@@ -11,7 +11,10 @@ the bridge remains authoritative.
 and runtime in one program. See [`README.md`](README.md).
 
 **Status: design.** No code. This repository holds research and specifications only.
-Do not add source, build files or CI until the storage decision below is made.
+Do not add source, build files or CI until **Phase 0** of the
+[action plan](https://github.com/oramasearch/liquid-bridge/blob/main/docs/action-plan.md)
+is complete — the five decisions in the bridge's `docs/decisions.md`, recorded below
+under *Decisions not to drift past*.
 
 ### Vocabulary — use these words exactly
 
@@ -138,8 +141,16 @@ what changed.
 
 ## Related repositories
 
+This repository is one module of
+[`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge). The
+**action plan and Phase 0 decisions live there**, in `docs/`; this file records the
+chosen options once they are made.
+
 | Repository | Relationship |
 |---|---|
+| [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge) | The bridge: this repo, k0s, lake and lake-operator as submodules, plus `docs/action-plan.md`, `docs/repositories.md`, `docs/decisions.md`. |
+| [`oramasearch/lake`](https://github.com/oramasearch/lake) | The lake binary — the hosted service. Skeleton; no code until Phase 0. |
+| [`oramasearch/lake-operator`](https://github.com/oramasearch/lake-operator) | kubebuilder operator for lake on k0s; the enterprise on-prem path. Modelled on `orama-cloud-v1-operator`, the Zetta operator. |
 | [`oramasearch/k0s`](https://github.com/oramasearch/k0s) | **Private copy** of `k0sproject/k0s`, synced with upstream, modified for drips. `main` is a pristine upstream mirror; our changes live on `liquid`. See its `ORAMA-FORK.md`. |
 | [`homer6/automerge-cpp`](https://github.com/homer6/automerge-cpp) | The CRDT datastore ([17](docs/features/17-implementation.md)). Still under `homer6`; whether it moves is undecided. |
 | [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F search engine ([12](docs/features/12-search.md)). Private; currently a scaffold. |
