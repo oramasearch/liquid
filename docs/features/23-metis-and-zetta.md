@@ -122,8 +122,9 @@ is manufactured by infrastructure, not by analysis.
   (`docs/competitors/`) are confidential. This repository links and does not restate.
   Nothing from them goes to Perplexity, Firecrawl or any external service.
 - **The bridge is the map.** Cross-product context lives in
-  `homer6/orama-work`; per-product detail lives in the sub-bridges. Read a bridge's own
-  `CLAUDE.md` before working inside it.
+  [`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge) (cloned
+  locally as `orama-work`); per-product detail lives in the sub-bridges. Read a bridge's
+  own `CLAUDE.md` before working inside it.
 - **Blueprint-first.** Zetta is designed from the wtm `ORAMA-ZETTA` blueprint, projected
   onto the docs site and GitHub issues, both regenerable. If liquid converges with
   Zetta, liquid's design should enter that blueprint rather than staying a parallel
@@ -133,9 +134,9 @@ is manufactured by infrastructure, not by analysis.
 
 - **The storage decision above.** Everything else waits on it.
 - **One CRDT or two** — `automerge-cpp` versus Zetta's replication.
-- **Does liquid ship under the Orama umbrella or independently?** It is currently a
-  `homer6` repository, not an `oramasearch` one, and the licensing posture (Metis is
-  noted as source-available) has not been decided for liquid.
+- **Licensing posture.** liquid now lives at `oramasearch/liquid` (private), so the
+  umbrella question is settled. What is *not* settled is the licence: Metis is noted as
+  source-available, and liquid has no stated position.
 - **Naming.** liquid / lake / liquify / drip is a coherent family; Orama / Zetta / Metis
   is another. Whether they are presented as one portfolio or two is a positioning
   decision, not a technical one.

@@ -20,12 +20,26 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > **Status: design.** Nothing is implemented yet. This repository currently holds
 > research and specifications.
 
+## Where this sits
+
+liquid is an **Orama** project (`oramasearch/liquid`, private). It is the intended
+go-to-market vehicle for **Metis**, the Enterprise Intelligence OS Orama is pivoting to
+build, whose central claim is that intelligence is bounded by *data availability*.
+
+liquid manufactures the two lower bands of that availability — Reach and Fidelity — as
+a side effect of being a tool teams adopt for other reasons, while **Zetta** turns
+available data into running instruments.
+
+See **[docs/features/23-metis-and-zetta.md](docs/features/23-metis-and-zetta.md)** for
+the mapping, and for the open decision about the overlap between liquid's storage layer
+and Zetta's.
+
 ## Documentation
 
 | | |
 |---|---|
-| **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 21 topics, each with a curated analysis and the web-grounded sources it was drawn from. |
-| **[docs/features/](docs/features/)** | What liquid does. 17 feature areas, each traceable to the research. |
+| **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 25 topics, each with a curated analysis and — for 23 of them — the web-grounded sources it was drawn from. |
+| **[docs/features/](docs/features/)** | What liquid does. 23 feature areas, each traceable to the research. |
 
 Start with **[docs/research/99-synthesis/](docs/research/99-synthesis/)** for the
 argument in one place, then **[docs/features/](docs/features/)** for the
