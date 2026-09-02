@@ -208,7 +208,7 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    source-available. An open-source tool cannot depend on it, so liquid has its own
    store. The earlier convergence recommendation ([23](docs/features/23-metis-and-zetta.md))
    was made without this constraint and is withdrawn.
-2. **lake uses Zetta as much as possible.** lake is the enterprise product and builds on
+2. **lake uses Zetta as much as possible as its data plane (control plane: Postgres for now; bridge decisions §6).** lake is the enterprise product and builds on
    Zetta — including borrowing Zetta's web-serving approach. lake must still host liquid
    repositories, so it consumes liquid's store **as a library** for repository data and
    uses Zetta for its own control plane and operational state.
