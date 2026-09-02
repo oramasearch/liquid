@@ -140,6 +140,14 @@ what changed.
 
 ## Related repositories
 
+**Read Zetta only from the umbrella bridge** —
+`/Users/stevesperandeo/dev/homer6/orama-work/modules/zetta-bridge/modules/zetta` —
+never from a standalone clone. A standalone `~/dev/oramasearch/zetta` was found 1,053
+commits behind and missing the whole `include/zetta/api/` HTTP layer; conclusions drawn
+from it were wrong. Same for the Orama operator, at
+`orama-work/modules/orama-cloud-v1-bridge/modules/orama-cloud-v1-operator` (that
+checkout may be on an in-flight branch — cut PR branches from a clean `origin/main`).
+
 This repository is one module of
 [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge). The
 **action plan and Phase 0 decisions live there**, in `docs/`; this file records the
