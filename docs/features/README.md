@@ -1,0 +1,76 @@
+# liquid — features
+
+This tree states what liquid **does**. It is the counterpart to
+[`docs/research/`](../research/), which states what the world currently does and
+why it is insufficient.
+
+Every feature document here should be traceable to evidence in the research tree.
+Where a feature exists because an incumbent tool fails at something, the document
+says so and links to the analysis.
+
+## The premise
+
+liquid is a version control system, build system, package manager, artifact
+service and runtime in one program. The name is the thesis: **software changes
+form**. Source becomes objects, objects become libraries, libraries become
+packages, packages become images, images become running processes — and liquid
+moves a project along that chain in either direction, computing only the minimum
+delta at each step, distributing the work across many machines, with a
+cryptographic chain of custody throughout.
+
+It replaces, or subsumes the role of: git, GitHub, Spack, Nix, `docker build`,
+CMake, Autotools, ccache/sccache, Bazel's remote execution, an artifact registry,
+a code search engine, and a PaaS.
+
+## Design axioms
+
+These hold across every feature. If a proposed feature violates one, the feature
+is wrong.
+
+1. **One content-addressed chunk store.** Source, binaries, packages, images,
+   search indexes and encrypted data are all chunks in one store. There is no
+   "large file mode" because there is no distinction to make.
+2. **One dependency graph of pure actions.** An action is a pure function from an
+   input Merkle tree to outputs, addressed by digest. Builds, packaging, indexing
+   and deployment are all actions.
+3. **Dependencies are observed, never declared.** The sandbox records what an
+   action actually read. Under-declaration becomes impossible; over-declaration
+   becomes unnecessary.
+4. **Outputs are content-addressed.** A rebuild producing identical bytes stops the
+   cascade. This is what kills "build the world".
+5. **Nothing is materialised until it is read.** Checkouts, build outputs,
+   artifacts and container filesystems are all lazy.
+6. **Reproducibility is enforced, not aspirational.** It is load-bearing for
+   caching, substitution and provenance.
+7. **Provenance is a byproduct.** Every action already records everything an
+   attestation needs. Signing is automatic.
+8. **Everything works offline, degraded but correct.** Remote cache, remote
+   execution and the artifact service are accelerators, never requirements.
+
+## Feature areas
+
+| # | Area | Summary |
+|---|---|---|
+| [01](01-object-model-and-storage.md) | Object model and storage | The chunk store, Merkle DAG, large-file support, and how everything else sits on it. |
+| [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, splitting and merging unrelated codebases. |
+| [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML. |
+| [04](04-build-engine.md) | Build engine | The incremental query graph, actions, early cutoff, and compile-as-you-type. |
+| [05](05-caching.md) | Caching | Build cache and compiler cache, built in, working on first run. |
+| [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
+| [07](07-dependency-resolution.md) | Dependency resolution | Spack-grade constraint solving over variants, compilers, targets and virtual providers. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more. |
+| [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
+| [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, and the attacks this prevents. |
+| [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |
+| [12](12-search.md) | Search | Full-text and code search over the working tree, history, and published artifacts. |
+| [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
+| [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |
+| [15](15-consumer-sync-and-web.md) | Consumer sync and web | The Dropbox/Drive-style interface for non-developers, local and web. |
+| [16](16-universality.md) | Universality | Every language, platform and operating system — what that commitment actually requires. |
+| [17](17-implementation.md) | Implementation | C++26, the component inventory, and the build order. |
+
+## Status
+
+**Everything in this tree is a specification, not a description.** Nothing is
+implemented yet. Documents state intent; where a decision is still open, they say
+so explicitly rather than inventing an answer.
