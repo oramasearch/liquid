@@ -27,27 +27,85 @@ if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT LIQUID_USE_SYSTEM_COMPILER)
   endif()
 endif()
 
-project(liquid VERSION 0.0.1 LANGUAGES CXX)
+project(liquid VERSION 0.0.1 LANGUAGES CXX
+        DESCRIPTION "liquid — version control, build, packages, artifacts and runtime in one program")
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(LIQUID_BUILD_TESTS "Build the test suite" ON)
+# libliquid is the product; the `liquid` binary is a thin client of it, and so are liquify
+# and lake. Static by default (one binary to ship); -DBUILD_SHARED_LIBS=ON builds libliquid.so.
+option(LIQUID_BUILD_CLI   "Build the liquid command-line binary" ON)
+option(LIQUID_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
+option(BUILD_SHARED_LIBS  "Build libliquid as a shared library" OFF)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
-# Core library: everything the CLI and future daemon share.
-add_library(liquid-core STATIC
+# -----------------------------------------------------------------------------
+# libliquid — everything under include/liquid/ is the public API.
+# -----------------------------------------------------------------------------
+add_library(libliquid
   src/version.cpp
+  src/hello.cpp
 )
-target_include_directories(liquid-core PUBLIC include)
-target_compile_features(liquid-core PUBLIC cxx_std_26)
+add_library(liquid::liquid ALIAS libliquid)
+set_target_properties(libliquid PROPERTIES
+  OUTPUT_NAME liquid            # libliquid.a / libliquid.dylib / libliquid.so
+  EXPORT_NAME liquid            # find_package(liquid) → liquid::liquid
+  VERSION     ${PROJECT_VERSION}
+  SOVERSION   0)
+target_include_directories(libliquid PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(libliquid PUBLIC cxx_std_26)
+include(GenerateExportHeader)
+generate_export_header(libliquid
+  BASE_NAME liquid
+  EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/include/liquid/export.hpp)
+if(NOT BUILD_SHARED_LIBS)
+  target_compile_definitions(libliquid PUBLIC LIQUID_STATIC_DEFINE)
+endif()
 
-# The CLI.
-add_executable(liquid src/main.cpp)
-target_link_libraries(liquid PRIVATE liquid-core)
+# -----------------------------------------------------------------------------
+# The CLI — a thin client of libliquid.
+# -----------------------------------------------------------------------------
+if(LIQUID_BUILD_CLI)
+  add_executable(liquid-cli src/main.cpp)
+  set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
+  target_link_libraries(liquid-cli PRIVATE liquid::liquid)
+endif()
 
+# -----------------------------------------------------------------------------
+# Install + package config: find_package(liquid CONFIG) → liquid::liquid.
+# -----------------------------------------------------------------------------
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+install(TARGETS libliquid EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY include/ ${CMAKE_CURRENT_BINARY_DIR}/include/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+if(LIQUID_BUILD_CLI)
+  install(TARGETS liquid-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+install(EXPORT liquidTargets NAMESPACE liquid::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/liquid)
+configure_package_config_file(cmake/liquidConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/liquidConfig.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/liquid)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/liquidConfigVersion.cmake
+  COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/liquidConfig.cmake
+              ${CMAKE_CURRENT_BINARY_DIR}/liquidConfigVersion.cmake
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/liquid)
+
+# -----------------------------------------------------------------------------
 # Tests: GoogleTest via FetchContent + CTest, matching Zetta.
+# -----------------------------------------------------------------------------
 if(LIQUID_BUILD_TESTS)
   include(FetchContent)
   FetchContent_Declare(googletest

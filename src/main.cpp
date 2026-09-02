@@ -3,7 +3,7 @@
 #include <span>
 #include <string_view>
 
-#include "liquid/version.hpp"
+#include "liquid/liquid.hpp"
 
 namespace {
 
@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (cmd == "hello") {
-        std::println("hello from liquid {} — drip, drip, drip", liquid::version_string());
+        std::println("{}", liquid::hello());
         return 0;
     }
     return usage();

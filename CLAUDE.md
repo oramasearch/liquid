@@ -228,6 +228,14 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    yet chosen. lake and the operator: enterprise. Zetta: source-available. k0s: Apache
    2.0 upstream, private copy.
 
+7. **libliquid is the product; the `liquid` binary, liquify and lake are clients of it**
+   (2026-09-02). One CMake target `liquid::liquid` (static by default, shared on request,
+   hidden visibility with `LIQUID_EXPORT` on the API), installed with a package config so
+   `find_package(liquid)` works, and consumable as a submodule with `LIQUID_BUILD_CLI OFF`.
+   Everything under `include/liquid/` is public API and must stay free of Zetta and, where
+   feasible, of third-party types (Boost stays behind the boundary). The CLI never carries
+   behaviour the library lacks.
+
 **Still open:**
 
 - **TAAP content-addressed subjects** — the spec needs an object-subject form

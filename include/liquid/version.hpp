@@ -1,6 +1,8 @@
 #pragma once
 #include <string_view>
 
+#include "liquid/export.hpp"
+
 namespace liquid {
 
 // Semantic version of this build.
@@ -14,6 +16,6 @@ struct version {
 // translation unit that uses them, so this lives in the header.
 [[nodiscard]] constexpr version current_version() noexcept { return {0, 0, 1}; }
 
-[[nodiscard]] std::string_view version_string() noexcept;
+[[nodiscard]] LIQUID_EXPORT std::string_view version_string() noexcept;
 
 }  // namespace liquid

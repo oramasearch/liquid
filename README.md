@@ -17,10 +17,11 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: bootstrap.** The specification is complete; code has begun with a C++26
-> hello world — `liquid version`, `liquid hello`, one passing GoogleTest — building with
-> CMake + Ninja and Homebrew/LLVM Clang, exactly as Zetta does. The design gate (Phase 0
-> in the bridge's action plan) is lifted.
+> **Status: hello world, as a library.** The specification is complete. Code is a C++26
+> **libliquid** (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the
+> `liquid` binary as a thin client of it; liquify and lake link the same library. `liquid version`
+> and `liquid hello` run, tests pass, `find_package(liquid)` works from an install. Phase 1 (the
+> store) starts inside libliquid.
 
 ## Where this sits
 
@@ -116,6 +117,38 @@ named, reviewable aggregation of drips. Drips are the record; changes are the na
   mTLS, TLS and SSH, because keyless signing already *is* certificate issuance.
 - Support every language, platform and operating system — with the tier of support
   stated honestly rather than implied.
+
+## Library and binary
+
+**libliquid is the product; the binary is a client.** Everything under `include/liquid/` is
+the public API; `src/main.cpp` only parses arguments and calls it. liquify links the same
+library (as a submodule, `add_subdirectory`), and lake will (across the licence boundary, as a
+library, never the other way round).
+
+| Target | What |
+|---|---|
+| `liquid::liquid` (`libliquid`) | the library: `libliquid.a`, or `libliquid.so`/`.dylib` with `-DBUILD_SHARED_LIBS=ON`; symbols hidden by default, `LIQUID_EXPORT` marks the API |
+| `liquid-cli` → `liquid` | the command-line binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
+| `liquid-tests` | GoogleTest; on by default only when liquid is the top-level project |
+
+```sh
+cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
+./build/liquid hello
+cmake --install build --prefix /opt/liquid        # bin/liquid, lib/libliquid.a, include/liquid/, lib/cmake/liquid/
+```
+
+Consume from CMake either way:
+
+```cmake
+# as a submodule (what liquify does)
+set(LIQUID_BUILD_CLI OFF)
+add_subdirectory(modules/liquid EXCLUDE_FROM_ALL)
+target_link_libraries(app PRIVATE liquid::liquid)
+
+# or from an install
+find_package(liquid CONFIG REQUIRED)
+target_link_libraries(app PRIVATE liquid::liquid)
+```
 
 ## Implementation
 
