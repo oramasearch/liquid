@@ -6,9 +6,100 @@
 > [23-secrets-service-and-pki](../research/23-secrets-service-and-pki/) ·
 > [25-multiplayer-and-agent-collaboration](../research/25-multiplayer-and-agent-collaboration/)
 >
-> **Every drip is signed by an identified party — human or agent. On by default.**
+> **TAAP/1 is liquid's security model** — not one component within it. Every claim liquid
+> makes about anything is a TAAP attestation, and every party that makes one is a TAAP
+> identity. On by default.
 
-## TAAP/1 is liquid's identity layer
+## One primitive for everything
+
+TAAP's attestation is a general statement:
+
+> *Authority A asserts that Subject S has attributes X as of time T.*
+
+That single shape is what liquid needs **everywhere**. It is not an identity feature that
+liquid also uses for signing — it is the substrate that every other security claim in the
+system reduces to.
+
+| What liquid needs to state | Authority | Subject | Profile |
+|---|---|---|---|
+| This person holds this role in this org | lake | a person | `org_membership/1` |
+| This agent may act for this principal, with these scopes | the principal | an agent | `delegation/1` |
+| This drip was authored by this actor | the actor | **the drip** | `authorship/1` |
+| This change was reviewed and approved | the reviewer | **the change** | `review_approval/1` |
+| This build produced this artifact from these inputs | the builder | **the artifact** | `slsa_provenance/1` |
+| This artifact contains these components | the build graph | **the artifact** | `sbom/1` |
+| This model was trained on this dataset with this code | the training run | **the checkpoint** | `model_provenance/1` |
+| This library's ABI is compatible with that one | liquid | **the library** | `abi_compatibility/1` |
+| This drip passed secret scanning | the scanner | **the drip** | `scan_result/1` |
+| Two builders independently produced identical bytes | the verifier | **the artifact** | `reproducibility/1` |
+
+**Users, agents, documents, artifacts, drips, changes — all subjects.** That is the whole
+point, and it is why TAAP is the security model rather than a signing library.
+
+### What this replaces
+
+liquid's supply-chain design ([10](10-supply-chain.md)) originally specified **in-toto
+attestations in DSSE envelopes**. TAAP supersedes that layer: it is the same shape —
+signed, independently verifiable statements about a subject — with a better-specified
+canonical encoding, domain-separated signatures, key-derived identity and explicit
+revocation.
+
+**Ecosystem predicates ride inside it.** A SLSA Provenance or SPDX/CycloneDX document
+becomes the `asserted_attributes` body under a registered `attestation_profile`, so liquid
+stays interoperable with SLSA and SBOM tooling without running two attestation frameworks.
+
+### The fields that make this work
+
+TAAP's attestation object already has what a general attestation system needs, and each
+solves a problem liquid would otherwise hit:
+
+- **`attestation_profile`** — a *versioned* schema name. Verifiers key policy off the
+  profile rather than guessing from which keys are present, so adding an attribute is not
+  a breaking change.
+- **`asserted_attributes` nested** — Authority claims cannot collide with or shadow
+  protocol fields.
+- **`evidence_references`** — digest-linked basis for the claim, supporting audit and
+  dispute without forcing the Authority to disclose the underlying record.
+- **`status_policy`** — the issuer states how volatile its own claim is and how stale an
+  answer may be. A conferred degree changes never; "currently authorised to deploy"
+  changes constantly. This is exactly right for liquid, where `abi_compatibility` is
+  durable and `delegation` is not.
+- **`expires_at: null` permitted** — permanence expressed honestly instead of via absurd
+  far-future dates, with freshness handled by status.
+- **`attribute_disclosure_commitments`** — salted per-attribute hashes, so a subset of an
+  attestation can be disclosed without revealing the rest. Relevant for an SBOM shared
+  with a customer who should not see every internal component.
+
+## The gap you need to close
+
+**TAAP subjects are key-derived identifiers.** §5.1 defines an identity as
+`taap:1:<algorithm>:<fingerprint>` — derived from a *public key*.
+
+A person has a key. An agent can hold one. **A document does not.** A drip, a chunk, a
+change, an artifact and a model checkpoint are content-addressed — identified by the hash
+of their bytes, not by a keypair they control.
+
+So for "attribution to users, agents, **documents**" to work as stated, TAAP needs a
+**content-addressed subject form** — a subject identified by digest rather than by key,
+which cannot itself sign or hold status but can be the target of assertions.
+
+This is [open question 22.3](../standards/taap-1-spec-draft.md) ("should the Subject be
+allowed to be a non-human — a device, a build artifact, a corporate entity"). For liquid
+it is not an optional extension: **it is load-bearing, and it blocks.** Without it, liquid
+can attest about actors but not about the things they produce, which is most of what
+liquid needs to say.
+
+Suggested shape, as protocol feedback:
+
+```
+subject_identifier      taap:1:ed25519:...        an actor — can sign, can hold status
+subject_digest          taap:1:content:sha512-256:...   an object — cannot sign
+```
+
+with the rule that exactly one is present, and that an object subject's identity is the
+digest of its canonical form.
+
+## TAAP/1 as liquid's identity layer
 
 Every actor that writes to a liquid repository — a person, an agent, a build worker, a
 CI job — is a **TAAP identity**: a key-derived identifier of the form
@@ -180,19 +271,22 @@ is a consensus-constrained estimate, not precise UTC.
 Where liquid needs trusted UTC — regulatory deadlines, legal ordering — that is an
 **RFC 3161 TSA**, in addition to the log and any anchor.
 
-## Reconciling TAAP identity with lake's PKI
+## PKI serves TAAP, not alongside it
 
-These are **two different identity models** and the relationship needs to be explicit,
-because getting it wrong produces a system with two incompatible notions of "who."
+To be precise about the hierarchy, because getting it wrong produces two competing
+notions of "who":
+
+**TAAP is the model. The PKI is an implementation detail for online freshness.**
 
 | | TAAP | lake's CA ([20](20-secrets-service-and-pki.md)) |
 |---|---|---|
-| Identity is | a long-lived public key | a short-lived certificate bound to an OIDC identity |
+| Role | **The identity and every claim** | Short-lived credentials for online operations |
+| Identity is | a long-lived public key | a certificate bound to a TAAP key |
 | Works offline | yes | no — requires an issuer |
 | Naming authority | none | lake |
 | Lifetime | years, with auditable rotation | minutes |
 
-They compose rather than compete:
+The relationship:
 
 - **TAAP identity is the durable one.** It is what a drip is signed by, and what remains
   attributable decades later.
@@ -204,8 +298,13 @@ They compose rather than compete:
 - **Offline signing uses the TAAP key directly**, with lake's attestation verified
   whenever the verifier next has connectivity.
 
-So: TAAP answers *who*, durably and offline. lake's PKI answers *what are they currently
-authorised to do*, freshly and revocably.
+So: **TAAP answers *who* and *what is claimed*, durably and offline. The PKI answers
+*what are they currently authorised to do*, freshly and revocably** — and it does so by
+issuing certificates *to TAAP keys*, never by establishing a parallel identity.
+
+Every artifact liquid signs — a drip, a build result, a review, a deployment — is a TAAP
+attestation. There is one signing model, and lake's CA is how it gets short-lived
+credentials when online.
 
 ## TAAP open questions liquid answers
 
@@ -214,7 +313,7 @@ Feedback to the protocol owner:
 
 | Question | liquid's answer |
 |---|---|
-| **22.3 — non-human subjects** | **Required.** Agents, build workers and build artifacts must all be Subjects. This is not an edge case for liquid; it is the main case. |
+| **22.3 — non-human subjects** | **Required, and blocking.** See [the gap](#the-gap-you-need-to-close) above. Agents can hold keys; documents, drips, changes and artifacts cannot. liquid needs a content-addressed subject form. This is the main case for liquid, not an edge case. |
 | **22.5 — delegation chains** | **Required, attenuation-only with depth limits.** human → agent → subagent is the normal topology, and an agent must never hold more than its dispatcher. The confused-deputy risk is real and the depth limit is the mitigation. |
 | **22.8 — ledger dependency** | **Optional, and liquid supplies one.** lake's transparency log is exactly the log TAAP treats as optional. The protocol should keep working with purely local trust stores — liquid needs the air-gapped configuration above. |
 | **22.2 — identifier stability across rotation** | **Prefer stability** (the current draft's choice). A drip signed in 2026 must remain attributable after a 2029 key rotation; breaking every stored reference is not acceptable in a version-control system. |

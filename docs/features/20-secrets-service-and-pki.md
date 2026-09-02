@@ -21,6 +21,14 @@ Two different problems, routinely conflated:
 Doc 11 says live production credentials should be *referenced* from the repository and
 *minted at deploy time*. **This is the thing that mints them.** That closes the loop.
 
+## The PKI serves TAAP
+
+Stated up front to avoid two competing notions of identity: **[TAAP/1](../standards/taap-1-spec-draft.md)
+is liquid's security model** ([25](25-identity-attestation-and-transparency.md)). The
+certificates described here are **short-lived credentials issued to TAAP keys** for
+online operations — they do not establish a separate identity, and a TAAP identity
+remains valid and verifiable when every certificate has expired.
+
 ## Why lake is unusually well placed to do this
 
 A secrets service needs three things it normally has to acquire: an identity system to

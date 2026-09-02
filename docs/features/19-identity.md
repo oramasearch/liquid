@@ -5,6 +5,11 @@
 > [14-secrets-and-encryption](../research/14-secrets-and-encryption/)
 >
 > Clerk-quality authentication, provided by lake.
+>
+> **The identity substrate is [TAAP/1](../standards/taap-1-spec-draft.md)**
+> ([25](25-identity-attestation-and-transparency.md)). Every principal here — person,
+> workload, organisation — is a TAAP identity, and every authorisation statement about
+> them is a TAAP attestation. This document is the product surface over that model.
 
 ## Why this is not a bolt-on
 
@@ -38,9 +43,9 @@ is the thing that makes the security story true.**
 
 | Principal | Examples | Authenticated by |
 |---|---|---|
-| **People** | Developers, and everyone using the Drive surface | Password + MFA, passkeys/WebAuthn, OAuth social, enterprise SSO |
-| **Workloads** | Build workers, deployed applications, agents | Short-lived workload identity, never a long-lived key |
-| **Organisations** | Teams, projects, customers | Membership and role, not a credential of their own |
+| **People** | Developers, and everyone using the Drive surface | Password + MFA, passkeys/WebAuthn, OAuth social, enterprise SSO — each binding to a durable TAAP identity |
+| **Workloads** | Build workers, deployed applications, agents | Short-lived credentials issued *to* a TAAP key, never a long-lived secret |
+| **Organisations** | Teams, projects, customers | Membership and role asserted as TAAP attestations, not a credential of their own |
 
 Long-lived static tokens are the failure mode to avoid — they leak, they are
 committed, they never expire, and they cannot be attributed. lake issues short-lived

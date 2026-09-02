@@ -5,6 +5,11 @@
 >
 > **Requirement:** cryptographic chain of custody and signed builds, so viruses
 > cannot get in.
+>
+> **The mechanism is [TAAP/1](../standards/taap-1-spec-draft.md)** — every attestation
+> below is a TAAP attestation, and every signer a TAAP identity. See
+> [25](25-identity-attestation-and-transparency.md) for the model; this document is what
+> liquid asserts with it.
 
 ## What a chain of custody actually is
 
@@ -21,8 +26,11 @@ liquid already records, for every action: the complete input Merkle tree, the
 command, the environment, the toolchain by content, the observed read manifest, and
 the outputs ([04](04-build-engine.md), [05](05-caching.md)).
 
-**That is SLSA provenance.** liquid emits it as a signed in-toto attestation
-automatically, for every action, with no user configuration. Nothing else on the
+**That is SLSA provenance.** liquid emits it as a signed **TAAP attestation**
+automatically, for every action, with no user configuration — carrying the SLSA
+Provenance predicate as its `asserted_attributes` body under a registered
+`attestation_profile`, so it stays interoperable with SLSA tooling while using one
+attestation framework rather than two ([25](25-identity-attestation-and-transparency.md)). Nothing else on the
 market gets this free, because nothing else owns the whole chain.
 
 SBOMs come from the same place — generated from the build graph, complete and
