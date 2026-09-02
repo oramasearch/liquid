@@ -26,7 +26,7 @@ liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module
 [**`oramasearch/liquid-bridge`**](https://github.com/oramasearch/liquid-bridge), which
 also holds [our k0s](https://github.com/oramasearch/k0s), the
 [lake binary](https://github.com/oramasearch/lake) and the
-[lake-operator](https://github.com/oramasearch/lake-operator) — and the
+[Orama operator](https://github.com/oramasearch/orama-operator) — and the
 **[action plan](https://github.com/oramasearch/liquid-bridge/blob/main/docs/action-plan.md)**. It is the intended
 go-to-market vehicle for **Metis**, the Enterprise Intelligence OS Orama is pivoting to
 build, whose central claim is that intelligence is bounded by *data availability*.

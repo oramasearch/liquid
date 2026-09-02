@@ -147,9 +147,9 @@ chosen options once they are made.
 
 | Repository | Relationship |
 |---|---|
-| [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge) | The bridge: this repo, k0s, lake and lake-operator as submodules, plus `docs/action-plan.md`, `docs/repositories.md`, `docs/decisions.md`. |
+| [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge) | The bridge: this repo, k0s, lake and orama-operator as submodules, plus `docs/action-plan.md`, `docs/repositories.md`, `docs/decisions.md`. |
 | [`oramasearch/lake`](https://github.com/oramasearch/lake) | The lake binary — the hosted service. Skeleton; no code until Phase 0. |
-| [`oramasearch/lake-operator`](https://github.com/oramasearch/lake-operator) | kubebuilder operator for lake on k0s; the enterprise on-prem path. Modelled on `orama-cloud-v1-operator`, the Zetta operator. |
+| [`oramasearch/orama-operator`](https://github.com/oramasearch/orama-operator) | **The Orama operator** (renamed from `orama-cloud-v1-operator`; the Zetta operator). lake is deployed by adding a `Lake` CR to it — there is no separate lake operator. Running in production on AKS. |
 | [`oramasearch/k0s`](https://github.com/oramasearch/k0s) | **Private copy** of `k0sproject/k0s`, synced with upstream, modified for drips. `main` is a pristine upstream mirror; our changes live on `liquid`. See its `ORAMA-FORK.md`. |
 | [`homer6/automerge-cpp`](https://github.com/homer6/automerge-cpp) | The CRDT datastore ([17](docs/features/17-implementation.md)). Still under `homer6`; whether it moves is undecided. |
 | [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F search engine ([12](docs/features/12-search.md)). Private; currently a scaffold. |
@@ -203,9 +203,10 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    Zetta — including borrowing Zetta's web-serving approach. lake must still host liquid
    repositories, so it consumes liquid's store **as a library** for repository data and
    uses Zetta for its own control plane and operational state.
-3. **lake-operator has its own Zetta as a state store**, in addition to k8s — the same
-   model as the Zetta operator (`orama-cloud-v1-operator`): **k8s/etcd is the source of
-   truth for desired state (the CRs); Zetta holds observed state**, synced with anti-flap
+3. **lake is deployed by the Orama operator, not a separate operator.** `Lake` is a new
+   CR on `oramasearch/orama-operator` (renamed from `orama-cloud-v1-operator`), which
+   already has its own Zetta as observed-state store — **k8s/etcd is the source of truth
+   for desired state (the CRs); Zetta holds observed state**, synced with anti-flap
    discipline. See its `docs/zetta-datastore.md`.
 4. **One CRDT — `automerge-cpp`, and it stays open.** MIT-licensed, public, already
    vendored by Zetta. It is the shared open component between liquid (open) and Zetta
@@ -215,7 +216,7 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    `cppalliance/corosio` directly. stdexec is not used. Requires **Clang 17+**: Homebrew
    LLVM on macOS, `clang++-NN` on Linux; Apple's Clang and Ubuntu's GCC 13 are too old.
 6. **Licence posture.** liquid and liquify: open source, eventually — licence text not
-   yet chosen. lake and lake-operator: enterprise. Zetta: source-available. k0s: Apache
+   yet chosen. lake and the operator: enterprise. Zetta: source-available. k0s: Apache
    2.0 upstream, private copy.
 
 **Still open:**
