@@ -1,6 +1,5 @@
 add_executable(liquid-tests
   test_version.cpp
-  test_hello.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid GTest::gtest_main)
 include(GoogleTest)

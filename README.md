@@ -20,7 +20,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > **Status: hello world, as a library.** The specification is complete. Code is a C++26
 > **libliquid** (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the
 > `liquid` binary as a thin client of it; liquify and lake link the same library. `liquid version`
-> and `liquid hello` run, tests pass, `find_package(liquid)` works from an install. Phase 1 (the
+> and `liquid hello` run, the test passes, `find_package(liquid)` works from an install. Phase 1 (the
 > store) starts inside libliquid.
 
 ## Where this sits

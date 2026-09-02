@@ -48,7 +48,6 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # -----------------------------------------------------------------------------
 add_library(libliquid
   src/version.cpp
-  src/hello.cpp
 )
 add_library(liquid::liquid ALIAS libliquid)
 set_target_properties(libliquid PROPERTIES

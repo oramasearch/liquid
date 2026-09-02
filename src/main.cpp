@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (cmd == "hello") {
-        std::println("{}", liquid::hello());
+        std::println("hello from liquid {} — drip, drip, drip", liquid::version_string());
         return 0;
     }
     return usage();
