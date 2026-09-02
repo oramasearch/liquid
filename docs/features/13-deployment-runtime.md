@@ -14,6 +14,26 @@ update — in seconds rather than minutes.
 
 ## The distribution
 
+**Decided: a private copy of k0s, modified.** Not built from scratch, and not a public
+fork.
+
+[`oramasearch/k0s`](https://github.com/oramasearch/k0s) is a private copy of
+[`k0sproject/k0s`](https://github.com/k0sproject/k0s) kept in sync with upstream, with
+our changes isolated on a `liquid` branch so `git diff main..liquid` is always exactly
+our delta. k0s is **Apache 2.0** (its `docs/` is CC-BY-SA-4.0), so private modification
+carries no publication obligation; distributing modified binaries requires retaining
+`LICENSE` and `NOTICE` and stating that files were changed. The branch model satisfies
+the last of those by construction.
+
+Rationale: building a control plane is not the hard part — *"a credible new distribution
+is mostly a lifecycle-integration project."* Starting from k0s buys the lifecycle work
+and leaves us to do the part that is actually differentiated, which is the chunk-aware
+node integration below.
+
+See `ORAMA-FORK.md` in that repository for the branch model and sync procedure.
+
+## What we inherit
+
 Two axes, deliberately separated because conflating them causes bad decisions.
 
 **Control plane — follow k0s.** A single statically linked binary with no runtime
@@ -104,8 +124,9 @@ it back.
 
 ## Open questions
 
-- **Whether to build a distribution at all, or a layer over k0s/Talos.** Building on
-  them is far less work and loses the chunk-aware snapshotter integration.
+- ~~Whether to build a distribution at all.~~ **Resolved:** a private, synced copy of
+  k0s ([`oramasearch/k0s`](https://github.com/oramasearch/k0s)), modified on a `liquid`
+  branch. Still open is how much of Talos's immutable-node model to adopt on top.
 - **Break-glass design** for an immutable node OS.
 - **Multi-tenancy model** — namespaces are not a security boundary, and the
   alternatives (vcluster, separate clusters, microVMs) have very different costs.

@@ -92,7 +92,9 @@ named, reviewable aggregation of drips. Drips are the record; changes are the na
 - Serve builds, with a transparency log and signed provenance.
 - Store encrypted secrets without destroying deduplication.
 - Search full text and code, including inside published artifacts.
-- Deploy to a minimal Kubernetes distribution with a Railway-style experience.
+- Deploy to a minimal Kubernetes distribution — a private, upstream-synced copy of
+  [k0s](https://github.com/oramasearch/k0s) modified for drips — with a Railway-style
+  experience.
 - Present a Dropbox/Drive-style interface for non-developers, local and web.
 - Review changes, not branches — so review survives a rebase and stacking is native.
 - Host models and datasets with training provenance — the chunk store Hugging Face

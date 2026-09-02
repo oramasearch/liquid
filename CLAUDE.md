@@ -136,6 +136,21 @@ Do not leave a superseded claim standing next to its correction.
 **No estimates.** Never preface work with size or duration guesses. Do the task, report
 what changed.
 
+## Related repositories
+
+| Repository | Relationship |
+|---|---|
+| [`oramasearch/k0s`](https://github.com/oramasearch/k0s) | **Private copy** of `k0sproject/k0s`, synced with upstream, modified for drips. `main` is a pristine upstream mirror; our changes live on `liquid`. See its `ORAMA-FORK.md`. |
+| [`homer6/automerge-cpp`](https://github.com/homer6/automerge-cpp) | The CRDT datastore ([17](docs/features/17-implementation.md)). Still under `homer6`; whether it moves is undecided. |
+| [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F search engine ([12](docs/features/12-search.md)). Private; currently a scaffold. |
+| [`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge) | The org umbrella bridge. Authoritative for org-wide conventions. |
+
+**Copies of public upstreams are never forks.** `gh repo fork` produces a **public**
+repository that cannot be flipped to private. Use
+`gh repo create oramasearch/<name> --private` and push the upstream history into it, then
+set the `upstream` remote's *push* URL to an invalid value so an accidental push cannot
+leak our changes. Verify with `gh repo view <repo> --json visibility` **before** pushing.
+
 ## Confidentiality
 
 **Metis material is confidential** — `docs/metis/` and `docs/competitors/` in
