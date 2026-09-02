@@ -55,6 +55,7 @@ Every topic directory contains:
 | [21](21-consumer-sync-and-web/) | Consumer sync and web | Dropbox's Nucleus and block model, Drive, CFAPI/File Provider/FUSE, and sharing UX for non-developers. |
 | [22](22-forges-and-code-hosting/) | Forges and code hosting | GitHub's branch-based review defect, Actions economics, lock-in, Gerrit and stacked diffs — context for lake.live. |
 | [23](23-secrets-service-and-pki/) | Secrets service and PKI | Vault/OpenBao, dynamic secrets, SPIFFE/SPIRE, certificate lifetimes, and Fulcio as a CA. |
+| [24](24-editors-and-ide-architecture/) | Editors and IDE architecture | VS Code's process model and marketplace moat, JetBrains PSI, Zed, text CRDTs — and why Xi failed. |
 | [99](99-synthesis/) | Synthesis | Cross-cutting conclusions: the shared model, the ordering of the build, and what liquid must get right first. |
 
 ## Method and provenance

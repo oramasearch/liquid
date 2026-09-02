@@ -24,6 +24,20 @@ a code search engine, a PaaS, Dropbox, Clerk and Vault.
 
 **[lake.live](18-lake-service.md)** is the hosted expression of all of it.
 
+## Names and units
+
+| Name | What it is |
+|---|---|
+| **liquid** | The tool. The CLI and the daemon. |
+| **lake** | Where liquid collects — the hosted service at `lake.live`. |
+| **liquify** | The IDE. |
+| **drip** | One captured write to disk. The atom of history — automatic, continuous, never explicit. |
+| **change** | A named, reviewable aggregation of drips. What another system would call a commit or a pull request. |
+
+Drips are the record; changes are the narrative. Nothing else versions at this
+granularity, and it is what makes "compile the minimum delta as you author" literal
+rather than aspirational.
+
 ## Design axioms
 
 These hold across every feature. If a proposed feature violates one, the feature
@@ -48,6 +62,8 @@ is wrong.
    attestation needs. Signing is automatic.
 8. **Everything works offline, degraded but correct.** Remote cache, remote
    execution and the artifact service are accelerators, never requirements.
+9. **Every write to disk is a versioned change.** Capture is automatic and
+   continuous. There is no step at which history begins.
 
 ## Feature areas
 
@@ -73,6 +89,7 @@ is wrong.
 | [18](18-lake-service.md) | **lake.live** | The hosted service: GitHub + Google Drive + Railway over one store. |
 | [19](19-identity.md) | Identity and auth | Clerk-quality auth, and why identity is the trust root for the whole chain of custody. |
 | [20](20-secrets-service-and-pki.md) | Secrets service and PKI | Dynamic secrets, encryption as a service, and certificate issuance. |
+| [21](21-liquify-ide.md) | **liquify** | The IDE. No language server, because the editor and the build are one graph. |
 
 ## Status
 

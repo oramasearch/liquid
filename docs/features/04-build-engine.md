@@ -80,6 +80,10 @@ overhead is a loss. Very short work stays local and may be batched
 
 ## Compile as you type
 
+Every write to disk is a **drip** ([02](02-version-control.md)), and every drip
+invalidates the minimum part of the graph. That is what makes drip-by-drip
+compilation literal: the unit of rebuild is the unit of authoring.
+
 The editor and the build query the **same warm graph**.
 
 - Unsaved editor buffers are volatile inputs via an in-memory overlay.

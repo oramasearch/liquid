@@ -61,6 +61,31 @@ HTTP range requests over a CDN are four communities independently discovering th
 ([07](../07-distributed-execution/), [16](../16-monorepo-scale-and-authoring-loop/),
 [11](../11-container-images/), [12](../12-artifact-distribution/)).
 
+## The fourth mechanism: the drip
+
+Added after the first three were established, and it changes the shape of the system.
+
+**Every write to disk is a versioned change — a drip.** Capture is automatic and
+continuous; a **change** is a named, reviewable aggregation of drips.
+
+This is not a UX flourish. It makes the unit of history equal to the unit of
+authoring, which is exactly what the incremental engine wants: each drip invalidates
+the minimum part of the query graph, so "compile the minimum delta as you author"
+stops being a metaphor. It also unifies three things that are normally separate
+subsystems — version control capture, build invalidation, and sync/collaboration —
+because a drip is a CRDT change regardless of whether it came from your keyboard,
+your colleague's, or a merge.
+
+Nothing else versions at this granularity, and the reason nothing does is that it
+requires the storage layer, the build engine and the collaboration layer to be one
+system. Which is the thesis.
+
+**Its costs are real and are stated in the feature docs:** build outputs must be
+excluded by declared rules; CRDT metadata growth becomes the central risk rather than
+a background one; drips must compact once their change is named; and a secret pasted
+then deleted was still written to disk, so scanning must run on the drip rather than
+the commit.
+
 ## What "build the world" actually is
 
 Steve's complaint has four distinct causes, and only fixing all four eliminates it:
@@ -133,7 +158,13 @@ carry the real risk:
 
 ## Risks worth stating plainly
 
-- **Scope.** This is five or six ambitious products. Sequencing is everything.
+- **Scope, and it has grown.** This is now closer to a dozen ambitious products: a
+  VCS, a build system, a package manager, an artifact service, a runtime, a
+  Kubernetes distribution, a forge, a consumer file-sync product, an identity
+  provider, a secrets service, a certificate authority, and an IDE. Each has a
+  credible, well-funded incumbent. **Sequencing is the entire game**, and the
+  temptation to build the visible products before the foundation is the single most
+  likely way this fails.
 - **Incremental correctness.** rustc has shipped incremental-compilation
   correctness bugs repeatedly. A stale-but-plausible artifact is worse than a slow
   build. Continuous clean-rebuild validation is mandatory, not optional
@@ -161,7 +192,14 @@ The dependency order is fairly forced:
 5. **Resolution** — Spack-grade constraint solving over content-addressed outputs.
 6. **Projection** — OCI images, OS packages, the artifact service.
 7. **Search, deployment, hot update.**
+8. **lake** — the hosted expression: forge, drive, platform, identity, secrets, PKI.
+9. **liquify** — as a VS Code extension and LSP server first; native only once the
+   graph, the virtual filesystem and the daemon are proven.
 
 Steps 1–2 are the foundation and the first useful product. If liquid can wrap an
 existing project and make its builds correct, cached, distributed and attested
 without that project changing anything, everything else has a route to market.
+
+Note what is *not* early: the forge, the IDE and the consumer product are the most
+visible and the most tempting, and all three depend on the store, the graph and the
+daemon being right. They are the payoff, not the foundation.

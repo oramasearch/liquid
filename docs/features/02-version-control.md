@@ -62,6 +62,28 @@ No staging area. Edits are automatically recorded into the current change. The
 staging area is the concept that must be taught before anything else works, and it
 buys less than it costs.
 
+### Every write is a drip
+
+liquid versions at the granularity of the **write**, not the commit.
+
+Every save to disk is captured as a **drip** — the atom of history. Drips are
+automatic, continuous and never explicit. A **change** is a named, reviewable
+aggregation of drips.
+
+| | Captured | Named | Reviewed |
+|---|---|---|---|
+| **Drip** | Automatically, on every write | No | No |
+| **Change** | From drips | Yes | Yes |
+
+This is why history is complete rather than curated: nothing is lost between saves,
+`liquid undo` reaches any prior state, and the build invalidates the minimum work per
+drip ([04](04-build-engine.md)) instead of per commit.
+
+Three consequences the design must handle, covered in [21](21-liquify-ide.md): build
+outputs and dependency directories are excluded by declared rules; drips compact once
+their change is named; and **secret scanning runs on the drip, not on the commit** —
+because a credential pasted and deleted seconds later was still written to disk.
+
 ## Repository composition
 
 **This is the headline feature.** A repository is a *value* that can be nested,

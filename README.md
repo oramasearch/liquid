@@ -31,6 +31,16 @@ Start with **[docs/research/99-synthesis/](docs/research/99-synthesis/)** for th
 argument in one place, then **[docs/features/](docs/features/)** for the
 specifications.
 
+## Names
+
+**liquid** is the tool. **[lake](docs/features/18-lake-service.md)** is where it
+collects — the hosted service at `lake.live`. **[liquify](docs/features/21-liquify-ide.md)**
+is the IDE.
+
+A **drip** is one captured write to disk — the atom of history, automatic and
+continuous. A **change** is a named, reviewable aggregation of drips. Drips are the
+record; changes are the narrative.
+
 ## Design axioms
 
 1. **One content-addressed chunk store.** Source, binaries, packages, images, search
@@ -48,6 +58,7 @@ specifications.
 7. **Provenance is a byproduct.** Every action already records everything an
    attestation needs.
 8. **Everything works offline**, degraded but correct.
+9. **Every write to disk is a versioned change.** Drip, drip, drip.
 
 ## What it must do
 
@@ -64,6 +75,8 @@ specifications.
 - Deploy to a minimal Kubernetes distribution with a Railway-style experience.
 - Present a Dropbox/Drive-style interface for non-developers, local and web.
 - Review changes, not branches — so review survives a rebase and stacking is native.
+- Give you an editor with no language server, because the editor and the build are
+  the same incremental graph.
 - Provide identity, a runtime secrets service, and PKI — one CA serving signing,
   mTLS, TLS and SSH, because keyless signing already *is* certificate issuance.
 - Support every language, platform and operating system — with the tier of support
