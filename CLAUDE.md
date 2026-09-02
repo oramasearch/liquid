@@ -10,11 +10,10 @@ the bridge remains authoritative.
 **liquid** — a version control system, build system, package manager, artifact service
 and runtime in one program. See [`README.md`](README.md).
 
-**Status: design.** No code. This repository holds research and specifications only.
-Do not add source, build files or CI until **Phase 0** of the
-[action plan](https://github.com/oramasearch/liquid-bridge/blob/main/docs/action-plan.md)
-is complete — the five decisions in the bridge's `docs/decisions.md`, recorded below
-under *Decisions not to drift past*.
+**Status: design → bootstrap.** The Phase 0 gate is lifted (see *Decisions* below).
+Code begins with hello-world scaffolding: a C++26 CMake + Ninja build, Clang 17+,
+Catch2, modelled on Zetta's `CMakeLists.txt` compiler auto-selection. liquid is
+**open source eventually** and must never take a dependency on Zetta.
 
 ### Vocabulary — use these words exactly
 
@@ -189,26 +188,46 @@ Web-grounded research uses the Perplexity MCP server.
 - Note the tier used in the `sources.md` header. A `reason`-tier source is still
   web-grounded and cited, but less exhaustive — readers should know which they have.
 
-## Decisions not to drift past
+## Decisions — recorded
 
-1. **The Zetta/liquid storage overlap** ([23](docs/features/23-metis-and-zetta.md)).
-   Zetta is already a C++26 CRDT-replicated clustered store with large objects; liquid
-   specifies a C++26 CRDT-backed content-addressed store with large objects. **There
-   should not be two.** Decide before writing the storage layer — it is the one choice
-   that is expensive to reverse.
-2. **Where the one CRDT lives.** Zetta already vendors `automerge-cpp` as a submodule,
-   so there is one CRDT, not two. Open: whether `homer6/automerge-cpp` moves under
-   `oramasearch`, and whether liquid consumes it as a submodule the way Zetta does.
-3. **Licence.** Metis is noted source-available; liquid has no stated position.
+These were the Phase 0 gates. Most are now decided; the rest are narrowed.
 
 **Decided:**
 
-- **Async stack — Boost.Capy for coroutines, Corosio for networking.** The same stack
-  Zetta and oramacore-cpp use; Zetta vendors both as submodules. stdexec is not used
-  anywhere in liquid. **Toolchain consequence:** C++26 with Capy/Corosio needs
-  **Clang 17+**. Apple's system Clang and Ubuntu's GCC 13 are too old; use Homebrew
-  LLVM on macOS (`brew install llvm`) and `clang++-NN` on Linux, per Zetta's build
-  notes. Zetta's `./scripts/install-deps.sh` is the reference setup.
+1. **liquid does not sit on Zetta. Separate stores, by licence boundary.** liquid and
+   liquify will be **open source** (eventually). Zetta is closed / enterprise
+   source-available. An open-source tool cannot depend on it, so liquid has its own
+   store. The earlier convergence recommendation ([23](docs/features/23-metis-and-zetta.md))
+   was made without this constraint and is withdrawn.
+2. **lake uses Zetta as much as possible.** lake is the enterprise product and builds on
+   Zetta — including borrowing Zetta's web-serving approach. lake must still host liquid
+   repositories, so it consumes liquid's store **as a library** for repository data and
+   uses Zetta for its own control plane and operational state.
+3. **lake-operator has its own Zetta as a state store**, in addition to k8s — the same
+   model as the Zetta operator (`orama-cloud-v1-operator`): **k8s/etcd is the source of
+   truth for desired state (the CRs); Zetta holds observed state**, synced with anti-flap
+   discipline. See its `docs/zetta-datastore.md`.
+4. **One CRDT — `automerge-cpp`, and it stays open.** MIT-licensed, public, already
+   vendored by Zetta. It is the shared open component between liquid (open) and Zetta
+   (closed). Where the canonical repo lives is still open, but its licence is settled.
+5. **Async stack — Boost.Capy for coroutines, Corosio for networking**, matching Zetta
+   and oramacore-cpp. Consume `oramasearch/corosio` (private patch carrier), never
+   `cppalliance/corosio` directly. stdexec is not used. Requires **Clang 17+**: Homebrew
+   LLVM on macOS, `clang++-NN` on Linux; Apple's Clang and Ubuntu's GCC 13 are too old.
+6. **Licence posture.** liquid and liquify: open source, eventually — licence text not
+   yet chosen. lake and lake-operator: enterprise. Zetta: source-available. k0s: Apache
+   2.0 upstream, private copy.
+
+**Still open:**
+
+- **TAAP content-addressed subjects** — the spec needs an object-subject form
+  ([25](docs/features/25-identity-attestation-and-transparency.md)). Blocking for
+  attribution of documents and artifacts; needs the protocol owner.
+- **Which open-source licence** for liquid and liquify.
+- **Canonical home of `automerge-cpp`** — `homer6` or `oramasearch`.
+
+**Code may now begin.** The "no code until Phase 0" gate is lifted for hello-world
+scaffolding in every module.
 
 ## Inherited org conventions — the ones hit most here
 
