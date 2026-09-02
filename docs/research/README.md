@@ -53,6 +53,8 @@ Every topic directory contains:
 | [19](19-full-text-search/) | Full-text and code search | Trigram indexes, Zoekt, GitHub Blackbird, and indexing a content-addressed versioned corpus. |
 | [20](20-deployment-runtime-k8s/) | Deployment runtime and minimal k8s | k0s/k3s/Talos, Railway-style PaaS, buildpacks, GitOps — liquid's delivery target. |
 | [21](21-consumer-sync-and-web/) | Consumer sync and web | Dropbox's Nucleus and block model, Drive, CFAPI/File Provider/FUSE, and sharing UX for non-developers. |
+| [22](22-forges-and-code-hosting/) | Forges and code hosting | GitHub's branch-based review defect, Actions economics, lock-in, Gerrit and stacked diffs — context for lake.live. |
+| [23](23-secrets-service-and-pki/) | Secrets service and PKI | Vault/OpenBao, dynamic secrets, SPIFFE/SPIRE, certificate lifetimes, and Fulcio as a CA. |
 | [99](99-synthesis/) | Synthesis | Cross-cutting conclusions: the shared model, the ordering of the build, and what liquid must get right first. |
 
 ## Method and provenance

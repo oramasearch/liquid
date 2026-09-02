@@ -11,7 +11,11 @@ machines, with a cryptographic chain of custody throughout.
 
 It aims to subsume the role of git, GitHub, Spack, Nix, `docker build`, CMake,
 Autotools, ccache/sccache, remote build execution, an artifact registry, a code
-search engine, and a PaaS.
+search engine, a PaaS, Dropbox, Clerk and Vault.
+
+**[lake.live](docs/features/18-lake-service.md)** is the hosted expression of all of
+it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
+and Railway** over one content-addressed store, with identity, secrets and PKI.
 
 > **Status: design.** Nothing is implemented yet. This repository currently holds
 > research and specifications.
@@ -59,6 +63,9 @@ specifications.
 - Search full text and code, including inside published artifacts.
 - Deploy to a minimal Kubernetes distribution with a Railway-style experience.
 - Present a Dropbox/Drive-style interface for non-developers, local and web.
+- Review changes, not branches — so review survives a rebase and stacking is native.
+- Provide identity, a runtime secrets service, and PKI — one CA serving signing,
+  mTLS, TLS and SSH, because keyless signing already *is* certificate issuance.
 - Support every language, platform and operating system — with the tier of support
   stated honestly rather than implied.
 

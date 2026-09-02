@@ -20,7 +20,9 @@ cryptographic chain of custody throughout.
 
 It replaces, or subsumes the role of: git, GitHub, Spack, Nix, `docker build`,
 CMake, Autotools, ccache/sccache, Bazel's remote execution, an artifact registry,
-a code search engine, and a PaaS.
+a code search engine, a PaaS, Dropbox, Clerk and Vault.
+
+**[lake.live](18-lake-service.md)** is the hosted expression of all of it.
 
 ## Design axioms
 
@@ -68,6 +70,9 @@ is wrong.
 | [15](15-consumer-sync-and-web.md) | Consumer sync and web | The Dropbox/Drive-style interface for non-developers, local and web. |
 | [16](16-universality.md) | Universality | Every language, platform and operating system — what that commitment actually requires. |
 | [17](17-implementation.md) | Implementation | C++26, the component inventory, and the build order. |
+| [18](18-lake-service.md) | **lake.live** | The hosted service: GitHub + Google Drive + Railway over one store. |
+| [19](19-identity.md) | Identity and auth | Clerk-quality auth, and why identity is the trust root for the whole chain of custody. |
+| [20](20-secrets-service-and-pki.md) | Secrets service and PKI | Dynamic secrets, encryption as a service, and certificate issuance. |
 
 ## Status
 
