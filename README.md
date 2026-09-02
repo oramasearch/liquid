@@ -40,6 +40,7 @@ and Zetta's.
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |
 | **[docs/features/](docs/features/)** | What liquid does. 25 feature areas, each traceable to the research. |
+| **[docs/standards/](docs/standards/)** | External standards liquid depends on — currently [TAAP/1](docs/standards/taap-1-spec-draft.md), vendored until it has its own repository. |
 
 Start with **[docs/research/99-synthesis/](docs/research/99-synthesis/)** for the
 argument in one place, then **[docs/features/](docs/features/)** for the
@@ -73,9 +74,11 @@ named, reviewable aggregation of drips. Drips are the record; changes are the na
    attestation needs.
 8. **Everything works offline**, degraded but correct.
 9. **Every write to disk is a versioned change.** Drip, drip, drip.
-10. **Every change is attributable.** Every drip is signed by an identified party under
-    [TAAP/1](docs/standards/taap-1-spec-draft.md), and the history is an append-only,
-    tamper-evident log — optionally anchored to a public chain. On by default.
+10. **Every change is attributable.** [TAAP/1](docs/standards/taap-1-spec-draft.md) is
+    the security model: every claim liquid makes about a user, an agent, a document, a
+    build or an artifact is a signed attestation, and history is an append-only,
+    tamper-evident log with a witness quorum — optionally anchored to a public chain. On
+    by default.
 
 ## What it must do
 
@@ -96,9 +99,10 @@ named, reviewable aggregation of drips. Drips are the record; changes are the na
   already migrated to, plus the attestation chain a model hub cannot offer.
 - Give you an editor with no language server, because the editor and the build are
   the same incremental graph.
-- Sign every change by an identified human or agent, in an append-only log that can be
-  independently verified — and optionally anchored to a public chain for timestamping
-  that does not require trusting us.
+- Attribute everything — users, agents, documents, builds, artifacts — with signed
+  [TAAP/1](docs/standards/taap-1-spec-draft.md) attestations, in an append-only log with
+  independent witnesses, optionally anchored to a public chain for timestamping that does
+  not require trusting us.
 - Provide identity, a runtime secrets service, and PKI — one CA serving signing,
   mTLS, TLS and SSH, because keyless signing already *is* certificate issuance.
 - Support every language, platform and operating system — with the tier of support

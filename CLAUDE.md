@@ -37,6 +37,8 @@ docs/research/NN-topic/
     sources.md   raw web-grounded research, verbatim
 docs/features/NN-name.md
     specifications — what liquid does
+docs/standards/
+    external standards liquid depends on, vendored
 ```
 
 ### `sources.md` is evidence
@@ -61,6 +63,26 @@ hate · and a closing **Implications for liquid** section. Cite specifics and nu
 Each states what liquid does, links the research it rests on, and **ends with Open
 questions**. State an open question rather than inventing an answer — the open questions
 are the most valuable content in the tree.
+
+### `docs/standards/` is vendored, not owned
+
+[TAAP/1](docs/standards/taap-1-spec-draft.md) is **liquid's security model** — every
+claim about a user, agent, document, build or artifact is a TAAP attestation
+([`docs/features/25-identity-attestation-and-transparency.md`](docs/features/25-identity-attestation-and-transparency.md)).
+
+Three things to know before touching anything that depends on it:
+
+1. **It is a draft**, and liquid would be its first significant implementation. The
+   protocol may change under us.
+2. **The copy here is a holding position.** TAAP is transport-agnostic and much wider in
+   scope than liquid; it should get its own repository. When it does, record the version
+   this copy corresponds to and stop treating the vendored file as authoritative.
+3. **One open question blocks liquid**: TAAP subjects are key-derived, but documents,
+   drips and artifacts are content-addressed. A content-addressed subject form is
+   required, not optional. Do not design around the gap — it needs closing in the spec.
+
+Do not introduce a second attestation or signing framework. in-toto predicates and SBOM
+formats ride *inside* TAAP as profile bodies; they do not get their own envelope.
 
 ## Working rules for this repo
 
@@ -90,9 +112,22 @@ ls docs/research/*/sources.md | wc -l   # with sources
 ls docs/features/*.md | grep -v README | wc -l
 ```
 
-**Update the index in the same change.** A new research topic updates
-`docs/research/README.md`; a new feature doc updates `docs/features/README.md`. Both
-are tables — add the row, do not leave it for later.
+### Before finishing — run all four
+
+The first two are commands and got run every time; the last two are prose and got
+skipped. Treat them as the same checklist, not as an afterthought.
+
+1. **Link check** (above) — must report zero.
+2. **Count sync** (above) — recount, never estimate.
+3. **Indexes.** A new research topic adds a row to `docs/research/README.md`; a new
+   feature doc adds a row to `docs/features/README.md`. Tables — add the row now.
+4. **Root `README.md` and this file.** Any change to what liquid *is*, what it *does*, a
+   new top-level directory, or a new convention updates **both**. A new `docs/`
+   subdirectory that appears in neither is a bug.
+
+**This last one has already been missed.** `docs/standards/` existed in the tree before
+it appeared in either file, and TAAP was the security model before this file mentioned
+it. If a change is worth a feature doc, it is worth a line in the README.
 
 **Correct the record when research contradicts a spec.** This has already happened
 twice and both corrections improved the design. Say what changed and why, in the doc.
