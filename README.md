@@ -38,8 +38,8 @@ and Zetta's.
 
 | | |
 |---|---|
-| **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 26 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |
-| **[docs/features/](docs/features/)** | What liquid does. 24 feature areas, each traceable to the research. |
+| **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |
+| **[docs/features/](docs/features/)** | What liquid does. 25 feature areas, each traceable to the research. |
 
 Start with **[docs/research/99-synthesis/](docs/research/99-synthesis/)** for the
 argument in one place, then **[docs/features/](docs/features/)** for the

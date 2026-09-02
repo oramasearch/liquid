@@ -1,7 +1,8 @@
 # Identity, attestation and transparency
 
 > Standard: [TAAP/1](../standards/taap-1-spec-draft.md) ·
-> Research: [13-supply-chain-security](../research/13-supply-chain-security/) ·
+> Research: [26-transparency-logs-and-anchoring](../research/26-transparency-logs-and-anchoring/) ·
+> [13-supply-chain-security](../research/13-supply-chain-security/) ·
 > [23-secrets-service-and-pki](../research/23-secrets-service-and-pki/) ·
 > [25-multiplayer-and-agent-collaboration](../research/25-multiplayer-and-agent-collaboration/)
 >
@@ -88,7 +89,13 @@ than the loose one.
   writers; liquid has an operator and a log.
 - **No Byzantine fault tolerance** among untrusting parties.
 - **Tamper-*evident*, not tamper-*proof*.** History can still be rewritten. What the log
-  guarantees is that rewriting is *detectable*, not impossible.
+  guarantees is that rewriting is *detectable*, not impossible. Rekor's own documentation
+  says exactly this about itself.
+- **No protection from split view — by default.** This is the non-obvious one. A log can
+  serve each victim a *different, internally consistent* history: valid signatures, valid
+  inclusion proofs, valid consistency proofs, different content. RFC 9162 states that an
+  equivocating log circumvents ordinary auditing. **Publishing to a Merkle log is not, by
+  itself, a security property.** What closes it is below.
 
 **So the honest description is: an append-only, signed, cryptographically timestamped
 transparency log with optional public anchoring.** That is precisely what Certificate
@@ -99,27 +106,79 @@ it does not need one.
 
 You get every property Steve asked for. The accurate name is the better one.
 
+## Witnessing is the primary defence — not anchoring
+
+The instinct is that anchoring to a chain is the strong control. **It is not.** Anchoring
+only detects inconsistency *at anchor granularity* — a daily anchor leaves up to a day of
+operator-controlled ordering and equivocation before the next root.
+
+What actually closes split view is a **witness quorum**:
+
+> liquid's log obtains **M-of-N cosignatures** from independent witnesses that have
+> verified consistency, *before* returning a checkpoint. Clients reject any checkpoint
+> lacking quorum.
+
+Using the C2SP cosignature format. **Mandatory, not optional** — optional witnessing is
+security theatre, and Rekor v2 shipping without an enabled witness network is the
+cautionary example.
+
+Security requires witness *diversity* and quorum *intersection*: at least one honest
+witness shared between any two accepted quorums. Witnesses under one administration are
+not witnesses.
+
+### The log is tiled
+
+Signed checkpoint plus immutable, CDN-cacheable tiles; proofs computed client-side. This
+is where Certificate Transparency (Static CT API, Let's Encrypt's Sunlight), Rekor v2 and
+the Go checksum database all converged.
+
+The reason is **monitoring cost**, which is the real bottleneck: verifying one inclusion
+proof is logarithmic, but finding every unauthorised use of an identity means reading
+every entry. A Rekor v1 identity scan was measured at ~50× slower than log growth; bulk
+tiles improved it by about two orders of magnitude.
+
+**A log nobody can afford to monitor provides no security.**
+
+### Verify every proof, completely
+
+Go's `sum.golang.org` — the best-deployed example of this architecture — shipped
+**CVE-2026-56865** in August 2026: a malicious proxy could forge up to two tiles because
+tiles were not verified against their parents. The architecture was sound; the verifier
+was partial. Partial verification is a bypass.
+
 ## Anchoring
 
-**Enabled by default, disableable.**
+**Enabled by default, disableable.** An escalation on top of witnessing, for when the
+required property is *operator-independent* durable proof.
 
-Periodically — hourly by default — liquid commits the transparency log's current Merkle
-root to a public chain, and retains the resulting proof. Aggregation means one
-transaction timestamps every drip since the last anchor, so cost is amortised across the
-whole batch rather than paid per drip.
+Periodically — hourly by default — liquid commits the log's current Merkle root to a
+public chain via OpenTimestamps-style aggregation, and retains the proof. One transaction
+timestamps every drip since the last anchor, so cost amortises across the batch.
 
 | Configuration | Behaviour |
 |---|---|
-| **Off** | Signed drips and a local hash chain. Tamper-evident within the repository. |
-| **Witnessed** (default) | Published to lake's transparency log; third parties can verify inclusion and consistency. |
-| **Anchored** | Merkle roots additionally committed to a public chain on a schedule. |
-| **Air-gapped** | Signing and chaining only; no network. TAAP's transport-agnostic design is what makes this a supported configuration rather than a degraded one. |
+| **Air-gapped** | Signing and hash chaining only, no network. TAAP's transport-agnostic design makes this a supported configuration rather than a degraded one. |
+| **Witnessed** (default) | Published to lake's tiled log with a mandatory witness quorum. Closes split view. |
+| **Anchored** | Merkle roots additionally committed to a public chain on a schedule. Survives compromise or disappearance of lake itself. |
 
-The trade to state to customers plainly: anchoring buys *independently verifiable
-existence-before-T without trusting lake*. It costs confirmation latency and a
-dependency on an external chain. For most repositories the witnessed log is sufficient;
-for regulated, legal-evidence or long-retention cases, anchoring is the difference
-between "our vendor says so" and "mathematics says so."
+State the trade honestly: anchoring proves *existence before a confirmed block* without
+trusting lake or its witnesses. It costs confirmation latency (hours, not seconds), fees
+that someone must fund continually, and a dependency on that chain remaining secure and
+interpretable. And it proves existence only — **not authorship, correctness, ownership or
+truth.**
+
+For most repositories the witnessed log is sufficient. For regulated records, legal
+evidence and long retention, anchoring is the difference between "our vendor says so" and
+"anyone can check."
+
+### Time is a separate problem
+
+**The log does not provide authoritative time.** Rekor v2 explicitly dropped its v1
+timestamp and tells signers to obtain an RFC 3161 timestamp separately. A block timestamp
+is a consensus-constrained estimate, not precise UTC.
+
+Where liquid needs trusted UTC — regulatory deadlines, legal ordering — that is an
+**RFC 3161 TSA**, in addition to the log and any anchor.
 
 ## Reconciling TAAP identity with lake's PKI
 
@@ -176,8 +235,13 @@ Feedback to the protocol owner:
 - **Which chain to anchor to**, and whether to support several. Bitcoin has the strongest
   independence argument and the worst latency and cost.
 - **Anchoring cadence** and whether it should vary by repository policy.
-- **What happens when a signature fails to verify years later** — algorithm deprecation,
-  key compromise discovered after the fact. Long-term validity needs specifying.
+- **Long-term validity is a process, not an artifact**, and needs specifying. Neither a
+  one-time anchor nor a one-time RFC 3161 token stays valid for decades. It requires
+  timestamping the *signature value* rather than the document, retaining contemporaneous
+  revocation evidence, renewing archive timestamps before the old protection weakens, and
+  rehashing all prior evidence before the hash algorithm breaks. RFC 4998 Evidence Record
+  Syntax is the relevant standard. This matters because liquid's history is meant to
+  outlive the keys that signed it.
 - **TAAP's own maturity.** It is a draft with unresolved questions, and liquid would be
   its first significant implementation. That is an opportunity and a risk, and the risk
   is that the protocol changes under liquid.
