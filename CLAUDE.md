@@ -21,7 +21,7 @@ GoogleTest via FetchContent + CTest, modelled on Zetta's `CMakeLists.txt` compil
 |---|---|
 | **liquid** | The tool: the CLI and the daemon. |
 | **lake** | The hosted service at `lake.live`. GitHub + Google Drive + Railway + Hugging Face over one store. |
-| **liquify** | The IDE. |
+| **liquify** | The IDE — native, cross-platform, its own repo `oramasearch/liquify` (private for now, open source eventually; never depends on Zetta). Not an editor extension. |
 | **drip** | One captured write to disk. The atom of history — automatic, continuous, never explicit. |
 | **change** | A named, reviewable aggregation of drips. What another system calls a commit or a pull request. |
 

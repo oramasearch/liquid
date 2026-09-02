@@ -198,16 +198,18 @@ feature parity. liquify's candidate is *instant open of any repository at any si
 real semantics and no indexing wait* — which follows from the virtual filesystem and the
 warm graph, and which no other editor can offer.
 
-**So the sequencing is deliberately unheroic:**
+**Decision (2026-09-02): liquify is a native, cross-platform IDE from the start.** It has
+its own repository (`oramasearch/liquify`, private for now, open source eventually, and it never
+depends on Zetta, the same rule as liquid). The staged route through a VS Code extension and a
+JetBrains plugin that this document previously recommended is **not** the plan; those may exist
+later as adjuncts, but the product is the editor. The hello world is a window on SDL3 + Dear
+ImGui, the stack Zetta's headed mode already proves on macOS, Windows and Linux.
 
-| Stage | Deliverable | Why |
-|---|---|---|
-| **1** | A **VS Code extension and an LSP server** backed by liquid's graph | Meets people where they are. Loses the no-LSP advantage, keeps everything else — instant open, real search, unified build. Ships early. |
-| **2** | JetBrains plugin | Same, for the other half of the market. |
-| **3** | **liquify** native | Built only once the graph, the VFS and the daemon are proven by stages 1–2. |
-
-Building the editor first would be the classic mistake. The editor is the *expression*
-of the architecture; the architecture has to exist first.
+What the sequencing argument still governs is *depth*, not existence: the editor shell (window,
+editor surface, VFS-backed tree) can be built now, but everything that makes liquify different —
+instant open at any size, diagnostics without a second parse, drips, multiplayer — arrives with
+liquid's store, graph and daemon (Phases 1 and 4). The editor is the *expression* of that
+architecture and must not run ahead of it.
 
 ## Design position
 
@@ -227,9 +229,6 @@ of the architecture; the architecture has to exist first.
 
 ## Open questions
 
-- **Whether liquify ships at all**, versus liquid remaining excellent inside VS Code
-  and JetBrains forever. Stage 1 must be genuinely good regardless, and it may prove
-  sufficient.
 - **Drip granularity.** Per save is the obvious default. Per keystroke is possible —
   the datastore supports it and the build engine is designed for it — but the metadata
   cost is unproven and the value over per-save is unclear.
@@ -237,6 +236,6 @@ of the architecture; the architecture has to exist first.
   history is retained, and for how long?
 - **Extension compatibility.** Whether to attempt VS Code extension API compatibility
   (large, thankless, effective) or a clean native API (small, elegant, empty).
-- **Marketplace licensing.** Microsoft restricts the VS Code marketplace to VS Code;
-  forks have had to build their own registries. Relevant if stage 1 becomes a fork
-  rather than an extension.
+- **UI toolkit for a text-editing surface.** SDL3 + Dear ImGui is the proven starting point;
+  whether an immediate-mode UI is right for the editor buffer, or whether a retained text
+  layer (GPU-rendered, Zed-style) sits inside it, is the first real liquify decision.
