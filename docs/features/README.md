@@ -91,6 +91,7 @@ is wrong.
 | [20](20-secrets-service-and-pki.md) | Secrets service and PKI | Dynamic secrets, encryption as a service, and certificate issuance. |
 | [21](21-liquify-ide.md) | **liquify** | The IDE. No language server, because the editor and the build are one graph. |
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
+| [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
 
 ## Status
 
