@@ -79,10 +79,10 @@ This is why history is complete rather than curated: nothing is lost between sav
 `liquid undo` reaches any prior state, and the build invalidates the minimum work per
 drip ([04](04-build-engine.md)) instead of per commit.
 
-Three consequences the design must handle, covered in [21](21-liquify-ide.md): build
-outputs and dependency directories are excluded by declared rules; drips compact once
-their change is named; and **secret scanning runs on the drip, not on the commit** —
-because a credential pasted and deleted seconds later was still written to disk.
+Capture is automatic and on by default. How a write becomes a drip — the journal, the
+OS watcher fallbacks, atomic-save detection, coalescing, the fan-out to build, search
+and collaborators, and the secret-scanning hazard — is specified in
+[22-change-capture](22-change-capture.md).
 
 ## Repository composition
 

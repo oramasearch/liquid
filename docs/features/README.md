@@ -90,6 +90,7 @@ is wrong.
 | [19](19-identity.md) | Identity and auth | Clerk-quality auth, and why identity is the trust root for the whole chain of custody. |
 | [20](20-secrets-service-and-pki.md) | Secrets service and PKI | Dynamic secrets, encryption as a service, and certificate issuance. |
 | [21](21-liquify-ide.md) | **liquify** | The IDE. No language server, because the editor and the build are one graph. |
+| [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 
 ## Status
 
