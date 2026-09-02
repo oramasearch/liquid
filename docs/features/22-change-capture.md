@@ -133,6 +133,17 @@ A build writing 10,000 object files must not produce 10,000 drips.
 
 The tunable is the window; the default should favour "one save, one drip."
 
+## Every drip is signed
+
+Capture and attribution are the same step. A drip carries a
+[TAAP/1](../standards/taap-1-spec-draft.md) signature from the actor that produced it —
+human or agent — so authorship is a recorded fact rather than an inference from
+metadata. See [25](25-identity-attestation-and-transparency.md).
+
+The performance consequence is real and is called out there: signing sits on the save
+path, and the budget is single-digit milliseconds. Batching signatures across coalesced
+drips is the likely answer.
+
 ## The fan-out
 
 A drip is not only a history record. **It is the event that drives the system.** One

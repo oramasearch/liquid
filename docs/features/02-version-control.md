@@ -79,6 +79,10 @@ This is why history is complete rather than curated: nothing is lost between sav
 `liquid undo` reaches any prior state, and the build invalidates the minimum work per
 drip ([04](04-build-engine.md)) instead of per commit.
 
+Every drip is **signed by the party that made it** under
+[TAAP/1](../standards/taap-1-spec-draft.md), so history is attributable and
+tamper-evident by construction ([25](25-identity-attestation-and-transparency.md)).
+
 Capture is automatic and on by default. How a write becomes a drip — the journal, the
 OS watcher fallbacks, atomic-save detection, coalescing, the fan-out to build, search
 and collaborators, and the secret-scanning hazard — is specified in

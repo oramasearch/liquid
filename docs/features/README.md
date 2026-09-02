@@ -31,7 +31,7 @@ a code search engine, a PaaS, Dropbox, Clerk and Vault.
 | **liquid** | The tool. The CLI and the daemon. |
 | **lake** | Where liquid collects — the hosted service at `lake.live`. |
 | **liquify** | The IDE. |
-| **drip** | One captured write to disk. The atom of history — automatic, continuous, never explicit. |
+| **drip** | One captured write to disk. The atom of history — automatic, continuous, never explicit, and signed by the party that made it. |
 | **change** | A named, reviewable aggregation of drips. What another system would call a commit or a pull request. |
 
 Drips are the record; changes are the narrative. Nothing else versions at this
@@ -64,6 +64,9 @@ is wrong.
    execution and the artifact service are accelerators, never requirements.
 9. **Every write to disk is a versioned change.** Capture is automatic and
    continuous. There is no step at which history begins.
+10. **Every change is attributable.** Every drip carries a TAAP/1 signature from an
+    identified party — human or agent — and the chain is append-only and tamper-evident
+    ([25](25-identity-attestation-and-transparency.md)).
 
 ## Feature areas
 
@@ -93,6 +96,7 @@ is wrong.
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 | [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
 | [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Many people and many agents changing the same things at once — and what agents need that humans do not. |
+| [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, and the append-only log with optional public anchoring. |
 
 ## Status
 

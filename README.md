@@ -52,8 +52,8 @@ collects — the hosted service at `lake.live`. **[liquify](docs/features/21-liq
 is the IDE.
 
 A **drip** is one captured write to disk — the atom of history, automatic and
-continuous. A **change** is a named, reviewable aggregation of drips. Drips are the
-record; changes are the narrative.
+continuous, and **signed by the party that made it**, human or agent. A **change** is a
+named, reviewable aggregation of drips. Drips are the record; changes are the narrative.
 
 ## Design axioms
 
@@ -73,6 +73,9 @@ record; changes are the narrative.
    attestation needs.
 8. **Everything works offline**, degraded but correct.
 9. **Every write to disk is a versioned change.** Drip, drip, drip.
+10. **Every change is attributable.** Every drip is signed by an identified party under
+    [TAAP/1](docs/standards/taap-1-spec-draft.md), and the history is an append-only,
+    tamper-evident log — optionally anchored to a public chain. On by default.
 
 ## What it must do
 
@@ -93,6 +96,9 @@ record; changes are the narrative.
   already migrated to, plus the attestation chain a model hub cannot offer.
 - Give you an editor with no language server, because the editor and the build are
   the same incremental graph.
+- Sign every change by an identified human or agent, in an append-only log that can be
+  independently verified — and optionally anchored to a public chain for timestamping
+  that does not require trusting us.
 - Provide identity, a runtime secrets service, and PKI — one CA serving signing,
   mTLS, TLS and SSH, because keyless signing already *is* certificate issuance.
 - Support every language, platform and operating system — with the tier of support
