@@ -194,13 +194,19 @@ Web-grounded research uses the Perplexity MCP server.
    specifies a C++26 CRDT-backed content-addressed store with large objects. **There
    should not be two.** Decide before writing the storage layer — it is the one choice
    that is expensive to reverse.
-2. **One CRDT or two** — `automerge-cpp` versus Zetta's own replication.
+2. **Where the one CRDT lives.** Zetta already vendors `automerge-cpp` as a submodule,
+   so there is one CRDT, not two. Open: whether `homer6/automerge-cpp` moves under
+   `oramasearch`, and whether liquid consumes it as a submodule the way Zetta does.
 3. **Licence.** Metis is noted source-available; liquid has no stated position.
 
 **Decided:**
 
 - **Async stack — Boost.Capy for coroutines, Corosio for networking.** The same stack
-  Zetta and oramacore-cpp use. stdexec is not used anywhere in liquid.
+  Zetta and oramacore-cpp use; Zetta vendors both as submodules. stdexec is not used
+  anywhere in liquid. **Toolchain consequence:** C++26 with Capy/Corosio needs
+  **Clang 17+**. Apple's system Clang and Ubuntu's GCC 13 are too old; use Homebrew
+  LLVM on macOS (`brew install llvm`) and `clang++-NN` on Linux, per Zetta's build
+  notes. Zetta's `./scripts/install-deps.sh` is the reference setup.
 
 ## Inherited org conventions — the ones hit most here
 

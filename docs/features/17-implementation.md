@@ -123,14 +123,14 @@ depend on them.
 
 | Need | Choice |
 |---|---|
-| **Datastore / metadata CRDT** | **automerge-cpp** (committed) |
+| **Datastore / metadata CRDT** | **automerge-cpp** (committed) — the same code Zetta already vendors as a submodule |
 | **Ranked full-text search** | **oramacore-cpp** / BM25F (committed) |
 | **Code substring/regex search** | Positional trigram index (to build) |
 | **Hashing** | BLAKE3 primary; hardware SHA-256 for OCI/REAPI interop; algorithm agile |
 | **Compression** | zstd (`--patch-from`, `--rsyncable`, long-range), lz4 for hot paths |
 | **Content-defined chunking** | FastCDC |
 | **Async I/O** | io_uring / kqueue / IOCP behind one abstraction |
-| **Coroutines and networking** | **Boost.Capy** for coroutines, **Corosio** for networking — decided. The same stack Zetta and oramacore-cpp use. |
+| **Coroutines and networking** | **Boost.Capy** for coroutines, **Corosio** for networking — decided. The same stack Zetta and oramacore-cpp use; Zetta vendors both. Requires **Clang 17+**. |
 | **Thread pool** | Taskflow or TBB |
 | **RPC / serialisation** | Protobuf + gRPC where REAPI and OCI demand it; Cap'n Proto or FlatBuffers internally |
 | **Chunk index** | RocksDB or LMDB — decided by benchmark, not preference |
