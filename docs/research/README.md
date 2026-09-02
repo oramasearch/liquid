@@ -57,6 +57,7 @@ Every topic directory contains:
 | [23](23-secrets-service-and-pki/) | Secrets service and PKI | Vault/OpenBao, dynamic secrets, SPIFFE/SPIRE, certificate lifetimes, and Fulcio as a CA. |
 | [24](24-editors-and-ide-architecture/) | Editors and IDE architecture | VS Code's process model and marketplace moat, JetBrains PSI, Zed, text CRDTs — and why Xi failed. |
 | [25](25-multiplayer-and-agent-collaboration/) | Multiplayer and agent collaboration | How agent tools actually handle concurrency, attribution conventions and their gaps, and CRDTs under machine-rate writers. |
+| [26](26-transparency-logs-and-anchoring/) | Transparency logs and anchoring | Split-view attacks, witness quorums, tiled logs, and when Bitcoin anchoring is actually worth it. |
 | [99](99-synthesis/) | Synthesis | Cross-cutting conclusions: the shared model, the ordering of the build, and what liquid must get right first. |
 
 ## Method and provenance
