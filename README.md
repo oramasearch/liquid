@@ -17,8 +17,10 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: design.** Nothing is implemented yet. This repository currently holds
-> research and specifications.
+> **Status: bootstrap.** The specification is complete; code has begun with a C++26
+> hello world — `liquid version`, `liquid hello`, one passing GoogleTest — building with
+> CMake + Ninja and Homebrew/LLVM Clang, exactly as Zetta does. The design gate (Phase 0
+> in the bridge's action plan) is lifted.
 
 ## Where this sits
 

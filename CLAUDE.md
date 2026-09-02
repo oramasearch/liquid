@@ -12,7 +12,7 @@ and runtime in one program. See [`README.md`](README.md).
 
 **Status: design → bootstrap.** The Phase 0 gate is lifted (see *Decisions* below).
 Code begins with hello-world scaffolding: a C++26 CMake + Ninja build, Clang 17+,
-Catch2, modelled on Zetta's `CMakeLists.txt` compiler auto-selection. liquid is
+GoogleTest via FetchContent + CTest, modelled on Zetta's `CMakeLists.txt` compiler auto-selection. liquid is
 **open source eventually** and must never take a dependency on Zetta.
 
 ### Vocabulary — use these words exactly
