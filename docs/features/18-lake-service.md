@@ -93,6 +93,64 @@ Preview environments are cheap here in a way they are not elsewhere: images shar
 chunks and builds share a cache, so a per-change environment costs very little
 ([08](08-packaging-and-images.md)).
 
+## Models and datasets — the Hugging Face surface
+
+lake replaces Hugging Face as well as GitHub, and this is the surface where liquid's
+storage model is most obviously correct rather than merely competitive.
+
+**Hugging Face already migrated to liquid's architecture.** The Hub replaced Git LFS
+with **Xet**: content-defined chunking at a ~64 KiB target (8 KiB min, 128 KiB max),
+new chunks grouped into ~64 MiB blocks for transfer, content-addressed storage, and
+reconstruction manifests with parallel range fetches
+([research](../research/02-large-files-and-binary-assets/)).
+
+That is liquid's chunk store, arrived at independently for the same reason: **model
+checkpoints and datasets are large, revised repeatedly, and mostly unchanged between
+revisions.** HF's published results on their own migration:
+
+| | Git LFS | Xet |
+|---|---:|---:|
+| CORD-19, 50 incremental updates — download | 51 min | 19 min |
+| — upload | 47 min | 24 min |
+| — storage | 8.9 GB | 3.52 GB |
+| Two GPT-2 `model.safetensors` versions | 1.2 GB | 645 MB (**-53%**) |
+| Append 1 MB to a 5 GB SQLite file | ~5 GB re-upload (~13 min @ 50 Mb/s) | ~0.1 s |
+
+Observed dedup across the Hub ranges **30–85%**, workload dependent — poor for
+encrypted or fully recompressed files where a small logical edit changes every byte.
+
+liquid starts from the same primitive and uses **FastCDC** (3–12× faster than the Rabin
+family at equal or better dedup), so the storage win is table stakes. **The
+differentiation is everything liquid attaches to it.**
+
+### What lake adds that a model hub does not have
+
+| | |
+|---|---|
+| **Training provenance** | A model is an artifact produced by actions with recorded inputs ([04](04-build-engine.md)). lake can attest *which dataset, which code, which hyperparameters, which hardware* produced these weights — signed, and verifiable ([10](10-supply-chain.md)). Model hubs today host weights; they cannot tell you how the weights came to exist. |
+| **The full chain as one graph** | dataset → preprocessing → training run → checkpoint → evaluation → deployed endpoint is one action graph, not five disconnected systems. "Which model is serving, and what was it trained on?" is a query. |
+| **Reproducibility** | Training is rarely bit-reproducible, and liquid should not pretend otherwise. But the *inputs* are pinned by content hash, so a run is re-executable and divergence is detectable ([10](10-supply-chain.md)). |
+| **Model supply-chain safety** | The live risk. `pickle`-based formats execute code on load — which is why `safetensors` exists. liquid's format registry ([03](03-diff-and-merge.md)) decomposes model files structurally, so "does this checkpoint deserialize code?" is answerable mechanically rather than by trusting a scanner. |
+| **Diffing checkpoints** | Two checkpoints differ by chunk, and `safetensors` decomposes into named tensors — so "what actually changed between these runs?" has a real answer ([03](03-diff-and-merge.md)). |
+| **Datasets as first-class** | Parquet, Arrow, Zarr and HDF5 are structurally understood, not opaque blobs ([03](03-diff-and-merge.md)). Zarr's chunk-per-object layout is already ideal for the store. |
+| **Search inside models and datasets** | Model cards, configs, and dataset contents indexed by the same engine as code ([12](12-search.md)). |
+| **Serving** | An endpoint is a deployment ([13](13-deployment-runtime.md)), sharing chunks with the checkpoint it serves — so promoting a model is not a re-upload. |
+| **Permissions and encryption** | Per-subtree keys and org roles ([19](19-identity.md), [11](11-secrets-and-encryption.md)), for teams whose weights and training data cannot leave their control. |
+
+### Where this matters commercially
+
+Enterprises increasingly cannot put models or training data on a public hub, and the
+self-hosted alternatives are a registry with none of the provenance. lake runs on the
+customer's own infrastructure ([13](13-deployment-runtime.md)) — which is Zetta's
+stated posture too ([23](23-metis-and-zetta.md)) — and provenance is exactly the Band B
+availability dimension Metis's theory identifies as binding.
+
+**Honest limits.** Xet's advantage is real but bounded: encrypted or recompressed
+artifacts dedup poorly, a checkout still materialises the full file, and HF's per-file
+limits exist for operational reasons liquid will also face. The community, discovery
+and social graph of a public hub is a network effect, not a technical property — lake
+does not get it by being better engineered.
+
 ## The artifact registry
 
 Everything in [09](09-artifact-service.md), hosted: OCI, npm, PyPI, Maven, apt and

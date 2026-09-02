@@ -118,9 +118,11 @@ operation. There is no clone, and disk grows with what you actually read.
 compilation, diff and search. Refactors, structural selection and structural diff
 ([03](03-diff-and-merge.md)) come from the tree the build is already using.
 
-**Multiplayer, free.** The datastore is a CRDT designed for exactly this. Concurrent
-editing, presence and cursors that survive merges are properties of the storage layer,
-not a feature bolted on with a separate synchronisation service.
+**Multiplayer without a second system.** The datastore is a CRDT, so convergent
+concurrent editing is a property of the storage layer rather than a separate
+synchronisation service bolted alongside it. That is a real head start — but see
+[Multiplayer is not free](#multiplayer-is-not-free) below, and
+[24](24-multiplayer-and-agents.md) for what it takes to make it correct.
 
 **Review in place.** Changes from lake ([18](18-lake-service.md)) are reviewed in the
 editor, against real semantics rather than a text diff — and comments anchor to

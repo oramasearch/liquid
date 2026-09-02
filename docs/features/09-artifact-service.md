@@ -24,6 +24,10 @@ format-specific repositories.
   free.
 - **REAPI CAS** for build traffic ([06](06-distributed-execution.md)).
 - **Ecosystem views** for npm, PyPI, Maven, apt, and generic artifacts.
+- **Model and dataset views** — the Hugging Face surface
+  ([18](18-lake-service.md)). HF's own Xet migration validated content-defined chunking
+  for checkpoints and datasets; liquid uses the same primitive and attaches training
+  provenance to it.
 
 No third protocol unless measurement forces one.
 

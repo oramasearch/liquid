@@ -9,8 +9,8 @@ running processes. liquid moves a project along that chain in either direction,
 computing only the minimum delta at each step, distributing the work across many
 machines, with a cryptographic chain of custody throughout.
 
-It aims to subsume the role of git, GitHub, Spack, Nix, `docker build`, CMake,
-Autotools, ccache/sccache, remote build execution, an artifact registry, a code
+It aims to subsume the role of git, GitHub, Hugging Face, Spack, Nix, `docker build`,
+CMake, Autotools, ccache/sccache, remote build execution, an artifact registry, a code
 search engine, a PaaS, Dropbox, Clerk and Vault.
 
 **[lake.live](docs/features/18-lake-service.md)** is the hosted expression of all of
@@ -89,6 +89,8 @@ record; changes are the narrative.
 - Deploy to a minimal Kubernetes distribution with a Railway-style experience.
 - Present a Dropbox/Drive-style interface for non-developers, local and web.
 - Review changes, not branches — so review survives a rebase and stacking is native.
+- Host models and datasets with training provenance — the chunk store Hugging Face
+  already migrated to, plus the attestation chain a model hub cannot offer.
 - Give you an editor with no language server, because the editor and the build are
   the same incremental graph.
 - Provide identity, a runtime secrets service, and PKI — one CA serving signing,
