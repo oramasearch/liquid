@@ -26,9 +26,10 @@ verifiable provenance, end to end
 ```
 
 Every existing stack federates this across three or four vendors — an identity
-provider, a CI system, a signing service and a registry — and the seams are where
-trust is lost. lake issues the identity, executes the build, signs the result and
-serves the artifact, so the chain has no seam to attack.
+provider, a CI system, a signing service and a registry — and every **trust boundary**
+between them is a place the chain can be broken: each handoff re-asserts an identity
+that the next system takes on faith. lake issues the identity, executes the build, signs
+the result and serves the artifact, so there is no inter-vendor handoff to attack.
 
 That is worth stating plainly: **auth is not a feature lake adds to look complete. It
 is the thing that makes the security story true.**
