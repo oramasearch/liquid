@@ -38,6 +38,31 @@ valuable, and a later goal.
 | **Flatpak / Snap / AppImage** | Bundled runtimes. |
 | **OCI images** | See below. |
 | **ostree / bootc commits** | The image-based-OS target, and the closest fit to liquid's model. |
+| **Helm charts** | The Kubernetes packaging standard — see below. |
+
+## Helm charts
+
+liquid emits Helm charts as a projection, like every other package format.
+
+Two things make this more than a template renderer:
+
+- **Charts are generated from the deployment graph, not hand-written.** liquid knows
+  what it built, what the images are, what they depend on, what ports and volumes they
+  need, and which config and secrets they consume ([13](13-deployment-runtime.md)).
+  Values, image digests and dependency ordering are derived rather than transcribed
+  into templated YAML by hand — which is where most chart bugs live.
+- **Images are pinned by digest, with provenance attached.** A chart references
+  immutable digests rather than mutable tags, and each referenced image carries its
+  attestation ([10](10-supply-chain.md)). "What is actually deployed, and where did it
+  come from?" stays answerable after the chart ships.
+
+Helm 3 charts are **OCI artifacts**, so lake's registry hosts them natively with no
+separate chart museum ([09](09-artifact-service.md)) — and they deduplicate against the
+images they reference, because both are chunks in one store.
+
+Charts remain a first-class **output** even for teams deploying to their own clusters
+rather than to lake's distribution. Emitting the ecosystem's standard format is how
+liquid stays adoptable without demanding the runtime be adopted too.
 
 ## Dependencies are derived, never written
 

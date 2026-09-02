@@ -38,8 +38,8 @@ and Zetta's.
 
 | | |
 |---|---|
-| **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 25 topics, each with a curated analysis and — for 23 of them — the web-grounded sources it was drawn from. |
-| **[docs/features/](docs/features/)** | What liquid does. 23 feature areas, each traceable to the research. |
+| **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 26 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |
+| **[docs/features/](docs/features/)** | What liquid does. 24 feature areas, each traceable to the research. |
 
 Start with **[docs/research/99-synthesis/](docs/research/99-synthesis/)** for the
 argument in one place, then **[docs/features/](docs/features/)** for the
@@ -82,7 +82,7 @@ record; changes are the narrative.
 - Diff *inside* zip, HDF5, Parquet, SQLite and OOXML — not just their bytes.
 - Build incrementally as you type, with a build cache and compiler cache built in.
 - Resolve dependencies at Spack's level of expressiveness.
-- Produce `.deb`, `.rpm`, `.apk`, OCI images and more from one build.
+- Produce `.deb`, `.rpm`, `.apk`, OCI images and Helm charts from one build.
 - Serve builds, with a transparency log and signed provenance.
 - Store encrypted secrets without destroying deduplication.
 - Search full text and code, including inside published artifacts.
