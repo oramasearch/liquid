@@ -197,6 +197,11 @@ Web-grounded research uses the Perplexity MCP server.
 2. **One CRDT or two** — `automerge-cpp` versus Zetta's own replication.
 3. **Licence.** Metis is noted source-available; liquid has no stated position.
 
+**Decided:**
+
+- **Async stack — Boost.Capy for coroutines, Corosio for networking.** The same stack
+  Zetta and oramacore-cpp use. stdexec is not used anywhere in liquid.
+
 ## Inherited org conventions — the ones hit most here
 
 - **No AI attribution.** Never add `Co-Authored-By: Claude`, "Generated with…", or any

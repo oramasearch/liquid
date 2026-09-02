@@ -98,8 +98,9 @@ liquid adopts throughout, so integration is idiomatic rather than adapted.
 **Target `-std=c++26`; write C++20/23.** Very little of C++26 is portable in 2026:
 
 - **No standard-library `std::execution`** (P2300) anywhere — not libstdc++, not
-  libc++, not MSVC STL. Use NVIDIA `stdexec` behind liquid's own abstraction, or
-  Boost.Capy as oramacore-cpp does.
+  libc++, not MSVC STL. liquid uses **Boost.Capy** (coroutines) and **Corosio**
+  (networking), as Zetta and oramacore-cpp already do — one async stack across the org.
+  stdexec is not used.
 - **Static reflection** (P2996) is GCC 16 experimental only; no upstream Clang or
   MSVC.
 - **Contracts** (P2900) are GCC 16 experimental — not a security or validation
@@ -129,7 +130,7 @@ depend on them.
 | **Compression** | zstd (`--patch-from`, `--rsyncable`, long-range), lz4 for hot paths |
 | **Content-defined chunking** | FastCDC |
 | **Async I/O** | io_uring / kqueue / IOCP behind one abstraction |
-| **Coroutine scheduling** | Boost.Capy (matching oramacore-cpp) or stdexec |
+| **Coroutines and networking** | **Boost.Capy** for coroutines, **Corosio** for networking — decided. The same stack Zetta and oramacore-cpp use. |
 | **Thread pool** | Taskflow or TBB |
 | **RPC / serialisation** | Protobuf + gRPC where REAPI and OCI demand it; Cap'n Proto or FlatBuffers internally |
 | **Chunk index** | RocksDB or LMDB — decided by benchmark, not preference |
@@ -161,8 +162,8 @@ depend on them.
 - **CRDT history compaction.** The largest unresolved risk. What does archival of old
   operation history look like, and what is lost?
 - **RocksDB vs LMDB** for the chunk index.
-- **Boost.Capy vs stdexec** as the single coroutine substrate — oramacore-cpp uses
-  Capy, which is an argument for consistency.
+- ~~Boost.Capy vs stdexec~~ **Resolved:** Capy for coroutines, Corosio for networking,
+  matching Zetta and oramacore-cpp.
 - **Where the Automerge/chunk-store boundary sits exactly** for very large trees:
   at what point does a directory become its own document rather than a subtree of
   its parent's?
