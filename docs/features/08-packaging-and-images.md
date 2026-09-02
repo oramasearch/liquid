@@ -1,0 +1,112 @@
+# Packaging and images
+
+> Research: [10-os-packaging](../research/10-os-packaging/) ·
+> [11-container-images](../research/11-container-images/)
+
+## Projection, not translation
+
+liquid builds an artifact once. Package formats are **projections** of liquid's
+internal model — a content-addressed file tree plus complete dependency, ABI and
+provenance metadata, which is a superset of what any format needs.
+
+This is the only tractable architecture. A universal packager that translates
+between formats fails, because every distribution encodes policy, not just structure.
+
+## Two honest tiers
+
+Blurring these is how cross-format packagers disappoint people.
+
+**Tier A — installable packages.** Correct archives with correct dependency metadata
+that install, upgrade and remove cleanly. This is what FPM and nfpm users actually
+want, and it is broadly useful. liquid ships this.
+
+**Tier B — distro-policy-compliant packages.** Lintian-clean, policy-conformant
+source packages a Debian maintainer would sponsor. Enormously more work, genuinely
+valuable, and a later goal.
+
+## Targets
+
+| Target | Notes |
+|---|---|
+| **`.deb` / apt** | `ar` + `control.tar` + `data.tar`. Full relationship field support — `Depends`, `Pre-Depends`, `Recommends`, `Conflicts`, `Breaks`, `Replaces`, `Provides`. `Breaks` vs `Conflicts` reflects dpkg's two-phase install; `Provides` is virtual packages. |
+| **`.rpm` / dnf** | Spec generation, `%files` with ownership and permissions, automatic `SONAME`-derived dependencies. |
+| **Alpine `apk`** | The simplest correct target; the natural first implementation. |
+| **Arch `PKGBUILD`** | |
+| **Homebrew** | Formulae and bottles, with relocation. |
+| **Windows** | MSI / MSIX / winget, with Authenticode signing. |
+| **macOS** | `pkg` / `dmg`, with **codesigning and notarisation** — a hard gate, not polish. |
+| **Flatpak / Snap / AppImage** | Bundled runtimes. |
+| **OCI images** | See below. |
+| **ostree / bootc commits** | The image-based-OS target, and the closest fit to liquid's model. |
+
+## Dependencies are derived, never written
+
+RPM's automatic `SONAME` extraction is the right idea; liquid does better because it
+knows the exact build inputs *and* can inspect the produced binaries. Package
+dependency metadata is generated from the build graph plus ABI extraction
+([07](07-dependency-resolution.md)), never hand-maintained.
+
+## Maintainer scripts are a liability
+
+`preinst`/`postinst`/`prerm`/`postrm` are the top source of packaging bugs and an
+install-time arbitrary-code-execution vector.
+
+Where liquid emits them, it **generates them from declarative intent** — register a
+service, update a cache, create a user — rather than passing through arbitrary user
+shell.
+
+## OCI images
+
+liquid emits OCI images; it does not adopt tar layers internally
+([01](01-object-model-and-storage.md)).
+
+**Deterministic by construction.** Sorted entries, `SOURCE_DATE_EPOCH`, fixed
+ownership and modes, stripped volatile metadata, pinned compressor settings. Output
+is bit-identical across machines by default, not by careful configuration.
+
+**Layers are computed, not hand-ordered.** liquid knows the real dependency graph, so
+it partitions the filesystem to maximise registry reuse — stable dependencies low,
+volatile application code high. This eliminates the entire `COPY . .` genre of
+problem, because the user is no longer encoding a dependency order in instruction
+sequence.
+
+**Deleted bytes never ship.** liquid computes the final filesystem rather than
+replaying mutations, so the whiteout-bloat trap — deleting a 1 GB file in a later
+layer while still shipping it — cannot occur.
+
+**Incremental compilation inside the image, for free.** The loudest Docker complaint.
+liquid compiles with its own cache ([05](05-caching.md)) and then assembles the
+image, so a one-line change recompiles one object and produces an image differing by
+a handful of chunks. No cache mounts, no `cargo-chef`, no dependency pre-copy trick.
+
+**Attestations attach without mutating the digest**, via OCI 1.1 `subject` and the
+Referrers API ([10](10-supply-chain.md)).
+
+**Cross-compile rather than emulate.** QEMU is the wrong default and is punishingly
+slow for compilation. liquid ships toolchains in the input tree
+([06](06-distributed-execution.md)), so cross-compilation is the natural path, with
+native remote workers where a target genuinely must execute.
+
+**zstd layers**, and optionally chunk-addressed lazy-pull formats where liquid also
+controls the runtime ([13](13-deployment-runtime.md)).
+
+## The hard problems liquid must actually solve
+
+Archive formats are the easy part. These are not:
+
+- **ABI compatibility** — extracted and diffed continuously
+  ([07](07-dependency-resolution.md)).
+- **Relocation** — solved by construction, not by rewriting binaries.
+- **glibc version floors** and musl/glibc differences — expressed as constraints in
+  the solver rather than discovered at runtime.
+- **File conflicts** between packages claiming a path.
+- **Transactional upgrade** with rollback.
+- **Cross-compilation and sysroots** — first-class, because the toolchain is an input.
+
+## Open questions
+
+- **How far to pursue Tier B**, and for which distributions first.
+- **Whether to emit source packages** (`.dsc`, `debian/rules`, spec files) or only
+  binary packages. Source packages are what distributions actually maintain.
+- **Signing key custody per platform** — Authenticode and notarisation have
+  incompatible trust models.

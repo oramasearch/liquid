@@ -35,6 +35,30 @@ Chunks are grouped into **packs** of roughly 16–64 MiB for storage and transfe
 Keeping these two units distinct is not an optimisation — a store that treats
 chunks as objects dies of request overhead at any real scale.
 
+## Two layers: metadata and content
+
+liquid separates the **namespace** from the **bytes**, and this boundary is the most
+important structural decision after chunking itself.
+
+| Layer | Holds | Implementation |
+|---|---|---|
+| **Metadata** | Namespace, trees, paths, names, refs, branches, change history, permissions, small structured data | The CRDT datastore, [`automerge-cpp`](https://github.com/homer6/automerge-cpp) |
+| **Content** | Every byte | The chunk store described here |
+
+Metadata documents reference content **by hash**; they never contain it.
+
+This is exactly Dropbox's metadata-service / block-service split and Seafile's
+commit / FS-object / block split — both well-precedented. It is also what keeps a
+CRDT viable: Automerge is excellent for a structured document many people edit
+concurrently, and entirely wrong as a container for terabytes of binary data.
+
+What the CRDT layer contributes: conflict-free convergent merge, stable object
+identities that survive moves, a bloom-filter sync protocol that becomes liquid's
+replication protocol, time travel for history, cursors, and incremental change
+patches that drive rebuilds and indexing. See
+[17-implementation](17-implementation.md) for the full rationale and the open risks —
+principally CRDT history growth.
+
 ## Trees and nodes
 
 A **tree** is a sorted list of entries: name, mode, type, and either a chunk list

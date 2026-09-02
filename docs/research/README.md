@@ -52,6 +52,7 @@ Every topic directory contains:
 | [18](18-implementation-cpp26/) | Implementation: C++26 | What C++26 actually delivers in 2026, and the best-in-class libraries for hashing, chunking, async I/O and crypto. |
 | [19](19-full-text-search/) | Full-text and code search | Trigram indexes, Zoekt, GitHub Blackbird, and indexing a content-addressed versioned corpus. |
 | [20](20-deployment-runtime-k8s/) | Deployment runtime and minimal k8s | k0s/k3s/Talos, Railway-style PaaS, buildpacks, GitOps — liquid's delivery target. |
+| [21](21-consumer-sync-and-web/) | Consumer sync and web | Dropbox's Nucleus and block model, Drive, CFAPI/File Provider/FUSE, and sharing UX for non-developers. |
 | [99](99-synthesis/) | Synthesis | Cross-cutting conclusions: the shared model, the ordering of the build, and what liquid must get right first. |
 
 ## Method and provenance

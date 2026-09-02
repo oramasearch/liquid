@@ -2,6 +2,17 @@
 
 > Research: [01-version-control](../research/01-version-control/)
 
+## What this is built on
+
+The history, namespace and change graph live in the CRDT datastore
+([`automerge-cpp`](https://github.com/homer6/automerge-cpp), see
+[17](17-implementation.md)). Several features below are properties liquid gets from
+that substrate rather than mechanisms it must invent: change identity (`ChangeHash`,
+`ActorId`, `OpId`), stable object identity across moves, time travel, an operation
+history, and a peer-to-peer sync protocol.
+
+File *content* lives in the chunk store ([01](01-object-model-and-storage.md)).
+
 ## What liquid keeps from Git
 
 The content-addressed DAG, cheap branching, offline-first operation, and the idea
@@ -13,8 +24,8 @@ from them.
 ### Changes have identity
 
 Git records snapshots and computes changes by diffing afterwards. liquid records
-the **change** as a first-class object with a stable identity that survives
-rebasing, cherry-picking and transplanting between branches.
+the **change** as a first-class object with a stable identity (`ChangeHash`) that
+survives rebasing, cherry-picking and transplanting between branches.
 
 Consequences:
 
@@ -27,8 +38,10 @@ Consequences:
 
 ### Renames and moves are recorded, never inferred
 
-liquid owns the client and observes the move when it happens. Rename detection is
-not a diff-time heuristic with a similarity threshold.
+liquid owns the client and observes the move when it happens; the datastore gives
+every path a stable `ObjId` that survives it. Rename detection is not a diff-time
+heuristic with a similarity threshold. This is the same deficiency whose absence
+forced Dropbox's sync-engine rewrite ([research](../research/21-consumer-sync-and-web/)).
 
 ### Conflicts are values
 
@@ -38,8 +51,9 @@ it. Taken directly from Jujutsu, which demonstrated it works.
 
 ### Every operation is undoable
 
-An **operation log** records every mutation of the repository. `liquid undo`
-reverses any operation, including ones Git makes unrecoverable. This removes the
+The datastore's change history records every mutation of the repository, and its
+time travel (`get_at()`) reads any prior state. `liquid undo` reverses any
+operation, including ones Git makes unrecoverable. This removes the
 fear that drives the worst Git workflows.
 
 ### The working copy is a change
