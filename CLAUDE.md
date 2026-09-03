@@ -10,7 +10,7 @@ the bridge remains authoritative.
 **liquid** — a version control system, build system, package manager, artifact service
 and runtime in one program. See [`README.md`](README.md).
 
-**Status: design → bootstrap.** The Phase 0 gate is lifted (see *Decisions* below).
+**Status: Phase 1 — the store, inside libliquid.** Phase 0 is decided and Phase 0.5 met (see *Decisions* below).
 Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. Clang 17+, CMake + Ninja, GoogleTest. Phase 1
