@@ -11,9 +11,10 @@ the bridge remains authoritative.
 and runtime in one program. See [`README.md`](README.md).
 
 **Status: design → bootstrap.** The Phase 0 gate is lifted (see *Decisions* below).
-Code begins with hello-world scaffolding: a C++26 CMake + Ninja build, Clang 17+,
-GoogleTest via FetchContent + CTest, modelled on Zetta's `CMakeLists.txt` compiler auto-selection. liquid is
-**open source eventually** and must never take a dependency on Zetta.
+Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
+`docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
+same library as a pinned submodule, lake will. Clang 17+, CMake + Ninja, GoogleTest. Phase 1
+(the store) is built inside libliquid.
 
 ### Vocabulary — use these words exactly
 
@@ -155,8 +156,9 @@ chosen options once they are made.
 
 | Repository | Relationship |
 |---|---|
-| [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge) | The bridge: this repo, k0s, lake and orama-operator as submodules, plus `docs/action-plan.md`, `docs/repositories.md`, `docs/decisions.md`. |
-| [`oramasearch/lake`](https://github.com/oramasearch/lake) | The lake binary — the hosted service. Skeleton; no code until Phase 0. |
+| [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge) | The bridge: this repo, k0s, lake, liquify and orama-operator as submodules, plus `docs/action-plan.md`, `docs/repositories.md`, `docs/decisions.md`. |
+| [`oramasearch/lake`](https://github.com/oramasearch/lake) | The lake binary — the hosted service. Live on AKS (`Lake/prod`): the control surface (REST `/v1`, OpenAPI, MCP) over a Postgres control plane, Zetta as data plane; consumes libliquid for repository data once Phase 1 lands. |
+| [`oramasearch/liquify`](https://github.com/oramasearch/liquify) | The IDE — native, cross-platform (SDL3 + Dear ImGui), links libliquid as a pinned submodule. Private for now, open source eventually; never depends on Zetta. |
 | [`oramasearch/orama-operator`](https://github.com/oramasearch/orama-operator) | **The Orama operator** (renamed from `orama-cloud-v1-operator`; the Zetta operator). lake is deployed by adding a `Lake` CR to it — there is no separate lake operator. Running in production on AKS. |
 | [`oramasearch/k0s`](https://github.com/oramasearch/k0s) | **Private copy** of `k0sproject/k0s`, synced with upstream, modified for drips. `main` is a pristine upstream mirror; our changes live on `liquid`. See its `ORAMA-FORK.md`. |
 | [`homer6/automerge-cpp`](https://github.com/homer6/automerge-cpp) | The CRDT datastore ([17](docs/features/17-implementation.md)). Still under `homer6`; whether it moves is undecided. |
@@ -244,8 +246,9 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
 - **Which open-source licence** for liquid and liquify.
 - **Canonical home of `automerge-cpp`** — `homer6` or `oramasearch`.
 
-**Code may now begin.** The "no code until Phase 0" gate is lifted for hello-world
-scaffolding in every module.
+**Phase 0.5 is met** (every module builds and runs; lake serves on AKS). Phase 1 — the store —
+is the current work, inside libliquid, per the bridge `docs/action-plan.md` and the issues it
+links (liquid #33 is the Phase 1 epic).
 
 ## Inherited org conventions — the ones hit most here
 
