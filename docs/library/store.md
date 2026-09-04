@@ -53,12 +53,24 @@ The index is liquid-owned. Its portable records are exactly 48 bytes, serialized
 (32), pack id (u32), offset (u64), and compressed length (u32). The digest comes first, so records
 sort lexicographically by digest bytes.
 
-An algorithm owns its own memtable and immutable run set. The run header carries that algorithm,
-a 256-way first-byte fanout table, a 10-bit-per-key bloom filter, record count, and checksum.
+An algorithm owns its own sorted `std::map` memtable and immutable run set. The default memtable
+limit is 1,048,576 entries; inserts and lookups are logarithmic and the table is flushed at that
+limit or when its pack seals. The run header carries the algorithm, record count, a 256-way
+first-byte fanout table, a 10-bit-per-key bloom filter, and a checksum. `open` reads only this
+header and bloom filter, never run records. Its memory cost per run is therefore bounded by the
+header plus 10 bits per key.
+
 `MANIFEST` lists live runs with their algorithm and the highest indexed pack id. Lookups check the
-algorithm's memtable, then runs newest first. Flushing sorts the memtable and writes a new immutable
-run; after more than four runs the store merges them, writes and records the replacement, then
-removes old runs. The manifest is written to a temporary file, synchronized, and atomically renamed.
+algorithm's memtable, then runs newest first. A bloom hit selects the fanout slice; slices below
+64 KiB are read with one Corosio positional read and binary searched in memory, while larger slices
+are binary searched with individual 48-byte positional reads. A run file is opened lazily for its
+lookup and released before a short-lived public caller executor ends.
+
+Runs are size-tiered by record count. When more than four runs share a tier, compaction performs a
+streaming k-way merge through fixed 1 MiB pread windows and incrementally writes the replacement.
+It does not load input runs into memory. The replacement is synchronized and recorded in the
+manifest before the old runs are removed. The manifest itself is written to a temporary file,
+synchronized, and atomically renamed.
 
 If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
 tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
@@ -68,9 +80,9 @@ runs and are not given that mutation lock. Cross-process access is outside this 
 
 ## Tuning and verification
 
-`store_options::pack_size` controls pack rollover. The chunk bounds, bloom density (10 bits/key),
-and compaction threshold (four runs) are format or engine constants for this format version. Change
-them only with tests for rebuild, read integrity, and compaction.
+`store_options::pack_size` controls pack rollover. The index options default to 1,048,576 memtable
+entries, 10 bloom bits per key, and a four-run compaction threshold. Change these only with tests
+for header-only reopen, rebuild, read integrity, and compaction.
 
 ```sh
 cmake -S . -B build -G Ninja && cmake --build build

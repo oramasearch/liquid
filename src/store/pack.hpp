@@ -35,6 +35,14 @@ struct pack_contents {
                                                                      std::size_t size);
 [[nodiscard]] runtime::task<void> write_file(std::filesystem::path path,
                                               std::vector<std::byte> bytes);
+[[nodiscard]] runtime::task<void> write_file_range(std::filesystem::path path,
+                                                    std::uint64_t offset,
+                                                    std::vector<std::byte> bytes);
+// Test instrumentation for the private Corosio file helpers.  The counter is
+// intentionally byte based so it measures the I/O performed by index open.
+void reset_file_read_counter() noexcept;
+[[nodiscard]] std::uint64_t file_read_counter() noexcept;
+void note_file_read(std::size_t bytes) noexcept;
 [[nodiscard]] runtime::task<pack_contents> read_pack(std::filesystem::path path,
                                                       std::uint32_t id);
 [[nodiscard]] runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,

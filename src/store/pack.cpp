@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <system_error>
@@ -14,6 +15,8 @@
 
 namespace liquid::store_detail {
 namespace {
+
+std::atomic<std::uint64_t> file_read_bytes{};
 
 constexpr std::array<std::byte, 8> pack_magic{std::byte{'L'}, std::byte{'Q'}, std::byte{'P'},
                                                std::byte{'A'}, std::byte{'C'}, std::byte{'K'},
@@ -65,7 +68,7 @@ bool valid_algorithm(unsigned char value) {
 }
 
 runtime::task<void> write_at(std::filesystem::path path, std::uint64_t offset,
-                             std::vector<std::byte> bytes, bool truncate) {
+                             std::vector<std::byte> bytes, bool truncate, bool sync = true) {
     try {
         const auto executor = co_await boost::capy::this_coro::executor;
         boost::corosio::random_access_file file(executor.context());
@@ -79,7 +82,7 @@ runtime::task<void> write_at(std::filesystem::path path, std::uint64_t offset,
             if (ec || count == 0) co_return std::unexpected(io_error(ec ? ec.message() : "short file write", path.string()));
             written += count;
         }
-        file.sync_data();
+        if (sync) file.sync_data();
         file.close();
         co_return result<void>{};
     } catch (const std::system_error& exception) {
@@ -150,6 +153,7 @@ runtime::task<std::vector<std::byte>> read_file(std::filesystem::path path) {
                 read, boost::capy::mutable_buffer(bytes.data() + read, bytes.size() - read));
             if (ec || count == 0) co_return std::unexpected(io_error(ec ? ec.message() : "unexpected end of file", path.string()));
             read += count;
+            note_file_read(count);
         }
         file.close();
         co_return bytes;
@@ -176,6 +180,7 @@ runtime::task<std::vector<std::byte>> read_file_range(std::filesystem::path path
                 offset + read, boost::capy::mutable_buffer(bytes.data() + read, bytes.size() - read));
             if (ec || count == 0) co_return std::unexpected(io_error(ec ? ec.message() : "unexpected end of file", path.string()));
             read += count;
+            note_file_read(count);
         }
         file.close();
         co_return bytes;
@@ -188,6 +193,17 @@ runtime::task<std::vector<std::byte>> read_file_range(std::filesystem::path path
 
 runtime::task<void> write_file(std::filesystem::path path, std::vector<std::byte> bytes) {
     co_return co_await write_at(std::move(path), 0, std::move(bytes), true);
+}
+
+runtime::task<void> write_file_range(std::filesystem::path path, std::uint64_t offset,
+                                     std::vector<std::byte> bytes) {
+    co_return co_await write_at(std::move(path), offset, std::move(bytes), false, false);
+}
+
+void reset_file_read_counter() noexcept { file_read_bytes.store(0, std::memory_order_relaxed); }
+std::uint64_t file_read_counter() noexcept { return file_read_bytes.load(std::memory_order_relaxed); }
+void note_file_read(std::size_t bytes) noexcept {
+    file_read_bytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
 runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t id) {
