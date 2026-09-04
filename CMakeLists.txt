@@ -129,9 +129,11 @@ set_target_properties(liquid_blake3 PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
 add_library(liquid_monocypher_objects OBJECT
-  ${monocypher_source_SOURCE_DIR}/src/monocypher.c)
+  ${monocypher_source_SOURCE_DIR}/src/monocypher.c
+  ${monocypher_source_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
 target_include_directories(liquid_monocypher_objects SYSTEM PRIVATE
-  ${monocypher_source_SOURCE_DIR}/src)
+  ${monocypher_source_SOURCE_DIR}/src
+  ${monocypher_source_SOURCE_DIR}/src/optional)
 set_target_properties(liquid_monocypher_objects PROPERTIES
   C_EXTENSIONS OFF
   C_VISIBILITY_PRESET hidden
@@ -180,6 +182,7 @@ add_library(libliquid
   src/hash.cpp
   src/hash/sha256.c
   src/identity.cpp
+  src/identity/taap.cpp
   src/crypto/crypto.cpp
   src/object.cpp
   src/objects/records.cpp
@@ -211,7 +214,8 @@ target_include_directories(libliquid PUBLIC
   $<INSTALL_INTERFACE:include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${blake3_source_SOURCE_DIR}/c
-          ${monocypher_source_SOURCE_DIR}/src)
+          ${monocypher_source_SOURCE_DIR}/src
+          ${monocypher_source_SOURCE_DIR}/src/optional)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_link_libraries(libliquid
   PUBLIC Boost::capy
