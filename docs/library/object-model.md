@@ -56,7 +56,16 @@ action      { v, kind:"action", inputs:digest(tree), command:[text...], cwd, env
               platform, toolchain:digest(tree), sandbox:digest, timeout_s?, remote_eligible? }
 result      { v, kind:"result", action:digest, outputs, manifest, producer, provenance?, sboms?, sig }
 sbom        { v, kind:"sbom", format:text, document:bytes }
+query-graph { v:1, kind:"query-graph", nodes:[digest(query-node)…] }
+query-node  { v:1, kind:"query-node", key, fingerprint, durability,
+              dependencies:[{key,fingerprint}…], value:digest }
 ```
+
+The query graph uses its own store directory and atomic text `ROOT`. Query keys and dependency
+keys are canonical CBOR; dependencies retain read order. Query values are separate store objects,
+so opening the graph loads root and node metadata while value bytes remain shallow until demand.
+Only a completed query replaces `ROOT`; interrupted computations leave the previous complete graph
+readable.
 
 - **`node_id`** is 16 random bytes minted when a path is created. It is stored in the tree entry
   and in the document entry, and it is what survives a move: a move deletes the old key and puts

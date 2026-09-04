@@ -57,6 +57,7 @@ owning issue in `error::context`.
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
+| `liquid/graph.hpp` | #20 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, statistics, and the #23 comparison hook |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
@@ -137,6 +138,80 @@ released into the public domain without restrictions. The local copy adds C++ li
 fixed-width input promotion before shifts, and a `size_t` input loop; `NOTICE` records both
 origins. The `abc` SHA-256 vector is from that implementation's `sha256_test.c`; BLAKE3 vectors
 are checked against the official implementation.
+
+### `liquid/graph.hpp`
+
+```cpp
+enum class durability : std::uint8_t { volatile_ = 0, low = 1, medium = 2, high = 3 };
+enum class graph_input_kind : std::uint8_t {
+  working_tree_blob = 1, overlay_buffer = 2, environment = 3, toolchain = 4
+};
+struct graph_input_key { graph_input_kind kind; std::string name; bool operator==(...) const; };
+struct query_key { std::string kind; std::vector<std::byte> arguments; bool operator==(...) const; };
+using graph_dependency_key = std::variant<query_key, graph_input_key>;
+struct graph_value { std::vector<std::byte> bytes; digest fingerprint; durability durability_tier; };
+struct recorded_dependency { graph_dependency_key key; digest fingerprint; };
+struct recorded_query {
+  query_key key; digest fingerprint; std::vector<recorded_dependency> dependencies; graph_value value;
+};
+struct graph_statistics {
+  std::uint64_t demands, hits, executions, dependency_reads, fingerprint_reads;
+  std::uint64_t invalidation_walks, discarded_computations;
+};
+using query_argument_encoder =
+  std::function<result<std::vector<std::byte>>(std::span<const std::byte>)>;
+using query_compute =
+  std::function<runtime::task<std::vector<std::byte>>(query_context&, std::vector<std::byte>)>;
+struct query_kind { std::string name; query_argument_encoder encode_arguments; query_compute compute; };
+
+class query_registry {
+ public:
+  query_registry(); ~query_registry();
+  query_registry(const query_registry&) noexcept;
+  query_registry& operator=(const query_registry&) noexcept;
+  query_registry(query_registry&&) noexcept;
+  query_registry& operator=(query_registry&&) noexcept;
+  result<void> add(query_kind);
+  result<query_key> key(std::string, std::span<const std::byte>) const;
+};
+struct graph_options { std::filesystem::path working_tree; };
+class graph {
+ public:
+  graph() noexcept; ~graph();
+  graph(graph&&) noexcept; graph& operator=(graph&&) noexcept;
+  graph(const graph&) = delete; graph& operator=(const graph&) = delete;
+  static runtime::task<graph> open(std::filesystem::path, query_registry, graph_options = {});
+  runtime::task<graph_value> demand(query_key);
+  runtime::task<void> set_input(graph_input_key, std::vector<std::byte>, durability);
+  runtime::task<void> clear_input(graph_input_key, durability);
+  result<std::uint64_t> mark_changed(graph_input_key, durability);
+  result<std::uint64_t> mark_changed(query_key);
+  runtime::task<std::optional<recorded_query>> recorded(query_key);
+  runtime::task<void> flush();
+  graph_statistics statistics() const;
+};
+class query_context {
+ public:
+  query_context(query_context&&) noexcept;
+  query_context& operator=(query_context&&) noexcept;
+  query_context(const query_context&) = delete;
+  query_context& operator=(const query_context&) = delete;
+  ~query_context();
+  runtime::task<graph_value> read(graph_dependency_key);
+};
+```
+
+`query_registry::key` runs the kind's canonical argument encoder; an absent encoder preserves the
+provided bytes. A compute function is a Capy coroutine and performs every input or nested-query
+read through `query_context::read`, which records dependencies in read order and checks cooperative
+cancellation. `graph::open` shallow-loads persisted query metadata. `demand` validates stale nodes
+red-green, cuts off unchanged fingerprints, and persists only complete computations. The two
+`mark_changed` overloads return the exact invalidation walk count; the query overload also removes
+its completed value to force recomputation. `set_input` and `clear_input` manage overlay,
+environment, and toolchain leaves; working-tree leaves otherwise read relative to
+`graph_options::working_tree`. `recorded` loads a completed value and returns the comparison
+surface for #23; a query with no completed value returns an empty optional. `flush` atomically
+republishes the current graph root, and `statistics` returns counters since open.
 
 ### `liquid/store.hpp`
 

@@ -50,7 +50,10 @@ and `liquid serve reapi` CAS and ActionCache; production workers remain a later 
 adds the dependency-free protobuf codec, REAPI v2.3 message set, native tree/action/result
 conversions, and BLAKE3/SHA-256 capability selection. Liquid #19 adds explicit local replay of recorded actions and results, byte-level
 comparison, and optional verification recording; remote inputs hydrate through the registered
-transport-neutral blob source. Liquid #64 adds signed zstd delta delivery with verified local and
+transport-neutral blob source. Liquid #20 adds the persisted demand-driven query graph, canonical
+query and input fingerprints, red-green validation, early cutoff, durability-filtered invalidation,
+cooperative cancellation, recorded-input retrieval, and `action_result` nodes for direct and
+wrapped builds. Liquid #64 adds signed zstd delta delivery with verified local and
 registered-remote blob fetch plus chunk fallback. The repository object model,
 internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and

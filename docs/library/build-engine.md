@@ -227,6 +227,7 @@ Tiers (features/05) share one store and one key:
 
 | Tier | Where | Phase |
 |---|---|---|
+| Query graph | persisted `action_result` nodes for direct execution and every wrapped tool action | Phase 4 (#20) |
 | Memory | the daemon's map of candidate keys to results | Phase 4 (#21) |
 | Disk | `result` and `action` records and output blobs in the local store; the index under `actions/` is a small run set like the chunk index | Phase 2 (#11) |
 | Remote | lake, REAPI's ActionCache and CAS | Phase 3 (#16; design: [`distribution.md`](distribution.md)), Phase 6 |
@@ -410,14 +411,13 @@ CMake compiler probe, the sandbox-only exec hook exits before the compiler entry
 returns `errc::unsupported` naming the target. It never falls back to running a foreign probe on
 the host.
 
-## What Phase 2 does not do
+## What remains beyond Phase 2
 
-The demand-driven graph, the daemon and per-definition granularity are Phase 4: [`incremental-engine.md`](incremental-engine.md).
-
-No query graph beyond actions (Phase 4 turns queries and actions into one engine), no production
-worker (Phase 3), no daemon (Phase 4), no per-definition
-granularity (Phase 4). Actions are the coarse end of the spectrum features/04 describes; the fine
-end arrives when the graph does.
+The demand-driven graph now makes action results and ordinary queries one engine in Phase 4 #20;
+its contract and proof are in [`incremental-engine.md`](incremental-engine.md). The daemon and
+per-definition granularity remain Phase 4 work. There is no production worker (Phase 3), daemon,
+or per-definition granularity. Actions remain the coarse end of the spectrum features/04
+describes; frontend queries add the fine end.
 
 Measured remote transfer timing remains Phase 3 work; #18 records absent bytes and its deterministic
 transfer estimate. Continuous daemon profiles remain Phase 4 work. The stored trace and its Chrome

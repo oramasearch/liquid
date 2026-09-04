@@ -21,7 +21,8 @@ struct prepared_action {
     std::uint64_t bytes_served{};
 };
 
-[[nodiscard]] runtime::task<prepared_action> prepare_action(repository& source, action_input input);
+[[nodiscard]] runtime::task<prepared_action>
+prepare_action(repository& source, action_input input, bool lookup_cache = true);
 
 [[nodiscard]] runtime::task<action_result> run_action(repository& source,
                                                       action_input input,

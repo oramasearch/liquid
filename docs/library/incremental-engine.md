@@ -8,8 +8,12 @@
 > stub trees, design position), [`features/22-change-capture.md`](../features/22-change-capture.md)
 > (the fan-out), [`features/12-search.md`](../features/12-search.md) (the planner, symbols).
 > Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
-> a retained GPU text layer inside Dear ImGui. This page is written before the issues and corrected
-> by them.
+> a retained GPU text layer inside Dear ImGui.
+
+**Status:** the demand-driven query graph in #20 is implemented, including persisted red-green
+validation, durability-filtered invalidation, cancellation, and the action-query integration.
+The daemon, clean-rebuild scheduler, frontend granularity, symbols, and planner remain with their
+listed issues.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -18,8 +22,9 @@ the same mechanism under a demand-driven graph that stays warm, so a keystroke r
 that keystroke changed, and gives liquify that graph in-process.
 
 **Exit for the phase:** a one-line change in a large C++ project recompiles one translation unit
-and relinks in the time a save takes; the editor shows the diagnostic before the build finishes; a
-comment-only edit rebuilds nothing.
+and relinks; the editor shows the diagnostic before the build finishes; a comment-only edit may
+re-run the affected compile query but does not re-run the link when the object fingerprint is
+unchanged.
 
 ## Queries and actions are one mechanism (#20)
 
@@ -39,26 +44,55 @@ the toolchain digest.
 marks them *maybe stale* and, on the next demand, walks each dependency in the order it was read
 the last time: if a dependency's fingerprint is unchanged the walk continues; if one changed, the
 query re-executes. **Early cutoff**: when a re-executed query produces the same fingerprint, its
-dependents are marked green without re-executing. This is what makes a comment-only edit rebuild
-nothing: the object file's fingerprint is unchanged, so the link is not revisited.
+dependents are marked green without re-executing. A comment-only edit therefore re-runs the
+compile query, produces the same object fingerprint, and does not execute the link query.
 
 **Durability tiers.** Each input carries a durability (volatile, low, medium, high, as the
 specification tables them) and each query the minimum durability of everything it read. A change
 to a volatile input (the buffer being typed in) marks stale only queries whose durability is
 volatile; the rest of the graph is not visited. The tier of a path is configured per repository
-(`config.build.durability`) with defaults: the working tree is low, dependencies medium, the
-toolchain tree high.
+(`config.build.durability`) when #21 adds daemon configuration. The #20 API takes the tier at each
+input change; build integration assigns the working tree low, overlays volatile, dependencies
+medium, and the toolchain tree high.
 
-**Persistence.** The graph is a record set in the store: query keys, fingerprints, dependency
-lists and values (values that are already records, such as results, are referenced by digest; small
-values are inline). On daemon start the graph loads shallowly (keys, fingerprints and dependency
-lists; values on demand) and validates against the current inputs by the same red-green walk, so a
-restart costs a validation pass, not a rebuild. Cold-start time on a large C++ tree is measured and
-recorded here.
+**Persistence.** The graph is a record set in the store. A `query-graph/1` root references
+`query-node/1` records containing canonical keys, fingerprints, durability, dependency lists in
+read order, and a value digest. Values are separate store objects and load only on demand. `ROOT`
+is replaced atomically after each completed query; an interrupted computation can leave
+unreachable objects but cannot replace the last complete root. Opening reads the root and node
+metadata, marks loaded nodes maybe stale, and leaves values shallow. The next demand validates
+against current inputs by the same red-green walk, so a restart costs fingerprint reads rather
+than query execution.
+
+The reproducible `liquid-graph-measure` target populated one query per regular file in liquid's
+checkout, excluding `.git`, `.liquid-build`, and build directories, then reopened and validated
+the graph. On an Apple M3 Max macOS host on 2026-09-04:
+
+```text
+graph cold-start validation: files=3656 fingerprint_reads=3656 executions=0 hits=3656 elapsed_ms=3038
+```
+
+Run it with `cmake --build build --target liquid-graph-measure`, followed by
+`build/tests/liquid-graph-measure . <empty-state-directory-outside-checkout>`.
 
 **Cancellation.** A keystroke cancels in-flight queries that depend on the changed volatile input;
 queries are Capy coroutines, and cancellation is cooperative at every dependency read. Results of
 cancelled computations are discarded, never stored.
+
+`query_registry` canonicalises arguments before constructing a key. All input and query reads go
+through `query_context::read`, which records the dependency and fingerprint. Working-tree blobs,
+overlay buffers, environment values, and toolchain digests are the supported leaves. Public
+`graph::recorded` returns a query's canonical key, value and fingerprint, plus the recorded inputs
+in read order; #23 uses this comparison hook without accessing graph internals.
+
+`build::execute` demands an `action_result` query before disk lookup or execution. `wrap` makes
+the driver and each discovered tool action an `action_result` node, primes those nodes after
+publication, and demands them on the next invocation. When an upstream action is invalidated,
+the wrapper conditionally retains a downstream candidate and the child hook compares the recorded
+input bytes after the producer finishes. Equal object bytes cut off the linker; changed bytes make
+the linker execute. The existing result validation still verifies signatures, manifests,
+referenced objects, and divergent-result quarantine before a graph hit is reported; a failed check
+forces the action query to recompute.
 
 ## The daemon (#21)
 
@@ -151,12 +185,14 @@ in-process:
 
 ## How to verify
 
-Each issue adds its proof beside the Phase 2 and 3 ones. The phase exit is measured on liquid's
-own tree (the self-host project from #59) and recorded here: the time from a one-line edit to a
-relinked binary, the time to the first diagnostic in liquify, and zero rebuilds for a comment-only
-edit.
+`QueryGraph` tests cover read-order red-green validation, early cutoff, exact volatile
+invalidation walks, cancellation by a second demand, interrupted-process recovery, shallow value
+loading, fingerprint-only restart validation, and the #23 retrieval hook. The mount-backed CMake
+fixture proves a comment edit executes one compile process with identical object and link results,
+while a one-line semantic edit executes one compile and the link and changes the link result.
+Remaining phase exit measurements belong to the issues that add the daemon and editor diagnostics.
 
 ## How to change
 
-This page precedes its implementation. An issue that finds it wrong changes it in the same commit
-as the code and says why in the commit body.
+An issue that finds this contract wrong changes it in the same commit as the code and says why in
+the commit body.

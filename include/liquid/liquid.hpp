@@ -6,6 +6,7 @@
 #include "liquid/drip.hpp"
 #include "liquid/error.hpp"
 #include "liquid/git.hpp"
+#include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/object.hpp"

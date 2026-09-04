@@ -38,7 +38,13 @@ performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts.
 validates saved actions, launches one writable observed mount, derives child actions from process
 reads and writes, publishes the driver's outer action, and materialises hits back into the checkout.
 Action boundaries are output-producing leaf processes from the discovered toolchain, not executable
-names. Completed output snapshots make each recorded action independently replayable.
+names. Completed output snapshots make each recorded action independently replayable. Direct
+execution and wrapping demand persisted `action_result` graph nodes before the disk cache. The
+wrapper primes a node for every discovered tool action; after an upstream miss, the child hook
+checks a condition over the producer's output bytes before accepting a downstream hit, giving
+unchanged objects early cutoff without hiding a changed object from the linker.
+Refreshed saved actions retain their prior dependency order so invalidated producer outputs are
+known before any dependent plan is accepted.
 `trace.cpp` derives dependency edges when a result manifest reads another action's output, stores a
 `build_trace` record for every wrap, computes longest paths, loads the latest retained trace, and
 exports Chrome trace-event JSON including each recorded execution decision and model input. The

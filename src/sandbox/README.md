@@ -5,6 +5,9 @@ The wrap launcher installs `wrap_hook.c` only in the child sandbox: Linux bind-m
 `LD_PRELOAD`; macOS permits its path in the generated profile and injects
 `DYLD_INSERT_LIBRARIES`. The hook records process identity, parent, executable, normalized working
 directory, and argv, then exits a process early when its per-run plan entry is a validated hit.
+Conditional hit rows also carry the size and byte guard for previously invalidated inputs. The
+hook checks those inputs in the mounted working tree at process entry, after their producers have
+finished, and executes the process if any guard differs.
 The hook also records monotonic entry and exit values used for each wrapped action's execution
 phase and Chrome trace offset. A validated hit records its exit value before terminating early.
 Verification launches the recorded working directory in a newly materialised input snapshot and

@@ -46,6 +46,9 @@ Build tests cover the disk action index's reopen and rebuild paths on every plat
 privileged Linux environment they also prove a second identical execution launches no process,
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.
+Portable query-graph tests cover early cutoff, durability-filtered walks, cooperative cancellation,
+interrupted-process recovery, fingerprint-only restart validation, and recorded input retrieval.
+`liquid-graph-measure` reports cold-start validation over the repository's regular files.
 Portable provenance cases prove the SLSA field mapping, exact manifest dependencies, tamper
 rejection, and the DSSE/in-toto projection's canonical attestation digest round-trip. The real
 cache-hit case also proves that the existing provenance attestation is reused without re-signing.
