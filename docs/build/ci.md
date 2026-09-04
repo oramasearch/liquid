@@ -18,7 +18,8 @@ cannot consume the Visual Studio flags passed by its developer environment. If n
 found, configuration stops with instructions for installing one or choosing an explicit system
 compiler. The Windows job updates CMake before configuration because the image's CMake 3.31 does
 not recognize `cxx_std_26` for Clang 19.1.5; the current package maps that requirement to
-`clang-cl`'s `/std:c++latest`. It initializes the Visual Studio developer environment so
+`clang-cl`'s `/std:c++latest`. The workflow relies on this paired automatic selection rather than
+overriding only the C++ compiler. It initializes the Visual Studio developer environment so
 `clang-cl` uses the MSVC STL and linker.
 
 ## Platform coverage
