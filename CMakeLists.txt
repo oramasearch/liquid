@@ -64,6 +64,7 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # libliquid — everything under include/liquid/ is the public API.
 # -----------------------------------------------------------------------------
 include(FetchContent)
+find_package(ZLIB REQUIRED)
 
 set(BOOST_CAPY_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(BOOST_CAPY_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -235,6 +236,10 @@ add_library(libliquid
   src/formats/json.cpp
   src/hash.cpp
   src/hash/sha256.c
+  src/git/export.cpp
+  src/git/import.cpp
+  src/git/object_store.cpp
+  src/git/sha1.cpp
   src/identity.cpp
   src/identity/taap.cpp
   src/crypto/crypto.cpp
@@ -296,7 +301,7 @@ target_compile_definitions(libliquid PRIVATE
 add_dependencies(libliquid liquid-wrap-hook)
 target_link_libraries(libliquid
   PUBLIC Boost::capy
-  PRIVATE Boost::corosio libzstd_static
+  PRIVATE Boost::corosio libzstd_static ZLIB::ZLIB
           $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
 if(LIQUID_FUSE_TARGET)
   target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
