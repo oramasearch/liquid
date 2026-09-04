@@ -1,8 +1,15 @@
+set(LIQUID_HTTP2_TEST_SOURCES
+  ${PROJECT_SOURCE_DIR}/src/http2/connection.cpp
+  ${PROJECT_SOURCE_DIR}/src/http2/frame.cpp
+  ${PROJECT_SOURCE_DIR}/src/http2/grpc.cpp
+  ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
+
 add_executable(liquid-tests
   test_drip.cpp
   test_delta.cpp
   test_error.cpp
   test_hash.cpp
+  http2/test_codecs.cpp
   test_identity.cpp
   test_object.cpp
   test_remote.cpp
@@ -38,14 +45,22 @@ add_executable(liquid-tests
   build/test_why.cpp
   build/test_sbom.cpp
   build/test_wrap.cpp
+  ${LIQUID_HTTP2_TEST_SOURCES}
 )
-target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
+target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main Boost::corosio)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
+  ${PROJECT_SOURCE_DIR}/modules/corosio/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
+
+add_executable(liquid-http2-test-server
+  http2/test_server.cpp
+  ${LIQUID_HTTP2_TEST_SOURCES})
+target_link_libraries(liquid-http2-test-server PRIVATE liquid::liquid Boost::corosio)
+target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 add_executable(liquid-build-fixture build/fixture.c)
 if(UNIX AND NOT APPLE)

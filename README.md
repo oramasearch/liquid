@@ -72,9 +72,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > queue depth, and cache locality. Four or more short actions share one supported remote batch; a
 > race cancels its loser and publishes only its winner. Results, `liquid why`, retained traces, and
 > Chrome events preserve the decision and every model input. The dependency-free protobuf codec,
-> REAPI v2.3 messages, and native tree/action/result conversions are implemented; HTTP/2 client
-> integration, production workers, the remote cache tier, and measured transfer timing remain
-> Phase 3 work.
+> REAPI v2.3 messages, and native tree/action/result conversions are implemented. Private HTTP/2
+> and gRPC framing now have h2c interoperability; HTTP/2 client integration, production workers,
+> the remote cache tier, and measured transfer timing remain Phase 3 work.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -92,7 +92,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > status` reports current-tree bytes that remain remote. Actions carry an opt-in remote-eligibility
 > flag, default off; on Linux, eligible actions refuse and name reads outside their input and
 > toolchain trees before dispatch. Cost-based scheduling and the REAPI record codec are implemented;
-> the HTTP/2 client integration remains separate Phase 3 work.
+> private HTTP/2 and gRPC framing are implemented, while HTTP/2 client integration remains separate
+> Phase 3 work.
 
 > **Phase 3 now includes explicit local replay.** `liquid replay <action|result>` reconstructs a
 > recorded action from its input tree, toolchain, environment, and sandbox, then compares exit
@@ -135,6 +136,7 @@ and Zetta's.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
+- [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c interoperability, and TLS ALPN status.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 - [`docs/library/gc.md`](docs/library/gc.md) — leased roots, retention rules, cost-aware result eviction, epoch marking, reference extraction, and crash-safe sweep ordering.
