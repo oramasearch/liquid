@@ -1,9 +1,10 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process local stores (liquid #1, #7, #8).** `store::open`, `put`,
+**Status: implemented for single-process local stores (liquid #1, #7, #8, #46).** `store::open`, `put`,
 `get`, `read`, and `contains` are Capy coroutines. The same operations support encrypted
 objects when supplied a keyring. Leased roots and epoch collection are implemented as Capy
-coroutines; see [gc.md](gc.md).
+coroutines; see [gc.md](gc.md). Collection also compacts sparse packs without recompressing
+frames.
 
 ## What and why
 
@@ -97,8 +98,37 @@ Collection snapshots unexpired leased roots and marks objects and chunks through
 reference registry. The mark bitmap is working state for that epoch only; the committed manifest
 records tombstones for dead physical frames. Frames written after the epoch high-water position
 are live without joining the snapshot and cannot become tombstones. The index is rebuilt without
-dead chunks before wholly dead packs are removed; partial packs are reported for liquid #46. The
-full lease model, crash order, report fields, and verification are in [gc.md](gc.md).
+dead chunks before wholly dead packs are removed. Sparse packs below the collection threshold are
+compacted as described below. The full lease model, crash order, report fields, and verification
+are in [gc.md](gc.md).
+
+## Pack compaction
+
+`collection_options::compact_below` defaults to `0.5`. A partially dead pack is compacted when
+its live frame-byte fraction is strictly below that value; `0` disables compaction.
+`collection_options::compact_only` uses the committed tombstone manifest without another mark and
+sweep. The CLI exposes that pass as `liquid gc --compact`; `--compact-below <fraction>` changes
+the threshold for either collection mode.
+
+For each selected pack, the collector holds its mutation lock, records a pending compaction
+marker, then copies each non-tombstoned physical frame into a new sealed pack. A copied frame is
+its original header and compressed (or encrypted) payload byte-for-byte: compaction never
+decompresses, recompresses, or recalculates its identity. The new locations are inserted into a
+newest index run. The replacement pack and run are only preparation; the collection manifest
+rename is the commit point. That manifest replaces the old pack's partial bitmap with an all-dead
+bitmap. Only after the rename does the index manifest publish the new run and does the collector
+remove the old pack and its pending marker.
+
+Recovery reads a pending marker before opening the index. Before the collection manifest rename,
+it removes the replacement pack; after it, it removes the old pack. A crash between the collection
+manifest and index-manifest updates rebuilds the index from packs and the committed tombstones.
+Thus an uncommitted replacement never survives the next open and a committed replacement is found
+even if index publication did not finish.
+
+Readers do not take the mutation lock. A reader that resolved an old location before the switch
+can still read the old pack until its later removal. On POSIX, a reader that already opened the
+file keeps a valid mapping after unlink. On Windows, a removal blocked by an open mapping is left
+for the next store open through the pending marker.
 
 ## Index
 

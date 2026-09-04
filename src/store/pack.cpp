@@ -445,6 +445,52 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
     co_return entry;
 }
 
+runtime::task<pack_entry> append_pack_frame(std::filesystem::path destination,
+                                            pack_contents contents,
+                                            std::filesystem::path source,
+                                            pack_entry entry,
+                                            bool durable) {
+    if (contents.data_end < pack_header_size) {
+        co_return std::unexpected(
+            error{errc::internal, "invalid pack write position", destination.string()});
+    }
+    if (!contents.appendable) {
+        co_return std::unexpected(
+            error{errc::internal, "attempted to append sealed pack", destination.string()});
+    }
+    if (!std::filesystem::exists(destination)) {
+        std::vector<std::byte> header(pack_magic.begin(), pack_magic.end());
+        put_u32(header, contents.id);
+        put_u32(header, 0);
+        auto created = co_await write_at(destination, 0, std::move(header), true, durable);
+        if (!created) {
+            co_return std::unexpected(created.error());
+        }
+    }
+    const auto frame_size = physical_header_size + static_cast<std::size_t>(entry.location.length);
+    auto frame = co_await read_file_range(source, entry.location.offset, frame_size);
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    if (!std::equal(frame_magic.begin(), frame_magic.end(), frame->begin()) &&
+        !std::equal(encrypted_frame_magic.begin(), encrypted_frame_magic.end(), frame->begin())) {
+        co_return std::unexpected(corrupt_error("invalid source frame", source));
+    }
+    if (get_u32(*frame, 12) != entry.location.length ||
+        std::to_integer<unsigned char>((*frame)[16]) != static_cast<unsigned char>(entry.id.alg) ||
+        !std::equal(entry.id.bytes.begin(), entry.id.bytes.end(), frame->begin() + 17)) {
+        co_return std::unexpected(corrupt_error("source frame differs from pack table", source));
+    }
+    auto copied =
+        co_await write_at(destination, contents.data_end, std::move(*frame), false, durable);
+    if (!copied) {
+        co_return std::unexpected(copied.error());
+    }
+    entry.location.pack_id = contents.id;
+    entry.location.offset = contents.data_end;
+    co_return entry;
+}
+
 runtime::task<void>
 seal_pack(std::filesystem::path path, const pack_contents& contents, bool durable) {
     if (!contents.appendable) {

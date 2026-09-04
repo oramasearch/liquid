@@ -1,4 +1,5 @@
 #include "collector.hpp"
+#include "compactor.hpp"
 
 #include <algorithm>
 #include <array>
@@ -125,6 +126,11 @@ std::string root_reason(const lease_record& lease) {
 
 } // namespace
 
+runtime::task<void> save_collection_manifest(const std::filesystem::path& root,
+                                             const collection_manifest& manifest) {
+    co_return co_await save_manifest(root, manifest);
+}
+
 bool collection_manifest::dead(std::uint32_t pack_id, std::size_t frame) const noexcept {
     const auto pack = tombstones.find(pack_id);
     return pack != tombstones.end() && marked(pack->second, frame);
@@ -173,10 +179,30 @@ runtime::task<collection_report> collector::run(collection_options options) {
         co_return std::unexpected(error{
             errc::invalid_argument, "minimum lease age cannot be negative", "store::collect"});
     }
+    if (!std::isfinite(options.compact_below) || options.compact_below < 0.0 ||
+        options.compact_below > 1.0) {
+        co_return std::unexpected(error{errc::invalid_argument,
+                                        "compaction threshold must be between zero and one",
+                                        "store::collect"});
+    }
 
     auto previous = co_await load_collection_manifest(store_.root_);
     if (!previous)
         co_return std::unexpected(previous.error());
+    if (options.compact_only) {
+        collection_report report;
+        report.epoch = previous->epoch;
+        auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
+        if (lock_error) {
+            co_return std::unexpected(
+                error{errc::busy, lock_error.message(), "store::collect compaction"});
+        }
+        compactor compact(store_);
+        auto compacted = co_await compact.run(options, *previous, report);
+        if (!compacted)
+            co_return std::unexpected(compacted.error());
+        co_return report;
+    }
     collection_manifest committed;
     committed.epoch = previous->epoch + 1;
     committed.tombstones = previous->tombstones;
@@ -428,7 +454,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
     auto objects_staged = co_await store_.stage_objects();
     if (!objects_staged)
         co_return std::unexpected(objects_staged.error());
-    auto manifest_saved = co_await save_manifest(store_.root_, committed);
+    auto manifest_saved = co_await save_collection_manifest(store_.root_, committed);
     if (!manifest_saved)
         co_return std::unexpected(manifest_saved.error());
     auto objects_saved = co_await store_.publish_staged_objects();
@@ -457,6 +483,10 @@ runtime::task<collection_report> collector::run(collection_options options) {
         store_.current_pack_ = next_pack_id;
         store_.packs_.emplace(store_.current_pack_, pack_contents{store_.current_pack_, {}, 16});
     }
+    compactor compact(store_);
+    auto compacted = co_await compact.run(options, committed, report);
+    if (!compacted)
+        co_return std::unexpected(compacted.error());
     co_return report;
 }
 

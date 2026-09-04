@@ -36,6 +36,11 @@ if(LIQUID_BUILD_CLI)
   set_tests_properties(gc-cli-explain PROPERTIES
     FIXTURES_REQUIRED gc_cli
     PASS_REGULAR_EXPRESSION "retained: lease")
+  add_test(NAME gc-cli-compact
+    COMMAND $<TARGET_FILE:liquid-cli> gc --compact --compact-below 0.5 ${LIQUID_GC_CLI_STORE})
+  set_tests_properties(gc-cli-compact PROPERTIES
+    FIXTURES_REQUIRED gc_cli
+    PASS_REGULAR_EXPRESSION "packs_compacted=0")
   add_test(NAME gc-cli-clean
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_GC_CLI_STORE})
   set_tests_properties(gc-cli-clean PROPERTIES FIXTURES_CLEANUP gc_cli)

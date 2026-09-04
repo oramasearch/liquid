@@ -1,8 +1,8 @@
 # Store garbage collection
 
-**Status: implemented for single-process local stores (liquid #8).** Leased roots, epoch
-marking, chunk-list reference extraction, whole-pack deletion, dry runs, and retained-chunk
-explanations are available through `liquid/store.hpp` and `liquid gc`.
+**Status: implemented for single-process local stores (liquid #8, #46).** Leased roots, epoch
+marking, chunk-list reference extraction, whole-pack deletion, sparse-pack compaction, dry runs,
+and retained-chunk explanations are available through `liquid/store.hpp` and `liquid gc`.
 
 ## What and why
 
@@ -56,9 +56,10 @@ reconstruction treats every frame as live unless the committed tombstone bitmap 
 Pack ids are never reused after deletion, so a committed tombstone can never identify a later
 frame.
 
-Partially live packs are not rewritten. Their dead frame bytes and live fraction are reported as
-`bytes_reclaimable_in_partially_dead_packs` and `partially_dead_packs`; liquid #46 adds pack
-rewriting. This issue deletes only wholly dead packs.
+Partially live packs report their dead frame bytes and live fraction as
+`bytes_reclaimable_in_partially_dead_packs` and `partially_dead_packs`. After a normal sweep,
+liquid #46 may compact those below `collection_options::compact_below`; the exact copy, manifest,
+recovery, and reader rules are in [store.md](store.md#pack-compaction).
 
 ## API and explanations
 
@@ -70,7 +71,7 @@ with either its lease path or the epoch high-water rule as the reason.
 The CLI opens the supplied store path, or the current directory when omitted:
 
 ```sh
-liquid gc [--explain] [store-path]
+liquid gc [--explain] [--compact] [--compact-below <fraction>] [store-path]
 ```
 
 `--explain` prints lines such as `blake3:… retained: lease … for root blake3:…` and identifies
@@ -85,10 +86,11 @@ LIQUID_SIM_SEEDS=2000 ctest --test-dir build -L sim-long --output-on-failure
 ```
 
 The focused tests cover two simultaneously leased roots, unrooted reclamation, expiry, renewal,
-release, shared chunks, a concurrent put, dry-run immutability, and index reconstruction. The
-seeded simulator interleaves rooted and orphan puts with renewal and collection and interrupts
-writes, renames, and pack removal. The named seed-140 regression replays a collection crash and
-verifies that a forced index reconstruction retains every root.
+release, shared chunks, a concurrent put, dry-run immutability, index reconstruction, and 30% and
+70% live-pack policy boundaries. The seeded simulator interleaves rooted and orphan puts with
+renewal, collection, and compaction-only passes and interrupts writes, renames, and pack removal.
+The named seed-140 regression replays a collection or compaction crash and verifies that a forced
+index reconstruction retains every root.
 
 ## How to change
 

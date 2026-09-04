@@ -17,16 +17,16 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 chunk store, garbage collection, deterministic crash simulator, first working repository, and TAAP/1 identities with rotation plus signed drips and changes are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 chunk store, garbage collection with pack compaction, deterministic crash simulator, first working repository, and TAAP/1 identities with rotation plus signed drips and changes are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error and digest APIs
 > are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put, get,
 > range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
-> leased roots, and epoch garbage collection. Capture subscriptions and remote operations remain
-> `unsupported` until their owning issues land. VFS full materialisation works on every platform;
-> lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree
-> reads and writes, recorded moves
+> leased roots, epoch garbage collection, and pack compaction. Capture subscriptions and remote operations
+> remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
+> lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
+> and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
 > locks, and status are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.

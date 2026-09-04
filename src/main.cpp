@@ -1,3 +1,5 @@
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <print>
@@ -29,6 +31,20 @@ int collect(std::span<char*> args) {
         const std::string_view argument = args[index];
         if (argument == "--explain") {
             options.explain = true;
+        } else if (argument == "--compact") {
+            options.compact_only = true;
+        } else if (argument == "--compact-below") {
+            if (++index == args.size()) {
+                std::println(stderr, "gc: --compact-below requires a fraction");
+                return 2;
+            }
+            char* end = nullptr;
+            options.compact_below = std::strtod(args[index], &end);
+            if (end == args[index] || *end != '\0' || !std::isfinite(options.compact_below) ||
+                options.compact_below < 0.0 || options.compact_below > 1.0) {
+                std::println(stderr, "gc: --compact-below must be a fraction from zero to one");
+                return 2;
+            }
         } else if (argument.starts_with("-")) {
             std::println(stderr, "unknown gc option: {}", argument);
             return 2;
@@ -56,10 +72,14 @@ int collect(std::span<char*> args) {
                  report->live_objects,
                  report->live_chunks,
                  report->dead_chunks);
-    std::println("packs_deleted={} bytes_reclaimed={} partial_pack_bytes={}",
+    std::println("packs_deleted={} bytes_reclaimed={} partial_pack_bytes={} packs_compacted={}",
                  report->packs_deleted,
                  report->bytes_reclaimed,
-                 report->bytes_reclaimable_in_partially_dead_packs);
+                 report->bytes_reclaimable_in_partially_dead_packs,
+                 report->packs_compacted);
+    std::println("compaction_bytes_reclaimed={} compaction_bytes_written={}",
+                 report->bytes_reclaimed_by_compaction,
+                 report->bytes_written_by_compaction);
     if (options.explain) {
         for (const auto& retained : report->retained_chunks)
             std::println("{} retained: {}", liquid::to_string(retained.id), retained.reason);

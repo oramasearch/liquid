@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <random>
 #include <string>
 #include <utility>
@@ -72,6 +74,45 @@ liquid::runtime::task<liquid::digest> put_during_collection(liquid::store* store
     if (!put)
         co_return std::unexpected(put.error());
     co_return *put;
+}
+
+std::uint32_t read_u32(const std::vector<std::byte>& input, std::size_t offset) {
+    std::uint32_t value = 0;
+    for (unsigned index = 0; index != 4; ++index) {
+        value |= std::uint32_t(std::to_integer<unsigned char>(input[offset + index]))
+                 << (index * 8U);
+    }
+    return value;
+}
+
+std::vector<std::vector<std::byte>> stored_frames(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    EXPECT_TRUE(input.is_open());
+    const std::vector<char> raw((std::istreambuf_iterator<char>(input)), {});
+    std::vector<std::byte> bytes;
+    bytes.reserve(raw.size());
+    for (const auto value : raw) {
+        bytes.push_back(std::byte{static_cast<unsigned char>(value)});
+    }
+    std::vector<std::vector<std::byte>> frames;
+    std::size_t offset = 16;
+    while (offset + 49 <= bytes.size() && std::to_integer<char>(bytes[offset]) == 'L' &&
+           std::to_integer<char>(bytes[offset + 1]) == 'Q' &&
+           std::to_integer<char>(bytes[offset + 2]) == 'F') {
+        const auto size = 49ULL + read_u32(bytes, offset + 12);
+        if (size > bytes.size() - offset) {
+            break;
+        }
+        frames.emplace_back(bytes.begin() + offset, bytes.begin() + offset + size);
+        offset += size;
+    }
+    return frames;
+}
+
+bool contains_frame(const std::vector<std::vector<std::byte>>& haystack,
+                    const std::vector<std::byte>& needle) {
+    return std::ranges::any_of(haystack,
+                               [&needle](const auto& candidate) { return candidate == needle; });
 }
 
 } // namespace
@@ -256,4 +297,95 @@ TEST(GarbageCollection, RebuiltIndexHonorsCommittedTombstones) {
     EXPECT_TRUE(liquid::runtime::block_on(store.contains(*live)).value_or(false));
     EXPECT_FALSE(liquid::runtime::block_on(store.contains(*dead)).value_or(true));
     EXPECT_TRUE(liquid::runtime::block_on(store.get(*live)).has_value());
+}
+
+TEST(GarbageCollection, CompactsThirtyPercentLivePackWithoutChangingFrames) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    std::vector<liquid::digest> ids;
+    std::vector<liquid::lease> roots;
+    for (std::uint64_t index = 0; index != 10; ++index) {
+        const auto id = liquid::runtime::block_on(store.put(bytes(8192, 1000 + index)));
+        ASSERT_TRUE(id.has_value());
+        ids.push_back(*id);
+        if (index < 3) {
+            auto root = liquid::runtime::block_on(store.lease_root(*id, std::chrono::hours{1}));
+            ASSERT_TRUE(root.has_value());
+            roots.push_back(std::move(*root));
+        }
+    }
+    const auto old_pack = temporary.path() / "packs" / "pack-1.pack";
+    const auto old_frames = stored_frames(old_pack);
+    ASSERT_EQ(old_frames.size(), 20U);
+
+    const auto report = liquid::runtime::block_on(store.collect());
+    ASSERT_TRUE(report.has_value()) << report.error().message;
+    EXPECT_EQ(report->packs_compacted, 1U);
+    EXPECT_GT(report->bytes_written_by_compaction, 0U);
+    EXPECT_GT(report->bytes_reclaimed_by_compaction, 0U);
+    EXPECT_FALSE(std::filesystem::exists(old_pack));
+    const auto replacement = temporary.path() / "packs" / "pack-2.pack";
+    const auto replacement_frames = stored_frames(replacement);
+    ASSERT_EQ(replacement_frames.size(), 6U);
+    for (const auto& frame : replacement_frames) {
+        EXPECT_TRUE(contains_frame(old_frames, frame));
+    }
+    for (std::size_t index = 0; index != 3; ++index) {
+        const auto got = liquid::runtime::block_on(store.get(ids[index]));
+        ASSERT_TRUE(got.has_value()) << got.error().message;
+        EXPECT_EQ(*got, bytes(8192, 1000 + index));
+    }
+
+    store = {};
+    std::filesystem::remove_all(temporary.path() / "index");
+    store = open_store(temporary.path());
+    for (std::size_t index = 0; index != 3; ++index) {
+        const auto got = liquid::runtime::block_on(store.get(ids[index]));
+        ASSERT_TRUE(got.has_value()) << got.error().message;
+        EXPECT_EQ(*got, bytes(8192, 1000 + index));
+    }
+}
+
+TEST(GarbageCollection, LeavesSeventyPercentLivePackAlone) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    for (std::uint64_t index = 0; index != 10; ++index) {
+        const auto id = liquid::runtime::block_on(store.put(bytes(8192, 2000 + index)));
+        ASSERT_TRUE(id.has_value());
+        if (index < 7) {
+            auto root = liquid::runtime::block_on(store.lease_root(*id, std::chrono::hours{1}));
+            ASSERT_TRUE(root.has_value());
+        }
+    }
+    const auto report = liquid::runtime::block_on(store.collect());
+    ASSERT_TRUE(report.has_value()) << report.error().message;
+    EXPECT_EQ(report->packs_compacted, 0U);
+    EXPECT_TRUE(std::filesystem::exists(temporary.path() / "packs" / "pack-1.pack"));
+    EXPECT_FALSE(std::filesystem::exists(temporary.path() / "packs" / "pack-2.pack"));
+}
+
+TEST(GarbageCollection, DisabledCompactionChangesNothingUntilCompactOnlyPass) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    for (std::uint64_t index = 0; index != 10; ++index) {
+        const auto id = liquid::runtime::block_on(store.put(bytes(8192, 3000 + index)));
+        ASSERT_TRUE(id.has_value());
+        if (index < 3) {
+            auto root = liquid::runtime::block_on(store.lease_root(*id, std::chrono::hours{1}));
+            ASSERT_TRUE(root.has_value());
+        }
+    }
+    liquid::collection_options disabled;
+    disabled.compact_below = 0.0;
+    const auto swept = liquid::runtime::block_on(store.collect(disabled));
+    ASSERT_TRUE(swept.has_value()) << swept.error().message;
+    EXPECT_EQ(swept->packs_compacted, 0U);
+    EXPECT_TRUE(std::filesystem::exists(temporary.path() / "packs" / "pack-1.pack"));
+
+    liquid::collection_options compact_only;
+    compact_only.compact_only = true;
+    const auto compacted = liquid::runtime::block_on(store.collect(compact_only));
+    ASSERT_TRUE(compacted.has_value()) << compacted.error().message;
+    EXPECT_EQ(compacted->packs_compacted, 1U);
+    EXPECT_FALSE(std::filesystem::exists(temporary.path() / "packs" / "pack-1.pack"));
 }

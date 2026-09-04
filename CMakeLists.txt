@@ -227,6 +227,7 @@ add_library(libliquid
   src/store.cpp
   src/store/chunker.cpp
   src/store/collector.cpp
+  src/store/compactor.cpp
   src/store/faults.cpp
   src/store/index.cpp
   src/store/leases.cpp

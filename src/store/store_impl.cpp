@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 
 #include "chunker.hpp"
@@ -135,13 +137,16 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         auto objects = co_await result->load_objects();
         if (!objects)
             co_return std::unexpected(objects.error());
+        auto collection = co_await load_collection_manifest(result->root_);
+        if (!collection)
+            co_return std::unexpected(collection.error());
+        auto recovered = co_await result->recover_pending_compactions(*collection);
+        if (!recovered)
+            co_return std::unexpected(recovered.error());
         const bool manifest_exists = std::filesystem::exists(result->root_ / "index" / "MANIFEST");
         auto opened = co_await result->index_.open();
         if (!opened && opened.error().code != errc::corrupt)
             co_return std::unexpected(opened.error());
-        auto collection = co_await load_collection_manifest(result->root_);
-        if (!collection)
-            co_return std::unexpected(collection.error());
         auto indexed = co_await result->index_packs(
             !opened || !manifest_exists || result->index_.collection_epoch() != collection->epoch);
         if (!indexed)
@@ -151,6 +156,59 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         co_return std::unexpected(store_error(errc::io, caught.what(), root.string()));
     } catch (const std::exception& caught) {
         co_return std::unexpected(store_error(errc::internal, caught.what(), root.string()));
+    }
+}
+
+runtime::task<void>
+store_backend::recover_pending_compactions(const collection_manifest& manifest) {
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(root_ / "gc")) {
+            const auto name = entry.path().filename().string();
+            constexpr std::string_view prefix = "compact-";
+            constexpr std::string_view suffix = ".pending";
+            if (!name.starts_with(prefix) || !name.ends_with(suffix)) {
+                continue;
+            }
+            const auto values_text = std::string_view(name).substr(
+                prefix.size(), name.size() - prefix.size() - suffix.size());
+            std::array<std::uint64_t, 3> values{};
+            std::size_t value_index = 0;
+            std::size_t start = 0;
+            bool valid = true;
+            while (start <= values_text.size() && value_index < values.size()) {
+                const auto end = values_text.find('-', start);
+                const auto part = values_text.substr(start, end - start);
+                const auto [next, error_code] =
+                    std::from_chars(part.data(), part.data() + part.size(), values[value_index]);
+                if (error_code != std::errc{} || next != part.data() + part.size()) {
+                    valid = false;
+                    break;
+                }
+                ++value_index;
+                if (end == std::string_view::npos) {
+                    break;
+                }
+                start = end + 1;
+            }
+            if (!valid || value_index != values.size() ||
+                values[1] > std::numeric_limits<std::uint32_t>::max() ||
+                values[2] > std::numeric_limits<std::uint32_t>::max()) {
+                std::error_code ignored;
+                std::filesystem::remove(entry.path(), ignored);
+                continue;
+            }
+            const auto old_pack_id = static_cast<std::uint32_t>(values[1]);
+            const auto new_pack_id = static_cast<std::uint32_t>(values[2]);
+            const auto remove_id = manifest.epoch >= values[0] ? old_pack_id : new_pack_id;
+            const auto path = root_ / "packs" / ("pack-" + std::to_string(remove_id) + ".pack");
+            visit_fault({fault_operation::remove, fault_phase::before, path});
+            std::filesystem::remove(path);
+            visit_fault({fault_operation::remove, fault_phase::after, path});
+            std::filesystem::remove(entry.path());
+        }
+        co_return result<void>{};
+    } catch (const std::system_error& caught) {
+        co_return std::unexpected(store_error(errc::io, caught.what(), (root_ / "gc").string()));
     }
 }
 
