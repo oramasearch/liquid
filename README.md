@@ -34,7 +34,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
-> locks, status, and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
+> locks, status, public tree/change diff, paged result, attestation, trace, and SBOM enumeration,
+> and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
 > Directory CRDT checkpoints are compact and shallow-loaded, remote changes are observed through
 > patches, and every automerge apply, merge, and sync-receive failure is checked.

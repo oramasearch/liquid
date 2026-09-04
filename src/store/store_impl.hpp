@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <boost/capy/ex/async_mutex.hpp>
@@ -55,6 +56,7 @@ public:
     [[nodiscard]] runtime::task<void> register_remote(blob value);
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] std::vector<digest> attestations(digest subject) const;
+    [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>> lease_root(digest id,
                                                                          std::chrono::seconds ttl);

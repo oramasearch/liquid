@@ -5,7 +5,8 @@ that require observation and sandbox enforcement run only when FUSE is configure
 privileged Linux container runs them for real. Portable tests cover action-index persistence,
 rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA provenance derivation
 and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
-SPDX/CycloneDX structure, and fully marked system-binary inference.
+SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages over public
+results, attestations, traces, and result-scoped SBOMs.
 
 `test_graph.cpp` covers canonical demand, read-order dependencies, red-green validation, early
 cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Its

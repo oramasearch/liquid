@@ -1598,6 +1598,17 @@ std::vector<digest> store_backend::attestations(digest subject) const {
     return subjects_.find(subject);
 }
 
+std::vector<digest> store_backend::object_ids(std::string_view kind) const {
+    auto output = std::vector<digest>{};
+    for (const auto& [unused, object] : objects_) {
+        static_cast<void>(unused);
+        if (object.kind == kind) {
+            output.push_back(object.id);
+        }
+    }
+    return output;
+}
+
 runtime::task<std::optional<object_key_version>> store_backend::key_version(digest id) {
     const auto object = objects_.find(to_string(id));
     std::string reference;

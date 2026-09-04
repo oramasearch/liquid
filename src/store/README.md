@@ -26,7 +26,9 @@ Each trace retains its named results, including results from wraps that did not 
 Collector explanations carry object-level reasons and count live policy roots by rule name.
 `subject_index.cpp` maps an attestation's signed subject digest to its canonical attestation record
 digest. The map updates when records are stored and rebuilds from attestation objects when the store
-opens; build-input policy still loads and verifies every indexed record before counting it.
+opens; build-input policy still loads and verifies every indexed record before counting it. The
+private object-kind listing used by repository record pages returns canonical object IDs without
+exposing store internals in the public API.
 
 Repository internals can query the opened store's root and configuration without exposing either
 through the public store API. This places per-repository checkpoint and journal entry points under

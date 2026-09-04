@@ -157,6 +157,10 @@ std::vector<digest> store::attestations(digest subject) const {
     return impl_ ? impl_->value->attestations(subject) : std::vector<digest>{};
 }
 
+std::vector<digest> store::object_ids(std::string_view kind) const {
+    return impl_ ? impl_->value->object_ids(kind) : std::vector<digest>{};
+}
+
 runtime::task<std::vector<std::byte>> store::get(digest id) {
     if (!impl_)
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -75,6 +76,10 @@ auto physical_copies(const std::filesystem::path& packs, const liquid::digest& i
 
 auto text(const std::vector<std::byte>& value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
+auto has_change(const liquid::tree_diff_entry& entry, liquid::tree_diff_kind kind) -> bool {
+    return std::ranges::find(entry.changes, kind) != entry.changes.end();
 }
 
 auto sha256_options() -> liquid::repository_options {
@@ -432,6 +437,106 @@ TEST(Repository, tree_and_blob_read_historical_records) {
         liquid::runtime::block_on(repository.blob(directory->entries.front().ref));
     ASSERT_TRUE(contents) << contents.error().message;
     EXPECT_EQ(text(*contents), "contents");
+}
+
+TEST(Repository, diff_reports_path_changes_and_optional_text_hunks) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("old-name", content("move\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("modified", content("one\ntwo\nthree\nfour\nfive\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("removed", content("remove\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("mode", content("mode\n"))));
+    const auto before = liquid::runtime::block_on(repository.cut("before"));
+    ASSERT_TRUE(before) << before.error().message;
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("old-name", "new-name")));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("modified", content("one\nchanged\nthree\nchanged-again\nfive\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.remove("removed")));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("mode", content("mode\n"), {.mode = 0100755})));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("added", content("add\n"))));
+    const auto after = liquid::runtime::block_on(repository.cut("after"));
+    ASSERT_TRUE(after) << after.error().message;
+
+    const auto changes =
+        liquid::runtime::block_on(repository.diff(*before, *after, {.text = true}));
+    ASSERT_TRUE(changes) << changes.error().message;
+    ASSERT_EQ(changes->size(), 5U);
+
+    const auto moved = std::ranges::find(*changes, "new-name", &liquid::tree_diff_entry::path);
+    ASSERT_NE(moved, changes->end());
+    EXPECT_EQ(moved->old_path, "old-name");
+    EXPECT_TRUE(has_change(*moved, liquid::tree_diff_kind::moved));
+    EXPECT_TRUE(moved->old_blob);
+    EXPECT_TRUE(moved->new_blob);
+
+    const auto modified = std::ranges::find(*changes, "modified", &liquid::tree_diff_entry::path);
+    ASSERT_NE(modified, changes->end());
+    EXPECT_TRUE(has_change(*modified, liquid::tree_diff_kind::modified));
+    ASSERT_TRUE(modified->line_hunks);
+    ASSERT_EQ(modified->line_hunks->size(), 2U);
+    EXPECT_EQ(modified->line_hunks->at(0).old_line, 2U);
+    EXPECT_EQ(modified->line_hunks->at(1).old_line, 4U);
+
+    const auto removed = std::ranges::find(*changes, "removed", &liquid::tree_diff_entry::path);
+    ASSERT_NE(removed, changes->end());
+    EXPECT_TRUE(has_change(*removed, liquid::tree_diff_kind::removed));
+    EXPECT_TRUE(removed->old_blob);
+    EXPECT_FALSE(removed->new_blob);
+    ASSERT_TRUE(removed->line_hunks);
+    ASSERT_EQ(removed->line_hunks->size(), 1U);
+    EXPECT_EQ(removed->line_hunks->front().old_count, 1U);
+
+    const auto added = std::ranges::find(*changes, "added", &liquid::tree_diff_entry::path);
+    ASSERT_NE(added, changes->end());
+    ASSERT_TRUE(added->line_hunks);
+    ASSERT_EQ(added->line_hunks->size(), 1U);
+    EXPECT_EQ(added->line_hunks->front().new_count, 1U);
+
+    const auto mode = std::ranges::find(*changes, "mode", &liquid::tree_diff_entry::path);
+    ASSERT_NE(mode, changes->end());
+    EXPECT_TRUE(has_change(*mode, liquid::tree_diff_kind::mode_changed));
+    EXPECT_FALSE(has_change(*mode, liquid::tree_diff_kind::modified));
+
+    const auto old_snapshot = liquid::runtime::block_on(repository.at(*before));
+    const auto new_snapshot = liquid::runtime::block_on(repository.at(*after));
+    ASSERT_TRUE(old_snapshot);
+    ASSERT_TRUE(new_snapshot);
+    const auto tree_changes =
+        liquid::runtime::block_on(repository.diff(old_snapshot->root, new_snapshot->root));
+    ASSERT_TRUE(tree_changes);
+    EXPECT_EQ(tree_changes->size(), changes->size());
+    EXPECT_TRUE(std::ranges::all_of(
+        *tree_changes, [](const auto& entry) { return !entry.line_hunks.has_value(); }));
+}
+
+TEST(Repository, diff_surfaces_recorded_conflict_values) {
+    temporary_repository left_location;
+    temporary_repository right_location;
+    auto left = liquid::runtime::block_on(liquid::repository::create(left_location.path()));
+    auto right = liquid::runtime::block_on(liquid::repository::create(right_location.path()));
+    ASSERT_TRUE(left);
+    ASSERT_TRUE(right);
+    ASSERT_TRUE(liquid::runtime::block_on(left->write("same", content("left"))));
+    const auto before = liquid::runtime::block_on(left->cut("before"));
+    ASSERT_TRUE(before);
+    ASSERT_TRUE(liquid::runtime::block_on(right->write("same", content("right"))));
+    ASSERT_TRUE(liquid::runtime::block_on(right->cut("right")));
+    ASSERT_TRUE(liquid::runtime::block_on(left->combine(std::move(*right), "same")));
+    const auto conflicted = liquid::runtime::block_on(left->cut("conflicted"));
+    ASSERT_TRUE(conflicted);
+
+    const auto changes = liquid::runtime::block_on(left->diff(*before, *conflicted));
+    ASSERT_TRUE(changes) << changes.error().message;
+    const auto same = std::ranges::find(*changes, "same", &liquid::tree_diff_entry::path);
+    ASSERT_NE(same, changes->end());
+    EXPECT_TRUE(has_change(*same, liquid::tree_diff_kind::conflicted));
+    EXPECT_TRUE(same->old_conflicts.empty());
+    EXPECT_EQ(same->new_conflicts.size(), 2U);
 }
 
 TEST(Repository, write_modes_and_nested_references_are_preserved) {

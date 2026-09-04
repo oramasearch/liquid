@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/export.hpp"
@@ -133,6 +134,7 @@ private:
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
+    [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
                                                   algorithm hash_algorithm);

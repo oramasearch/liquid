@@ -9,7 +9,6 @@
 #include <set>
 #include <sstream>
 
-#include "build/cache.hpp"
 #include "build/policy.hpp"
 #include "build/repository_access.hpp"
 #include "build/why.hpp"
@@ -425,7 +424,7 @@ auto result_matches(repository& source,
         value->outputs, [&](const action_output& output) { return output.path == target; });
 }
 
-auto quarantine_detail(const objects::action_index_entry& entry) -> std::string {
+auto quarantine_detail(const repository_result& entry) -> std::string {
     auto detail = std::string{"the action index quarantines this divergent result"};
     if (entry.verification) {
         detail += "; verification attestation: ";
@@ -743,34 +742,36 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
         }
     }
     if (!selected) {
-        auto cache = build_detail::disk_cache{*source};
-        auto cache_opened = co_await cache.open();
-        if (!cache_opened) {
-            co_return std::unexpected(cache_opened.error());
-        }
-        auto index = build_detail::action_index{action_directory};
-        auto opened = co_await index.open();
-        if (!opened) {
-            co_return std::unexpected(opened.error());
-        }
-        auto entries = index.entries();
-        std::ranges::sort(entries, std::greater{}, &objects::action_index_entry::sequence);
         auto current = std::optional<result_id>{};
-        for (const auto& entry : entries) {
-            auto lookup = build_detail::lookup_record{cache_status::miss, result_id{entry.result}};
-            auto matches = co_await build_detail::result_matches(*source, lookup, target, parsed);
-            if (!matches || !*matches) {
-                continue;
+        auto filter = result_filter{.page = {.limit = 1'000}};
+        auto complete = false;
+        while (!complete && (!selected || !selected->previous)) {
+            auto records = co_await source->results(filter);
+            if (!records) {
+                co_return std::unexpected(records.error());
             }
-            if (!current) {
-                current = result_id{entry.result};
-                selected = lookup;
-                continue;
+            for (const auto& entry : records->records) {
+                if (entry.sequence == 0) {
+                    continue;
+                }
+                auto lookup = build_detail::lookup_record{cache_status::miss, entry.id};
+                auto matches =
+                    co_await build_detail::result_matches(*source, lookup, target, parsed);
+                if (!matches || !*matches) {
+                    continue;
+                }
+                if (!current) {
+                    current = entry.id;
+                    selected = lookup;
+                    continue;
+                }
+                if (!build_detail::same_digest(current->value, entry.id.value)) {
+                    selected->previous = entry.id;
+                    break;
+                }
             }
-            if (!build_detail::same_digest(current->value, entry.result)) {
-                selected->previous = result_id{entry.result};
-                break;
-            }
+            complete = records->done;
+            filter.page.cursor = records->next;
         }
     }
     if (!selected) {
@@ -781,29 +782,23 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
     report.lookup = selected->status;
     report.result = selected->result;
     report.previous_result = selected->previous;
-    auto cache = build_detail::disk_cache{*source};
-    auto cache_opened = co_await cache.open();
-    if (!cache_opened) {
-        co_return std::unexpected(cache_opened.error());
+    auto quarantined = std::optional<repository_result>{};
+    auto indexed_result = co_await source->results({.id = selected->result});
+    if (!indexed_result) {
+        co_return std::unexpected(indexed_result.error());
     }
-    const auto quarantined = [&]() -> const objects::action_index_entry* {
-        const auto matches = [&](const result_id& id) {
-            return std::ranges::find_if(cache.entries(), [&](const auto& entry) {
-                return build_detail::same_digest(entry.result, id.value) && entry.divergent;
-            });
-        };
-        const auto result = matches(selected->result);
-        if (result != cache.entries().end()) {
-            return &*result;
+    if (!indexed_result->records.empty() && indexed_result->records.front().divergent) {
+        quarantined = indexed_result->records.front();
+    }
+    if (!quarantined && selected->previous) {
+        auto indexed_previous = co_await source->results({.id = *selected->previous});
+        if (!indexed_previous) {
+            co_return std::unexpected(indexed_previous.error());
         }
-        if (selected->previous) {
-            const auto previous = matches(*selected->previous);
-            if (previous != cache.entries().end()) {
-                return &*previous;
-            }
+        if (!indexed_previous->records.empty() && indexed_previous->records.front().divergent) {
+            quarantined = indexed_previous->records.front();
         }
-        return nullptr;
-    }();
+    }
     auto value = co_await build_detail::load_result(*source, selected->result.value);
     if (!value) {
         report.cause = {.reason = cache_miss_reason::unknown,

@@ -6,6 +6,11 @@ state directory; the handle borrows the store, and repository, directory, ref, a
 owners carry the repository identity. Redaction persists the caller's replacement and a signed marker before targeted store
 tombstoning, pack compaction, and the required `not_found` verification.
 
+Public tree comparison flattens immutable tree records into repository-relative paths, matches
+entries by `node_id`, and reports moves independently from mode and content changes. Change-level
+comparison also attaches the conflict values stored on each change. Text hunk generation reads
+blob contents only when the caller opts in.
+
 At every cut and configured drip interval, cached directory documents are compact-saved, stored,
 and immediately reopened shallowly. The repository marker is published before the covered journal
 state is retired; open restores later journaled working-tree updates on the shallow documents.

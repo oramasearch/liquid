@@ -188,6 +188,32 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `operations()` / `undo(op_id)` | every operation above appends an `op` record to `ops` (`{ id, kind, from, to, at, by, inverse }`). `operations()` returns them newest first; `undo` applies an inverse as a new operation. Undo never rewrites history. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
 
+## Public tree comparison
+
+Issue #166 adds `repository::diff` overloads for two changes, two tree-record digests, or two
+already loaded `tree` values. The result is sorted by repository-relative path. Each
+`tree_diff_entry` carries a vector of independent `tree_diff_kind` values, so one path can be both
+moved and modified or both mode-changed and conflicted. `path` is the destination path when the
+entry exists on the new side; a move also carries `old_path`.
+
+Entries match by `node_id`, not by name. A delete and recreate at the same path is therefore one
+removed entry and one added entry, while a rename of the same node is a move. Directory record
+digests change whenever a descendant changes, but that does not report a modification for every
+ancestor directory. Blob entries carry `old_blob` and `new_blob` when those sides exist. Modes are
+also present per side, including on pure mode changes.
+
+Change comparison attaches the exact before and after conflict-reference vectors stored in the
+two change records. A conflict-only change produces its own `conflicted` entry even when the tree
+record did not change. Tree comparison has no change record and therefore no conflict values.
+
+Text work is opt-in through `tree_diff_options::text`. Without it, diff reads tree records but does
+not materialise blob contents. With it, added, removed, and modified blobs are checked as UTF-8 and
+receive `line_hunks`, using the existing `line_change` shape from build diagnostics. Binary values
+leave `line_hunks` disengaged. The line algorithm returns separate hunks for separated edits; for inputs
+whose line matrix would exceed 4,000,000 cells it returns the exact common-prefix/common-suffix
+envelope as one bounded-memory hunk. The value type can gain Phase 4's syntax-aware `structural`
+field without changing these path, identity, conflict, or text fields.
+
 ## Document boundary
 
 **Decided (2026-09-04): one automerge document per directory.** The measurement below, made for
