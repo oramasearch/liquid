@@ -12,6 +12,7 @@
 #endif
 
 #include "build/cache.hpp"
+#include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/why.hpp"
 #include "liquid/build.hpp"
@@ -131,26 +132,16 @@ public:
                                                  .toolchain = toolchain,
                                                  .platform = {"test", "test"}};
         const auto sandbox_id = sandbox.value_or(sandbox_);
-        auto action_bytes =
-            liquid::objects::encode(liquid::objects::action_record{action_input, sandbox_id});
-        EXPECT_TRUE(action_bytes) << action_bytes.error().message;
-        auto action = liquid::runtime::block_on(liquid::repository_detail::build_access::put_record(
-            repository_, std::move(*action_bytes)));
-        EXPECT_TRUE(action) << action.error().message;
-        auto value = liquid::action_result{.action = *action,
-                                           .outputs = {{std::move(output), 0644, content}},
+        const auto action = liquid::objects::action_record{action_input, sandbox_id};
+        auto value = liquid::action_result{.outputs = {{std::move(output), 0644, content}},
                                            .stdout_output = content,
                                            .stderr_output = content,
                                            .manifest = {{std::move(input), content}},
                                            .observed_at = std::chrono::floor<std::chrono::seconds>(
                                                std::chrono::system_clock::now())};
-        auto signed_value = liquid::runtime::block_on(
-            liquid::repository_detail::build_access::sign_result(repository_, value));
-        EXPECT_TRUE(signed_value) << signed_value.error().message;
-        auto result_bytes = liquid::objects::encode(value);
-        EXPECT_TRUE(result_bytes) << result_bytes.error().message;
-        auto id = liquid::runtime::block_on(liquid::repository_detail::build_access::put_record(
-            repository_, std::move(*result_bytes)));
+        auto id =
+            liquid::runtime::block_on(liquid::build_detail::testing::store_result_with_provenance(
+                repository_, action, value));
         EXPECT_TRUE(id) << id.error().message;
         auto cache = liquid::build_detail::disk_cache{repository_};
         EXPECT_TRUE(liquid::runtime::block_on(cache.open()));
@@ -166,6 +157,14 @@ public:
         auto cache = liquid::build_detail::disk_cache{repository_};
         ASSERT_TRUE(liquid::runtime::block_on(cache.open()));
         auto recorded = cache.record_lookup(liquid::cache_status::miss, current, previous);
+        ASSERT_TRUE(recorded) << recorded.error().message;
+    }
+
+    void quarantine(liquid::result_id value) {
+        auto cache = liquid::build_detail::disk_cache{repository_};
+        ASSERT_TRUE(liquid::runtime::block_on(cache.open()));
+        auto recorded =
+            liquid::runtime::block_on(cache.record_verification(value.value, sandbox_, true));
         ASSERT_TRUE(recorded) << recorded.error().message;
     }
 
@@ -348,6 +347,24 @@ TEST(BuildWhy, target_without_a_record_is_never_built) {
         liquid::build::why(fixture.project(), "missing.o", fixture.cache_path()));
     ASSERT_TRUE(report) << report.error().message;
     EXPECT_EQ(report->cause.reason, liquid::cache_miss_reason::never_built);
+}
+
+TEST(BuildWhy, quarantined_result_uses_the_authoritative_index_flag) {
+    why_fixture fixture;
+    fixture.write("main.c", "int main(void) { return 0; }\n");
+    const auto root = fixture.cut();
+    const auto content = fixture.blob("main.c");
+    const auto toolchain = fixture.toolchain("/usr/bin/cc", "compiler");
+    const auto result =
+        fixture.publish({"cc", "main.c"}, root, toolchain, "main.o", "main.c", content);
+    fixture.quarantine(result);
+    fixture.lookup(result);
+
+    auto report = liquid::runtime::block_on(
+        liquid::build::why(fixture.project(), "main.o", fixture.cache_path()));
+    ASSERT_TRUE(report) << report.error().message;
+    EXPECT_EQ(report->cause.reason, liquid::cache_miss_reason::divergent_result_quarantined);
+    EXPECT_NE(report->cause.detail.find("verification attestation"), std::string::npos);
 }
 
 TEST(BuildWhy, default_cache_identity_survives_build_configuration_changes) {

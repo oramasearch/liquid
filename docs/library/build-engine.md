@@ -106,8 +106,6 @@ same candidate key, the producer's TAAP `result` signature and referenced proven
 manifest entry matches, and every output and stream blob record still exists.
 `action_result::cache` and `why` describe the current execution request and are not part of the
 immutable producer-signed result bytes.
-`action_result::cache` and `why` describe the current execution request and are not part of the
-immutable producer-signed result bytes.
 `src/build/why.cpp` turns recorded comparisons into the public `why_report` and persists the
 completed-wrap counters used by `liquid cache stats`.
 
@@ -304,11 +302,10 @@ coarse end of the spectrum features/04 describes; the fine end arrives when the 
   recursive-Make fixture.
 - Every executed action carries a verified SLSA provenance attestation, and an identical cached
   execution reuses the same attestation digest.
-- Under-hashing is caught by construction: a test edits a header that was read but not declared and
-  asserts a miss naming that header, both digests, its UTF-8 line hunk, and its repository drip.
-- Portable record tests cover command, environment, toolchain, sandbox, never-built, imported-index,
-  divergence quarantine, and cumulative-stat explanations. The privileged Linux wrap test proves the
-  observed header and completed-wrap statistics end to end.
+- `why` names a changed header with both digests, its UTF-8 line hunk, and its repository drip.
+  Portable record tests cover command, environment, toolchain, sandbox, never-built, imported-index,
+  authoritative divergence quarantine, and cumulative-stat explanations. The privileged Linux wrap
+  test proves the observed header and completed-wrap statistics end to end.
 
 ## How to change
 

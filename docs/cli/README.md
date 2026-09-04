@@ -92,8 +92,10 @@ tree, toolchain tree, sandbox record, and repository history named by that looku
 an unrecorded checkout path to invent a cause. If a local lookup journal is absent, as on a machine
 that imported remote cache records, it uses action-index sequence and the signed result manifests.
 An absent target is `never built`; incomplete or ambiguous records are `unknown` and retain the
-known action and result identifiers. `--json` emits the same fields, including nullable digest,
-line-change, attribution, environment, and tool fields.
+known action and result identifiers. A divergence explanation is emitted only for the authoritative
+action-index flag written by `liquid verify`, with its verification attestation digest when recorded.
+`--json` emits the same fields, including nullable digest, line-change, attribution, environment,
+and tool fields.
 
 `liquid cache stats` reports cumulative completed-wrap counts. Disk is the only implemented tier;
 its hit rate and bytes avoided are reported, while memory and remote say `unavailable` and remote

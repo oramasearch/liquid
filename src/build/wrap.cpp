@@ -25,8 +25,8 @@
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/verify.hpp"
-#include "build/wrap.hpp"
 #include "build/why.hpp"
+#include "build/wrap.hpp"
 #include "formats/json.hpp"
 #include "objects/records.hpp"
 #include "sandbox/sandbox.hpp"
@@ -1274,7 +1274,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                          observed_run& run,
                                          const wrap_options& options,
                                          bool outer_miss_recorded,
-    wrap_report& report) {
+                                         wrap_report& report) {
     report.exit = run.launch.exit;
     auto cut = co_await source.cut("wrap output snapshot");
     if (!cut) {

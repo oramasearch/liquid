@@ -386,6 +386,15 @@ auto result_matches(repository& source,
         value->outputs, [&](const action_output& output) { return output.path == target; });
 }
 
+auto quarantine_detail(const objects::action_index_entry& entry) -> std::string {
+    auto detail = std::string{"the action index quarantines this divergent result"};
+    if (entry.verification) {
+        detail += "; verification attestation: ";
+        detail += to_string(*entry.verification);
+    }
+    return detail;
+}
+
 } // namespace
 
 auto wrap_cache_directory(const std::filesystem::path& working_tree,
@@ -719,6 +728,29 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
     report.lookup = selected->status;
     report.result = selected->result;
     report.previous_result = selected->previous;
+    auto cache = build_detail::disk_cache{*source};
+    auto cache_opened = co_await cache.open();
+    if (!cache_opened) {
+        co_return std::unexpected(cache_opened.error());
+    }
+    const auto quarantined = [&]() -> const objects::action_index_entry* {
+        const auto matches = [&](const result_id& id) {
+            return std::ranges::find_if(cache.entries(), [&](const auto& entry) {
+                return build_detail::same_digest(entry.result, id.value) && entry.divergent;
+            });
+        };
+        const auto result = matches(selected->result);
+        if (result != cache.entries().end()) {
+            return &*result;
+        }
+        if (selected->previous) {
+            const auto previous = matches(*selected->previous);
+            if (previous != cache.entries().end()) {
+                return &*previous;
+            }
+        }
+        return nullptr;
+    }();
     auto value = co_await build_detail::load_result(*source, selected->result.value);
     if (!value) {
         report.cause = {.reason = cache_miss_reason::unknown,
@@ -734,6 +766,11 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
     }
     if (selected->status == cache_status::hit) {
         report.cause = {.reason = cache_miss_reason::unknown, .detail = "cache hit"};
+        co_return report;
+    }
+    if (quarantined) {
+        report.cause = {.reason = cache_miss_reason::divergent_result_quarantined,
+                        .detail = build_detail::quarantine_detail(*quarantined)};
         co_return report;
     }
     auto action = co_await build_detail::load_action(*source, value->action);
