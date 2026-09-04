@@ -45,6 +45,7 @@ and Zetta's.
 ## Documentation
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
+- [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 | | |
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |
@@ -131,6 +132,12 @@ library, never the other way round).
 | `liquid::liquid` (`libliquid`) | the library: `libliquid.a`, or `libliquid.so`/`.dylib` with `-DBUILD_SHARED_LIBS=ON`; symbols hidden by default, `LIQUID_EXPORT` marks the API |
 | `liquid-cli` → `liquid` | the command-line binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
 | `liquid-tests` | GoogleTest; on by default only when liquid is the top-level project |
+
+### Build
+
+`LIQUID_BUILD_BENCH=ON` adds the optional `bench/chunk-index/chunk-index-bench` target and
+fetches its RocksDB and LMDB dependencies. It defaults to OFF, so the default configure does not
+fetch or build benchmark code.
 
 ```sh
 cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
