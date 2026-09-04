@@ -19,6 +19,9 @@ auto tree_remove(int argc, char** argv) -> int;
 auto compose_nest(int argc, char** argv) -> int;
 auto compose_split(int argc, char** argv) -> int;
 auto compose_combine(int argc, char** argv) -> int;
+auto capture_pause(int argc, char** argv) -> int;
+auto capture_resume(int argc, char** argv) -> int;
+auto capture_watch(int argc, char** argv) -> int;
 auto history_undo(int argc, char** argv) -> int;
 auto history_operations(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
@@ -102,8 +105,9 @@ constexpr auto commands = std::to_array<command>({
      "show or rotate the device identity",
      "available",
      liquid_cli::identity},
-    {"pause", "pause", "pause working-tree capture", "arrives with #5", nullptr},
-    {"resume", "resume", "resume working-tree capture", "arrives with #5", nullptr},
+    {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
+    {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
+    {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},
 });
 
 auto print_usage() -> void {

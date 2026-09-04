@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "liquid/drip.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
@@ -135,21 +136,50 @@ auto repo_status(int argc, char** argv) -> int {
     if (!current) {
         return fail(current.error());
     }
+    auto opened_capture =
+        liquid::runtime::block_on(liquid::capture::open(std::filesystem::current_path()));
+    if (!opened_capture) {
+        return fail(opened_capture.error());
+    }
+    auto capture = std::move(*opened_capture);
+    auto capture_current = capture.status();
+    if (!capture_current) {
+        return fail(capture_current.error());
+    }
+    auto closed = liquid::runtime::block_on(capture.close());
+    if (!closed) {
+        return fail(closed.error());
+    }
     const auto head = current->head ? liquid::to_string(current->head->value) : std::string{};
     if (json) {
         std::println("{{\"pending_drips\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
-                     "directories\":{},\"head\":{}}}",
+                     "directories\":{},\"head\":{},\"capture\":{{\"state\":{},\"pending_drips\":"
+                     "{},\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}}}}",
                      current->pending_drips,
                      current->paused ? "true" : "false",
                      current->conflicts.size(),
                      current->oversized_directories.size(),
-                     current->head ? json_string(head) : "null");
+                     current->head ? json_string(head) : "null",
+                     json_string(capture_current->state == liquid::capture_status::state::paused
+                                     ? "paused"
+                                     : "running"),
+                     capture_current->pending_drips,
+                     capture_current->overflow_count,
+                     capture_current->recrawl_count,
+                     json_string(capture_current->last_cursor.token));
     } else {
         std::println("pending_drips={}", current->pending_drips);
         std::println("paused={}", current->paused);
         std::println("conflicts={}", current->conflicts.size());
         std::println("oversized_directories={}", current->oversized_directories.size());
         std::println("head={}", head);
+        std::println("capture_state={}",
+                     capture_current->state == liquid::capture_status::state::paused ? "paused"
+                                                                                     : "running");
+        std::println("capture_pending_drips={}", capture_current->pending_drips);
+        std::println("capture_overflow_count={}", capture_current->overflow_count);
+        std::println("capture_recrawl_count={}", capture_current->recrawl_count);
+        std::println("capture_cursor={}", capture_current->last_cursor.token);
     }
     return 0;
 }

@@ -6,8 +6,7 @@ directory unless a command names another repository. Every library operation run
 
 `init` imports regular files already present in its target directory through
 `repository::write_file`. Subsequent external edits need the watcher-backed capture service from
-liquid #5; `pause` and `resume` will arrive with that service and are listed below for stable
-discovery but are not callable in this release.
+liquid #5. `status` opens capture while it gathers its report, and includes capture telemetry.
 
 ## Commands
 
@@ -35,8 +34,9 @@ that the table and `liquid --help` name the same commands.
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [store]` | Collect a store. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
-| `pause` | `pause` | Pause working-tree capture. | arrives with #5 |
-| `resume` | `resume` | Resume working-tree capture. | arrives with #5 |
+| `pause` | `pause` | Pause working-tree capture. | available |
+| `resume` | `resume` | Resume working-tree capture. | available |
+| `watch` | `watch` | Capture changes until Ctrl-C. | available |
 
 ## Output and errors
 
@@ -72,16 +72,18 @@ liquid mount /tmp/liquid-mount --read-only
 liquid materialise /tmp/liquid-checkout src
 liquid gc --dry-run .liquid-store
 liquid identity rotate
-liquid pause                 # arrives with #5
-liquid resume                # arrives with #5
+liquid pause
+liquid resume
+liquid watch
 ```
 
 ## How to verify
 
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
 two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
-combines it, reads the JSON history, undoes the move, verifies a locked mutation is refused, and
-runs dry-run collection. `cli-help-docs` compares the documented command names to `--help`.
+combines it, reads JSON history and operations, undoes the move, verifies a locked mutation is
+refused, pauses and resumes capture, and runs dry-run collection. `cli-help-docs` compares the
+documented command names to `--help`.
 
 ## How to change
 

@@ -306,6 +306,7 @@ endif()
 if(LIQUID_BUILD_CLI)
   add_executable(liquid-cli
     src/main.cpp
+    src/cli/capture.cpp
     src/cli/compose.cpp
     src/cli/gc.cpp
     src/cli/history.cpp
