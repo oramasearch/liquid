@@ -34,7 +34,7 @@ auto create(std::string_view device) -> document {
     return std::move(*result);
 }
 
-void sync(document &left, document &right) {
+void sync(document& left, document& right) {
     auto left_state = liquid::crdt::sync_state{};
     auto right_state = liquid::crdt::sync_state{};
     for (int round = 0; round < 20; ++round) {
@@ -97,6 +97,39 @@ TEST(CrdtDocument, validation_failure_leaves_heads_and_state_untouched) {
     EXPECT_EQ(result.error().code, liquid::errc::invalid_argument);
     EXPECT_EQ(*value.heads(), *before_heads);
     EXPECT_EQ(*value.save(), *before_save);
+}
+
+TEST(CrdtDocument, commit_options_reach_the_automerge_change) {
+    auto value = create("laptop");
+    auto applied = value.transact({write("note.txt", "blake3:note")},
+                                  {.message = "record note", .time = 1'725'000'000'123});
+    ASSERT_TRUE(applied) << applied.error().message;
+    auto saved = value.save_compact();
+    ASSERT_TRUE(saved) << saved.error().message;
+    auto loaded = automerge_cpp::Document::load(*saved);
+    ASSERT_TRUE(loaded) << loaded.error().message;
+    const auto changes = loaded->get_changes();
+    ASSERT_FALSE(changes.empty());
+    EXPECT_EQ(changes.back().message, "record note");
+    EXPECT_EQ(changes.back().timestamp, 1'725'000'000'123);
+}
+
+TEST(CrdtDocument, corrupt_sync_input_leaves_document_unchanged) {
+    auto source = create("laptop");
+    auto target = create("phone");
+    ASSERT_TRUE(source.transact({write("note.txt", "blake3:note")}));
+    auto source_state = liquid::crdt::sync_state{};
+    auto target_state = liquid::crdt::sync_state{};
+    auto outgoing = source.generate_sync_message(source_state);
+    ASSERT_TRUE(outgoing && *outgoing);
+    auto damaged = **outgoing;
+    damaged.pop_back();
+    auto before = target.save();
+    ASSERT_TRUE(before);
+    auto received = target.receive_sync_message(target_state, damaged);
+    ASSERT_FALSE(received);
+    EXPECT_EQ(received.error().code, liquid::errc::corrupt);
+    EXPECT_EQ(*target.save(), *before);
 }
 
 TEST(CrdtDocument, concurrent_write_and_directory_move_converge) {

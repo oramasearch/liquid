@@ -717,7 +717,7 @@ struct repository::impl {
             auto raw = co_await objects.get(saved->second);
             if (!raw)
                 co_return std::unexpected(raw.error());
-            auto loaded = crdt::directory_document::load(*raw, "local", "repository");
+            auto loaded = crdt::directory_document::load(*raw, "local", root_path.generic_string());
             if (!loaded)
                 co_return std::unexpected(loaded.error());
             auto inserted = directory_cache.emplace(id, std::move(*loaded));
@@ -729,7 +729,8 @@ struct repository::impl {
         }
         crdt::repo_id repository{};
         std::ranges::copy(current.repository, repository.begin());
-        auto created = crdt::directory_document::create(repository, "local", "repository");
+        auto created =
+            crdt::directory_document::create(repository, "local", root_path.generic_string());
         if (!created)
             co_return std::unexpected(created.error());
         auto inserted = directory_cache.emplace(id, std::move(*created));
@@ -743,11 +744,16 @@ struct repository::impl {
             auto saved_document = document.save();
             if (!saved_document)
                 co_return std::unexpected(saved_document.error());
+            auto reopened = crdt::directory_document::load(
+                *saved_document, "local", root_path.generic_string());
+            if (!reopened)
+                co_return std::unexpected(reopened.error());
             auto saved_id = co_await repository_detail::store_access::put_plain(
                 objects, std::move(*saved_document));
             if (!saved_id)
                 co_return std::unexpected(saved_id.error());
             current.dirs[node] = *saved_id;
+            document = std::move(*reopened);
         }
         auto encoded = encode_repository_document(current);
         if (!encoded)
@@ -911,8 +917,8 @@ struct repository::impl {
             co_return std::unexpected(encoded.error());
         co_return co_await store_detail::write_file(journal_marker(), std::move(*encoded));
     }
-    runtime::task<void> append_drip(std::string operation, const node_id& node) {
-        const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    runtime::task<void>
+    append_drip(std::string operation, const node_id& node, std::chrono::sys_seconds at) {
         auto body = cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                                       {"kind", "drip"},
                                       {"author", cbor::value{signing_key.identity().taap_id}},
@@ -1271,9 +1277,13 @@ struct repository::impl {
         if (!directory_document)
             co_return std::unexpected(directory_document.error());
         const auto existing_id = found == (*parent)->entries.end() ? node_id{} : found->second.node;
-        auto recorded =
-            (*directory_document)
-                ->put_entry(parts->back(), {"blob", existing_id, mode, to_string(*reference)});
+        const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        const auto time =
+            std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
+        auto recorded = (*directory_document)
+                            ->put_entry(parts->back(),
+                                        {"blob", existing_id, mode, to_string(*reference)},
+                                        crdt::commit_options{.message = "write", .time = time});
         if (!recorded)
             co_return std::unexpected(recorded.error());
         if (found != (*parent)->entries.end()) {
@@ -1294,7 +1304,7 @@ struct repository::impl {
         if (!operation)
             co_return std::unexpected(operation.error());
         record_operation(*operation, "write", path, {}, found->second.node, std::move(prior));
-        auto signed_drip = co_await append_drip("write", found->second.node);
+        auto signed_drip = co_await append_drip("write", found->second.node, at);
         if (!signed_drip)
             co_return std::unexpected(signed_drip.error());
         ++current.pending_drips;
@@ -1816,26 +1826,31 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     auto source_document = co_await impl_->directory((*source_parent)->node);
     if (!source_document)
         co_return std::unexpected(source_document.error());
+    const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    const auto time =
+        std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
+    auto options = crdt::commit_options{.message = "move", .time = time};
     if ((*source_parent)->node == (*destination_parent)->node) {
-        auto recorded = (*source_document)->rename_entry(source->back(), destination->back());
+        auto recorded =
+            (*source_document)->rename_entry(source->back(), destination->back(), options);
         if (!recorded)
             co_return std::unexpected(recorded.error());
     } else {
         auto destination_document = co_await impl_->directory((*destination_parent)->node);
         if (!destination_document)
             co_return std::unexpected(destination_document.error());
-        auto removed = (*source_document)->remove_entry(source->back());
+        auto removed = (*source_document)->remove_entry(source->back(), options);
         if (!removed)
             co_return std::unexpected(removed.error());
         const auto kind = found->second.kind == entry_kind::file        ? "blob"
                           : found->second.kind == entry_kind::directory ? "tree"
                                                                         : "repo";
-        auto inserted = (*destination_document)
-                            ->put_entry(destination->back(),
-                                        {kind,
-                                         found->second.node,
-                                         found->second.mode,
-                                         to_string(found->second.object)});
+        auto inserted =
+            (*destination_document)
+                ->put_entry(
+                    destination->back(),
+                    {kind, found->second.node, found->second.mode, to_string(found->second.object)},
+                    options);
         if (!inserted)
             co_return std::unexpected(inserted.error());
     }
@@ -1847,7 +1862,7 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     if (!operation)
         co_return std::unexpected(operation.error());
     impl_->record_operation(*operation, "move", from, to, moved_node, std::nullopt);
-    auto signed_drip = co_await impl_->append_drip("move", moved_node);
+    auto signed_drip = co_await impl_->append_drip("move", moved_node, at);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++impl_->current.pending_drips;
@@ -1873,7 +1888,12 @@ runtime::task<void> repository::remove(std::string path) {
     auto directory = co_await impl_->directory((*parent)->node);
     if (!directory)
         co_return std::unexpected(directory.error());
-    auto recorded = (*directory)->remove_entry(parts->back());
+    const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    const auto time =
+        std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
+    auto recorded =
+        (*directory)
+            ->remove_entry(parts->back(), crdt::commit_options{.message = "remove", .time = time});
     if (!recorded)
         co_return std::unexpected(recorded.error());
     auto prior = found->second;
@@ -1882,7 +1902,7 @@ runtime::task<void> repository::remove(std::string path) {
     if (!operation)
         co_return std::unexpected(operation.error());
     impl_->record_operation(*operation, "remove", path, {}, prior.node, std::move(prior));
-    auto signed_drip = co_await impl_->append_drip("remove", prior.node);
+    auto signed_drip = co_await impl_->append_drip("remove", prior.node, at);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++impl_->current.pending_drips;
@@ -2639,8 +2659,13 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
         co_return std::unexpected(directory.error());
     const auto identity = random_id();
     const auto reference = digest{source.impl_->hash_algorithm, {}};
-    auto recorded =
-        (*directory)->put_entry(parts->back(), {"tree", identity, mode, to_string(reference)});
+    const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    const auto time =
+        std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
+    auto recorded = (*directory)
+                        ->put_entry(parts->back(),
+                                    {"tree", identity, mode, to_string(reference)},
+                                    crdt::commit_options{.message = "mkdir", .time = time});
     if (!recorded)
         co_return std::unexpected(recorded.error());
     (*parent)->entries.emplace(parts->back(),
@@ -2649,7 +2674,7 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
     if (!operation)
         co_return std::unexpected(operation.error());
     source.impl_->record_operation(*operation, "mkdir", path, {}, identity, std::nullopt);
-    auto signed_drip = co_await source.impl_->append_drip("mkdir", identity);
+    auto signed_drip = co_await source.impl_->append_drip("mkdir", identity, at);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++source.impl_->current.pending_drips;
@@ -3010,22 +3035,35 @@ runtime::task<void> repository_detail::testing::sync(repository& left, repositor
 
     auto left_sync = crdt::sync_state{};
     auto right_sync = crdt::sync_state{};
-    auto outgoing = (*left_document)->generate_sync_message(left_sync);
-    if (!outgoing)
-        co_return std::unexpected(outgoing.error());
-    if (*outgoing) {
-        auto received = (*right_document)->receive_sync_message(right_sync, **outgoing);
-        if (!received)
-            co_return std::unexpected(received.error());
+    auto quiesced = false;
+    for (auto round = 0; round < 20; ++round) {
+        auto progress = false;
+        auto outgoing = (*left_document)->generate_sync_message(left_sync);
+        if (!outgoing)
+            co_return std::unexpected(outgoing.error());
+        if (*outgoing) {
+            auto received = (*right_document)->receive_sync_message(right_sync, **outgoing);
+            if (!received)
+                co_return std::unexpected(received.error());
+            progress = true;
+        }
+        outgoing = (*right_document)->generate_sync_message(right_sync);
+        if (!outgoing)
+            co_return std::unexpected(outgoing.error());
+        if (*outgoing) {
+            auto received = (*left_document)->receive_sync_message(left_sync, **outgoing);
+            if (!received)
+                co_return std::unexpected(received.error());
+            progress = true;
+        }
+        if (!progress) {
+            quiesced = true;
+            break;
+        }
     }
-    outgoing = (*right_document)->generate_sync_message(right_sync);
-    if (!outgoing)
-        co_return std::unexpected(outgoing.error());
-    if (*outgoing) {
-        auto received = (*left_document)->receive_sync_message(left_sync, **outgoing);
-        if (!received)
-            co_return std::unexpected(received.error());
-    }
+    if (!quiesced)
+        co_return std::unexpected(
+            failure(errc::corrupt, "directory sync did not quiesce", "repository sync"));
 
     for (const auto& [path, left_entry] : left.impl_->current.root.entries) {
         auto right_entry = right.impl_->current.root.entries.find(path);

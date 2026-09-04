@@ -334,6 +334,13 @@ directly.
 Existing repository documents without operation metadata remain readable; their records return an
 empty actor and epoch timestamp.
 
+The internal CRDT wrapper pins automerge-cpp at `06408d3`. Directory checkpoints call
+`save_compact()`, reopen through `load_shallow()`, and replay later journaled drips. Local
+automerge validation failures map to `errc::invalid_argument`; malformed checkpoint, merge, and
+sync data map to `errc::corrupt`. Apply, merge, and sync-receive expected values are checked before
+candidate state is installed, and remote observation uses the patch-returning entry points. The
+wrapper exposes no automerge type in this public header.
+
 ### `liquid/vfs.hpp`
 
 ```cpp
@@ -521,8 +528,9 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 
 ## Deliberately internal
 
-`src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/crdt/` (automerge-cpp and the
-metadata documents), `src/capture/` (the journal, OS watchers, coalescing), `src/vfs/` (Cloud
+`src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/crdt/` (checked automerge-cpp
+access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
+`src/capture/` (the journal, OS watchers, coalescing), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
 
@@ -557,4 +565,5 @@ refactor.
 
 - ~~The async surface.~~ **Resolved (Steve, 2026-09-03):** coroutine-native on Capy from the
   first header; see rules 4 and 6.
-- **Where the automerge document boundary sits** for very large trees (features/17).
+- ~~Where the automerge document boundary sits for very large trees.~~ **Resolved
+  (2026-09-04):** one document per directory; see [`object-model.md`](object-model.md).

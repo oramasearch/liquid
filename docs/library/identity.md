@@ -56,6 +56,15 @@ private key are never logged; `signer` wipes its secret material on destruction.
 valid signature, `false` for an unsigned record, and `errc::unauthorized` for invalid signed data.
 `verify_document` checks the self-signature. Drips and changes use the same verification rules.
 
+## CRDT commit metadata
+
+Each CRDT transaction for a drip passes the operation message and its Unix millisecond timestamp to
+automerge-cpp through `CommitOptions`. This makes the metadata available to CRDT history, compact
+checkpoints, and peers without making it an attribution authority. The TAAP signature input is
+unchanged: liquid still signs the same domain-separated canonical drip body described above, and
+the automerge change hash is not signed in its place. Journal replay supplies the recorded message
+and timestamp again so the reconstructed automerge change hash is identical.
+
 ## Measurement and limits
 
 On the development machine, 1,000 canonical drip-body signatures averaged **198,234 ns** each,

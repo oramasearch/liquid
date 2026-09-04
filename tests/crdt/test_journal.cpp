@@ -29,7 +29,8 @@ TEST(CrdtJournal, replay_reproduces_document_heads) {
         .ref = "blake3:journal",
         .mode = 0100644,
     };
-    auto applied = original->transact({operation});
+    auto applied =
+        original->transact({operation}, liquid::crdt::commit_options{.time = 1'788'400'000'000});
     ASSERT_TRUE(applied.has_value());
     auto record = liquid::crdt::drip_record{
         .id = applied->front().id,
@@ -69,7 +70,8 @@ TEST(CrdtJournal, reads_records_from_a_plain_cursor) {
         auto applied = document->transact({{.kind = liquid::crdt::operation_kind::write,
                                             .path = name,
                                             .ref = "blake3:cursor",
-                                            .mode = 0100644}});
+                                            .mode = 0100644}},
+                                          liquid::crdt::commit_options{.time = 1'788'400'000'000});
         ASSERT_TRUE(applied);
         ASSERT_TRUE(journal.append({.id = applied->front().id,
                                     .base = *base,
@@ -108,7 +110,8 @@ TEST(CrdtJournal, redaction_marker_changes_the_logical_view_without_rewriting) {
     auto applied = document->transact({{.kind = liquid::crdt::operation_kind::write,
                                         .path = "settings.env",
                                         .ref = "blake3:redaction",
-                                        .mode = 0100644}});
+                                        .mode = 0100644}},
+                                      liquid::crdt::commit_options{.time = 1'788'400'000'000});
     ASSERT_TRUE(applied);
     const auto drip = applied->front().id;
     ASSERT_TRUE(journal.append({.id = drip,

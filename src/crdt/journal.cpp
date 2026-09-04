@@ -375,7 +375,7 @@ auto journal::read(cursor from, std::size_t max) const
 }
 
 auto journal::cut(const document& value, std::uint64_t epoch) -> result<void> {
-    auto saved = value.save();
+    auto saved = value.save_compact();
     if (!saved)
         return std::unexpected(saved.error());
     auto encoded = cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
@@ -428,7 +428,7 @@ auto journal::replay(std::string_view taap_id, std::string_view device_id) const
         document_value ? std::get_if<cbor::value::bytes>(&(**document_value).data) : nullptr;
     if (!v || *v != 1 || !saved)
         return std::unexpected(corrupt("invalid cut file"));
-    auto replayed = document::load(*saved, taap_id, device_id);
+    auto replayed = document::load_shallow(*saved, taap_id, device_id);
     if (!replayed)
         return std::unexpected(replayed.error());
 
@@ -459,7 +459,8 @@ auto journal::replay(std::string_view taap_id, std::string_view device_id) const
             return std::unexpected(corrupt("drip base does not match replay heads"));
         if (replayed->actor() != record->by)
             return std::unexpected(corrupt("drip actor does not match replay actor"));
-        auto applied = replayed->transact(std::move(record->ops));
+        auto applied = replayed->transact(std::move(record->ops),
+                                          commit_options{.time = record->at * std::int64_t{1000}});
         if (!applied)
             return std::unexpected(applied.error());
     }

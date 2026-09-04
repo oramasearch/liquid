@@ -378,10 +378,13 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         auto base = document->heads();
         if (!base)
             co_return std::unexpected(base.error());
-        auto applied = document->transact(std::move(operations));
+        const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        const auto time =
+            std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
+        auto applied =
+            document->transact(std::move(operations), crdt::commit_options{.time = time});
         if (!applied)
             co_return std::unexpected(applied.error());
-        const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
         auto record = crdt::drip_record{.id = applied->front().id,
                                         .base = *base,
                                         .ops = *applied,

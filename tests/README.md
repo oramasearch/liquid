@@ -19,6 +19,11 @@ and cryptography tests stay in their existing targets. They also verify that rep
 retains checkpointed content while reclaiming an orphan. CLI scenario and command-documentation
 tests live in `cli/`. `test_runtime.cpp` repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
+`liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and
+measures a fresh-process repository open for the automerge-cpp adoption comparison.
+Focused CRDT cases verify commit metadata, compact checkpoint journal replay, corrupt-sync
+atomicity, and upstream sync convergence; the repository replica case also covers distinct clone
+actors and multi-round sync.
 
 Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,

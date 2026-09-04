@@ -10,12 +10,13 @@ in [`api-map.md`](api-map.md).
 **Why.** features/01 fixes the split (bytes in the chunk store, namespace in the CRDT) and
 features/02 fixes the behaviour (changes with identity, moves recorded not inferred, conflicts as
 values, everything undoable, the working copy is a change, repositories as composable values).
-What neither fixes is the shape of the records and the document, and the 2026-09-03 survey of
-`automerge-cpp` found properties liquid must design around rather than assume (tracked as
-https://github.com/oramasearch/automerge-cpp/issues/13): its change hashes do not cover
-operation content, its default actor id is zero, it has no commit metadata, no incremental save,
-no patches for remote changes, no rollback, no sync wire format, and no history compaction.
-Everything below that says "liquid's own" is there because of one of those.
+What neither fixes is the shape of the records and the document. The 2026-09-03 survey of
+`automerge-cpp` tracked the missing capabilities in
+https://github.com/oramasearch/automerge-cpp/issues/13. The dependency tip adopted by liquid #136
+closes that epic: change hashes and chunk encoding are upstream-compatible, public failures are
+checked, transactions roll back, commit metadata and incremental saves exist, remote changes
+return patches, text indices count scalar values, sync uses the upstream wire format, and compact
+checkpoints can be loaded shallowly.
 
 **Status: implemented for liquid #2 and #3.** The private automerge-cpp wrapper, canonical CBOR
 codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
@@ -56,8 +57,9 @@ action, result   # kinds reserved now; records defined in Phase 2 (features/10, 
   the same `node_id` under the new key. This is liquid's own because automerge has no move
   operation and cannot re-parent an object; the CRDT sees two edits, liquid sees one move.
 - **`change_ref` = `{ repo_id, id: digest(change) }`.** A change's identity is the digest of its
-  canonical record, computed by liquid, **not** automerge's `ChangeHash` (which today does not
-  cover operation content). Because the parent reference carries a `repo_id`, a change can have
+  canonical liquid record, **not** automerge's upstream-compatible `ChangeHash`. The identifiers
+  have different domains: the liquid record includes the tree, TAAP author, signature, conflicts,
+  and repository parents. Because the parent reference carries a `repo_id`, a change can have
   parents in two different repositories, which is what `combine` needs.
 - **`heads`** are the automerge document heads the change was cut at; they tie the immutable
   record to the document's history so `at(change_id)` can rebuild the document state too, not
@@ -106,23 +108,24 @@ Every mutation of the document is a transaction, and every transaction is a **dr
 record. The document's history *is* the drip stream. A liquid `change` is cut from it: a named,
 reviewable aggregation whose `root` is the tree snapshot written to the store at that moment.
 
-Rules liquid's wrapper enforces on top of automerge-cpp, until the upstream issues close:
+Rules liquid's wrapper enforces on top of automerge-cpp:
 
 1. **Actor id is set, always**, before the first transaction: `digest(taap_id ‖ device_id)[0:16]`,
    stable per identity per device and unique across replicas. Never the library default.
-2. **Commit metadata is liquid's**: message, time and author live in the drip and change records,
-   not in automerge's `Change` (which cannot carry them).
-3. **Observation is by diff**: after `merge`/`apply_changes`/sync, liquid compares heads and
-   walks the changed objects itself; nothing relies on patches from remote changes.
-4. **Persistence** is the whole document saved into the store as a blob at every change cut,
-   plus liquid's drip journal between cuts; incremental save replaces the journal when it exists.
-   A cut increments the repository's journal epoch, atomically installs the whole-document save,
-   then resets the append-only journal. A replica behind the retained epoch starts from that cut
-   instead of requesting discarded drips.
-5. **Transactions never throw** past the boundary: liquid validates inputs before opening one,
-   because automerge-cpp applies eagerly and cannot roll back.
-6. **Sync framing is liquid's** (CBOR around `SyncMessage` and the changes it carries) until a
-   wire format exists upstream; the framing is versioned like every record.
+2. **Commit metadata is carried twice for different purposes**: the automerge change receives the
+   drip message and millisecond timestamp through `CommitOptions`; the signed liquid drip and
+   change records remain the authority for attribution.
+3. **Remote observation uses patches**: apply, merge, and sync receive use the
+   `*_with_patches` entry points. Every returned `std::expected` is checked before the candidate
+   document replaces the active document.
+4. **Persistence uses compact checkpoints**: `save_compact()` output is stored at every cut and
+   every 64 drips, the active directory is reopened with `load_shallow()`, and later journaled
+   drips are replayed on that checkpoint.
+5. **Errors remain values across the wrapper**: local operation failures become
+   `errc::invalid_argument`; malformed saves, changes, merges, and sync input become
+   `errc::corrupt`. A failed external application leaves the active document unchanged.
+6. **Sync messages use automerge's v1 wire format.** Liquid's repository transport associates
+   each message with its directory `node_id`; the inner message bytes come from automerge-cpp.
 
 ## Operations
 
@@ -157,7 +160,7 @@ The layout from here:
   the `node_id` of the root directory, and **`dirs`: a map from directory `node_id` to the digest of
   that directory document's latest saved bytes in the store**. That map is the mutable name→content
   indirection a content-addressed store lacks: to load a directory, look its `node_id` up in `dirs`,
-  `store.get` the digest, `document::load`. A directory document is saved (and `dirs` updated in one
+  `store.get` the digest, `document::load_shallow`. A directory document is saved (and `dirs` updated in one
   repository-document transaction) at every cut and at a configurable interval; between saves the
   journal's drips replay onto the loaded document. The repository document itself is saved to the
   store at the same moments and its digest is written to `LIQUID_REPO` at the repository root,
@@ -195,15 +198,68 @@ possible because entries are addressed by `node_id`, not by position. Reproduce 
 Release configure with `cmake --build build-measure --target liquid-crdt-measure &&
 ./build-measure/tests/liquid-crdt-measure 100000 1000`.
 
+### automerge-cpp adoption measurement
+
+The issue #136 comparison used a Release build on an Apple M3 Max with 64 GiB of memory, macOS
+14.6.1, and Homebrew Clang 22.1.8. `liquid-repository-open-measure prepare` created 100 directories
+and distributed 10,000 writes across them with the default checkpoint interval of 64. The final
+partial interval remained in `LIQUID_JOURNAL`. Each row is the median of three fresh-process
+`open` runs over independent copies of that prepared repository; peak RSS therefore excludes the
+preparation process.
+
+| automerge-cpp | Open samples | Peak-RSS samples | Median open | Median peak RSS |
+|---|---|---|---:|---:|
+| Before: `4dd7955` (`v0.6.0`) | 563.955, 567.660, 586.194 ms | 257.000, 260.906, 275.375 MiB | 567.660 ms | 260.906 MiB |
+| After: `06408d3` | 525.087, 472.571, 473.059 ms | 263.516, 262.562, 262.484 MiB | 473.059 ms | 262.562 MiB |
+
+The measured open became 16.7% faster. Peak RSS was effectively unchanged (+1.656 MiB, +0.6%).
+Directory documents remain lazy, so this measures repository-document recovery, the final journal
+interval, checkpoint publication, and store setup. Compact/shallow loading bounds the history of a
+directory when that directory is first accessed and after every later checkpoint.
+
+Reproduce the workload with:
+
+```sh
+cmake -S . -B build-measure -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-measure --target liquid-repository-open-measure
+build-measure/tests/liquid-repository-open-measure prepare build-measure/repository 100 10000
+cp -R build-measure/repository build-measure/open-1
+build-measure/tests/liquid-repository-open-measure open build-measure/open-1
+```
+
 ## Implementation notes
 
 `LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
 written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
-is a private CRDT document cached by its `node_id`; saving a checkpoint writes the document bytes
-to the store and refreshes its `dirs` entry. A checkpoint occurs at `cut` and after the configured
-drip interval (64 by default); an uncut write is recovered from the repository journal. On open,
-each directory document is restored lazily against the journaled working tree before its next
-mutation. Matching entries are left intact, so recovery is idempotent across process restarts.
+is a private CRDT document cached by its `node_id`; saving a checkpoint writes `save_compact()`
+bytes to the store, refreshes its `dirs` entry, and replaces the active instance with
+`load_shallow()` of those same bytes. A checkpoint occurs at `cut` and after the configured drip
+interval (64 by default). The checkpoint digest and heads are published before journal entries
+covered by those heads are retired. On open, each directory document is loaded shallowly and
+restored lazily against the journaled working tree before its next mutation. Matching entries are
+left intact, so recovery is idempotent across process restarts.
+
+The actor derivation's device input is the repository checkout path. Two clones of the same
+repository therefore author under different automerge actors and may create valid concurrent
+sequences; reopening the same checkout keeps its actor stable.
+
+The compact checkpoint bytes are also the full-history archive: loading them with `load()` instead
+of `load_shallow()` reconstructs the pre-checkpoint graph when an old branch or historical query
+needs it. The active shallow document accepts changes whose dependency closure reaches the
+checkpoint heads. A change based only on older pruned heads must be routed to that archive or to a
+fresh snapshot; retiring the archive is valid only after no supported peer or historical query can
+name those heads.
+
+Checkpoints written before this dependency bump do not load because the pre-#15 private change
+encoding and hashes are intentionally incompatible. No repository data exists in that format. If
+one did, recreate each directory document from its retained journal and the canonical repository,
+tree, and blob records, then cut a new compact checkpoint with this version. Do not reinterpret an
+old hash as a new one.
+
+The wrapper contains no text mutation or text-position conversion today. Its index-bearing code is
+limited to list operation records and passes element indices unchanged. Future text support must
+pass Unicode scalar-value positions and counts to `splice_text`, cursors, marks, and patch handling;
+UTF-8 byte offsets are not valid automerge text indices.
 
 File content is represented by a canonical `blob` record whose parallel chunk digest and size
 lists describe FastCDC logical chunks. The size list lets VFS range reads locate an offset without
