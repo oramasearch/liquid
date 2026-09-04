@@ -58,6 +58,8 @@ owning issue in `error::context`.
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/graph.hpp` | #20, #21 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, and the #23 comparison hook |
+| `liquid/frontend_abi.h` | #65 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, and `assemble` operations |
+| `liquid/frontend.hpp` | #65 | implemented | checked shared/static frontend loading, language registry, source units, and the unit-keyed query-graph coordinator |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
@@ -217,6 +219,116 @@ identifiers. `recorded` loads a completed value and returns the comparison
 surface for #23; a query with no completed value returns an empty optional. `flush` atomically
 republishes the current graph root, and `statistics` returns counters since open plus the current
 resident-value accounting.
+
+### `liquid/frontend_abi.h` and `liquid/frontend.hpp`
+
+The module boundary is C11 and carries only fixed-width integers, byte spans, strings, function
+pointers, and caller-independent owned bytes. Dynamic modules export
+`liquid_frontend_get_module_v1`; static consumers pass the same descriptor to `linked`. Every
+module operation receives optional progress and cancellation callbacks and returns canonical CBOR.
+
+```c
+#define LIQUID_FRONTEND_ABI_VERSION 1u
+#define LIQUID_FRONTEND_ENTRYPOINT_V1 "liquid_frontend_get_module_v1"
+typedef enum liquid_frontend_status_v1 {
+  LIQUID_FRONTEND_STATUS_OK = 0,
+  LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT,
+  LIQUID_FRONTEND_STATUS_UNSUPPORTED,
+  LIQUID_FRONTEND_STATUS_CANCELLED,
+  LIQUID_FRONTEND_STATUS_INTERNAL
+} liquid_frontend_status_v1;
+typedef struct liquid_frontend_bytes_v1 { const uint8_t* data; size_t size; }
+  liquid_frontend_bytes_v1;
+typedef struct liquid_frontend_owned_bytes_v1 {
+  uint8_t* data; size_t size; liquid_frontend_release_v1 release; void* context;
+} liquid_frontend_owned_bytes_v1;
+typedef struct liquid_frontend_callbacks_v1 {
+  void* context; liquid_frontend_progress_v1 progress; liquid_frontend_cancelled_v1 cancelled;
+} liquid_frontend_callbacks_v1;
+typedef struct liquid_frontend_language_v1 {
+  const char* name; const char* const* extensions; size_t extension_count;
+} liquid_frontend_language_v1;
+typedef struct liquid_frontend_module_v1 {
+  uint32_t abi_version; size_t struct_size; const char* name;
+  const liquid_frontend_language_v1* languages; size_t language_count; void* module_context;
+  liquid_frontend_units_v1 units; liquid_frontend_compile_unit_v1 compile_unit;
+  liquid_frontend_assemble_v1 assemble; liquid_frontend_destroy_v1 destroy;
+} liquid_frontend_module_v1;
+```
+
+`units(language, blob, context)` returns an array of declaration, definition, and type maps with
+names, source ranges, and source bytes. `compile_unit(unit, context)` returns a compiler action.
+`assemble(unit_outputs, context)` returns the translation-unit output. The release callback owns
+every successful result buffer; the loader copies and releases it before returning. The complete
+canonical schemas are in [`frontends.md`](frontends.md).
+
+```cpp
+enum class frontend_unit_kind : std::uint8_t { declaration = 1, definition = 2, type = 3 };
+struct frontend_source_position { std::uint64_t byte, line, column; };
+struct frontend_source_range { frontend_source_position start, end; };
+struct frontend_unit {
+  frontend_unit_kind kind; std::string name; frontend_source_range range;
+  digest fingerprint; std::vector<std::byte> canonical_value;
+};
+struct frontend_callbacks {
+  std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
+  std::function<bool()> cancelled;
+};
+class frontend_module {
+ public:
+  frontend_module() noexcept; ~frontend_module();
+  frontend_module(frontend_module&&) noexcept;
+  frontend_module& operator=(frontend_module&&) noexcept;
+  static result<frontend_module> load(std::filesystem::path shared_object);
+  static result<frontend_module> linked(const liquid_frontend_module_v1* descriptor);
+  std::string_view name() const; std::vector<std::string> languages() const;
+  bool supports(std::string_view language) const;
+  result<std::vector<frontend_unit>> units(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
+      frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> compile_unit(const frontend_unit&,
+      std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> assemble(std::span<const std::byte> unit_outputs_cbor,
+      std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
+};
+class frontend_registry {
+ public:
+  frontend_registry(); ~frontend_registry();
+  frontend_registry(frontend_registry&&) noexcept;
+  frontend_registry& operator=(frontend_registry&&) noexcept;
+  result<void> add(frontend_module); result<void> load(std::filesystem::path shared_object);
+  result<const frontend_module*> find(std::string_view language) const;
+};
+struct frontend_build_request {
+  std::string language, source_path; std::vector<std::byte> source, context_cbor;
+};
+struct frontend_unit_output {
+  frontend_unit unit; std::vector<std::byte> action, output; bool action_ran;
+};
+struct frontend_build_report {
+  std::vector<frontend_unit_output> units; std::vector<std::byte> translation_unit_output;
+  std::uint64_t actions_run, assemblies_run;
+};
+class frontend_graph {
+ public:
+  frontend_graph() noexcept; ~frontend_graph();
+  frontend_graph(frontend_graph&&) noexcept;
+  frontend_graph& operator=(frontend_graph&&) noexcept;
+  static runtime::task<frontend_graph> open(std::filesystem::path state_directory,
+      std::filesystem::path working_tree, std::shared_ptr<frontend_module>,
+      frontend_action_executor);
+  runtime::task<frontend_build_report> build(frontend_build_request);
+  result<std::uint64_t> mark_changed(std::string path, durability = durability::low);
+  graph_statistics statistics() const;
+};
+```
+
+`frontend_module` validates the descriptor, ownership contract, and canonical CBOR before values
+cross into C++. `frontend_registry` rejects duplicate language registrations. `frontend_graph`
+registers the action and assembly query kinds, records action read paths through `query_context`,
+and runs the potentially blocking assembly operation through `runtime::offload`. The caller's
+`frontend_action_executor` owns compiler-action scheduling and returns object bytes. All three
+handles are move-only; their public copy operations are deleted.
 
 ### `liquid/store.hpp`
 
@@ -974,7 +1086,8 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 
 ## Deliberately internal
 
-`src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/crdt/` (checked automerge-cpp
+`src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/frontend/` (module-handle and
+frontend-query state), `src/crdt/` (checked automerge-cpp
 access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
 `src/sync/` (canonical metadata and pack wire codecs plus the Corosio/Boost.HTTP client),
 `src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/vfs/` (Cloud
@@ -991,17 +1104,20 @@ key custody providers). Their headers live beside their sources, never under `in
   pins before 1.0, and none is implied by `SOVERSION 0`.
 - **Shared builds are for packaging, not for stability.** Rules 2 and 3 above are what make a
   future stable ABI possible; until 1.0 they are discipline, not a promise.
+- **Frontend C ABI v1 exists before 1.0.** `liquid/frontend_abi.h` is separately versioned and does
+  not expose the C++ ABI. Language modules use it now; format codecs and package backends may adopt
+  dedicated C descriptors later without being loaded into libliquid's core.
 - **At 1.0:** semantic versioning of the C++ API, `SOVERSION` bumped on breaks, still no symbol
-  versioning. The stable *non-C++* boundary for codecs, language frontends and package backends
-  (features/17) is a separate C ABI under `include/liquid/c/`, designed with the first plugin
-  (Phase 5), not now.
+  versioning. The C++ surface remains distinct from separately versioned module descriptors.
 
 ## How to verify
 
 `nm -gU build-shared/libliquid.dylib | grep liquid` lists exactly the symbols of the headers on
 this map. Every public function has a test that exercises either its implemented result or its
 `result` error path. The `liquid-header-tests` target compiles every public header in its own
-translation unit, and a clean installed consumer verifies `find_package(liquid CONFIG)`.
+translation unit, including the frontend ABI as C11, and a clean installed consumer verifies
+`find_package(liquid CONFIG)`. The frontend tests load the Clang module from its shared-object path
+and register the same descriptor statically.
 
 ## How to change
 

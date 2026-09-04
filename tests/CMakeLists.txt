@@ -43,6 +43,7 @@ add_executable(liquid-tests
   build/test_distribution.cpp
   build/test_policy.cpp
   build/test_facts.cpp
+  build/test_frontend.cpp
   build/test_graph.cpp
   build/test_provenance.cpp
   build/test_why.cpp
@@ -91,6 +92,15 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+if(LIQUID_BUILD_FRONTENDS)
+  add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
+    LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
+    LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
+    LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
+  target_link_libraries(liquid-tests PRIVATE liquid-frontend-clang-static)
+endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_GRAPH_CRASH_FIXTURE="$<TARGET_FILE:liquid-graph-crash-fixture>")
@@ -190,6 +200,17 @@ target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
 add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
+if(LIQUID_BUILD_FRONTENDS)
+  add_executable(liquid-frontend-measure EXCLUDE_FROM_ALL frontend_measure.cpp)
+  target_link_libraries(liquid-frontend-measure PRIVATE liquid::liquid)
+  target_include_directories(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(liquid-frontend-measure PRIVATE
+    LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
+    LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
+    LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>")
+  add_dependencies(liquid-frontend-measure liquid-frontend-clang)
+endif()
+
 add_executable(liquid-store-large-tests test_store_large.cpp)
 target_include_directories(liquid-store-large-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
@@ -252,6 +273,7 @@ add_executable(liquid-header-tests
   headers/delta.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/frontend.cpp
   headers/git.cpp
   headers/graph.cpp
   headers/hash.cpp
@@ -268,6 +290,10 @@ add_executable(liquid-header-tests
   headers/vfs.cpp)
 target_link_libraries(liquid-header-tests PRIVATE liquid::liquid)
 add_test(NAME public-headers-isolated COMMAND liquid-header-tests)
+
+add_executable(liquid-frontend-c-header headers/frontend_abi.c)
+target_include_directories(liquid-frontend-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-frontend-c-header COMMAND liquid-frontend-c-header)
 
 add_executable(liquid-cbor-tests encoding/test_cbor.cpp)
 target_sources(liquid-cbor-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)

@@ -53,6 +53,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(LIQUID_BUILD_CLI   "Build the liquid command-line binary" ON)
 option(LIQUID_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 option(LIQUID_BUILD_BENCH "Build optional benchmarks" OFF)
+option(LIQUID_BUILD_FRONTENDS "Build bundled frontend modules" ON)
 option(BUILD_SHARED_LIBS  "Build libliquid as a shared library" OFF)
 if(LIQUID_BUILD_BENCH AND NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -161,6 +162,92 @@ FetchContent_Declare(zstd_source
   GIT_SHALLOW    TRUE
   SOURCE_SUBDIR  build/cmake)
 FetchContent_MakeAvailable(zstd_source)
+
+if(LIQUID_BUILD_FRONTENDS)
+  FetchContent_Declare(tree_sitter_source
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
+    GIT_TAG        v0.25.9
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  liquid-no-upstream-cmake)
+  FetchContent_Declare(tree_sitter_c_source
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
+    GIT_TAG        v0.24.1
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  liquid-no-upstream-cmake)
+  FetchContent_Declare(tree_sitter_cpp_source
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
+    GIT_TAG        v0.23.4
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  liquid-no-upstream-cmake)
+  FetchContent_MakeAvailable(tree_sitter_source tree_sitter_c_source tree_sitter_cpp_source)
+
+  add_library(liquid_frontend_syntax STATIC
+    modules/frontends/common/cbor.cpp
+    modules/frontends/common/syntax.cpp
+    ${tree_sitter_source_SOURCE_DIR}/lib/src/lib.c
+    ${tree_sitter_c_source_SOURCE_DIR}/src/parser.c
+    ${tree_sitter_cpp_source_SOURCE_DIR}/src/parser.c
+    ${tree_sitter_cpp_source_SOURCE_DIR}/src/scanner.c)
+  target_include_directories(liquid_frontend_syntax PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${tree_sitter_source_SOURCE_DIR}/lib/include
+    ${tree_sitter_source_SOURCE_DIR}/lib/src
+    ${tree_sitter_c_source_SOURCE_DIR}/src
+    ${tree_sitter_cpp_source_SOURCE_DIR}/src)
+  target_compile_features(liquid_frontend_syntax PRIVATE c_std_11 cxx_std_26)
+  target_compile_definitions(liquid_frontend_syntax PRIVATE TREE_SITTER_HIDE_SYMBOLS)
+  set_target_properties(liquid_frontend_syntax PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+  add_library(liquid-frontend-tree-sitter MODULE modules/frontends/tree_sitter/module.cpp)
+  target_include_directories(liquid-frontend-tree-sitter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+  target_link_libraries(liquid-frontend-tree-sitter PRIVATE liquid_frontend_syntax)
+  set_target_properties(liquid-frontend-tree-sitter PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "liquid-frontend-tree-sitter"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/tree-sitter"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/tree-sitter"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+  add_library(liquid-frontend-clang MODULE modules/frontends/clang/module.cpp)
+  target_include_directories(liquid-frontend-clang PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+  target_link_libraries(liquid-frontend-clang PRIVATE liquid_frontend_syntax)
+  set_target_properties(liquid-frontend-clang PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "liquid-frontend-clang"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/clang"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/clang"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+  add_library(liquid-frontend-clang-static STATIC modules/frontends/clang/module.cpp)
+  target_include_directories(liquid-frontend-clang-static PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+  target_link_libraries(liquid-frontend-clang-static PRIVATE liquid_frontend_syntax)
+  set_target_properties(liquid-frontend-clang-static PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+  if(APPLE)
+    target_link_options(liquid-frontend-tree-sitter PRIVATE
+      "LINKER:-exported_symbol,_liquid_frontend_get_module_v1")
+    target_link_options(liquid-frontend-clang PRIVATE
+      "LINKER:-exported_symbol,_liquid_frontend_get_module_v1")
+  elseif(UNIX)
+    target_link_options(liquid-frontend-tree-sitter PRIVATE
+      "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends/exports.map")
+    target_link_options(liquid-frontend-clang PRIVATE
+      "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends/exports.map")
+  endif()
+endif()
 
 add_library(liquid_blake3_objects OBJECT
   ${blake3_source_SOURCE_DIR}/c/blake3.c
@@ -282,6 +369,8 @@ add_library(libliquid
   src/error.cpp
   src/formats/dotenv.cpp
   src/formats/json.cpp
+  src/frontend/graph.cpp
+  src/frontend/module.cpp
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
@@ -373,7 +462,7 @@ endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio Boost::corosio_openssl Boost::http libzstd_static ZLIB::ZLIB
-          $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
+          ${CMAKE_DL_LIBS} $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
 if(LIQUID_FUSE_TARGET)
   target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
   target_link_libraries(libliquid PRIVATE ${LIQUID_FUSE_TARGET})
@@ -446,6 +535,11 @@ install(TARGETS liquid-wrap-hook
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   install(TARGETS liquid-read-guard
     RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)
+endif()
+if(LIQUID_BUILD_FRONTENDS)
+  install(TARGETS liquid-frontend-tree-sitter liquid-frontend-clang
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid/frontends
+    RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid/frontends)
 endif()
 install(TARGETS boost_capy EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

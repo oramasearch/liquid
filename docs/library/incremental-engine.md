@@ -10,11 +10,11 @@
 > Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
 > a retained GPU text layer inside Dear ImGui.
 
-**Status:** the demand-driven query graph in #20 and the per-checkout daemon in #21 are
-implemented, including persisted red-green validation, durability-filtered invalidation,
-cancellation, action-query integration, ordered cursor fan-out, and bounded resident graph values.
-The clean-rebuild scheduler, frontend granularity, symbols, and planner remain with their listed
-issues.
+**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, and per-definition
+frontend granularity in #65 are implemented, including persisted red-green validation,
+durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
+bounded resident graph values, module loading, unit-keyed actions, and translation-unit assembly.
+The clean-rebuild scheduler, symbols, and planner remain with their listed issues.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -151,15 +151,19 @@ itself from #59, the wrap fixtures) is the acceptance.
 
 ## Granularity: per translation unit, then per definition (#65)
 
-Per translation unit is the floor today and stays the unit for linking. Per definition is a
-frontend's job: a **frontend module** behind a stable non-C++ boundary (the plugin ABI of decision
-§14; the same boundary format codecs will use) that, given a blob, yields its **units** (functions,
-types, declarations with their source ranges) and, for C and C++ with a Clang-fronted target, the
-per-unit compile actions the engine can run. tree-sitter provides the syntactic fallback for
-languages without a frontend module. A change inside one function body re-runs that definition's
-actions only; the object for the translation unit is assembled from unit outputs by the frontend
-module. The module is replaceable and lives outside libliquid's core (`modules/frontends/`), so a
-frontend's licence and size never enter libliquid.
+Per translation unit stays the unit for linking. Per definition is a frontend's job: the versioned
+C ABI in [`frontend_abi.h`](../../include/liquid/frontend_abi.h) registers languages and exchanges
+canonical CBOR for units, compiler actions, unit outputs, and assembly results. Its complete
+contract and measured proof are in [`frontends.md`](frontends.md). The tree-sitter fallback yields
+C and C++ declarations and definitions without compiling. The Clang C++ module uses the configured
+toolchain compiler to produce one action per definition and assembles the resulting objects into a
+relocatable translation-unit object. The module is replaceable and lives outside libliquid's core
+under `modules/frontends/`, so its parser and compiler dependencies never enter libliquid.
+
+Unit fingerprints cover kind, name, and source while excluding the absolute range. Definition
+action queries record quoted-header reads and assembly queries depend on their ordered action
+outputs. A body edit therefore creates one action key and reassembles; a header edit invalidates the
+definitions that recorded it.
 
 ## Symbols and the search planner (#66, #67, #22)
 
@@ -202,8 +206,9 @@ in-process:
    liquid #21 (the daemon, fan-out, memory ceiling); liquify #4 (stub trees, against #20's
    query interface) and liquify #1's shell work that does not need the graph (the retained text
    layer).
-2. liquid #65 (frontend module boundary, C and C++ per definition), #66 (symbols), #22 (local
-   index on drip), #23 (validation on the reference projects); liquify #5 (interactive analysis)
+2. liquid #65 (**implemented:** frontend module boundary and C++ per definition, with C/C++ syntax
+   fallback), #66 (symbols), #22 (local index on drip), #23 (validation on the reference projects);
+   liquify #5 (interactive analysis)
    and #1 (the editor on the graph).
 3. liquid #67 (the planner); liquify #6 (inline build, test, deploy).
 
@@ -214,7 +219,11 @@ invalidation walks, cancellation by a second demand, interrupted-process recover
 loading, fingerprint-only restart validation, and the #23 retrieval hook. The mount-backed CMake
 fixture proves a comment edit executes one compile process with identical object and link results,
 while a one-line semantic edit executes one compile and the link and changes the link result.
-Remaining phase exit measurements belong to the issues that add the daemon and editor diagnostics.
+`FrontendModule` and `FrontendGraph` prove dynamic and static registration, C fallback units, exact
+definition actions, one action plus assembly after a body edit, and every recorded reader plus
+assembly after a header edit. `liquid-frontend-measure` records the own-tree edit result in
+[`frontends.md`](frontends.md). Remaining phase exit measurements belong to the issues that add the
+daemon and editor diagnostics.
 
 ## How to change
 

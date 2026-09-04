@@ -6,6 +6,8 @@
 #include "liquid/delta.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/error.hpp"
+#include "liquid/frontend.hpp"
+#include "liquid/frontend_abi.h"
 #include "liquid/git.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"

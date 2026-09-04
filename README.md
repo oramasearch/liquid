@@ -47,11 +47,15 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > history and its identity mapping; `liquid export git` writes a standalone Git repository and reports
 > compatibility losses.
 
-> **Phase 4 now includes the persisted demand-driven query graph.** Registered coroutine query
+> **Phase 4 now includes the persisted demand-driven query graph and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
 > validate red-green on demand, cut off unchanged fingerprints, propagate durability, cancel
 > cooperatively, and expose recorded inputs and values for clean comparison. Direct build execution
-> and every wrapped tool action are `action_result` graph nodes.
+> and every wrapped tool action are `action_result` graph nodes. A versioned C frontend ABI loads
+> replaceable shared or static language modules outside libliquid. The bundled tree-sitter fallback
+> discovers C and C++ units, while the Clang C++ module emits definition actions and assembles their
+> outputs into a relocatable translation-unit object. A function-body edit therefore executes only
+> that definition's new action; recorded header reads invalidate the definitions that use them.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
