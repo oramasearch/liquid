@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -67,6 +68,8 @@ struct LIQUID_EXPORT collection_report {
     std::vector<std::string> unknown_kinds;
     std::vector<partial_pack> partially_dead_packs;
     std::vector<retained_chunk> retained_chunks;
+    std::vector<retained_chunk> retained_objects;
+    std::map<std::string, std::uint64_t> retained_by_rule;
     std::uint64_t packs_compacted{};
     std::uint64_t bytes_reclaimed_by_compaction{};
     std::uint64_t bytes_written_by_compaction{};

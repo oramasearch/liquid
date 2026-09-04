@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <random>
 #include <span>
 #include <system_error>
@@ -152,14 +153,31 @@ create_lease(std::filesystem::path directory, digest root, std::chrono::seconds 
         co_return std::unexpected(
             lease_error(errc::invalid_argument, "lease ttl cannot be negative", directory));
     }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (ttl > std::chrono::sys_seconds::max() - now) {
+        co_return std::unexpected(
+            lease_error(errc::invalid_argument, "lease ttl is too large", directory));
+    }
+    co_return co_await create_lease_until(
+        std::move(directory), root, std::optional{now + ttl}, std::string{});
+}
+
+runtime::task<std::shared_ptr<lease_state>>
+create_lease_until(std::filesystem::path directory,
+                   digest root,
+                   std::optional<std::chrono::sys_seconds> expiry,
+                   std::string owner) {
+    if (owner.size() > std::numeric_limits<std::uint16_t>::max()) {
+        co_return std::unexpected(
+            lease_error(errc::invalid_argument, "lease owner is too long", directory));
+    }
     auto state = std::make_shared<lease_state>();
     state->directory = std::move(directory);
     state->record.id = random_id();
     state->record.root = root;
-    state->record.owner = "local:" + state->record.id;
+    state->record.owner = owner.empty() ? "local:" + state->record.id : std::move(owner);
     state->record.generation = 1;
-    state->record.expiry =
-        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()) + ttl;
+    state->record.expiry = expiry.value_or(std::chrono::sys_seconds::max());
     auto written = co_await write_record(state->directory, state->record);
     if (!written)
         co_return std::unexpected(written.error());

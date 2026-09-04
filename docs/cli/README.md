@@ -34,6 +34,9 @@ that the table and `liquid --help` name the same commands.
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
+| `import` | `import git <path>` | Import a local Git repository. | available |
+| `export` | `export git <path> [ref]` | Export as a Git repository. | available |
+| `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
@@ -137,6 +140,10 @@ every selected input, accepted signer count, and satisfaction result. Warning ru
 `warning:` lines and exit successfully. Both commands open the current liquid repository or the
 current project's wrap repository.
 
+`retain explain` applies persisted `config.retention` rules, evaluates reachability without
+deleting data, and prints the matching rule, lease ID, and expiry for a retained digest. A digest
+outside every live root is reported as due for eviction by the next collection.
+
 ## Examples
 
 ```sh
@@ -158,6 +165,9 @@ liquid unlock src/main.cpp
 liquid mount /tmp/liquid-mount --read-only
 liquid materialise /tmp/liquid-checkout src
 liquid gc --dry-run .
+liquid import git ../source-repository
+liquid export git ../exported-repository main
+liquid retain explain blake3:<object-digest>
 liquid identity rotate
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>

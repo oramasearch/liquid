@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include "liquid/repository.hpp"
@@ -18,5 +19,11 @@ int main(int argc, char** argv) {
     if (!written)
         return 1;
     auto cut = liquid::runtime::block_on(repository->cut("fixture"));
-    return cut ? 0 : 1;
+    if (!cut)
+        return 1;
+    std::ofstream digest_file(path / "RETAINED_DIGEST", std::ios::binary | std::ios::trunc);
+    if (!digest_file.is_open())
+        return 1;
+    digest_file << liquid::to_string(cut->value) << '\n';
+    return digest_file ? 0 : 1;
 }

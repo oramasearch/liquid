@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "build/repository_access.hpp"
+#include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
@@ -234,6 +236,46 @@ TEST(GarbageCollection, TreeAndChangeRootsKeepReferencedObjects) {
     const auto retained = liquid::runtime::block_on(store.get(*leaf));
     ASSERT_TRUE(retained.has_value()) << retained.error().message;
     EXPECT_EQ(*retained, payload);
+}
+
+TEST(GarbageCollection, forever_ref_rule_survives_reopen_and_keeps_reachable_objects) {
+    temporary_store temporary;
+    auto options = liquid::repository_options{};
+    options.retention.rules = {
+        liquid::ref_retention_rule{"release tags forever", "release/*", std::nullopt}};
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::create(temporary.path(), options));
+    ASSERT_TRUE(repository) << repository.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(repository->write("release.bin", bytes(4096, 72))));
+    auto release = liquid::runtime::block_on(repository->cut("release"));
+    ASSERT_TRUE(release) << release.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(repository->set_ref("release/v1", *release)));
+    ASSERT_TRUE(liquid::runtime::block_on(repository->remove("release.bin")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository->cut("after release")));
+
+    *repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(temporary.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto explanation = liquid::runtime::block_on(reopened->retain_explain(release->value));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    EXPECT_TRUE(explanation->retained);
+    EXPECT_NE(explanation->reason.find("rule release tags forever"), std::string::npos);
+    EXPECT_NE(explanation->reason.find("until forever"), std::string::npos);
+
+    auto report = liquid::runtime::block_on(reopened->collect());
+    ASSERT_TRUE(report) << report.error().message;
+    EXPECT_EQ(report->retained_by_rule["release tags forever"], 1U);
+    auto snapshot = liquid::runtime::block_on(reopened->at(*release));
+    ASSERT_TRUE(snapshot) << snapshot.error().message;
+    const auto entry =
+        std::ranges::find(snapshot->root.entries, "release.bin", &liquid::tree_entry::name);
+    ASSERT_NE(entry, snapshot->root.entries.end());
+    *reopened = {};
+    auto object_store =
+        liquid::runtime::block_on(liquid::store::open(temporary.path() / ".liquid-store"));
+    ASSERT_TRUE(object_store) << object_store.error().message;
+    auto blob = liquid::runtime::block_on(object_store->get(entry->ref));
+    EXPECT_TRUE(blob) << blob.error().message;
 }
 
 TEST(GarbageCollection, PutAfterEpochHighWaterSurvives) {

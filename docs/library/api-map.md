@@ -58,9 +58,9 @@ owning issue in `error::context`.
 | `liquid/attestation.hpp` | #14, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
-| `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #46, #53, #58, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/object.hpp` | #2, #50, #62 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #40, #41, #42, #50, #52, #53, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics |
+| `liquid/repository.hpp` | #2, #11, #40, #41, #42, #50, #52, #53, #58, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, typed retention policy, and retention explanations |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -155,6 +155,8 @@ struct collection_report {
   std::vector<std::string> unknown_kinds;
   std::vector<partial_pack> partially_dead_packs;
   std::vector<retained_chunk> retained_chunks;
+  std::vector<retained_chunk> retained_objects;
+  std::map<std::string, std::uint64_t> retained_by_rule;
   std::uint64_t packs_compacted, bytes_reclaimed_by_compaction, bytes_written_by_compaction;
 };
 class lease { public: runtime::task<void> renew(std::chrono::seconds ttl);
@@ -277,6 +279,7 @@ class repository {
   runtime::task<void> unlock(std::string path);
   runtime::task<digest> store_attestation(attestation);    // store canonical evidence; no trust implied
   runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
+  runtime::task<retention_explanation> retain_explain(digest);       // live rule/lease or eviction
   runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
   runtime::task<void> set_policy(policy_config);           // validate and checkpoint config.policy
   // Import primitives (liquid #43; lake's importers use the same calls)
@@ -304,7 +307,7 @@ normalization, enforcement, and JSON Pointer key paths.
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
 `repository_options` is a plain record with `checkpoint_interval`, `store`, `encrypt`, `cache`,
-`verify`, and `policy`; its `store_options`
+`verify`, `policy`, and `retention`; its `store_options`
 member selects the object-store hash algorithm and, when configured, its key custody. Pass the
 same options to `create` and `open` so later writes and reads use the intended store settings.
 Repository change IDs are computed with that selected store algorithm, including IDs returned by
@@ -327,6 +330,13 @@ unknown profiles or impossible quorums before the repository document changes.
 `repository::store_attestation` imports a canonical attestation into the repository object store
 and returns its digest. Storage does not imply trust: policy reloads the record and verifies its
 signature and registered profile each time it is evaluated.
+
+`retention_config::rules` holds `ref_retention_rule`, `result_retention_rule`, and
+`size_cap_retention_rule` variants. Ref rules have a name, glob, and optional duration (no duration
+means forever); result rules have a base duration scaled by recorded execution cost; a size-cap
+ rule carries physical store bytes. At most one result rule and one size-cap rule are valid. The
+ configuration is persisted in the repository document and `retain_explain` reports the computed
+ outcome.
 
 `key_readability` is `{ key_id, version, readable }`. `revision_readability` is a `change_id` and
 the sorted key-version set used by its blobs. `readability_report` contains those revision rows and

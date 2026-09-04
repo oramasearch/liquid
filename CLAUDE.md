@@ -24,8 +24,10 @@ verified redaction, liquid #52's JSON/`.env` leaf encryption with structural key
 #43's local Git import/export with identity mapping are implemented;
 liquid #10 provides local sandboxed action execution through `liquid::build` on Linux, and liquid
 #11 provides its signed, manifest-validated persistent disk cache with read-only publication by
-default. Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and
-`compile_commands.json` builds on Linux with FUSE and macOS with macFUSE. Liquid #13 provides
+default, and liquid #58 adds typed ref/result retention, computed reachability, cost-aware
+size-capped eviction, and retention explanations. Liquid #12 provides `liquid wrap` for
+configuration-free CMake, Autotools, Make, and `compile_commands.json` builds on Linux with FUSE
+and macOS with macFUSE. Liquid #13 provides
 sampled local re-execution, signed `reproducibility/1` attestations, critical divergence alerts,
 permanent divergent-result quarantine, and result-bound `slsa_provenance/1` attestations that
 verify on cache lookup and publication and export as in-toto/DSSE; operations owned by later issues

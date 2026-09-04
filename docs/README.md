@@ -21,7 +21,7 @@ notes so that each claim has a clear role.
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
 | [`library/store.md`](library/store.md) | Content-defined local store, on-disk formats, integrity checks, index, tuning, and rebuild. |
-| [`library/gc.md`](library/gc.md) | Leased roots, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
+| [`library/gc.md`](library/gc.md) | Leased roots, typed retention rules, cost-aware result eviction, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
 | [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, versioned data-key rotation and revocation, readability reports, key custody, on-disk envelopes, and failure behavior. |
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
@@ -29,6 +29,6 @@ notes so that each claim has a clear role.
 | [`library/capture.md`](library/capture.md) | Change capture, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
-| [`cli/README.md`](cli/README.md) | Command-line commands, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10 executor checkpoint and the mount-proof dependency on #130. |

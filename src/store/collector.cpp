@@ -122,7 +122,43 @@ bool after_high_water(std::uint32_t high_water_pack,
 }
 
 std::string root_reason(const lease_record& lease) {
-    return "lease " + lease.id + " for root " + to_string(lease.root);
+    auto reason = "lease " + lease.id;
+    if (lease.owner.starts_with("retention:")) {
+        const auto first = lease.owner.find('\n');
+        const auto second =
+            first == std::string::npos ? std::string::npos : lease.owner.find('\n', first + 1);
+        if (first != std::string::npos && second != std::string::npos) {
+            reason += " from rule " + lease.owner.substr(first + 1, second - first - 1);
+        }
+    }
+    if (lease.expiry == std::chrono::sys_seconds::max()) {
+        reason += " until forever";
+    } else {
+        reason += " until " + std::to_string(lease.expiry.time_since_epoch().count());
+    }
+    return reason + " for root " + to_string(lease.root);
+}
+
+bool lease_is_live(const lease_record& lease,
+                   std::chrono::sys_seconds now,
+                   std::chrono::seconds grace) {
+    if (lease.expiry == std::chrono::sys_seconds::max() || lease.expiry > now) {
+        return true;
+    }
+    return now - lease.expiry < grace;
+}
+
+std::optional<std::string> retention_rule(const lease_record& lease) {
+    if (!lease.owner.starts_with("retention:")) {
+        return std::nullopt;
+    }
+    const auto first = lease.owner.find('\n');
+    const auto second =
+        first == std::string::npos ? std::string::npos : lease.owner.find('\n', first + 1);
+    if (first == std::string::npos || second == std::string::npos) {
+        return std::nullopt;
+    }
+    return lease.owner.substr(first + 1, second - first - 1);
 }
 
 } // namespace
@@ -230,7 +266,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     std::vector<lease_record> live_leases;
     for (const auto& lease : *leases) {
-        if (lease.expiry + options.min_lease_age > now)
+        if (lease_is_live(lease, now, options.min_lease_age))
             live_leases.push_back(lease);
     }
 
@@ -240,9 +276,14 @@ runtime::task<collection_report> collector::run(collection_options options) {
     std::set<std::string> live_objects;
     std::set<std::string> live_chunks;
     std::map<std::string, std::string> reasons;
+    std::map<std::string, std::string> object_reasons;
     std::deque<std::pair<digest, std::string>> pending;
-    for (const auto& lease : live_leases)
+    for (const auto& lease : live_leases) {
         pending.emplace_back(lease.root, root_reason(lease));
+        if (const auto rule = retention_rule(lease)) {
+            ++report.retained_by_rule[*rule];
+        }
+    }
 
     reference_registry registry;
     std::set<std::string> unknown_kinds;
@@ -257,6 +298,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
         const auto object_key = to_string(id);
         if (!live_objects.insert(object_key).second)
             continue;
+        object_reasons.try_emplace(object_key, reason);
         const auto object = snapshot_objects.find(object_key);
         if (object == snapshot_objects.end()) {
             if (snapshot_locations.contains(object_key)) {
@@ -331,7 +373,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
     }
     std::deque<std::pair<digest, std::string>> current_pending;
     for (const auto& lease : *current_leases) {
-        if (lease.expiry + options.min_lease_age <= now)
+        if (!lease_is_live(lease, now, options.min_lease_age))
             continue;
         if (live_objects.contains(to_string(lease.root)))
             continue;
@@ -343,6 +385,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
         const auto object_key = to_string(id);
         if (!live_objects.insert(object_key).second)
             continue;
+        object_reasons.try_emplace(object_key, reason);
         const auto object = store_.objects_.find(object_key);
         if (object == store_.objects_.end()) {
             if (snapshot_locations.contains(object_key)) {
@@ -382,6 +425,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
     for (const auto& [key, object] : store_.objects_) {
         if (!snapshot_objects.contains(key)) {
             live_objects.insert(key);
+            object_reasons.try_emplace(key, "written after epoch high-water mark");
             for (const auto& chunk : object.chunks) {
                 live_chunks.insert(to_string(chunk));
                 reasons.try_emplace(to_string(chunk), "written after epoch high-water mark");
@@ -447,6 +491,12 @@ runtime::task<collection_report> collector::run(collection_options options) {
                                   ? std::max(store_.current_pack_ + 1, high_water_pack + 1)
                                   : store_.current_pack_;
     if (options.explain) {
+        for (const auto& key : live_objects) {
+            auto parsed = parse_digest(key);
+            if (parsed) {
+                report.retained_objects.push_back({*parsed, object_reasons[key]});
+            }
+        }
         for (const auto& key : live_chunks) {
             auto parsed = parse_digest(key);
             if (parsed)

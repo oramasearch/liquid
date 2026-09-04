@@ -10,8 +10,10 @@
 #include <regex>
 #include <set>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
+#include "build/cache.hpp"
 #include "build/policy.hpp"
 #include "build/repository_access.hpp"
 #include "crdt/document.hpp"
@@ -25,6 +27,7 @@
 #include "repository/merge.hpp"
 #include "repository/store_access.hpp"
 #include "repository/testing.hpp"
+#include "store/leases.hpp"
 #include "store/pack.hpp"
 #include "vfs/repository_access.hpp"
 
@@ -69,6 +72,7 @@ struct repository_document {
     bool cache_publish{};
     std::uint32_t verification_rate{20};
     policy_config policy;
+    retention_config retention{};
     std::uint64_t pending_drips{};
 };
 
@@ -250,13 +254,45 @@ auto encode_repository_document(const repository_document& value)
                                     {"require", cbor::value{std::move(requirements)}},
                                     {"on_missing", cbor::value{on_missing}}}));
     }
+    auto retention_rules = cbor::value::array{};
+    for (const auto& configured : value.retention.rules) {
+        std::visit(
+            [&](const auto& rule) {
+                using rule_type = std::decay_t<decltype(rule)>;
+                if constexpr (std::is_same_v<rule_type, ref_retention_rule>) {
+                    auto fields = cbor::value::map{{"type", "refs"},
+                                                   {"name", cbor::value{rule.name}},
+                                                   {"glob", cbor::value{rule.glob}}};
+                    if (rule.duration) {
+                        fields.emplace_back(
+                            "duration_s",
+                            cbor::value{static_cast<std::uint64_t>(rule.duration->count())});
+                    } else {
+                        fields.emplace_back("forever", cbor::value{true});
+                    }
+                    retention_rules.emplace_back(cbor::value{std::move(fields)});
+                } else if constexpr (std::is_same_v<rule_type, result_retention_rule>) {
+                    retention_rules.push_back(
+                        map({{"type", "results"},
+                             {"name", cbor::value{rule.name}},
+                             {"duration_s",
+                              cbor::value{static_cast<std::uint64_t>(rule.base.count())}}}));
+                } else {
+                    retention_rules.push_back(map({{"type", "size_cap"},
+                                                   {"name", cbor::value{rule.name}},
+                                                   {"bytes", cbor::value{rule.bytes}}}));
+                }
+            },
+            configured);
+    }
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
              {"verify", map({{"rate", cbor::value{std::uint64_t{value.verification_rate}}}})},
              {"policy",
               map({{"approved_builders", cbor::value{std::move(approved_builders)}},
-                   {"rules", cbor::value{std::move(policy_rules)}}})}});
+                   {"rules", cbor::value{std::move(policy_rules)}}})},
+             {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
@@ -558,6 +594,81 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                 output.policy.rules.push_back(std::move(rule));
             }
         }
+        if (const auto* retention = find(*config, "retention")) {
+            const auto* rules_value = find(*retention, "rules");
+            const auto* rules =
+                rules_value ? std::get_if<cbor::value::array>(&rules_value->data) : nullptr;
+            if (!rules) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid retention config", "repository document"));
+            }
+            output.retention.rules.clear();
+            for (const auto& item : *rules) {
+                const auto* type_value = find(item, "type");
+                const auto* name_value = find(item, "name");
+                const auto* type =
+                    type_value ? std::get_if<std::string>(&type_value->data) : nullptr;
+                const auto* name =
+                    name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+                if (!type || !name) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid retention rule", "repository document"));
+                }
+                if (*type == "refs") {
+                    const auto* glob_value = find(item, "glob");
+                    const auto* duration_value = find(item, "duration_s");
+                    const auto* forever_value = find(item, "forever");
+                    const auto* glob =
+                        glob_value ? std::get_if<std::string>(&glob_value->data) : nullptr;
+                    const auto* duration = duration_value
+                                               ? std::get_if<std::uint64_t>(&duration_value->data)
+                                               : nullptr;
+                    const auto* forever =
+                        forever_value ? std::get_if<bool>(&forever_value->data) : nullptr;
+                    if (!glob || ((duration != nullptr) == (forever && *forever)) ||
+                        (forever && !*forever) ||
+                        (duration && (*duration == 0 ||
+                                      *duration > static_cast<std::uint64_t>(
+                                                      std::numeric_limits<std::int64_t>::max())))) {
+                        return std::unexpected(failure(
+                            errc::corrupt, "invalid ref retention rule", "repository document"));
+                    }
+                    auto configured_duration = std::optional<std::chrono::seconds>{};
+                    if (duration) {
+                        configured_duration =
+                            std::chrono::seconds{static_cast<std::int64_t>(*duration)};
+                    }
+                    output.retention.rules.push_back(
+                        ref_retention_rule{*name, *glob, configured_duration});
+                } else if (*type == "results") {
+                    const auto* duration_value = find(item, "duration_s");
+                    const auto* duration = duration_value
+                                               ? std::get_if<std::uint64_t>(&duration_value->data)
+                                               : nullptr;
+                    if (!duration || *duration == 0 ||
+                        *duration >
+                            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+                        return std::unexpected(failure(
+                            errc::corrupt, "invalid result retention rule", "repository document"));
+                    }
+                    output.retention.rules.push_back(result_retention_rule{
+                        *name, std::chrono::seconds{static_cast<std::int64_t>(*duration)}});
+                } else if (*type == "size_cap") {
+                    const auto* bytes_value = find(item, "bytes");
+                    const auto* byte_count =
+                        bytes_value ? std::get_if<std::uint64_t>(&bytes_value->data) : nullptr;
+                    if (!byte_count || *byte_count == 0) {
+                        return std::unexpected(failure(errc::corrupt,
+                                                       "invalid size-cap retention rule",
+                                                       "repository document"));
+                    }
+                    output.retention.rules.push_back(size_cap_retention_rule{*name, *byte_count});
+                } else {
+                    return std::unexpected(failure(
+                        errc::corrupt, "unknown retention rule type", "repository document"));
+                }
+            }
+        }
     }
     for (const auto& item : *saved_drips) {
         const auto* body = find(item, "body");
@@ -718,6 +829,54 @@ auto validate_encryption_rules(const std::vector<encryption_path_rule>& rules) -
     return {};
 }
 
+auto validate_retention_rules(const retention_config& config) -> result<void> {
+    auto names = std::set<std::string>{};
+    auto result_rules = std::uint32_t{};
+    auto cap_rules = std::uint32_t{};
+    for (const auto& configured : config.rules) {
+        auto valid = std::visit(
+            [&](const auto& rule) -> result<void> {
+                using rule_type = std::decay_t<decltype(rule)>;
+                if (rule.name.empty() || rule.name.size() > 128 || rule.name.contains('\n') ||
+                    !names.insert(rule.name).second) {
+                    return std::unexpected(failure(errc::invalid_argument,
+                                                   "invalid or duplicate retention rule name",
+                                                   rule.name));
+                }
+                if constexpr (std::is_same_v<rule_type, ref_retention_rule>) {
+                    if (rule.glob.empty() ||
+                        (rule.duration && *rule.duration <= std::chrono::seconds::zero())) {
+                        return std::unexpected(failure(
+                            errc::invalid_argument, "invalid ref retention rule", rule.name));
+                    }
+                } else if constexpr (std::is_same_v<rule_type, result_retention_rule>) {
+                    ++result_rules;
+                    if (rule.base <= std::chrono::seconds::zero()) {
+                        return std::unexpected(failure(
+                            errc::invalid_argument, "invalid result retention rule", rule.name));
+                    }
+                } else {
+                    ++cap_rules;
+                    if (rule.bytes == 0) {
+                        return std::unexpected(failure(
+                            errc::invalid_argument, "invalid size-cap retention rule", rule.name));
+                    }
+                }
+                return {};
+            },
+            configured);
+        if (!valid) {
+            return valid;
+        }
+    }
+    if (result_rules > 1 || cap_rules > 1) {
+        return std::unexpected(failure(errc::invalid_argument,
+                                       "retention accepts at most one result and one size-cap rule",
+                                       "config.retention"));
+    }
+    return {};
+}
+
 auto encryption_rule_for(const repository_document& document, std::string_view path)
     -> const encryption_path_rule* {
     for (const auto& rule : document.encryption_rules) {
@@ -762,7 +921,6 @@ struct repository::impl {
     std::optional<retained_lease> working_tree_lease;
     std::optional<retained_lease> checkpoint_lease;
     std::optional<retained_lease> cache_root_lease;
-    std::map<std::string, retained_lease> ref_leases;
     std::map<node_id, retained_lease> directory_leases;
     signer signing_key;
     std::shared_ptr<keyring> keys;
@@ -916,24 +1074,41 @@ struct repository::impl {
         retained.emplace(retained_lease{id, std::move(*replacement)});
         co_return result<void>{};
     }
-    runtime::task<void> retain_ref(std::string_view name, digest id) {
-        auto existing = ref_leases.find(std::string{name});
-        if (existing != ref_leases.end() && existing->second.id.alg == id.alg &&
-            existing->second.id.bytes == id.bytes) {
-            co_return co_await existing->second.value.renew(lease_ttl);
+    runtime::task<void> sync_retention_roots(std::string owner_prefix,
+                                             std::vector<repository_detail::retention_root> roots) {
+        const auto directory = root_path / ".liquid-store" / "leases";
+        auto existing = co_await store_detail::load_leases(directory);
+        if (!existing) {
+            co_return std::unexpected(existing.error());
         }
-        auto replacement = co_await objects.lease_root(id, lease_ttl);
-        if (!replacement) {
-            co_return std::unexpected(replacement.error());
+        auto retained_ids = std::set<std::string>{};
+        for (const auto& desired : roots) {
+            const auto expiry = desired.expiry.value_or(std::chrono::sys_seconds::max());
+            const auto matching = std::ranges::find_if(*existing, [&](const auto& record) {
+                return record.owner == desired.owner && record.root.alg == desired.root.alg &&
+                       record.root.bytes == desired.root.bytes && record.expiry == expiry;
+            });
+            if (matching != existing->end()) {
+                retained_ids.insert(matching->id);
+                continue;
+            }
+            auto created = co_await store_detail::create_lease_until(
+                directory, desired.root, desired.expiry, desired.owner);
+            if (!created) {
+                co_return std::unexpected(created.error());
+            }
         }
-        if (existing != ref_leases.end()) {
-            auto released = co_await existing->second.value.release();
+        for (const auto& record : *existing) {
+            if (!record.owner.starts_with(owner_prefix) || retained_ids.contains(record.id)) {
+                continue;
+            }
+            auto state = std::make_shared<store_detail::lease_state>();
+            state->directory = directory;
+            state->record = record;
+            auto released = co_await store_detail::release_lease(std::move(state));
             if (!released) {
                 co_return std::unexpected(released.error());
             }
-            existing->second = retained_lease{id, std::move(*replacement)};
-        } else {
-            ref_leases.emplace(std::string{name}, retained_lease{id, std::move(*replacement)});
         }
         co_return result<void>{};
     }
@@ -967,28 +1142,37 @@ struct repository::impl {
         if (!retained_document) {
             co_return std::unexpected(retained_document.error());
         }
+        auto ref_roots = std::vector<repository_detail::retention_root>{};
+        const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
         for (const auto& [name, head] : current.refs) {
-            auto retained_ref = co_await retain_ref(name, head.value);
-            if (!retained_ref) {
-                co_return std::unexpected(retained_ref.error());
+            for (const auto& configured : current.retention.rules) {
+                const auto* rule = std::get_if<ref_retention_rule>(&configured);
+                if (!rule || !glob_matches(rule->glob, name)) {
+                    continue;
+                }
+                auto expiry = std::optional<std::chrono::sys_seconds>{};
+                if (rule->duration) {
+                    if (*rule->duration > std::chrono::sys_seconds::max() - now) {
+                        co_return std::unexpected(failure(errc::invalid_argument,
+                                                          "ref retention duration is too large",
+                                                          rule->name));
+                    }
+                    expiry = now + *rule->duration;
+                }
+                ref_roots.push_back(
+                    {"retention:ref\n" + rule->name + "\n" + name, head.value, expiry});
+                break;
             }
+        }
+        auto retained_refs = co_await sync_retention_roots("retention:ref\n", std::move(ref_roots));
+        if (!retained_refs) {
+            co_return std::unexpected(retained_refs.error());
         }
         for (const auto& [node, directory] : current.dirs) {
             auto retained_directory = co_await retain_directory(node, directory);
             if (!retained_directory) {
                 co_return std::unexpected(retained_directory.error());
             }
-        }
-        for (auto found = ref_leases.begin(); found != ref_leases.end();) {
-            if (current.refs.contains(found->first)) {
-                ++found;
-                continue;
-            }
-            auto released = co_await found->second.value.release();
-            if (!released) {
-                co_return std::unexpected(released.error());
-            }
-            found = ref_leases.erase(found);
         }
         for (auto found = directory_leases.begin(); found != directory_leases.end();) {
             if (current.dirs.contains(found->first)) {
@@ -1449,6 +1633,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_policy) {
         co_return std::unexpected(valid_policy.error());
     }
+    auto valid_retention = validate_retention_rules(options.retention);
+    if (!valid_retention) {
+        co_return std::unexpected(valid_retention.error());
+    }
     auto code = std::error_code{};
     std::filesystem::create_directories(path, code);
     if (code)
@@ -1469,6 +1657,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.cache_publish = options.cache.publish;
     document.verification_rate = options.verify.rate;
     document.policy = std::move(options.policy);
+    document.retention = std::move(options.retention);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -1521,6 +1710,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     auto valid_policy = build_detail::validate_policy(document->policy);
     if (!valid_policy)
         co_return std::unexpected(valid_policy.error());
+    auto valid_retention = validate_retention_rules(document->retention);
+    if (!valid_retention) {
+        co_return std::unexpected(valid_retention.error());
+    }
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -2693,7 +2886,62 @@ runtime::task<collection_report> repository::collect(collection_options options)
     if (!checkpointed) {
         co_return std::unexpected(checkpointed.error());
     }
+    auto cache = build_detail::disk_cache{*this};
+    auto opened = co_await cache.open();
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    auto retained = co_await cache.apply_retention(true);
+    if (!retained) {
+        co_return std::unexpected(retained.error());
+    }
     co_return co_await impl_->objects.collect(options);
+}
+
+runtime::task<retention_explanation> repository::retain_explain(digest id) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto checkpointed = co_await impl_->checkpoint();
+    if (!checkpointed) {
+        co_return std::unexpected(checkpointed.error());
+    }
+    auto cache = build_detail::disk_cache{*this};
+    auto opened = co_await cache.open();
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    auto retained = co_await cache.apply_retention(true);
+    if (!retained) {
+        co_return std::unexpected(retained.error());
+    }
+    auto options = collection_options{};
+    options.dry_run = true;
+    options.explain = true;
+    auto report = co_await impl_->objects.collect(options);
+    if (!report) {
+        co_return std::unexpected(report.error());
+    }
+    const auto same_id = [&](const retained_chunk& item) {
+        return item.id.alg == id.alg && item.id.bytes == id.bytes;
+    };
+    if (const auto found = std::ranges::find_if(report->retained_objects, same_id);
+        found != report->retained_objects.end()) {
+        co_return retention_explanation{id, true, found->reason};
+    }
+    if (const auto found = std::ranges::find_if(report->retained_chunks, same_id);
+        found != report->retained_chunks.end()) {
+        co_return retention_explanation{id, true, found->reason};
+    }
+    auto present = co_await impl_->objects.contains(id);
+    if (!present) {
+        co_return std::unexpected(present.error());
+    }
+    co_return retention_explanation{
+        id,
+        false,
+        *present ? "not reachable from a live lease; the next collection will evict it"
+                 : "not present in the local store"};
 }
 
 runtime::task<cache_report> repository::cache_stats() {
@@ -3082,15 +3330,14 @@ runtime::task<void> repository_detail::build_access::release_cache_root(reposito
     if (!source.impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
-    if (!source.impl_->cache_root_lease) {
-        co_return result<void>{};
+    if (source.impl_->cache_root_lease) {
+        auto released = co_await source.impl_->cache_root_lease->value.release();
+        if (!released) {
+            co_return std::unexpected(released.error());
+        }
+        source.impl_->cache_root_lease.reset();
     }
-    auto released = co_await source.impl_->cache_root_lease->value.release();
-    if (!released) {
-        co_return std::unexpected(released.error());
-    }
-    source.impl_->cache_root_lease.reset();
-    co_return result<void>{};
+    co_return co_await source.impl_->sync_retention_roots("retention:result\n", {});
 }
 
 bool repository_detail::build_access::cache_publish_enabled(repository& source) noexcept {
@@ -3106,6 +3353,19 @@ result<policy_config> repository_detail::build_access::policy(repository& source
         return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
     return source.impl_->current.policy;
+}
+
+retention_config repository_detail::build_access::retention_policy(repository& source) {
+    return source.impl_ ? source.impl_->current.retention : retention_config{};
+}
+
+runtime::task<void> repository_detail::build_access::sync_retention_roots(
+    repository& source, std::string owner_prefix, std::vector<retention_root> roots) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return co_await source.impl_->sync_retention_roots(std::move(owner_prefix),
+                                                          std::move(roots));
 }
 
 void repository_detail::build_access::record_cache_lookup(repository& source,

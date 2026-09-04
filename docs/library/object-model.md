@@ -92,7 +92,12 @@ The **repository document** (one per repository; directories are their own docum
   "config":  {
     "encrypt": { "paths": [ { "path": glob, "key_id": text,
                                 "mode": "leaf"|"file", "encrypted_regex": text } … ] }
-  }                              # ordered encryption rules; first matching path wins
+    "retention": { "rules": [
+      { "type": "refs", "name": text, "glob": glob, "forever": true } |
+      { "type": "refs"|"results", "name": text, "duration_s": uint } |
+      { "type": "size_cap", "name": text, "bytes": uint }
+    ] }
+  }                              # ordered path rules; first matching path/ref rule wins
   "ops":     list of op          # the operation log, liquid #41
 }
 ```

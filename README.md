@@ -46,7 +46,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
-> dependency-aware build observability, build-input policy, and a cross-project configure fact base.**
+> dependency-aware build observability, build-input policy, a cross-project configure fact base, and
+> cost-aware retention.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -73,6 +74,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Autotools cache variables and common CMake check results are facts keyed by compiler content,
 > explicit sysroot content, and target triple; `liquid facts` inspects or exports them. `wrap --target`
 > refuses to execute an uncached probe for a foreign target.
+> Typed retention rules keep matching refs and cost-weighted results through computed reachability;
+> a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
+> names the responsible rule and lease. Memory and remote tiers remain separate work; macOS needs
+> macFUSE and Windows returns its documented unsupported result.
 
 ## Where this sits
 
@@ -101,7 +106,7 @@ and Zetta's.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
-- [`docs/library/gc.md`](docs/library/gc.md) — leased roots, epoch marking, reference extraction, and crash-safe sweep ordering.
+- [`docs/library/gc.md`](docs/library/gc.md) — leased roots, retention rules, cost-aware result eviction, epoch marking, reference extraction, and crash-safe sweep ordering.
 - [`docs/library/encryption.md`](docs/library/encryption.md) — trust-domain encrypted store objects, key custody, and failure behavior.
 - [`docs/library/leaf-encryption.md`](docs/library/leaf-encryption.md) — JSON and `.env` leaf encryption, path rules, explicit decryption, and structural key diff.
 - [`docs/library/simulation.md`](docs/library/simulation.md) — seeded crash recovery simulation, fault points, invariants, and replay.

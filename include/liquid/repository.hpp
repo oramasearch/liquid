@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "liquid/build.hpp"
@@ -49,6 +50,45 @@ struct LIQUID_EXPORT verify_config {
     std::uint32_t rate{20};
 };
 
+struct LIQUID_EXPORT ref_retention_rule {
+    std::string name;
+    std::string glob;
+    std::optional<std::chrono::seconds> duration{std::chrono::days{30}};
+
+    auto operator==(const ref_retention_rule&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT result_retention_rule {
+    std::string name;
+    std::chrono::seconds base{std::chrono::days{30}};
+
+    auto operator==(const result_retention_rule&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT size_cap_retention_rule {
+    std::string name;
+    std::uint64_t bytes{};
+
+    auto operator==(const size_cap_retention_rule&) const -> bool = default;
+};
+
+using retention_rule =
+    std::variant<ref_retention_rule, result_retention_rule, size_cap_retention_rule>;
+
+struct LIQUID_EXPORT retention_config {
+    std::vector<retention_rule> rules{
+        ref_retention_rule{"default refs", "*", std::chrono::days{30}},
+        result_retention_rule{"default results", std::chrono::days{30}}};
+
+    auto operator==(const retention_config&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT retention_explanation {
+    digest id{};
+    bool retained{};
+    std::string reason;
+};
+
 struct LIQUID_EXPORT repository_options {
     std::uint64_t checkpoint_interval{64};
     store_options store{};
@@ -56,6 +96,7 @@ struct LIQUID_EXPORT repository_options {
     cache_config cache{};
     verify_config verify{};
     policy_config policy{};
+    retention_config retention{};
 };
 
 struct LIQUID_EXPORT log_options {
@@ -180,6 +221,7 @@ public:
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
     [[nodiscard]] runtime::task<void> set_policy(policy_config policy);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
+    [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);
     [[nodiscard]] runtime::task<cache_report> cache_stats();
 
 private:

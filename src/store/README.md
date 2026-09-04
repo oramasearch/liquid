@@ -16,11 +16,12 @@ Targeted redaction removes selected object-map entries, commits tombstones for t
 frames, rebuilds the index, and compacts only affected packs. It is separate from lease-driven
 reachability collection so unrelated repository objects remain available.
 
-Build-cache collection roots are canonical `action-index-root` records under the same store. The
-reference registry traverses root to result, result to action/output/stdout/stderr/provenance, and
-action to input/toolchain/sandbox. It also traverses root to the verification attestation, so an
-indexed result, its trust evidence, and the bytes needed to use and verify it remain one reachable
-graph.
+Build-cache collection roots are canonical `action-index-root` records plus named result leases
+under the same store. The reference registry traverses result to
+action/output/stdout/stderr/provenance and action to input/toolchain/sandbox. The index root retains
+verification attestations but does not pin results, so result expiry and cost-aware eviction can
+release one usable graph without weakening the collector's manifest/index/pack-removal ordering.
+Collector explanations carry object-level reasons and count live policy roots by rule name.
 
 Build observability adds `build_trace` to the reference registry. The action-index root retains each
 trace digest, and each trace retains its named results, including results from wraps that did not

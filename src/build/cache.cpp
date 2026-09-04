@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <limits>
+#include <set>
+#include <system_error>
 
 #include "build/repository_access.hpp"
 #include "build/why.hpp"
@@ -212,6 +215,38 @@ auto signed_result_is_valid(const action_result& value) -> result<bool> {
         return std::unexpected(body.error());
     }
     return verify(value.producer, "result", *body, *signature);
+}
+
+auto cache_pack_bytes(const std::filesystem::path& directory) -> result<std::uint64_t> {
+    auto total = std::uint64_t{};
+    auto code = std::error_code{};
+    if (!std::filesystem::exists(directory, code)) {
+        if (code) {
+            return std::unexpected(cache_error(errc::io, code.message(), directory));
+        }
+        return total;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(directory, code)) {
+        if (code) {
+            return std::unexpected(cache_error(errc::io, code.message(), directory));
+        }
+        if (!entry.is_regular_file(code)) {
+            if (code) {
+                return std::unexpected(cache_error(errc::io, code.message(), entry.path()));
+            }
+            continue;
+        }
+        const auto size = entry.file_size(code);
+        if (code) {
+            return std::unexpected(cache_error(errc::io, code.message(), entry.path()));
+        }
+        if (std::numeric_limits<std::uint64_t>::max() - total < size) {
+            return std::unexpected(
+                error{errc::internal, "store byte count overflow", directory.string()});
+        }
+        total += size;
+    }
+    return total;
 }
 
 } // namespace
@@ -453,9 +488,13 @@ runtime::task<void> disk_cache::open() {
     }
     traces_ = decoded->traces;
     if (root_matches) {
-        co_return result<void>{};
+        co_return co_await repository_detail::build_access::retain_cache_root(source_, **root);
     }
-    co_return co_await index_.rebuild(std::move(decoded->entries), **root);
+    auto rebuilt = co_await index_.rebuild(std::move(decoded->entries), **root);
+    if (!rebuilt) {
+        co_return std::unexpected(rebuilt.error());
+    }
+    co_return co_await repository_detail::build_access::retain_cache_root(source_, **root);
 }
 
 result<digest> disk_cache::candidate_key(const action_input& input, digest sandbox) const {
@@ -651,7 +690,7 @@ disk_cache::publish(digest candidate, result_id id, const action_result& value) 
         co_return std::unexpected(stored.error());
     }
     repository_detail::build_access::record_cache_store(source_, result_bytes->size() + *stored);
-    co_return result<void>{};
+    co_return co_await apply_retention(false);
 }
 
 runtime::task<void>
@@ -675,6 +714,137 @@ disk_cache::record_verification(digest result, digest attestation, bool is_diver
         co_return std::unexpected(rebuilt.error());
     }
     co_return co_await persist_root();
+}
+
+runtime::task<void> disk_cache::apply_retention(bool enforce_size_cap) {
+    const auto policy = repository_detail::build_access::retention_policy(source_);
+    const result_retention_rule* result_rule = nullptr;
+    const size_cap_retention_rule* size_cap = nullptr;
+    for (const auto& configured : policy.rules) {
+        if (const auto* rule = std::get_if<result_retention_rule>(&configured)) {
+            result_rule = rule;
+        } else if (const auto* rule = std::get_if<size_cap_retention_rule>(&configured)) {
+            size_cap = rule;
+        }
+    }
+
+    struct candidate {
+        digest id;
+        action_result value;
+        std::uint64_t bytes{};
+        long double score{};
+        std::optional<std::chrono::sys_seconds> expiry;
+        std::string owner;
+    };
+
+    auto candidates = std::vector<candidate>{};
+    auto seen = std::set<std::string>{};
+    for (const auto& entry : index_.entries()) {
+        const auto key = to_string(entry.result);
+        if (!seen.insert(key).second) {
+            continue;
+        }
+        auto raw = co_await repository_detail::build_access::get(source_, entry.result);
+        if (!raw) {
+            if (raw.error().code == errc::not_found) {
+                continue;
+            }
+            co_return std::unexpected(raw.error());
+        }
+        auto value = objects::decode_result(*raw);
+        if (!value) {
+            continue;
+        }
+        auto referenced = co_await referenced_bytes(source_, *value);
+        if (!referenced && referenced.error().code != errc::not_found) {
+            co_return std::unexpected(referenced.error());
+        }
+        const auto graph_bytes = referenced ? *referenced : std::uint64_t{};
+        const auto record_bytes = static_cast<std::uint64_t>(raw->size());
+        const auto total = std::numeric_limits<std::uint64_t>::max() - graph_bytes < record_bytes
+                               ? std::numeric_limits<std::uint64_t>::max()
+                               : graph_bytes + record_bytes;
+        candidates.push_back({entry.result, std::move(*value), std::max(std::uint64_t{1}, total)});
+    }
+
+    if (result_rule && !candidates.empty()) {
+        auto costs = std::vector<std::int64_t>{};
+        costs.reserve(candidates.size());
+        for (const auto& item : candidates) {
+            costs.push_back(std::max<std::int64_t>(1, item.value.timing.exec.count()));
+        }
+        std::ranges::sort(costs);
+        auto median = static_cast<long double>(costs[costs.size() / 2]);
+        if (costs.size() % 2 == 0) {
+            median = (static_cast<long double>(costs[costs.size() / 2 - 1]) + median) / 2.0L;
+        }
+        const auto maximum_seconds =
+            static_cast<long double>(std::numeric_limits<std::int64_t>::max());
+        const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        for (auto& item : candidates) {
+            const auto cost = std::max<std::int64_t>(1, item.value.timing.exec.count());
+            const auto factor = std::clamp(static_cast<long double>(cost) / median, 1.0L, 64.0L);
+            const auto scaled =
+                std::min(maximum_seconds,
+                         std::ceil(static_cast<long double>(result_rule->base.count()) * factor));
+            const auto duration = std::chrono::seconds{static_cast<std::int64_t>(scaled)};
+            if (duration <= std::chrono::sys_seconds::max() - item.value.observed_at) {
+                const auto expiry = item.value.observed_at + duration;
+                if (expiry > now) {
+                    item.expiry = expiry;
+                }
+            }
+            item.owner = "retention:result\n" + result_rule->name + "\n" + to_string(item.id);
+            item.score = static_cast<long double>(cost) / static_cast<long double>(item.bytes);
+        }
+    }
+
+    auto evicted = std::set<std::string>{};
+    if (enforce_size_cap && result_rule && size_cap) {
+        const auto root = repository_detail::build_access::root_path(source_);
+        if (!root) {
+            co_return std::unexpected(root.error());
+        }
+        auto stored = cache_pack_bytes(*root / ".liquid-store" / "packs");
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        if (*stored > size_cap->bytes) {
+            std::ranges::sort(candidates, [](const candidate& left, const candidate& right) {
+                if (left.score != right.score) {
+                    return left.score < right.score;
+                }
+                return to_string(left.id) < to_string(right.id);
+            });
+            const auto target = *stored - size_cap->bytes;
+            auto released = std::uint64_t{};
+            for (const auto& item : candidates) {
+                if (!item.expiry) {
+                    continue;
+                }
+                evicted.insert(to_string(item.id));
+                if (std::numeric_limits<std::uint64_t>::max() - released < item.bytes) {
+                    released = std::numeric_limits<std::uint64_t>::max();
+                } else {
+                    released += item.bytes;
+                }
+                if (released >= target) {
+                    break;
+                }
+            }
+        }
+    }
+
+    auto roots = std::vector<repository_detail::retention_root>{};
+    if (result_rule) {
+        for (const auto& item : candidates) {
+            if (item.expiry && !evicted.contains(to_string(item.id))) {
+                roots.push_back({item.owner, item.id, item.expiry});
+            }
+        }
+    }
+    co_return co_await repository_detail::build_access::sync_retention_roots(
+        source_, "retention:result\n", std::move(roots));
 }
 
 const std::vector<objects::action_index_entry>& disk_cache::entries() const noexcept {

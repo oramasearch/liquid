@@ -3,7 +3,7 @@
 `test_executor.cpp` exercises public action execution and the private disk-cache invariants. Tests
 that require observation and sandbox enforcement run only when FUSE is configured; the prescribed
 privileged Linux container runs them for real. Portable tests cover action-index persistence,
-rebuild, the read-only publication default, SLSA provenance derivation and verification, tamper
+rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA provenance derivation and verification, tamper
 rejection, and DSSE/in-toto shape plus digest round-trip.
 
 `test_why.cpp` builds signed action/result histories without a mount and proves input digests and
@@ -19,9 +19,12 @@ timeout cleanup. Verification tests prove a pure agreement, signature-valid agre
 disagreement attestations, rate-one sampling, durable divergent quarantine, and critical output
 diagnostics.
 
+The mixed-cost retention case writes a cheap large result and an expensive small result into the
+real store, persists both index rows, exceeds the configured physical cap, and proves collection
+removes only the lower execution-cost-per-byte result.
+
 `wrap/` holds unchanged CMake, Autotools, recursive Make, and compilation-database projects built
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
-invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
 compiler entry,
