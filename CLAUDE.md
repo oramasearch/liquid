@@ -16,7 +16,8 @@ Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
 error and digest APIs plus liquid #1's local chunk store, liquid #7's trust-domain encrypted objects,
 and liquid #55's deterministic crash simulator are implemented, while operations owned by later issues return
-`errc::unsupported`. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store) is built inside
+`errc::unsupported`. The internal CRDT metadata document, canonical CBOR codec and drip journal
+are implemented. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store) is built inside
 libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
 option is enabled.
 
@@ -171,7 +172,7 @@ chosen options once they are made.
 | [`oramasearch/liquify`](https://github.com/oramasearch/liquify) | The IDE — native, cross-platform (SDL3 + Dear ImGui), links libliquid as a pinned submodule. Private for now, open source eventually; never depends on Zetta. |
 | [`oramasearch/orama-operator`](https://github.com/oramasearch/orama-operator) | **The Orama operator** (renamed from `orama-cloud-v1-operator`; the Zetta operator). lake is deployed by adding a `Lake` CR to it — there is no separate lake operator. Running in production on AKS. |
 | [`oramasearch/k0s`](https://github.com/oramasearch/k0s) | **Private copy** of `k0sproject/k0s`, synced with upstream, modified for drips. `main` is a pristine upstream mirror; our changes live on `liquid`. See its `ORAMA-FORK.md`. |
-| [`homer6/automerge-cpp`](https://github.com/homer6/automerge-cpp) | The CRDT datastore ([17](docs/features/17-implementation.md)). Still under `homer6`; whether it moves is undecided. |
+| [`oramasearch/automerge-cpp`](https://github.com/oramasearch/automerge-cpp) | The MIT-licensed CRDT datastore ([17](docs/features/17-implementation.md)), consumed here as a pinned private submodule. |
 | [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F search engine ([12](docs/features/12-search.md)). Private; currently a scaffold. |
 | [`oramasearch/corosio`](https://github.com/oramasearch/corosio) | **Private patch carrier** for `cppalliance/corosio` — `orama-main` carries an epoll hang-up fix that is **not upstream**. Zetta consumes it. **Consume this, never `cppalliance/corosio` directly.** (An earlier claim here that Zetta had drifted to upstream was wrong — it came from a stale standalone clone.) |
 | [`oramasearch/http`](https://github.com/oramasearch/http) | **Private patch carrier** for `cppalliance/http`, branch `zetta-patches`. Same rule: consume this, never upstream directly. |
@@ -229,9 +230,10 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    already has its own Zetta as observed-state store — **k8s/etcd is the source of truth
    for desired state (the CRs); Zetta holds observed state**, synced with anti-flap
    discipline. See its `docs/zetta-datastore.md`.
-4. **One CRDT — `automerge-cpp`, and it stays open.** MIT-licensed, public, already
-   vendored by Zetta. It is the shared open component between liquid (open) and Zetta
-   (closed). Where the canonical repo lives is still open, but its licence is settled.
+4. **One CRDT — `automerge-cpp`, and it stays open.** MIT-licensed and intended to remain
+   open source, currently private, and already vendored by Zetta. It is the shared open component
+   between liquid (open) and Zetta (closed). Its canonical repository is
+   `oramasearch/automerge-cpp`.
 5. **Async stack — Boost.Capy for coroutines, Corosio for networking**, matching Zetta
    and oramacore-cpp. Consume `oramasearch/corosio` (private patch carrier), never
    `cppalliance/corosio` directly. stdexec is not used. Requires **Clang 17+**: Homebrew
@@ -273,7 +275,6 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
   ([25](docs/features/25-identity-attestation-and-transparency.md)). Blocking for
   attribution of documents and artifacts; needs the protocol owner.
 - **Which open-source licence** for liquid and liquify.
-- **Canonical home of `automerge-cpp`** — `homer6` or `oramasearch`.
 
 **Phase 0.5 is met** (every module builds and runs; lake serves on AKS). Phase 1 — the store —
 is the current work, inside libliquid, per the bridge `docs/action-plan.md` and the issues it

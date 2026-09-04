@@ -74,3 +74,25 @@ add_executable(liquid-header-tests
   headers/vfs.cpp)
 target_link_libraries(liquid-header-tests PRIVATE liquid::liquid)
 add_test(NAME public-headers-isolated COMMAND liquid-header-tests)
+
+add_executable(liquid-cbor-tests encoding/test_cbor.cpp)
+target_sources(liquid-cbor-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
+target_include_directories(liquid-cbor-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(liquid-cbor-tests PRIVATE
+  LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(liquid-cbor-tests PRIVATE
+  liquid::liquid automerge-cpp::automerge-cpp GTest::gtest_main)
+gtest_discover_tests(liquid-cbor-tests)
+
+add_executable(liquid-crdt-tests crdt/test_document.cpp crdt/test_journal.cpp)
+target_sources(liquid-crdt-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
+target_include_directories(liquid-crdt-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-crdt-tests PRIVATE
+  liquid::liquid automerge-cpp::automerge-cpp GTest::gtest_main)
+gtest_discover_tests(liquid-crdt-tests)
+
+add_executable(liquid-crdt-measure EXCLUDE_FROM_ALL crdt/measure_document.cpp)
+target_sources(liquid-crdt-measure PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
+target_include_directories(liquid-crdt-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-crdt-measure PRIVATE
+  liquid::liquid automerge-cpp::automerge-cpp)

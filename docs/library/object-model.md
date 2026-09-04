@@ -17,6 +17,10 @@ operation content, its default actor id is zero, it has no commit metadata, no i
 no patches for remote changes, no rollback, no sync wire format, and no history compaction.
 Everything below that says "liquid's own" is there because of one of those.
 
+**Status: implemented for liquid #3.** The private automerge-cpp wrapper, repository document
+schema, canonical CBOR codec, versioned sync framing and drip journal are implemented. Repository
+operations that consume this layer remain liquid #2.
+
 ## The two layers, precisely
 
 | | Content store (liquid #1) | Metadata document (liquid #3) |
@@ -99,6 +103,9 @@ Rules liquid's wrapper enforces on top of automerge-cpp, until the upstream issu
    walks the changed objects itself; nothing relies on patches from remote changes.
 4. **Persistence** is the whole document saved into the store as a blob at every change cut,
    plus liquid's drip journal between cuts; incremental save replaces the journal when it exists.
+   A cut increments the repository's journal epoch, atomically installs the whole-document save,
+   then resets the append-only journal. A replica behind the retained epoch starts from that cut
+   instead of requesting discarded drips.
 5. **Transactions never throw** past the boundary: liquid validates inputs before opening one,
    because automerge-cpp applies eagerly and cannot roll back.
 6. **Sync framing is liquid's** (CBOR around `SyncMessage` and the changes it carries) until a
@@ -122,17 +129,41 @@ Rules liquid's wrapper enforces on top of automerge-cpp, until the upstream issu
 
 ## Document boundary
 
-Phase 1: one document per repository. automerge-cpp's published measurements reach one million
-keys in a document; liquid measures the working tree at 10⁵ and 10⁶ entries as part of #3 and
-records the numbers here. The per-directory-document design (one automerge document per
-directory, referenced by `node_id`) is the fallback if that measurement fails, and the schema
-above is written so a directory map can be lifted into its own document without changing entry
-shapes. features/17 keeps this as an open question; the measurement closes it.
+Phase 1 keeps one document per repository. The measured million-entry document completed on the
+test machine, so the per-directory-document fallback is not selected. The growth is strongly
+nonlinear, however: the million-entry case used 10.4 GiB peak RSS and load replay took
+708,573.076 ms. This makes one document a functional Phase 1 boundary, not evidence that it is an
+unbounded one.
+
+Hardware: Apple M3 Max (`Mac15,9`), 16 logical CPUs, 64 GiB RAM, macOS 14.6.1 (23G93), Homebrew
+Clang 22.1.8. The measurement used a Release build. `liquid-crdt-measure` created a flat working
+tree with one blob entry and one operation-log record per write. It submitted 1,000 writes per
+transaction, used deterministic 16-byte operation and node identifiers plus one fixed BLAKE3
+reference, and divided total transaction wall time by the number of writes. Save and load were
+timed with `std::chrono::steady_clock`; peak process RSS came from `getrusage` and includes the
+original and loaded documents resident together. Each case was one uninterrupted process.
+
+| Entries | Transaction per write | `save()` size | `save()` time | `load()` time | Peak RSS |
+|---:|---:|---:|---:|---:|---:|
+| 100,000 | 117.179 µs | 2,046,818 bytes | 338.496 ms | 3,800.777 ms | 1,171.562 MiB |
+| 1,000,000 | 2,086.627 µs | 20,176,218 bytes | 3,944.885 ms | 708,573.076 ms | 10,613.234 MiB |
+
+Reproduce either row after a Release configure with:
+
+```sh
+cmake --build build-measure --target liquid-crdt-measure
+./build-measure/tests/liquid-crdt-measure 100000 1000
+./build-measure/tests/liquid-crdt-measure 1000000 1000
+```
+
+The per-directory-document design (one automerge document per directory, referenced by
+`node_id`) remains the fallback if production trees exceed this measured envelope. The schema is
+written so a directory map can be lifted into its own document without changing entry shapes.
 
 ## How to verify
 
-- Canonical encoding: the same record encoded on Linux, macOS and Windows produces the same
-  digest (a fixture set under `tests/fixtures/records/`).
+- Canonical encoding: supported RFC 8949 Appendix A values and bytewise map-key ordering are
+  checked against `tests/fixtures/cbor/rfc8949-supported.txt`.
 - Identity: create, move, move back; the entry's `node_id` never changes; the log shows two
   moves and no delete/create pairs.
 - Composition: `split` then `nest` the result back; `root()` is byte-identical to before;

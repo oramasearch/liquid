@@ -22,9 +22,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > as a thin client of it; liquify and lake link the same library. The public error and digest APIs
 > are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put, get,
-> range read, contains, and trust-domain encrypted objects with passphrase or raw-key-file custody; leases and collection remain unsupported. Repository, capture, identity,
-> VFS and remote operations remain `unsupported` until their owning issues land. `liquid version` and
-> `liquid hello` remain unchanged, and `find_package(liquid)` works from an install.
+> range read, contains, and trust-domain encrypted objects with passphrase or raw-key-file custody;
+> leases and collection remain unsupported. Repository, capture, identity, VFS and remote operations
+> remain `unsupported` until their owning issues land. The internal CRDT
+> metadata document, canonical CBOR codec and drip journal are implemented behind libliquid.
+> `liquid version` and `liquid hello` remain unchanged, and `find_package(liquid)` works from an
+> install.
 
 ## Where this sits
 
@@ -176,7 +179,7 @@ target_link_libraries(app PRIVATE liquid::liquid)
 
 Modern **C++26**, cross-platform.
 
-- **Datastore** — [`homer6/automerge-cpp`](https://github.com/homer6/automerge-cpp),
+- **Datastore** — [`oramasearch/automerge-cpp`](https://github.com/oramasearch/automerge-cpp),
   a from-scratch C++23 CRDT implementation, for the metadata and namespace layer.
 - **Search** — [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp)
   (BM25F) for ranked full-text, plus a positional trigram index for code substring
