@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "liquid/store.hpp"
+#include "repository/store_access.hpp"
 #include "store/references.hpp"
 
 namespace liquid {
@@ -142,7 +143,8 @@ runtime::task<sync_transfer_report> sync_session::receive(std::span<const digest
                 co_return std::unexpected(loaded.error());
             }
             report.bytes += loaded->size();
-            auto stored = co_await impl_->local->put(*loaded);
+            auto stored =
+                co_await repository_detail::store_access::put_verified(*impl_->local, id, *loaded);
             if (!stored) {
                 co_return std::unexpected(stored.error());
             }

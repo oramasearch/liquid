@@ -9,7 +9,7 @@ notes so that each claim has a clear role.
 | [`features/`](features/) | Specifications for what liquid does. |
 | [`standards/`](standards/) | External standards liquid depends on. |
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
-| [`library/object-model.md`](library/object-model.md) | The records in the store, compact/shallow CRDT checkpoints, measured open cost, and how composition, conflicts, undo and locks work. Design for liquid #2, #3, and #136. |
+| [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, compact/shallow CRDT checkpoints, measured open cost, and how composition, conflicts, undo and locks work. Design for liquid #2, #3, #136, and #165. |
 | [`library/build-engine.md`](library/build-engine.md) | Phase 2's design plus #18's remote scheduling record: action and result records, observation by the mount with per-platform enforcement, cache lookup, retained timing and scheduling traces, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
 | [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, #18 scheduling, and #16 REAPI interoperability, plus the remaining worker work. |
 | [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4 design: queries and actions as one mechanism, fingerprints, red-green validation, early cutoff, durability tiers, the daemon and its fan-out, clean-rebuild validation, per-definition granularity behind a frontend module, symbols and the planner, liquify on the graph, the waves. |
@@ -23,12 +23,12 @@ notes so that each claim has a clear role.
 | [`library/hash-agility.md`](library/hash-agility.md) | Digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits. |
 | [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
 | [`library/http2.md`](library/http2.md) | Private Corosio HTTP/2 framing, HPACK, gRPC envelopes, and h2c/TLS ALPN interoperability proof. |
-| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange over HTTP/1.1. |
+| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client. |
 | [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
-| [`library/store.md`](library/store.md) | Content-defined local store, on-disk formats, integrity checks, index, tuning, and rebuild. |
-| [`library/gc.md`](library/gc.md) | Leased roots, typed retention rules, cost-aware result eviction, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
+| [`library/store.md`](library/store.md) | Content-defined local and caller-owned shared stores, on-disk formats, integrity checks, index, tuning, and rebuild. |
+| [`library/gc.md`](library/gc.md) | Repository-scoped leased roots, typed retention rules, cost-aware result eviction, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
 | [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, versioned data-key rotation and revocation, readability reports, key custody, on-disk envelopes, and failure behavior. |
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |

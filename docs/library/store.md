@@ -26,6 +26,8 @@ share chunks without a file-per-object bottleneck.
 <root>/leases/lease-<id>-<generation>.lease
 <root>/gc/MANIFEST       committed epoch and per-pack tombstone bitmaps
 <root>/keys/<key-id>.wrapped   encrypted trust-domain data key
+<root>/repositories/<id-hash>/LIQUID_REPO     shared-store repository checkpoint entry point
+<root>/repositories/<id-hash>/LIQUID_JOURNAL  shared-store repository journal entry point
 <root>/tmp/
 ```
 
@@ -35,6 +37,16 @@ an eight-byte frame magic, raw and compressed lengths (`u32` each), an algorithm
 digest, and an individually zstd-compressed payload. A sealed pack ends with a sorted chunk table
 and a footer containing the table location and checksum. The table carries the algorithm tag, so it
 remains the source for rebuilding index run sets.
+
+Ordinary writes use the store's configured hash algorithm. Verified sync receipt instead preserves
+the algorithm tag carried by each frame after recomputing that exact digest, so a BLAKE3 and a
+SHA-256 object can coexist in either configured store without changing remote identity.
+
+The `repositories/` directory appears only when a caller supplies one open store to
+`repository::create` or `repository::open`; it is not part of a repository-local store's checkout
+layout. Repository documents, directory checkpoints, trees, blobs, and chunks are still stored
+through the ordinary content-addressed packs, so identical content has one physical frame across
+all repositories in the store.
 
 The current pack has no table or footer. Its frames are represented in memory and in the index
 memtable. When a pack reaches `store_options::pack_size` (or 64 MiB when it is zero), it is sealed:

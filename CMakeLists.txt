@@ -320,6 +320,7 @@ add_library(libliquid
   src/store/subject_index.cpp
   src/sync/codec.cpp
   src/sync/endpoint.cpp
+  src/sync/server.cpp
   src/sync/session.cpp
   src/version.cpp
   src/vfs.cpp
@@ -408,6 +409,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/sbom.cpp
+    src/cli/serve.cpp
     src/cli/sync.cpp
     src/cli/serve.cpp
     src/cli/repo.cpp
@@ -419,7 +421,8 @@ if(LIQUID_BUILD_CLI)
     src/cli/why.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
-  target_link_libraries(liquid-cli PRIVATE liquid::liquid)
+  target_link_libraries(liquid-cli PRIVATE
+    liquid::liquid Boost::corosio Boost::http)
 endif()
 
 # -----------------------------------------------------------------------------

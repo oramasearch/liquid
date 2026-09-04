@@ -25,11 +25,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
-> leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
+> leased roots, epoch garbage collection, and pack compaction. Multiple repositories can use one
+> caller-owned store with repository-scoped checkpoints, journals, and retention leases. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
-> push and pull, signed metadata exchange, missing-object negotiation, and the HTTP/1.1 sync client are implemented;
-> hosting the server remains lake work. VFS full materialisation works on every platform;
+> push and pull, signed metadata exchange, missing-object negotiation, the public sync server, and
+> the HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory

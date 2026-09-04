@@ -123,8 +123,9 @@ bool after_high_water(std::uint32_t high_water_pack,
 
 std::string root_reason(const lease_record& lease) {
     auto reason = "lease " + lease.id;
-    if (lease.owner.starts_with("retention:")) {
-        const auto first = lease.owner.find('\n');
+    const auto retention = lease.owner.find("retention:");
+    if (retention != std::string::npos && (retention == 0 || lease.owner[retention - 1] == '\n')) {
+        const auto first = lease.owner.find('\n', retention);
         const auto second =
             first == std::string::npos ? std::string::npos : lease.owner.find('\n', first + 1);
         if (first != std::string::npos && second != std::string::npos) {
@@ -149,10 +150,11 @@ bool lease_is_live(const lease_record& lease,
 }
 
 std::optional<std::string> retention_rule(const lease_record& lease) {
-    if (!lease.owner.starts_with("retention:")) {
+    const auto retention = lease.owner.find("retention:");
+    if (retention == std::string::npos || (retention != 0 && lease.owner[retention - 1] != '\n')) {
         return std::nullopt;
     }
-    const auto first = lease.owner.find('\n');
+    const auto first = lease.owner.find('\n', retention);
     const auto second =
         first == std::string::npos ? std::string::npos : lease.owner.find('\n', first + 1);
     if (first == std::string::npos || second == std::string::npos) {

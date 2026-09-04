@@ -93,7 +93,8 @@ struct LIQUID_EXPORT retention_explanation {
 
 struct LIQUID_EXPORT repository_options {
     std::uint64_t checkpoint_interval{64};
-    store_options store{};
+    ::liquid::store* store{};
+    store_options storage{};
     encryption_config encrypt{};
     cache_config cache{};
     verify_config verify{};

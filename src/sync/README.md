@@ -6,7 +6,12 @@ and verify object digests before returning bytes.
 
 `session.cpp` walks references from caller-provided roots. Send asks the peer for its missing set
 before uploading; receive range-reads absent objects, verifies each full digest, stores it, and then
-continues through its references.
+continues through its references while preserving each transmitted digest algorithm.
+
+`server.cpp` implements the public transport-neutral `sync_server`. It owns the private codec,
+checks repository/store pairing, authorizes every change before atomic import, exports pull pages,
+answers missing-object queries and logical range reads, verifies pack uploads, and encodes canonical
+error bodies.
 
 `endpoint.cpp` is the private Corosio and `oramasearch/http` adapter. It parses HTTP/HTTPS repository
 URLs, resolves and connects on the caller's Capy executor, supports content-length and chunked

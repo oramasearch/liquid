@@ -25,7 +25,9 @@ file writes, and key diffs.
 
 Repository tests cover persisted operation records and their public newest-first view; private index
 and cryptography tests stay in their existing targets. They also verify that repository collection
-retains checkpointed content while reclaiming an orphan. CLI scenario and command-documentation
+retains checkpointed content while reclaiming an orphan. The supplied-store case creates two
+repository identifiers on one store, counts one physical frame for their repeated payload, collects
+one repository without losing the other, and reopens by identifier. CLI scenario and command-documentation
 tests live in `cli/`. `test_runtime.cpp` repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and
@@ -33,11 +35,12 @@ measures a fresh-process repository open for the automerge-cpp adoption comparis
 Focused CRDT cases verify commit metadata, compact checkpoint journal replay, corrupt-sync
 atomicity, and upstream sync convergence; the repository replica case also covers distinct clone
 actors and multi-round sync.
-The Unix integration case in `test_sync.cpp` exchanges two disk repositories through an in-process
-HTTP server double, measures missing-object bytes across repeated pushes, pulls into an empty
-repository, rejects a corrupted TAAP signature without changing state, and runs the CLI push/pull
-round trip. The test target compiles the private wire codec directly so shared-library visibility
-remains hidden. Header compilation keeps the public sync API covered on every platform.
+The Unix integration case in `test_sync.cpp` exchanges two disk repositories through the public
+server behind a small socket transport dispatched on the shared runtime, measures missing-object
+bytes across repeated pushes, pulls into an empty repository, and rejects both a corrupted TAAP
+signature and an authorization callback without changing state. Its CLI case starts the real
+`serve sync` process and invokes the real push and pull commands. The private wire codec stays in
+libliquid. Header compilation keeps the public sync API covered on every platform.
 
 Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,

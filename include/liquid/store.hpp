@@ -125,6 +125,11 @@ public:
 private:
     friend class repository;
 
+    [[nodiscard]] result<std::filesystem::path> root_path() const;
+    [[nodiscard]] result<store_options> configuration() const;
+    [[nodiscard]] runtime::task<lease>
+    lease_root(digest id, std::chrono::seconds ttl, std::string owner);
+    [[nodiscard]] runtime::task<digest> put_verified(digest id, std::vector<std::byte> input);
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);

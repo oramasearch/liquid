@@ -85,7 +85,7 @@ struct remote_fixture {
         value.remote = liquid::remote_blob_location{"disk", "worker-a"};
 
         auto options = liquid::repository_options{};
-        options.store.remote_sources.emplace("disk", remote);
+        options.storage.remote_sources.emplace("disk", remote);
         options.cache.publish = false;
         auto opened = liquid::runtime::block_on(
             liquid::repository::create(location.path() / "local", std::move(options)));

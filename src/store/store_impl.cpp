@@ -961,9 +961,9 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
         encryption = std::move(*derived);
     }
     digest whole{};
+    const auto algorithm_value = hash_algorithm;
     std::vector<chunk_range> ranges;
     if (!encryption && input.size() > 4U * 1024U * 1024U) {
-        const auto algorithm_value = hash_algorithm;
         auto hashed = co_await runtime::offload([input, algorithm_value] {
             const auto output = hash(algorithm_value, input);
             if (!output)
@@ -979,7 +979,7 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
         ranges = std::move(*chunked);
     } else {
         const auto hashed = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, input)
-                                       : hash(hash_algorithm, input);
+                                       : hash(algorithm_value, input);
         if (!hashed)
             co_return std::unexpected(hashed.error());
         whole = *hashed;
@@ -1012,7 +1012,7 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     for (const auto part : ranges) {
         const auto bytes = std::span<const std::byte>(input).subspan(part.offset, part.size);
         const auto id = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, bytes)
-                                   : hash(hash_algorithm, bytes);
+                                   : hash(algorithm_value, bytes);
         if (!id)
             co_return std::unexpected(id.error());
         auto stored = co_await store_chunk(
@@ -1025,7 +1025,7 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
     const auto descriptor_id = encryption
                                    ? crypto_detail::keyed_digest(encryption->chunk_mac, descriptor)
-                                   : hash(hash_algorithm, descriptor);
+                                   : hash(algorithm_value, descriptor);
     if (!descriptor_id)
         co_return std::unexpected(descriptor_id.error());
     auto descriptor_stored =
@@ -1637,6 +1637,11 @@ runtime::task<std::optional<object_key_version>> store_backend::key_version(dige
 
 runtime::task<std::shared_ptr<lease_state>> store_backend::lease_root(digest id,
                                                                       std::chrono::seconds ttl) {
+    co_return co_await lease_root(id, ttl, {});
+}
+
+runtime::task<std::shared_ptr<lease_state>>
+store_backend::lease_root(digest id, std::chrono::seconds ttl, std::string owner) {
     auto [lock_error, guard] = co_await mutation_.scoped_lock();
     if (lock_error)
         co_return std::unexpected(
@@ -1645,7 +1650,20 @@ runtime::task<std::shared_ptr<lease_state>> store_backend::lease_root(digest id,
         co_return std::unexpected(
             store_error(errc::not_found, "lease root is not present", to_string(id)));
     }
-    co_return co_await create_lease(root_ / "leases", id, ttl);
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (ttl < std::chrono::seconds::zero() || ttl > std::chrono::sys_seconds::max() - now) {
+        co_return std::unexpected(
+            store_error(errc::invalid_argument, "lease ttl is invalid", "store::lease_root"));
+    }
+    co_return co_await create_lease_until(root_ / "leases", id, now + ttl, std::move(owner));
+}
+
+const std::filesystem::path& store_backend::root_path() const noexcept {
+    return root_;
+}
+
+const store_options& store_backend::configuration() const noexcept {
+    return options_;
 }
 
 runtime::task<collection_report> store_backend::collect(collection_options options) {

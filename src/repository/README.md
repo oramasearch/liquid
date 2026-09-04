@@ -1,7 +1,9 @@
 # Repository implementation
 
 Repository mutations update the working tree, directory documents, signed drip bodies, and local
-store. Redaction persists the caller's replacement and a signed marker before targeted store
+or caller-owned shared store. A shared-store path argument is hashed into a repository-specific
+state directory; the handle borrows the store, and repository, directory, ref, and result lease
+owners carry the repository identity. Redaction persists the caller's replacement and a signed marker before targeted store
 tombstoning, pack compaction, and the required `not_found` verification.
 
 At every cut and configured drip interval, cached directory documents are compact-saved, stored,
@@ -9,6 +11,8 @@ and immediately reopened shallowly. The repository marker is published before th
 state is retired; open restores later journaled working-tree updates on the shallow documents.
 Each checkout path contributes the device component of its automerge actor ID, preventing cloned
 repositories from authoring contradictory concurrent sequences under one actor.
+Sync import reconstructs a full-history candidate from each compact checkpoint before receiving
+peer messages, so retries remain valid even though active directory documents are shallow.
 
 The build adapter uses the repository's device signer for result records and reproducibility
 attestations. It reads persisted cache, verification, and retention policy, synchronizes named ref

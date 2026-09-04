@@ -91,6 +91,13 @@ the renewable leases at every open and checkpoint and releases superseded roots.
 `repository::collect` for a repository; calling
 `store::collect` directly on its store can discard live repository objects.
 
+Every repository-created lease owner starts with `repository:<repo-id>`. Ref and result retention
+updates remove only leases under that repository prefix. This is required when one caller-owned
+store holds many repositories: collecting or changing policy for one repository cannot delete the
+other repositories' roots, while shared chunks stay live if any repository lease reaches them. The
+collector recognizes retention metadata after this prefix, so explanations and per-rule counts keep
+reporting the configured rule name.
+
 The CLI opens the supplied repository path, or the current directory when omitted:
 
 ```sh

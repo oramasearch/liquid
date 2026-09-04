@@ -3,9 +3,11 @@
 **What.** The HTTP/1.1 protocol used by libliquid clients and lake to exchange repository
 metadata and content. lake's `docs/api/sync.md` mirrors this page.
 
-**Status: implemented by liquid #160.** Metadata export and import are bounded by caller-provided
-spans. Imports verify the complete batch before changing repository state. Content negotiation and
-transfer reuse `remote_blob_source` and the store's pack-entry framing.
+**Status: implemented by liquid #160 and #165.** Metadata export and import are bounded by
+caller-provided spans. Imports verify the complete batch before changing repository state. Content
+negotiation and transfer reuse `remote_blob_source` and the store's pack-entry framing. The public
+`sync_server` owns protocol decoding and repository dispatch; `liquid serve sync` is its local
+HTTP/1.1 adapter.
 
 ## Repository URL and requests
 
@@ -53,6 +55,11 @@ are applied last. An empty repository adopts the incoming repository and root ID
 repository with a different identity rejects the batch. Duplicate signed records and
 already-observed CRDT messages are valid, making a retry idempotent.
 
+Repository checkpoints keep compact bytes that can be opened either as the shallow active
+document or as its full-history archive. Import opens a candidate from the full archive before
+receiving peer messages. A retry can therefore name a dependency older than the active checkpoint
+heads without contradicting the shallow document's retained actor sequence.
+
 Before import changes state, the receiver parses every frame, verifies each actor identifier and
 TAAP signature, checks each change digest and referenced object, applies every directory message to
 candidate documents through the checked patch-returning path, and validates all refs. Any failure
@@ -98,7 +105,20 @@ An interrupted request has no success response and is retried from the last ackn
 Servers do not advance that cursor until metadata import and required chunk publication both
 succeed.
 
-## Public client contract
+## Public server and client contract
+
+`sync_server(repository&, store&, options)` requires the repository to use that store. The
+repository-only constructor uses the repository's existing store and is intended for adapters such
+as the CLI. Its task-returning handlers accept or produce byte spans for push, pull, missing-object
+queries, pack-frame uploads, and logical range reads; the canonical codecs remain private.
+`sync_server::encode_error` produces the error body described above so an adapter need only choose
+the transport status.
+
+`sync_server_options::authorize` is an optional asynchronous per-change callback. Push invokes it
+in frame order before calling repository import. A callback failure returns that error and leaves
+repository metadata unchanged; object uploads that arrived earlier remain unreferenced
+content-addressed data eligible for collection. Embedders can perform authorization and audit work
+in this callback without reimplementing the wire format.
 
 `repository::export_drips` writes as many `sync_item` values as fit in the supplied span and
 returns the next cursor plus an end flag. `repository::import_drips` accepts a span, verifies it as
@@ -108,9 +128,19 @@ push/pull requests over the vendored `oramasearch/http` module. A caller may put
 cursor in `sync_endpoint_options`; the returned report supplies the next cursor to retain. All
 waiting operations are Capy tasks.
 
+## Local server command
+
+`liquid serve sync <path>` opens an existing repository and serves the five routes above with the
+vendored `oramasearch/http` router and serializer. It binds `127.0.0.1:8080` by default;
+`--listen <address>` and `--port <port>` select another listener. The command deliberately supplies
+no authentication policy. Keep the loopback default for local exchange, or embed `sync_server`
+with an authorization callback when exposing a service boundary.
+
 ## How to verify
 
-The sync tests exchange two on-disk repositories through an in-process server double, assert byte
-counts, and prove that a second exchange transfers only newly introduced chunks. They also corrupt
-a TAAP signature and require an atomic rejection. The CLI test runs push and pull against the same
-double. Static, shared, and Linux-container proofs run these tests with the rest of the suite.
+The sync tests exchange two on-disk repositories through `sync_server`, prove that a second
+exchange transfers only newly introduced chunks, retry unchanged metadata, and pull into an empty
+repository. They also corrupt a TAAP signature and reject a change through the authorization
+callback without changing repository state. The CLI test spawns `liquid serve sync` and runs the
+real `liquid push` and `liquid pull` commands against it. Static, shared, and Linux-container proofs
+run these tests with the rest of the suite.

@@ -93,7 +93,7 @@ struct action_fixture {
             });
         }
         if (remote) {
-            options.store.remote_sources.emplace("disk", std::move(remote));
+            options.storage.remote_sources.emplace("disk", std::move(remote));
         }
         auto opened =
             liquid::runtime::block_on(liquid::repository::create(location.path(), options));
