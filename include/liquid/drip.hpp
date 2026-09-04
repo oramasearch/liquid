@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -32,7 +33,23 @@ struct LIQUID_EXPORT drip {
     std::chrono::sys_seconds at;
 };
 
-enum class capture_status : std::uint8_t { running, paused };
+struct LIQUID_EXPORT capture_options {
+    std::vector<std::string> exclude;
+    std::chrono::milliseconds coalesce_window{200};
+    bool attribution{false};
+};
+
+struct LIQUID_EXPORT journal_cursor {
+    std::string token;
+};
+
+struct LIQUID_EXPORT capture_status {
+    enum class state : std::uint8_t { running, paused } state{state::running};
+    std::uint64_t pending_drips{0};
+    std::uint64_t overflow_count{0};
+    std::uint64_t recrawl_count{0};
+    journal_cursor last_cursor;
+};
 
 class LIQUID_EXPORT subscription {
 public:
@@ -46,17 +63,20 @@ public:
 private:
     struct impl;
     std::unique_ptr<impl> impl_;
+    friend class capture;
 };
 
 class LIQUID_EXPORT capture {
 public:
-    capture() noexcept;
     ~capture();
     capture(capture&&) noexcept;
     capture& operator=(capture&&) noexcept;
     capture(const capture&) = delete;
     capture& operator=(const capture&) = delete;
 
+    [[nodiscard]] static runtime::task<capture> open(std::filesystem::path workspace,
+                                                      capture_options options = {});
+    [[nodiscard]] runtime::task<void> close();
     [[nodiscard]] result<subscription> subscribe(std::function<void(const drip&)> callback);
     [[nodiscard]] runtime::task<void> pause();
     [[nodiscard]] runtime::task<void> resume();
@@ -64,7 +84,9 @@ public:
 
 private:
     struct impl;
+    explicit capture(std::unique_ptr<impl> implementation) noexcept;
     std::unique_ptr<impl> impl_;
+    friend class subscription;
 };
 
 }  // namespace liquid

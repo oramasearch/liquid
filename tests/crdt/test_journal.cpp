@@ -50,4 +50,45 @@ TEST(CrdtJournal, replay_reproduces_document_heads) {
     std::filesystem::remove_all(directory);
 }
 
+TEST(CrdtJournal, reads_records_from_a_plain_cursor) {
+    auto repository = liquid::crdt::repo_id{};
+    repository[0] = std::byte{0x19};
+    auto document = liquid::crdt::document::create(repository, "taap:user:steve", "laptop");
+    ASSERT_TRUE(document.has_value());
+    auto directory = std::filesystem::temp_directory_path() / "liquid-crdt-journal-cursor-test";
+    std::filesystem::create_directories(directory);
+    auto path = directory / "drips.cbor";
+    std::filesystem::remove(path);
+    std::filesystem::remove(path.string() + ".cut");
+    auto journal = liquid::crdt::journal{path};
+    ASSERT_TRUE(journal.cut(*document, 1));
+
+    for (const auto name : {"one.txt", "two.txt"}) {
+        auto base = document->heads();
+        ASSERT_TRUE(base);
+        auto applied = document->transact({{.kind = liquid::crdt::operation_kind::write,
+                                            .path = name,
+                                            .ref = "blake3:cursor",
+                                            .mode = 0100644}});
+        ASSERT_TRUE(applied);
+        ASSERT_TRUE(journal.append({.id = applied->front().id,
+                                    .base = *base,
+                                    .ops = *applied,
+                                    .by = document->actor(),
+                                    .at = 1'788'400'000}));
+    }
+
+    auto first = journal.read({}, 1);
+    ASSERT_TRUE(first);
+    ASSERT_EQ(first->first.size(), 1);
+    auto second = journal.read(first->second, 1);
+    ASSERT_TRUE(second);
+    ASSERT_EQ(second->first.size(), 1);
+    EXPECT_EQ(second->first.front().ops.front().path, "two.txt");
+    auto tail = journal.end();
+    ASSERT_TRUE(tail);
+    EXPECT_EQ(second->second, *tail);
+    std::filesystem::remove_all(directory);
+}
+
 } // namespace

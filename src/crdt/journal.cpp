@@ -224,6 +224,53 @@ auto journal::append(const drip_record &record) -> result<void> {
     return {};
 }
 
+auto journal::end() const -> result<cursor> {
+    auto code = std::error_code{};
+    const auto size = std::filesystem::file_size(path_, code);
+    if (code == std::errc::no_such_file_or_directory)
+        return cursor{};
+    if (code)
+        return std::unexpected(io_error(code.message(), path_));
+    return cursor{size};
+}
+
+auto journal::read(cursor from, std::size_t max) const
+    -> result<std::pair<std::vector<drip_record>, cursor>> {
+    auto tail = end();
+    if (!tail)
+        return std::unexpected(tail.error());
+    if (from.offset > tail->offset)
+        return std::unexpected(corrupt("journal cursor is beyond the current tail"));
+    if (max == 0 || from == *tail)
+        return std::pair{std::vector<drip_record>{}, from};
+
+    auto input = std::ifstream{path_, std::ios::binary};
+    if (!input)
+        return std::unexpected(io_error("cannot open journal", path_));
+    input.seekg(static_cast<std::streamoff>(from.offset));
+    if (!input)
+        return std::unexpected(io_error("cannot seek journal", path_));
+
+    auto records = std::vector<drip_record>{};
+    auto next = from;
+    while (records.size() < max && next.offset < tail->offset) {
+        auto length = read_length(input);
+        if (!length)
+            return std::unexpected(corrupt("truncated journal length"));
+        auto bytes = std::vector<std::byte>(*length);
+        input.read(reinterpret_cast<char *>(bytes.data()),
+                   static_cast<std::streamsize>(bytes.size()));
+        if (input.gcount() != static_cast<std::streamsize>(bytes.size()))
+            return std::unexpected(corrupt("truncated journal record"));
+        auto record = decode_record(bytes);
+        if (!record)
+            return std::unexpected(record.error());
+        records.push_back(std::move(*record));
+        next.offset += sizeof(std::uint32_t) + bytes.size();
+    }
+    return std::pair{std::move(records), next};
+}
+
 auto journal::cut(const document &value, std::uint64_t epoch) -> result<void> {
     auto saved = value.save();
     if (!saved)

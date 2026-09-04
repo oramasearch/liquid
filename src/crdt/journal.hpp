@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -21,9 +22,18 @@ struct drip_record {
 
 class journal {
   public:
+    struct cursor {
+        std::uint64_t offset{0};
+
+        auto operator==(const cursor &) const -> bool = default;
+    };
+
     explicit journal(std::filesystem::path path);
 
     [[nodiscard]] auto append(const drip_record &record) -> result<void>;
+    [[nodiscard]] auto read(cursor from, std::size_t max) const
+        -> result<std::pair<std::vector<drip_record>, cursor>>;
+    [[nodiscard]] auto end() const -> result<cursor>;
     [[nodiscard]] auto cut(const document &value, std::uint64_t epoch) -> result<void>;
     [[nodiscard]] auto replay(std::string_view taap_id, std::string_view device_id) const
         -> result<document>;

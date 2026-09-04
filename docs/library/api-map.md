@@ -59,7 +59,7 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #46 | implemented | `store`: content in, digests out; encrypted trust domains; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
-| `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
+| `liquid/drip.hpp` | #4, #5, #48 | implemented (#5); declared (#4, #48) | `drip`, `capture`: the journal as a subscription, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #111 | implemented (#4, #7, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
@@ -273,6 +273,9 @@ struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
 struct capture_options { std::vector<std::string> exclude;            // glob patterns from config
                          std::chrono::milliseconds coalesce_window{200};
                          bool attribution{false}; };                   // Phase 2 turns it on
+struct journal_cursor { std::string token; };
+struct capture_status { enum class state { running, paused } state; std::uint64_t pending_drips;
+                        std::uint64_t overflow_count; std::uint64_t recrawl_count; journal_cursor last_cursor; };
 class capture {                        // the journal, as a subscription
  public:
   static runtime::task<capture> open(std::filesystem::path workspace, capture_options = {});   // starts the watcher
@@ -303,6 +306,10 @@ class passphrase_provider final : public key_provider { public: result<std::arra
 class key_file_provider final : public key_provider { public: static runtime::task<std::shared_ptr<key_file_provider>> open(std::filesystem::path); };
 class keyring { public: result<void> add(std::string, std::shared_ptr<key_provider>); result<std::string> default_key_id() const; result<void> set_default_key_id(std::string); runtime::task<void> rewrap(std::string, std::shared_ptr<key_provider>); };
 ```
+
+`capture_status` makes overflow and recrawl visible because watcher events are hints, not a
+complete account of workspace state. The `drip_filter` insertion point between coalescing and
+journal append is intentionally a no-op until liquid #50 supplies inline secret scanning.
 
 Object subjects (attestations *about* a drip or artifact) wait on the TAAP spec change
 (liquid-bridge #1); the `actor` type is written so an object-subject form can be added beside it.
