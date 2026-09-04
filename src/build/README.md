@@ -8,7 +8,11 @@ ranks size-cap eviction by execution cost per result-graph byte. Divergence and 
 verification reference are durable index fields, and lookup never serves a divergent row.
 `materialise.cpp` reconstructs toolchain and replay trees from store
 records. `verify.cpp` owns sampling, fresh-sandbox replay, digest comparison, attestations, alerts,
-and background scheduling. `provenance.cpp` derives the SLSA predicate from each action/result pair,
+background scheduling, and the explicit replay API. Verification and replay share reconstruction,
+sandbox execution, and byte comparison. Explicit replay uses the repository's registered
+`remote_blob_source` to hydrate recorded remote inputs and expected outputs; it records
+attestations, alerts, and quarantine only when requested.
+`provenance.cpp` derives the SLSA predicate from each action/result pair,
 signs and stores its TAAP attestation, binds it to the signed result, verifies that graph, and writes
 native or DSSE/in-toto JSON.
 `policy.cpp` validates and digests repository policy, walks source and toolchain input trees, verifies

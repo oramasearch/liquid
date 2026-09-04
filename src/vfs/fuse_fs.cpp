@@ -112,13 +112,33 @@ public:
                  std::filesystem::path repository_root,
                  mount_options options,
                  observation_sink sink = {},
-                 std::vector<std::string> initial_outputs = {})
+                 std::vector<std::string> initial_outputs = {},
+                 std::optional<digest> snapshot_root = {})
         : source_(source), mountpoint_(std::move(mountpoint)),
           repository_root_(std::move(repository_root)), options_(options),
           cache_(repository_root_ / "LIQUID_VFS" / "chunks"),
-          queue_(std::make_shared<request_queue>()), sink_(std::move(sink)) {
-        for (auto& path : initial_outputs)
-            modification_times_.insert_or_assign(std::move(path), 2'000'000'000);
+          queue_(std::make_shared<request_queue>()), sink_(std::move(sink)),
+          snapshot_root_(std::move(snapshot_root)) {
+        if (!snapshot_root_) {
+            for (auto& output : initial_outputs) {
+                modification_times_.insert_or_assign(std::move(output), 2'000'000'000);
+            }
+            return;
+        }
+        for (auto& output : initial_outputs) {
+            const auto directory = output.ends_with('/');
+            auto path = std::filesystem::path{directory ? output.substr(0, output.size() - 1)
+                                                        : std::move(output)};
+            auto parent = path.parent_path();
+            while (!parent.empty()) {
+                virtual_entries_.insert_or_assign(parent.generic_string(), node_kind::tree);
+                parent = parent.parent_path();
+            }
+            const auto normalized = path.generic_string();
+            virtual_entries_.insert_or_assign(normalized,
+                                              directory ? node_kind::tree : node_kind::blob);
+            modification_times_.insert_or_assign(normalized, 2'000'000'000);
+        }
     }
 
     void request_unmount() noexcept override {
@@ -290,6 +310,59 @@ public:
         return source_;
     }
 
+    auto entry(std::string path) -> runtime::task<repository_detail::vfs_entry> {
+        auto value = result<repository_detail::vfs_entry>{};
+        if (snapshot_root_) {
+            value = co_await repository_detail::vfs_access::entry(source_, *snapshot_root_, path);
+        } else {
+            value = co_await repository_detail::vfs_access::entry(source_, path);
+        }
+        if (value || value.error().code != errc::not_found) {
+            co_return value;
+        }
+        const auto found = virtual_entries_.find(path);
+        if (found == virtual_entries_.end()) {
+            co_return std::unexpected(value.error());
+        }
+        const auto mode = found->second == node_kind::tree ? 0040755U : 0100644U;
+        co_return repository_detail::vfs_entry{
+            .name = std::filesystem::path{path}.filename().generic_string(),
+            .kind = found->second,
+            .mode = mode};
+    }
+
+    auto children(std::string path) -> runtime::task<std::vector<repository_detail::vfs_entry>> {
+        auto values = result<std::vector<repository_detail::vfs_entry>>{};
+        if (snapshot_root_) {
+            values =
+                co_await repository_detail::vfs_access::children(source_, *snapshot_root_, path);
+        } else {
+            values = co_await repository_detail::vfs_access::children(source_, path);
+        }
+        if (!values) {
+            const auto directory = virtual_entries_.find(path);
+            if (values.error().code != errc::not_found || directory == virtual_entries_.end() ||
+                directory->second != node_kind::tree) {
+                co_return std::unexpected(values.error());
+            }
+            values = std::vector<repository_detail::vfs_entry>{};
+        }
+        for (const auto& [candidate, kind] : virtual_entries_) {
+            const auto candidate_path = std::filesystem::path{candidate};
+            if (candidate_path.parent_path().generic_string() != path) {
+                continue;
+            }
+            const auto name = candidate_path.filename().generic_string();
+            if (std::ranges::any_of(*values,
+                                    [&name](const auto& entry) { return entry.name == name; })) {
+                continue;
+            }
+            const auto mode = kind == node_kind::tree ? 0040755U : 0100644U;
+            values->push_back({.name = name, .kind = kind, .mode = mode});
+        }
+        co_return values;
+    }
+
     auto cache() -> hydration_cache& {
         return cache_;
     }
@@ -360,6 +433,8 @@ private:
     hydration_cache cache_;
     std::shared_ptr<request_queue> queue_;
     observation_sink sink_;
+    std::optional<digest> snapshot_root_;
+    std::map<std::string, node_kind, std::less<>> virtual_entries_;
     std::atomic_uint64_t writes_captured_{};
     mutable std::mutex modification_mutex_;
     std::map<std::string, std::int64_t, std::less<>> modification_times_;
@@ -389,7 +464,7 @@ runtime::task<int> getattr_request(fuse_backend* state,
                                    std::string path,
                                    std::int64_t pid,
                                    std::shared_ptr<struct stat> output) {
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
     std::memset(output.get(), 0, sizeof(struct stat));
@@ -411,8 +486,7 @@ runtime::task<int> readdir_request(fuse_backend* state,
                                    std::string path,
                                    std::int64_t pid,
                                    std::shared_ptr<std::vector<std::string>> output) {
-    auto entries =
-        co_await repository_detail::vfs_access::children(state->source(), std::move(path));
+    auto entries = co_await state->children(path);
     if (!entries)
         co_return fuse_error(entries.error());
     output->reserve(entries->size() + 2);
@@ -426,7 +500,7 @@ runtime::task<int> readdir_request(fuse_backend* state,
 
 runtime::task<int>
 open_request(fuse_backend* state, std::string path, std::int64_t pid, int flags) {
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
     if (entry->kind != node_kind::blob)
@@ -454,7 +528,7 @@ runtime::task<int> read_request(fuse_backend* state,
                                 std::uint64_t offset,
                                 std::size_t size,
                                 std::shared_ptr<std::vector<std::byte>> output) {
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
     auto bytes = co_await state->cache().read(state->source(), *entry, offset, size);
@@ -490,7 +564,7 @@ runtime::task<int> write_request(fuse_backend* state,
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
     if (entry->kind != node_kind::blob)
@@ -517,7 +591,7 @@ runtime::task<int>
 remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool directory) {
     if (state->read_only())
         co_return -EROFS;
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
     if (directory && entry->kind == node_kind::blob)
@@ -525,7 +599,7 @@ remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool dir
     if (!directory && entry->kind != node_kind::blob)
         co_return -EISDIR;
     if (directory) {
-        auto children = co_await repository_detail::vfs_access::children(state->source(), path);
+        auto children = co_await state->children(path);
         if (!children)
             co_return fuse_error(children.error());
         if (!children->empty())
@@ -547,17 +621,17 @@ rename_request(fuse_backend* state, std::string from, std::string to, std::int64
         co_return -EROFS;
     if (from == to)
         co_return 0;
-    auto source = co_await repository_detail::vfs_access::entry(state->source(), from);
+    auto source = co_await state->entry(from);
     if (!source)
         co_return fuse_error(source.error());
-    auto destination = co_await repository_detail::vfs_access::entry(state->source(), to);
+    auto destination = co_await state->entry(to);
     if (destination) {
         if (source->kind == node_kind::blob && destination->kind != node_kind::blob)
             co_return -EISDIR;
         if (source->kind != node_kind::blob && destination->kind == node_kind::blob)
             co_return -ENOTDIR;
         if (destination->kind != node_kind::blob) {
-            auto children = co_await repository_detail::vfs_access::children(state->source(), to);
+            auto children = co_await state->children(to);
             if (!children)
                 co_return fuse_error(children.error());
             if (!children->empty())
@@ -603,7 +677,7 @@ truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::u
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
     auto contents = co_await state->cache().read(state->source(), *entry, 0, entry->size);
@@ -627,7 +701,7 @@ chmod_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
     const auto type = entry->mode & static_cast<std::uint32_t>(S_IFMT);
@@ -891,7 +965,7 @@ start_fuse(repository& source, std::filesystem::path mountpoint, mount_options o
 }
 
 runtime::task<std::shared_ptr<backend>> start_observed_fuse(repository& source,
-                                                            digest,
+                                                            digest tree,
                                                             std::filesystem::path mountpoint,
                                                             std::vector<std::string> outputs,
                                                             observation_sink sink,
@@ -905,12 +979,14 @@ runtime::task<std::shared_ptr<backend>> start_observed_fuse(repository& source,
         co_return std::unexpected(prepared.error());
     if (!*prepared)
         co_return std::unexpected(prepared->error());
-    auto state = std::make_shared<fuse_backend>(source,
-                                                std::move(mountpoint),
-                                                std::move(*root),
-                                                mount_options{.read_only = read_only},
-                                                std::move(sink),
-                                                std::move(outputs));
+    auto state =
+        std::make_shared<fuse_backend>(source,
+                                       std::move(mountpoint),
+                                       std::move(*root),
+                                       mount_options{.read_only = read_only},
+                                       std::move(sink),
+                                       std::move(outputs),
+                                       read_only ? std::optional{std::move(tree)} : std::nullopt);
     auto initialised = co_await state->initialise_cache();
     if (!initialised)
         co_return std::unexpected(initialised.error());

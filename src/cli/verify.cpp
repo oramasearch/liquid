@@ -1,5 +1,7 @@
 #include <filesystem>
+#include <format>
 #include <print>
+#include <string>
 #include <string_view>
 
 #include "liquid/build.hpp"
@@ -23,6 +25,111 @@ auto usage(std::string_view message) -> int {
 
 auto digest_text(const std::optional<liquid::digest>& value) -> std::string {
     return value ? liquid::to_string(*value) : "missing";
+}
+
+auto json_string(std::string_view value) -> std::string {
+    auto output = std::string{"\""};
+    for (const auto character : value) {
+        switch (character) {
+        case '\\':
+            output += "\\\\";
+            break;
+        case '"':
+            output += "\\\"";
+            break;
+        case '\b':
+            output += "\\b";
+            break;
+        case '\f':
+            output += "\\f";
+            break;
+        case '\n':
+            output += "\\n";
+            break;
+        case '\r':
+            output += "\\r";
+            break;
+        case '\t':
+            output += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(character) < 0x20U) {
+                output += std::format("\\u{:04x}", static_cast<unsigned char>(character));
+            } else {
+                output += character;
+            }
+        }
+    }
+    output += '"';
+    return output;
+}
+
+auto json_digest(const std::optional<liquid::digest>& value) -> std::string {
+    return value ? json_string(liquid::to_string(*value)) : "null";
+}
+
+auto json_number(const auto& value) -> std::string {
+    return value ? std::to_string(*value) : "null";
+}
+
+void print_replay_json(const liquid::replay_report& report, bool recorded) {
+    std::print("{{\"action\":{},\"result\":{},\"recorded_exit\":{},"
+               "\"reexecuted_exit\":{},\"agreement\":{},\"recorded\":{},"
+               "\"attestation\":{},\"differences\":[",
+               json_string(liquid::to_string(report.action)),
+               json_string(liquid::to_string(report.result)),
+               report.recorded_exit,
+               report.reexecuted_exit,
+               report.agreement,
+               recorded,
+               json_digest(report.attestation));
+    for (auto index = std::size_t{}; index < report.differences.size(); ++index) {
+        const auto& difference = report.differences[index];
+        if (index != 0) {
+            std::print(",");
+        }
+        std::print("{{\"output\":{},\"recorded\":{},\"reexecuted\":{},\"byte_offset\":{},"
+                   "\"recorded_byte\":{},\"reexecuted_byte\":{}}}",
+                   json_string(difference.output),
+                   json_digest(difference.cached),
+                   json_digest(difference.reexecuted),
+                   json_number(difference.byte_offset),
+                   json_number(difference.cached_byte),
+                   json_number(difference.reexecuted_byte));
+    }
+    std::println("]}}");
+}
+
+void print_replay_text(const liquid::replay_report& report, bool recorded) {
+    std::println("action={} result={} agreement={} recorded_exit={} reexecuted_exit={} recorded={} "
+                 "attestation={}",
+                 liquid::to_string(report.action),
+                 liquid::to_string(report.result),
+                 report.agreement,
+                 report.recorded_exit,
+                 report.reexecuted_exit,
+                 recorded,
+                 digest_text(report.attestation));
+    for (const auto& difference : report.differences) {
+        std::println(stderr,
+                     "difference: output={} recorded={} reexecuted={}",
+                     difference.output,
+                     digest_text(difference.cached),
+                     digest_text(difference.reexecuted));
+        if (difference.byte_offset) {
+            const auto recorded_byte =
+                difference.cached_byte ? std::format("{:02x}", *difference.cached_byte) : "missing";
+            const auto reexecuted_byte = difference.reexecuted_byte
+                                             ? std::format("{:02x}", *difference.reexecuted_byte)
+                                             : "missing";
+            std::println(stderr,
+                         "diff: output={} offset={} recorded={} reexecuted={}",
+                         difference.output,
+                         *difference.byte_offset,
+                         recorded_byte,
+                         reexecuted_byte);
+        }
+    }
 }
 
 } // namespace
@@ -104,6 +211,45 @@ auto verify(int argc, char** argv) -> int {
                  report->actions.size(),
                  divergent);
     return divergent ? 1 : 0;
+}
+
+auto replay(int argc, char** argv) -> int {
+    auto target = std::optional<liquid::digest>{};
+    auto record = false;
+    auto json = false;
+    for (auto index = 0; index < argc; ++index) {
+        const auto argument = std::string_view{argv[index]};
+        if (argument == "--record") {
+            record = true;
+            continue;
+        }
+        if (argument == "--json") {
+            json = true;
+            continue;
+        }
+        if (target) {
+            return usage("replay accepts one <action|result> digest");
+        }
+        auto parsed = liquid::parse_digest(argument);
+        if (!parsed) {
+            return usage("replay requires an action or result digest [--json] [--record]");
+        }
+        target = *parsed;
+    }
+    if (!target) {
+        return usage("replay requires an action or result digest [--json] [--record]");
+    }
+    auto report = liquid::runtime::block_on(
+        liquid::build::replay(std::filesystem::current_path(), *target, {.record = record}));
+    if (!report) {
+        return fail(report.error());
+    }
+    if (json) {
+        print_replay_json(*report, record);
+    } else {
+        print_replay_text(*report, record);
+    }
+    return report->agreement ? 0 : 1;
 }
 
 } // namespace liquid_cli

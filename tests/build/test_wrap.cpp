@@ -12,9 +12,9 @@
 #include <unistd.h>
 #endif
 
-#include "formats/json.hpp"
 #include "build/cache.hpp"
 #include "build/repository_access.hpp"
+#include "formats/json.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -432,7 +432,7 @@ TEST(BuildWrap, why_reports_current_policy_refusal_for_a_recorded_target) {
 
 #if defined(LIQUID_CLI)
 
-TEST(BuildWrap, verify_all_reexecutes_every_wrapped_action) {
+TEST(BuildWrap, verify_and_replay_reexecute_wrapped_actions) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0)
         GTEST_SKIP() << "FUSE is unavailable";
     if (!available("make") || !available("clang"))
@@ -459,6 +459,19 @@ TEST(BuildWrap, verify_all_reexecutes_every_wrapped_action) {
                         " verified=" + std::to_string(made->actions) + " divergent=false"),
               std::string::npos)
         << text;
+    ASSERT_FALSE(made->trace_actions.empty());
+    const auto replay_output = fixture.project().parent_path() / "replay-output";
+    const auto replay_command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                                shell_quote(LIQUID_CLI) + " replay " +
+                                liquid::to_string(made->trace_actions.front().action) +
+                                " --json >" + shell_quote(replay_output.string()) + " 2>&1";
+    const auto replay_status = std::system(replay_command.c_str());
+    auto replay_input = std::ifstream{replay_output};
+    const auto replay_text =
+        std::string{std::istreambuf_iterator<char>{replay_input}, std::istreambuf_iterator<char>{}};
+    ASSERT_EQ(replay_status, 0) << replay_text;
+    EXPECT_NE(replay_text.find("\"agreement\":true"), std::string::npos) << replay_text;
+    EXPECT_NE(replay_text.find("\"recorded\":false"), std::string::npos) << replay_text;
 }
 
 #endif

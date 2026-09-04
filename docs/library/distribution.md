@@ -99,6 +99,22 @@ byte with the recorded result. It is the same machinery as `liquid verify` with 
 purpose: verify samples for divergence; replay reproduces a specific failure on demand, including
 a cached hit ("replay a hit to check it").
 
+**Implemented.** The target may be a result record directly or an action in the local action index;
+an action selects its newest recorded result. A nonzero recorded exit is data, not a replay error:
+the command succeeds when the local run has the same exit, stdout, stderr, and declared output
+bytes. A difference exits nonzero and identifies the first unequal byte and the recorded and local
+values. `--json` emits the same report for tooling.
+
+Replay uses the repository's registered `remote_blob_source` for any recorded remote input or
+expected output. The source receives the recorded `remote_blob_location` source and instance;
+the store requests ranges and verifies every fetched chunk before local storage. The interface
+exposes `find_missing`, range reads, and writes without choosing the Phase 3 transport; the REAPI
+client can implement it after #16. Tests use its on-disk double backed by a second liquid store.
+
+Replay does not publish the local result, create a reproducibility attestation, emit a critical
+alert, or change the divergent flag. `--record` is the explicit exception: it records the same
+signed `reproducibility/1` sample and durable quarantine decision as `liquid verify`.
+
 ## The transport decision (#16)
 
 REAPI is defined as gRPC: HTTP/2 framing, protobuf messages, and the `google.longrunning`
@@ -160,7 +176,16 @@ Each issue adds its proof beside the Phase 2 ones (`build-engine.md`, "How to ve
 exit is the Phase 2 wrap fixtures built against a stock backend in Docker with the same hit rate
 as local, and the non-hermetic fixture refused at the read.
 
+Issue #19's privileged Linux cases replay a deterministic recorded failure, replay an indexed
+cache hit by action digest, detect an altered recorded output at byte zero, and hydrate a missing
+input through #17's on-disk source double. The wrap case invokes `liquid replay --json` against a
+recorded action. macOS static and shared builds compile the API and CLI while mount-backed cases
+skip when macFUSE is unavailable.
+
 ## How to change
 
 Keep this page synchronized with each Phase 3 implementation. A change to remote record identity,
 hydration, or eligibility must update the corresponding section and its verification evidence.
+This page tracks design and implementation status together. A Phase 3 issue that finds the design
+wrong changes this page in the same commit as the code and says why in the commit body, as the Phase
+2 issues did for `build-engine.md`.

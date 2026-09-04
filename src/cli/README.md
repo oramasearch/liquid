@@ -14,6 +14,8 @@ never read the private action cache directly.
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
 `verify.cpp` parses action, all, and changed selectors, calls the public verification API, prints
 attestation outcomes and critical output differences, and returns failure on divergence.
+The same command group implements `replay`: it parses an action or result plus `--json` and
+`--record`, calls the public replay API, and treats a matching recorded nonzero exit as success.
 
 `provenance.cpp` implements both `provenance` and the artifact-oriented `verify` alias entirely
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
@@ -24,7 +26,7 @@ API, and uses the public foreign-binary path only when no producing result exist
 canonical rule configuration and per-input verified-identity counts without reading the store
 directly.
 
-The public command table and user-facing examples live in
+The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 
 Repository status includes bytes still remote in both text and JSON. Build explanation renderers

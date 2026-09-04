@@ -40,6 +40,7 @@ that the table and `liquid --help` name the same commands.
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
@@ -55,9 +56,10 @@ that the table and `liquid --help` name the same commands.
 
 ## Output and errors
 
-`status`, `log`, `refs`, `ops`, `identity show`, `gc`, `why`, and `cache stats` accept `--json`;
-`status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
-but not present in the local store. Hydration and materialisation reduce the value chunk by chunk.
+`status`, `log`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache stats` accept
+`--json`; `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
+remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
+chunk.
 `version --json` is also available for scripts. Text output is line-oriented and stable. A library
 error always has this shape and exits with status 1:
 
@@ -88,6 +90,17 @@ record. `facts export` writes the `fact-bundle/1` JSON record used by later remo
 cached result, and `--changed` selects results without a recorded verification. Each line names the
 action, result, signed attestation, and agreement. Divergence prints a `critical:` line naming every
 differing output and exits with status 1; `--explain` adds the first differing byte and its values.
+
+`replay` opens the same cache and accepts an action or result digest. An action selects its newest
+indexed result. The action runs locally with its recorded input tree, toolchain, environment,
+sandbox definition, and observation time. Agreement includes exit status, stdout, stderr, and every
+declared output byte; a matching nonzero exit is successful reproduction and the command exits zero.
+A difference exits one and prints the first unequal byte and both byte values. `--json` emits action,
+result, both exit values, agreement, recording state, optional attestation, and typed differences.
+By default replay does not publish the local result or change verification and quarantine state.
+`--record` stores the run as a signed verification sample and applies its quarantine decision.
+Recorded remote inputs and expected outputs hydrate through the repository's configured
+`remote_blob_source`; the current command-line transport remains local until #16 is decided.
 
 `provenance` accepts a result digest or produced path in a liquid repository. In a wrapped project,
 a produced path opens that project's persistent cache. It verifies the result and attestation before
@@ -181,6 +194,9 @@ liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
 liquid verify --all
 liquid verify --changed --explain
+liquid replay blake3:<action-or-result-digest>
+liquid replay blake3:<action-or-result-digest> --json
+liquid replay blake3:<action-or-result-digest> --record
 liquid provenance blake3:<result-digest>
 liquid provenance --dsse build/output.o
 liquid policy check build/output.o
@@ -212,6 +228,8 @@ combines it, reads JSON history and operations, undoes the move, verifies a lock
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the
 documented command names to `--help`.
+The privileged Linux build fixtures also invoke `replay --json` for an indexed action and require
+agreement without recording a verification sample.
 
 ## How to change
 

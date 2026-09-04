@@ -287,6 +287,16 @@ structured output codecs.
 Local replay is the Phase 2 trust check. Re-execution on a different worker remains Phase 3 work;
 it uses the same comparison and attestation records.
 
+Issue #19 exposes that re-execution path as `liquid replay <action|result>`. Verification and replay
+share action reconstruction, sandbox selection, execution, and comparison. Verification always
+records a signed sample and quarantine outcome. Replay leaves both untouched unless `--record` is
+present. Replay always resolves byte details, including for stdout and stderr, and treats matching
+nonzero exit status as agreement. Before execution it recursively hydrates missing input,
+toolchain, sandbox, recorded stream, and output objects through `remote_blob_source`, validating
+each digest as it enters the local store. The read-only observed mount resolves paths from the
+recorded input-tree digest rather than the repository's live working tree and supplies declared
+output placeholders when a recorded output parent did not exist yet.
+
 ## `liquid wrap`: an existing build becomes actions
 
 ```
@@ -391,6 +401,10 @@ stored local trace and its Chrome trace-event projection do not invent either me
   served after reopening the repository.
 - A rate of one verifies every action, and `liquid verify --all` verifies every action in a wrapped
   recursive-Make fixture.
+- `liquid replay` reproduces a recorded nonzero exit with identical stdout, stderr, and output,
+  replays an indexed hit by action digest, reports the first changed output byte, and fetches a
+  missing input chunk through the on-disk remote double. Its default leaves verification and
+  quarantine state unchanged; `--record` writes the verification sample.
 - Every executed action carries a verified SLSA provenance attestation, and an identical cached
   execution reuses the same attestation digest.
 - `why` names a changed header with both digests, its UTF-8 line hunk, and its repository drip.
