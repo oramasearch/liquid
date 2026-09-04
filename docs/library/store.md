@@ -51,12 +51,13 @@ XChaCha20-Poly1305 encryption. Chunk ids are `blake3k` keyed digests, so a stora
 test a guessed plaintext. The data key is random when the domain is first written and the KEK
 never directly identifies or encrypts a chunk.
 
-The pack's existing eight reserved header bytes are an encryption flag. For encrypted records it
-is `1`, and the compressed payload is replaced by `nonce[24] || tag[16] || ciphertext`. The nonce
-comes from the operating system random source for every new chunk. The object map format is now
-`LQOBJ2`: each record adds an encryption flag and, when set, a length-prefixed key id. Its
-chunk-list descriptor contains the same key id and is encrypted too. `LQOBJ1` plaintext metadata
-remains readable.
+Encrypted frames use the encrypted variant of the frame magic, and their compressed payload is
+replaced by `nonce[24] || tag[16] || ciphertext`. The nonce comes from the operating system random
+source for every new chunk. Recovery can structurally recognize a complete encrypted frame; its
+AEAD authentication and keyed digest are verified when the chunk is read with its trust-domain
+key. The object map format is now `LQOBJ2`: each record adds an encryption flag and, when set, a
+length-prefixed key id. Its chunk-list descriptor contains the same key id and is encrypted too.
+`LQOBJ1` plaintext metadata remains readable.
 
 Every encrypted read first unwraps the domain data key, then authenticates and decompresses each
 requested chunk and verifies its keyed id. A missing or wrong key is `unauthorized` with the key
