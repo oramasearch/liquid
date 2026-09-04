@@ -1,9 +1,10 @@
 # REAPI protobuf codec
 
-Issue [liquid #156](https://github.com/oramasearch/liquid/issues/156) implements the protobuf half
-of the REAPI client. The implementation is internal to libliquid under `src/protobuf/` and
-`src/reapi/`; it adds no protobuf runtime, generated source, gRPC dependency, or public header.
-HTTP/2 framing and the client that implements `liquid/remote.hpp` are separate work.
+Issue [liquid #156](https://github.com/oramasearch/liquid/issues/156) implements the protobuf and
+record-conversion half of the REAPI client. The implementation is internal to libliquid under
+`src/protobuf/` and `src/reapi/`; it adds no protobuf runtime, generated source, gRPC dependency,
+or public header. HTTP/2 framing and the client that implements `liquid/remote.hpp` are separate
+work.
 
 ## Wire codec
 
@@ -51,6 +52,60 @@ Nested protocol messages such as cache update support, priority ranges, compress
 execution policies, and batch request/response entries are represented as their own structs as
 required by those top-level messages.
 
+## Tree conversion
+
+`reapi::DirectoryCache` converts a liquid tree record through caller-provided tree and logical-blob
+loaders. Entries are sorted by name and divided into the three REAPI node lists. Regular files use
+the digest of their logical contents, executable files set `is_executable`, symbolic-link blobs
+become link targets, and child tree records become `DirectoryNode` values. Every node retains its
+full Unix mode in `NodeProperties.unix_mode`.
+
+Each encoded `Directory` is hashed and returned with its bytes. The cache key includes the liquid
+tree digest, selected REAPI hash algorithm, and directory mode. Child results enter the cache as
+they are completed, so a shared or unchanged subtree is not loaded or encoded again. Active tree
+keys are tracked independently to reject cycles.
+
+The committed reference has this shape:
+
+```text
+root/
+  hello.txt       0100644  "hello\n"
+  run.sh          0100755  "#!/bin/sh\necho hi\n"
+  hello-link      0120000  -> hello.txt
+  sub/            0040755
+    nested.txt    0100644  "nested\n"
+```
+
+Python protobuf serializes the root `Directory` to `tests/reapi/fixtures/directory-reference.bin`.
+Its SHA-256 digest is
+`060b0d269f3e9e96094cec473650cce96bafe6fc5a2771a3723922bb587bab06`, which the conversion test
+reproduces from liquid tree and blob records.
+
+## Actions and results
+
+An `action_input` maps to a `Command` plus `Action`. Arguments, environment, working directory,
+declared outputs, and timeout use their standard fields. `OSFamily` and `ISA` carry the platform;
+`liquid.inputs`, `liquid.toolchain`, and `liquid.sandbox` carry the native record digests needed to
+reconstruct the input. Decode verifies the encoded `Command` against `Action.command_digest`
+before producing a remote-eligible native action.
+
+An `action_result` fills the standard output, exit, stdout/stderr digest, worker, timestamp, and
+execution-duration fields. File and directory contents are hashed through a caller-provided logical
+blob resolver. Symbolic-link contents become their target text. Liquid fields that REAPI cannot
+represent, including the observed-input manifest and provenance references, are retained in a
+`liquid.reapi.v1.ActionResultMetadata` `Any`. Its protobuf payload wraps the canonical native result
+record. A Liquid peer recovers the complete record; another REAPI implementation can ignore that
+auxiliary value and consume the standard fields. Decode also accepts results without the Liquid
+metadata and constructs a native result from the standard fields.
+
+## Digest handling
+
+Capability selection prefers BLAKE3 and falls back to SHA-256 for both cache and execution
+capabilities. No implicit conversion changes a liquid object's identity: the selected algorithm
+hashes the bytes in the REAPI view and the resulting `Digest` carries the hexadecimal hash plus
+byte length. Reverse conversion requires a 32-byte hexadecimal digest and restores the selected
+algorithm tag. Other advertised digest functions are rejected.
+
 ## Reference fixtures
 
 `tests/reapi/fixtures/MANIFEST` maps every binary fixture to its protobuf type. `VERSION` pins the
@@ -69,4 +124,5 @@ docker run --rm -v "$PWD/tests/reapi/fixtures:/out" liquid-reapi-fixtures /out
 ```
 
 The ordinary `liquid-tests` target reads the committed bytes. Tests cover every message named
-above, all wire forms, malformed input, and unknown-field retention.
+above, all wire forms, malformed input, unknown-field retention, both supported digest algorithms,
+subtree caching, the reference Merkle root, and native action/result round-trips.

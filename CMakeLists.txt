@@ -258,6 +258,7 @@ add_library(libliquid
   src/object.cpp
   src/objects/records.cpp
   src/protobuf/wire.cpp
+  src/reapi/conversion.cpp
   src/reapi/messages.cpp
   src/repository/merge.cpp
   src/remote.cpp

@@ -7,7 +7,9 @@
 > [`features/09-artifact-service.md`](../features/09-artifact-service.md) (deltas). This page is the
 > design the Phase 3 issues implement. The build-without-bytes, replay, and delta slices are
 > implemented. Issue #18 adds cost-model scheduling, batching, and racing through the shared
-> transport-neutral remote interfaces; later issues provide network transports and production workers.
+> transport-neutral remote interfaces. The protobuf messages and native record mapping are
+> implemented in [`reapi-codec.md`](reapi-codec.md); later work connects them to the HTTP/2 client
+> and production workers.
 
 Phase 2 built the local action path: records for actions and results
 ([`build-engine.md`](build-engine.md)), observation by the mount, the signed disk cache, `liquid

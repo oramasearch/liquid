@@ -44,7 +44,9 @@ materialisation, remote-byte status, metadata-only remote result recording, and 
 refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
 blob interfaces, source and toolchain transfer from the store, recorded local/remote/race cost
 decisions, short-action batching, and race-loser cancellation; REAPI transport and production workers
-remain later issues. Liquid #19 adds explicit local replay of recorded actions and results, byte-level
+remain later issues. Liquid #156 adds the dependency-free protobuf codec, REAPI v2.3 message set,
+native tree/action/result conversions, and BLAKE3/SHA-256 capability selection; HTTP/2 client
+integration remains separate work. Liquid #19 adds explicit local replay of recorded actions and results, byte-level
 comparison, and optional verification recording; remote inputs hydrate through the registered
 transport-neutral blob source. Liquid #64 adds signed zstd delta delivery with verified local and
 registered-remote blob fetch plus chunk fallback. The repository object model,

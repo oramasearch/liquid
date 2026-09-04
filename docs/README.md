@@ -12,7 +12,7 @@ notes so that each claim has a clear role.
 | [`library/object-model.md`](library/object-model.md) | The records in the store, compact/shallow CRDT checkpoints, measured open cost, and how composition, conflicts, undo and locks work. Design for liquid #2, #3, and #136. |
 | [`library/build-engine.md`](library/build-engine.md) | Phase 2's design plus #18's remote scheduling record: action and result records, observation by the mount with per-platform enforcement, cache lookup, retained timing and scheduling traces, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
 | [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, and #18 remote scheduling through the shared remote interfaces, plus the remaining transport and worker work. |
-| [`library/reapi-codec.md`](library/reapi-codec.md) | Dependency-free protobuf wire encoding, the REAPI v2.3 structs, and pinned reference fixtures. |
+| [`library/reapi-codec.md`](library/reapi-codec.md) | Dependency-free protobuf wire encoding, the REAPI v2.3 structs, native record conversion, hash selection, and pinned reference fixtures. |
 | [`library/provenance.md`](library/provenance.md) | Automatic result provenance: canonical TAAP storage, the exact SLSA v1 mapping, verification, and in-toto/DSSE export. |
 | [`library/policy.md`](library/policy.md) | Build-input policy: path and toolchain scopes, verified attestation quorums, refusal and warning behavior, and cache isolation. |
 | [`library/sbom.md`](library/sbom.md) | Graph-derived SPDX and CycloneDX SBOMs, signed records, distinct foreign-binary inference, and verification. |

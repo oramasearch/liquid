@@ -8,6 +8,10 @@ add_executable(liquid-tests
   test_remote.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
+  reapi/test_conversion.cpp
+  ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/conversion.cpp
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
