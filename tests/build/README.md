@@ -7,6 +7,12 @@ rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA p
 and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
 SPDX/CycloneDX structure, and fully marked system-binary inference.
 
+`test_graph.cpp` covers canonical demand, read-order dependencies, red-green validation, early
+cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Its
+restart case kills `graph_crash_fixture.cpp` during an active demand, reopens the last complete
+root, counts one input fingerprint read and no query executions, and checks the public recorded
+query hook.
+
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
 executor uses #17's shared on-disk remote source to reconstruct the source and toolchain in a new
@@ -46,7 +52,9 @@ compiler entry, parallel compilation-database seeding, and sandbox-only hook var
 CLI case runs `liquid verify --all`, checks that every wrapped action agrees, then replays one action
 through `liquid replay --json`.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
-and toolchain-tree leaf.
+and toolchain-tree leaf. Its query-graph cases make a comment-only translation-unit edit execute
+one compiler while preserving the object and link result, then make a semantic edit execute the
+compiler and linker and change the link result.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.

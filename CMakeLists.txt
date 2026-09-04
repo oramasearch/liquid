@@ -279,6 +279,7 @@ add_library(libliquid
   src/error.cpp
   src/formats/dotenv.cpp
   src/formats/json.cpp
+  src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
   src/http2/frame.cpp

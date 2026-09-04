@@ -260,6 +260,80 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(statistics->misses, configured->misses + first->misses + second->misses);
     EXPECT_GT(statistics->disk.bytes_avoided, 0U);
 
+    auto left_before =
+        liquid::runtime::block_on(cache.find_output("build/CMakeFiles/wrapped.dir/left.c.o"));
+    ASSERT_TRUE(left_before);
+    ASSERT_TRUE(*left_before);
+    auto left_before_bytes = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(*repository, (**left_before).value));
+    ASSERT_TRUE(left_before_bytes);
+    auto left_before_result = liquid::objects::decode_result(*left_before_bytes);
+    ASSERT_TRUE(left_before_result);
+    const auto left_before_output = std::ranges::find(left_before_result->outputs,
+                                                      "build/CMakeFiles/wrapped.dir/left.c.o",
+                                                      &liquid::action_output::path);
+    ASSERT_NE(left_before_output, left_before_result->outputs.end());
+    const auto left_object_before = left_before_output->blob;
+    const auto link_before = (**producing).value;
+
+    auto source = std::ofstream{fixture.project() / "left.c", std::ios::app};
+    source << "\n// fingerprint-preserving edit\n";
+    source.close();
+    auto comment =
+        run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, true, 3);
+    ASSERT_TRUE(comment) << comment.error().message << ": " << comment.error().context;
+    EXPECT_EQ(comment->processes_started, 1U);
+
+    auto comment_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(comment_repository);
+    auto comment_cache = liquid::build_detail::disk_cache{*comment_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(comment_cache.open()));
+    auto left_after = liquid::runtime::block_on(
+        comment_cache.find_output("build/CMakeFiles/wrapped.dir/left.c.o"));
+    auto link_after = liquid::runtime::block_on(comment_cache.find_output("build/wrapped"));
+    ASSERT_TRUE(left_after);
+    ASSERT_TRUE(*left_after);
+    ASSERT_TRUE(link_after);
+    ASSERT_TRUE(*link_after);
+    auto left_after_bytes = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(*comment_repository, (**left_after).value));
+    ASSERT_TRUE(left_after_bytes);
+    auto left_after_result = liquid::objects::decode_result(*left_after_bytes);
+    ASSERT_TRUE(left_after_result);
+    const auto left_after_output = std::ranges::find(left_after_result->outputs,
+                                                     "build/CMakeFiles/wrapped.dir/left.c.o",
+                                                     &liquid::action_output::path);
+    ASSERT_NE(left_after_output, left_after_result->outputs.end());
+    EXPECT_EQ(liquid::to_string(left_after_output->blob), liquid::to_string(left_object_before));
+    EXPECT_EQ(liquid::to_string((**link_after).value), liquid::to_string(link_before));
+
+    auto left_source = std::ifstream{fixture.project() / "left.c", std::ios::binary};
+    auto left_text =
+        std::string{std::istreambuf_iterator<char>{left_source}, std::istreambuf_iterator<char>{}};
+    const auto return_value = left_text.find("return WRAPPED_VALUE;");
+    ASSERT_NE(return_value, std::string::npos);
+    left_text.replace(return_value,
+                      std::string_view{"return WRAPPED_VALUE;"}.size(),
+                      "return WRAPPED_VALUE + 1;");
+    auto changed_source = std::ofstream{fixture.project() / "left.c", std::ios::trunc};
+    changed_source << left_text;
+    changed_source.close();
+    auto semantic =
+        run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, true, 3);
+    ASSERT_TRUE(semantic) << semantic.error().message << ": " << semantic.error().context;
+    EXPECT_EQ(semantic->processes_started, 2U);
+
+    auto semantic_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(semantic_repository);
+    auto semantic_cache = liquid::build_detail::disk_cache{*semantic_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(semantic_cache.open()));
+    auto semantic_link = liquid::runtime::block_on(semantic_cache.find_output("build/wrapped"));
+    ASSERT_TRUE(semantic_link);
+    ASSERT_TRUE(*semantic_link);
+    EXPECT_NE(liquid::to_string((**semantic_link).value), liquid::to_string(link_before));
+
     auto header = std::ofstream{fixture.project() / "include/value.h", std::ios::app};
     header << "\n#define WRAPPED_SECOND_VALUE 1\n";
     header.close();

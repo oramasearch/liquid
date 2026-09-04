@@ -41,6 +41,7 @@ add_executable(liquid-tests
   build/test_distribution.cpp
   build/test_policy.cpp
   build/test_facts.cpp
+  build/test_graph.cpp
   build/test_provenance.cpp
   build/test_why.cpp
   build/test_sbom.cpp
@@ -78,12 +79,19 @@ if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
+if(UNIX)
+  add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
+  target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
+  add_dependencies(liquid-tests liquid-graph-crash-fixture)
+endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
 if(UNIX)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_GRAPH_CRASH_FIXTURE="$<TARGET_FILE:liquid-graph-crash-fixture>")
   add_executable(liquid-wrap-sleep-tool build/sleep_copy.c)
   add_dependencies(liquid-tests liquid-wrap-sleep-tool)
   target_compile_definitions(liquid-tests PRIVATE
@@ -177,6 +185,9 @@ add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
 
+add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
+target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
+
 add_executable(liquid-store-large-tests test_store_large.cpp)
 target_include_directories(liquid-store-large-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
@@ -239,6 +250,7 @@ add_executable(liquid-header-tests
   headers/error.cpp
   headers/export.cpp
   headers/git.cpp
+  headers/graph.cpp
   headers/hash.cpp
   headers/identity.cpp
   headers/liquid.cpp

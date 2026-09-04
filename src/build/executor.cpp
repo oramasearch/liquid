@@ -17,6 +17,8 @@
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "build/why.hpp"
+#include "liquid/graph.hpp"
 #include "objects/records.hpp"
 #include "sandbox/environment.hpp"
 #include "sandbox/sandbox.hpp"
@@ -412,7 +414,8 @@ runtime::task<action_result> run_action(repository& source,
     co_return output;
 }
 
-runtime::task<prepared_action> prepare_action(repository& source, action_input input) {
+runtime::task<prepared_action>
+prepare_action(repository& source, action_input input, bool lookup_cache) {
     auto valid = validate(input);
     if (!valid) {
         co_return std::unexpected(valid.error());
@@ -459,18 +462,22 @@ runtime::task<prepared_action> prepare_action(repository& source, action_input i
     if (!candidate) {
         co_return std::unexpected(candidate.error());
     }
-    auto cached = co_await cache.lookup(input, *sandbox_id);
-    if (!cached) {
-        co_return std::unexpected(cached.error());
+    auto cached = build_detail::cache_lookup{};
+    if (lookup_cache) {
+        auto lookup = co_await cache.lookup(input, *sandbox_id);
+        if (!lookup) {
+            co_return std::unexpected(lookup.error());
+        }
+        cached = std::move(*lookup);
     }
     co_return prepared_action{std::move(input),
                               *action_id,
                               *sandbox_id,
                               *candidate,
                               *source_time,
-                              cached->hit,
-                              cached->why,
-                              cached->bytes_served};
+                              cached.hit,
+                              cached.why,
+                              cached.bytes_served};
 }
 
 runtime::task<result_id>
@@ -495,6 +502,106 @@ finish_action(repository& source, const prepared_action& prepared, action_result
     co_return *stored;
 }
 
+namespace {
+
+struct action_query_state {
+    repository* source{};
+    prepared_action* prepared{};
+};
+
+auto query_bytes(std::string_view value) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>(value.size());
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        output[index] = static_cast<std::byte>(value[index]);
+    }
+    return output;
+}
+
+auto query_text(std::span<const std::byte> value) -> std::string {
+    return {reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
+runtime::task<std::vector<std::byte>>
+action_result_query(query_context& context, std::vector<std::byte>, action_query_state* state) {
+    auto source_input = co_await context.read(
+        graph_input_key{graph_input_kind::working_tree_blob, "action source tree"});
+    if (!source_input) {
+        co_return std::unexpected(source_input.error());
+    }
+    auto toolchain_input =
+        co_await context.read(graph_input_key{graph_input_kind::toolchain, "action toolchain"});
+    if (!toolchain_input) {
+        co_return std::unexpected(toolchain_input.error());
+    }
+    auto cache = build_detail::disk_cache{*state->source};
+    auto cache_opened = co_await cache.open();
+    if (!cache_opened) {
+        co_return std::unexpected(cache_opened.error());
+    }
+    auto cached = co_await cache.lookup(state->prepared->input, state->prepared->sandbox);
+    if (!cached) {
+        co_return std::unexpected(cached.error());
+    }
+    state->prepared->why = cached->why;
+    state->prepared->bytes_served = cached->bytes_served;
+    if (cached->hit) {
+        repository_detail::build_access::record_cache_lookup(
+            *state->source, cached->hit->value, cache_status::hit, {}, cached->bytes_served);
+        co_return query_bytes(to_string(cached->hit->value));
+    }
+    auto value = co_await run_action(*state->source,
+                                     state->prepared->input,
+                                     state->prepared->action,
+                                     state->prepared->sandbox,
+                                     state->prepared->observed_at);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    value->schedule = execution_schedule{.decision = execution_decision::local,
+                                         .reason = "no remote executor configured"};
+    auto stored = co_await finish_action(*state->source, *state->prepared, std::move(*value));
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    co_return query_bytes(to_string(stored->value));
+}
+
+runtime::task<bool> query_result_present(repository& source, result_id id) {
+    auto cache = build_detail::disk_cache{source};
+    auto opened = co_await cache.open();
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    if (cache.divergent(id.value)) {
+        co_return false;
+    }
+    auto value = co_await result(source, id);
+    if (!value) {
+        co_return false;
+    }
+    auto references =
+        std::vector<digest>{value->action, value->stdout_output, value->stderr_output};
+    if (value->provenance) {
+        references.push_back(*value->provenance);
+    }
+    references.insert(references.end(), value->sboms.begin(), value->sboms.end());
+    for (const auto& output : value->outputs) {
+        references.push_back(output.blob);
+    }
+    for (const auto& reference : references) {
+        auto present = co_await repository_detail::build_access::contains(source, reference);
+        if (!present) {
+            co_return std::unexpected(present.error());
+        }
+        if (!*present) {
+            co_return false;
+        }
+    }
+    co_return true;
+}
+
+} // namespace
+
 runtime::task<result_id> execute(repository& source, action_input input) {
 #if defined(_WIN32)
     co_return std::unexpected(
@@ -502,22 +609,82 @@ runtime::task<result_id> execute(repository& source, action_input input) {
                 "sandboxed actions are unavailable on Windows until Cloud Files and job objects",
                 "liquid Phase 6"));
 #else
-    auto prepared = co_await prepare_action(source, std::move(input));
+    auto prepared = co_await prepare_action(source, std::move(input), false);
     if (!prepared) {
         co_return std::unexpected(prepared.error());
     }
-    if (prepared->hit) {
-        repository_detail::build_access::record_cache_lookup(
-            source, prepared->hit->value, cache_status::hit, {}, prepared->bytes_served);
-        co_return *prepared->hit;
+    auto root = repository_detail::build_access::root_path(source);
+    if (!root) {
+        co_return std::unexpected(root.error());
     }
-    auto action_result_value = co_await run_action(
-        source, prepared->input, prepared->action, prepared->sandbox, prepared->observed_at);
-    if (!action_result_value)
-        co_return std::unexpected(action_result_value.error());
-    action_result_value->schedule = execution_schedule{.decision = execution_decision::local,
-                                                       .reason = "no remote executor configured"};
-    co_return co_await finish_action(source, *prepared, std::move(*action_result_value));
+    auto state = action_query_state{&source, &*prepared};
+    auto registry = query_registry{};
+    auto registered = registry.add(
+        {.name = "action_result",
+         .compute = [&state](query_context& context, std::vector<std::byte> arguments) {
+             return action_result_query(context, std::move(arguments), &state);
+         }});
+    if (!registered) {
+        co_return std::unexpected(registered.error());
+    }
+    auto queries =
+        co_await graph::open(*root / ".liquid-build" / "query-graph", std::move(registry));
+    if (!queries) {
+        co_return std::unexpected(queries.error());
+    }
+    auto source_set =
+        co_await queries->set_input({graph_input_kind::working_tree_blob, "action source tree"},
+                                    query_bytes(to_string(prepared->input.inputs)),
+                                    durability::low);
+    auto toolchain_set =
+        co_await queries->set_input({graph_input_kind::toolchain, "action toolchain"},
+                                    query_bytes(to_string(prepared->input.toolchain)),
+                                    durability::high);
+    if (!source_set || !toolchain_set) {
+        co_return std::unexpected(!source_set ? source_set.error() : toolchain_set.error());
+    }
+    const auto key = query_key{"action_result", query_bytes(to_string(prepared->candidate))};
+    const auto executions = queries->statistics().executions;
+    auto demanded = co_await queries->demand(key);
+    if (!demanded) {
+        co_return std::unexpected(demanded.error());
+    }
+    auto id = parse_digest(query_text(demanded->bytes));
+    if (!id) {
+        co_return std::unexpected(id.error());
+    }
+    if (queries->statistics().executions == executions) {
+        auto present = co_await query_result_present(source, result_id{*id});
+        if (!present) {
+            co_return std::unexpected(present.error());
+        }
+        if (!*present) {
+            auto invalidated = queries->mark_changed(key);
+            if (!invalidated) {
+                co_return std::unexpected(invalidated.error());
+            }
+            demanded = co_await queries->demand(key);
+            if (!demanded) {
+                co_return std::unexpected(demanded.error());
+            }
+            id = parse_digest(query_text(demanded->bytes));
+            if (!id) {
+                co_return std::unexpected(id.error());
+            }
+        } else {
+            auto value = co_await result(source, result_id{*id});
+            if (!value) {
+                co_return std::unexpected(value.error());
+            }
+            auto served = co_await build_detail::output_bytes(source, *value);
+            if (!served) {
+                co_return std::unexpected(served.error());
+            }
+            repository_detail::build_access::record_cache_lookup(
+                source, *id, cache_status::hit, {}, *served);
+        }
+    }
+    co_return result_id{*id};
 #endif
 }
 
