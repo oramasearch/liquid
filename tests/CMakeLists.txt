@@ -6,6 +6,12 @@ add_executable(liquid-tests
   test_identity.cpp
   test_object.cpp
   test_remote.cpp
+  reapi/test_wire.cpp
+  reapi/test_messages.cpp
+  reapi/test_conversion.cpp
+  ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/conversion.cpp
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
@@ -49,7 +55,8 @@ add_dependencies(liquid-tests liquid-build-fixture)
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
-  LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
+  LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
+  LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
 if(UNIX)
   add_executable(liquid-wrap-sleep-tool build/sleep_copy.c)
   add_dependencies(liquid-tests liquid-wrap-sleep-tool)

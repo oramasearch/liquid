@@ -71,8 +71,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > toolchain trees from the store, and chooses local, remote, or racing execution from recorded timing, absent bytes,
 > queue depth, and cache locality. Four or more short actions share one supported remote batch; a
 > race cancels its loser and publishes only its winner. Results, `liquid why`, retained traces, and
-> Chrome events preserve the decision and every model input. The REAPI transport, production
-> workers, remote cache tier, and measured transfer timing remain Phase 3 work.
+> Chrome events preserve the decision and every model input. The dependency-free protobuf codec,
+> REAPI v2.3 messages, and native tree/action/result conversions are implemented; HTTP/2 client
+> integration, production workers, the remote cache tier, and measured transfer timing remain
+> Phase 3 work.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -89,8 +91,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > VFS hydration, and materialisation fetch verified logical chunks only on demand, while `liquid
 > status` reports current-tree bytes that remain remote. Actions carry an opt-in remote-eligibility
 > flag, default off; on Linux, eligible actions refuse and name reads outside their input and
-> toolchain trees before dispatch. The REAPI transport and cost-based scheduling remain separate
-> Phase 3 work.
+> toolchain trees before dispatch. Cost-based scheduling and the REAPI record codec are implemented;
+> the HTTP/2 client integration remains separate Phase 3 work.
 
 > **Phase 3 now includes explicit local replay.** `liquid replay <action|result>` reconstructs a
 > recorded action from its input tree, toolchain, environment, and sandbox, then compares exit
@@ -99,7 +101,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > its local result or change quarantine state unless `--record` requests an ordinary verification
 > sample. Registered remote inputs and expected outputs hydrate through their recorded
 > `remote_blob_location` and the repository's configured `remote_blob_source`; tests use its
-> on-disk double while the REAPI transport remains undecided.
+> on-disk double while the REAPI client integration remains separate work.
 
 > **Phase 3 delta delivery is implemented.** `liquid delta create` stores a zstd reference patch,
 > content-addressed delta record, and signed `delta/1` attestation. Apply and fetch verify source,
@@ -147,6 +149,7 @@ and Zetta's.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
+- [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.

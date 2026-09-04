@@ -257,6 +257,9 @@ add_library(libliquid
   src/crypto/crypto.cpp
   src/object.cpp
   src/objects/records.cpp
+  src/protobuf/wire.cpp
+  src/reapi/conversion.cpp
+  src/reapi/messages.cpp
   src/repository/merge.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
