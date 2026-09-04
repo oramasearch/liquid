@@ -5,6 +5,7 @@
 #include <string>
 
 #include "liquid/repository.hpp"
+#include "repository/testing.hpp"
 
 namespace {
 
@@ -145,6 +146,60 @@ TEST(Repository, combine_collision_is_a_conflict_value) {
   ASSERT_EQ(conflicts->size(), 1U);
   EXPECT_EQ(conflicts->front().path, "same");
   EXPECT_EQ(conflicts->front().refs.size(), 2U);
+}
+
+TEST(Repository, cut_loads_only_the_changed_directory_document) {
+  temporary_repository location;
+  auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+  ASSERT_TRUE(created);
+  auto repository = std::move(*created);
+  ASSERT_TRUE(liquid::runtime::block_on(repository.write("a/b/c/first", content("first"))));
+  ASSERT_TRUE(liquid::runtime::block_on(repository.write("a/b/d/second", content("second"))));
+  ASSERT_TRUE(liquid::runtime::block_on(repository.cut("initial tree")));
+  repository = {};
+
+  auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+  ASSERT_TRUE(reopened);
+  liquid::repository_detail::testing::reset_directory_loads(*reopened);
+  ASSERT_TRUE(liquid::runtime::block_on(reopened->write("a/b/c/first", content("updated"))));
+  EXPECT_EQ(liquid::repository_detail::testing::directory_loads(*reopened), 1U);
+}
+
+TEST(Repository, undo_move_restores_the_original_node_identity) {
+  temporary_repository location;
+  auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+  ASSERT_TRUE(created);
+  auto repository = std::move(*created);
+  ASSERT_TRUE(liquid::runtime::block_on(repository.write("before", content("value"))));
+  auto root = liquid::runtime::block_on(repository.root());
+  ASSERT_TRUE(root);
+  const auto identity = root->entries.front().node;
+  ASSERT_TRUE(liquid::runtime::block_on(repository.move("before", "after")));
+  ASSERT_TRUE(liquid::runtime::block_on(
+      repository.undo(liquid::repository_detail::testing::last_operation(repository))));
+  auto restored = liquid::runtime::block_on(repository.root());
+  ASSERT_TRUE(restored);
+  ASSERT_EQ(restored->entries.size(), 1U);
+  EXPECT_EQ(restored->entries.front().name, "before");
+  EXPECT_EQ(restored->entries.front().node, identity);
+}
+
+TEST(Repository, cross_directory_move_is_recovered_before_cut) {
+  temporary_repository location;
+  auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+  ASSERT_TRUE(created);
+  auto repository = std::move(*created);
+  ASSERT_TRUE(liquid::runtime::block_on(repository.write("from/file", content("value"))));
+  ASSERT_TRUE(liquid::runtime::block_on(repository.write("to/anchor", content("anchor"))));
+  ASSERT_TRUE(liquid::runtime::block_on(repository.move("from/file", "to/file")));
+  repository = {};
+
+  auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+  ASSERT_TRUE(reopened);
+  ASSERT_TRUE(liquid::runtime::block_on(reopened->cut("recover cross-directory move")));
+  auto moved = liquid::runtime::block_on(reopened->read("to/file"));
+  ASSERT_TRUE(moved);
+  EXPECT_EQ(text(*moved), "value");
 }
 
 } // namespace

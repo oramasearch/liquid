@@ -12,6 +12,7 @@
 #include "encoding/cbor.hpp"
 #include "objects/records.hpp"
 #include "repository/merge.hpp"
+#include "repository/testing.hpp"
 #include "store/pack.hpp"
 
 namespace liquid {
@@ -316,6 +317,7 @@ struct repository::impl {
   store objects;
   repository_document current;
   std::uint64_t checkpoint_interval{64};
+  std::uint64_t directory_load_count{};
   std::map<node_id, crdt::directory_document> directory_cache;
   impl(std::filesystem::path path, store value, repository_document document,
        std::uint64_t interval = 64)
@@ -335,6 +337,7 @@ struct repository::impl {
       if (!loaded)
         co_return std::unexpected(loaded.error());
       auto inserted = directory_cache.emplace(id, std::move(*loaded));
+      ++directory_load_count;
       co_return &inserted.first->second;
     }
     crdt::repo_id repository{};
@@ -902,5 +905,20 @@ runtime::task<void> repository::unlock(std::string path) {
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
+}
+
+auto repository_detail::testing::directory_loads(repository &value) -> std::uint64_t {
+  return value.impl_ ? value.impl_->directory_load_count : 0;
+}
+
+auto repository_detail::testing::last_operation(repository &value) -> op_id {
+  return value.impl_ && !value.impl_->current.operations.empty()
+             ? value.impl_->current.operations.back().id
+             : op_id{};
+}
+
+void repository_detail::testing::reset_directory_loads(repository &value) {
+  if (value.impl_)
+    value.impl_->directory_load_count = 0;
 }
 } // namespace liquid

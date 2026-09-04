@@ -15,6 +15,10 @@
 
 namespace liquid {
 
+namespace repository_detail {
+struct testing;
+}
+
 struct LIQUID_EXPORT repository_options {
   std::uint64_t checkpoint_interval{64};
 };
@@ -76,6 +80,7 @@ public:
   [[nodiscard]] runtime::task<void> unlock(std::string path);
 
 private:
+  friend struct repository_detail::testing;
   struct impl;
   std::unique_ptr<impl> impl_;
 };

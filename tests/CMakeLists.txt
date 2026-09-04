@@ -12,6 +12,7 @@ add_executable(liquid-tests
   test_vfs.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid GTest::gtest_main)
+target_include_directories(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
 

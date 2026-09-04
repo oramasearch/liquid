@@ -203,6 +203,11 @@ fixture in `tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree
   checked against `tests/fixtures/cbor/rfc8949-supported.txt`.
 - Identity: create, move, move back; the entry's `node_id` never changes; the log shows two
   moves and no delete/create pairs.
+- Recovery: a cross-directory move survives a process restart before the next cut; replayed
+  journal data restores the destination before the next snapshot is cut.
+- Lazy loading: a three-level tree reloads only the directory containing an updated entry;
+  the directory-cache load counter is asserted by the repository test.
+- Undo: undoing a recorded move restores the old path without minting a new `node_id`.
 - Composition: `split` then `nest` the result back; `root()` is byte-identical to before;
   `log` of the nested repository shows the pre-split history.
 - Conflict: two replicas write the same path; after sync the change carries one conflict value
