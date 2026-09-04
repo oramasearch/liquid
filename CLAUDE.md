@@ -14,7 +14,8 @@ and runtime in one program. See [`README.md`](README.md).
 Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. Clang 17+, CMake + Ninja, GoogleTest. Phase 1
-(the store) is built inside libliquid.
+(the store) is built inside libliquid. Optional developer benchmarks live under `bench/` and are
+excluded unless their build option is enabled.
 
 ### Vocabulary — use these words exactly
 
@@ -40,6 +41,8 @@ docs/research/NN-topic/
     sources.md   raw web-grounded research, verbatim
 docs/features/NN-name.md
     specifications — what liquid does
+docs/library/<topic>.md
+    implementation and benchmark notes for libliquid contributors
 docs/standards/
     external standards liquid depends on, vendored
 ```

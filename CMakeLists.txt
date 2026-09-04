@@ -39,7 +39,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # and lake. Static by default (one binary to ship); -DBUILD_SHARED_LIBS=ON builds libliquid.so.
 option(LIQUID_BUILD_CLI   "Build the liquid command-line binary" ON)
 option(LIQUID_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
+option(LIQUID_BUILD_BENCH "Build optional benchmarks" OFF)
 option(BUILD_SHARED_LIBS  "Build libliquid as a shared library" OFF)
+if(LIQUID_BUILD_BENCH AND NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
@@ -115,4 +119,9 @@ if(LIQUID_BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+# Optional benchmarks have their own dependencies and never enter the default build.
+if(LIQUID_BUILD_BENCH)
+  add_subdirectory(bench/chunk-index)
 endif()
