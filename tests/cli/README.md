@@ -18,3 +18,7 @@ The SBOM command tests exercise SPDX and CycloneDX output for the wrapped CMake 
 check each format's identifying field.
 `delta.cmake` drives create, apply, and catalog fetch through the executable and compares target,
 applied, and fetched file digests.
+
+`cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
+then passes the stored initial and successor documents to a fixture that uses only the public
+identity encode, decode, and verification APIs.

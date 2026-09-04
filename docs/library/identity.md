@@ -25,8 +25,10 @@ canonical TAAP/1 signature object into `result<signature>` and rejects unsupport
 invalid Ed25519 signature lengths.
 
 The codecs do not verify trust. Call `verify_document` for one decoded document and `verify_chain`
-for an ordered initial-document and rotation-document chain. The tests round-trip the exact initial
-and successor files stored by liquid and decode their signature objects through the public API.
+for an ordered initial-document and rotation-document chain. `cli-identity-codec` runs `liquid
+identity show` and `liquid identity rotate`, then round-trips and verifies their exact stored files
+through these public functions. The identity unit test also decodes each stored signature object
+through `decode_signature`.
 
 ## Rotation
 

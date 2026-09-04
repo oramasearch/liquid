@@ -15,6 +15,11 @@ on each desktop platform.
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, current Chocolatey CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 
+Every static or shared CTest run includes `consumer-project-build`. It configures a separate CMake
+project that defines Capy, Corosio, and nlohmann/json before adding liquid, then builds and runs its
+own `liquid::liquid` client. `cli-identity-codec` also verifies that the public identity codec reads
+the initial and rotation documents written by the CLI.
+
 `CMakeLists.txt` selects Homebrew LLVM on macOS, a versioned `clang++` on Linux, and `clang-cl`
 for both C and C++ on Windows before `project()`. GoogleTest enables C when FetchContent adds it;
 using `clang-cl` for that language prevents CMake from selecting GNU-style `clang.exe`, which

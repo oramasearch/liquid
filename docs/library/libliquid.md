@@ -41,6 +41,22 @@ find_package(liquid CONFIG REQUIRED)
 target_link_libraries(app PRIVATE liquid::liquid)
 ```
 
+When a parent project already defines `Boost::capy` or `Boost::corosio`, liquid reuses that target
+instead of adding its vendored checkout again. The supported minimum revisions are the revisions
+used by liquid's own checkout; a parent-supplied target must come from that commit or a compatible
+descendant on the named branch.
+
+| Dependency | Tested revision | Target and rule |
+|---|---|---|
+| Capy `develop` | `ce1c7d710c4baaeeddb57fa101707c610f6eb975` | `Boost::capy`; liquid adds `modules/capy` only when the target is absent |
+| Corosio `orama-main` | `9f8e865a7b5728a4093e9345456bc077194dbeff` | `Boost::corosio`; liquid adds `modules/corosio` only when the target is absent |
+| nlohmann/json | bundled `8167d2f64122c3ef7e5a0d9cab239fdba37aa54c`; supplied minimum 3.11.3 at `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03` | `nlohmann_json::nlohmann_json`; automerge-cpp uses a parent target when present, and the lake-shaped consumer proof supplies it before liquid |
+
+`tests/consumer/` is a separate CMake project that supplies all three targets before
+`add_subdirectory(liquid)`, builds a program linked to `liquid::liquid`, and runs it. The main CTest
+suite configures and builds that project with the same compiler and static/shared setting as the
+parent build.
+
 `cmake --install build --prefix <p>` lays out `bin/liquid`, `lib/libliquid.a`, `include/liquid/`,
 `lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, and
 `liquidTargets.cmake`), the wrap hook and Linux remote-action read guard under `libexec/liquid/`,
@@ -58,6 +74,9 @@ install consumer, install to a temporary prefix, configure a separate CMake proj
 `liquid::liquid`, then build and run that executable with the prefix in `CMAKE_PREFIX_PATH`.
 Its source should `co_await` a `liquid::runtime::task<T>` so the check also compiles Capy's
 exported coroutine headers.
+
+The default CTest suite includes `consumer-project-build`; run it alone with
+`ctest --test-dir <build> -R '^consumer-project-build$' --output-on-failure`.
 
 **Change.** New public headers go under `include/liquid/` and into `liquid.hpp`; new sources into
 the `libliquid` target. The public surface, its rules and the ABI policy are

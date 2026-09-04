@@ -66,3 +66,9 @@ The privileged Linux build suite also proves eligible actions reject and name a 
 `reapi/` covers the dependency-free protobuf wire forms, the pinned REAPI message fixtures,
 unknown-field retention, hash selection, and liquid record conversion. The codec stays private to
 libliquid, so this target compiles its private sources directly for static and shared builds.
+
+`consumer/` is an independent CMake project that adds the pinned Capy and Corosio checkouts plus
+nlohmann/json before liquid, then builds and runs an executable linked to `liquid::liquid`.
+`consumer-project-build` configures and builds it as one CTest step with the parent build's compiler
+and static/shared setting. `cli-identity-codec` creates and rotates an identity through the CLI,
+then decodes, re-encodes, and verifies the stored canonical-CBOR files through public libliquid API.

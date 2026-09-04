@@ -19,8 +19,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 
 > **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, and structured JSON/`.env` encryption are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
-> as a thin client of it; liquify and lake link the same library. The public error and digest APIs
-> are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
+> as a thin client of it; liquify and lake link the same library. The public error, digest, identity
+> document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
+> BLAKE3 identifiers. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
@@ -286,6 +287,11 @@ target_link_libraries(app PRIVATE liquid::liquid)
 find_package(liquid CONFIG REQUIRED)
 target_link_libraries(app PRIVATE liquid::liquid)
 ```
+
+Submodule consumers may define `Boost::capy` and `Boost::corosio` first; liquid reuses those targets
+instead of adding its vendored checkouts again. The exact tested revisions and minimum-pin rule are
+documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite builds a
+separate lake-shaped consumer project with Capy, Corosio, and nlohmann/json already present.
 
 ## Implementation
 
