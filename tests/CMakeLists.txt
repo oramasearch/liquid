@@ -3,6 +3,7 @@ add_executable(liquid-tests
   test_delta.cpp
   test_error.cpp
   test_hash.cpp
+  http2/test_codecs.cpp
   test_identity.cpp
   test_object.cpp
   test_remote.cpp
@@ -39,9 +40,10 @@ add_executable(liquid-tests
   build/test_sbom.cpp
   build/test_wrap.cpp
 )
-target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
+target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main Boost::corosio)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
+  ${PROJECT_SOURCE_DIR}/modules/corosio/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)

@@ -248,6 +248,10 @@ add_library(libliquid
   src/formats/json.cpp
   src/hash.cpp
   src/hash/sha256.c
+  src/http2/frame.cpp
+  src/http2/grpc.cpp
+  src/http2/hpack.cpp
+  src/http2/connection.cpp
   src/git/export.cpp
   src/git/import.cpp
   src/git/object_store.cpp
