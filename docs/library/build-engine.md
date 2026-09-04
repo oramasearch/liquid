@@ -195,7 +195,7 @@ Tiers (features/05) share one store and one key:
 |---|---|---|
 | Memory | the daemon's map of candidate keys to results | Phase 4 (#21) |
 | Disk | `result` and `action` records and output blobs in the local store; the index under `actions/` is a small run set like the chunk index | Phase 2 (#11) |
-| Remote | lake, REAPI's ActionCache and CAS | Phase 3 (#16), Phase 6 |
+| Remote | lake, REAPI's ActionCache and CAS | Phase 3 (#16; design: [`distribution.md`](distribution.md)), Phase 6 |
 
 The Action Cache and the CAS are the two halves the object model already separates
 (records versus chunks), and their lifetimes are coupled by the collector (#8): a result

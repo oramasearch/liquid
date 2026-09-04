@@ -11,6 +11,7 @@ notes so that each claim has a clear role.
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in the store, compact/shallow CRDT checkpoints, measured open cost, and how composition, conflicts, undo and locks work. Design for liquid #2, #3, and #136. |
 | [`library/build-engine.md`](library/build-engine.md) | Phase 2's design: action and result records, observation by the mount with per-platform enforcement, cache lookup, retained timing traces and critical paths, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
+| [`library/distribution.md`](library/distribution.md) | Phase 3 design: the REAPI mapping, build without the bytes, racing by cost, replay, the transport decision, own workers, deltas. |
 | [`library/provenance.md`](library/provenance.md) | Automatic result provenance: canonical TAAP storage, the exact SLSA v1 mapping, verification, and in-toto/DSSE export. |
 | [`library/policy.md`](library/policy.md) | Build-input policy: path and toolchain scopes, verified attestation quorums, refusal and warning behavior, and cache isolation. |
 | [`library/sbom.md`](library/sbom.md) | Graph-derived SPDX and CycloneDX SBOMs, signed records, distinct foreign-binary inference, and verification. |
