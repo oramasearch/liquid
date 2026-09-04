@@ -686,16 +686,20 @@ auto encode(const action_record& value) -> result<std::vector<std::byte>> {
     auto outputs = cbor::value::array{};
     for (const auto& path : value.input.outputs)
         outputs.emplace_back(path);
-    auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{1}}},
-                                   {"kind", "action"},
-                                   {"inputs", encode_digest(value.input.inputs)},
-                                   {"command", cbor::value{std::move(command)}},
-                                   {"cwd", cbor::value{value.input.cwd}},
-                                   {"env", cbor::value{std::move(environment)}},
-                                   {"outputs", cbor::value{std::move(outputs)}},
-                                   {"platform", encode_platform(value.input.platform)},
-                                   {"toolchain", encode_digest(value.input.toolchain)},
-                                   {"sandbox", encode_digest(value.sandbox)}};
+    auto fields = cbor::value::map{
+        {"v", cbor::value{value.input.remote_eligible ? std::uint64_t{2} : std::uint64_t{1}}},
+        {"kind", "action"},
+        {"inputs", encode_digest(value.input.inputs)},
+        {"command", cbor::value{std::move(command)}},
+        {"cwd", cbor::value{value.input.cwd}},
+        {"env", cbor::value{std::move(environment)}},
+        {"outputs", cbor::value{std::move(outputs)}},
+        {"platform", encode_platform(value.input.platform)},
+        {"toolchain", encode_digest(value.input.toolchain)},
+        {"sandbox", encode_digest(value.sandbox)}};
+    if (value.input.remote_eligible) {
+        fields.emplace_back("remote_eligible", cbor::value{true});
+    }
     if (value.input.timeout) {
         if (value.input.timeout->count() < 0)
             return std::unexpected(
@@ -1221,9 +1225,11 @@ auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>
 }
 
 auto decode_action(std::span<const std::byte> bytes) -> result<action_record> {
-    auto source = decode(bytes, "action");
+    auto source = decode_versioned(bytes, "action", 2);
     if (!source)
         return std::unexpected(source.error());
+    const auto* version_value = find(*source, "v");
+    const auto* version = std::get_if<std::uint64_t>(&version_value->data);
     auto command = decode_text_array(find(*source, "command"), "action command");
     auto outputs = decode_text_array(find(*source, "outputs"), "action outputs");
     const auto* cwd_value = find(*source, "cwd");
@@ -1263,14 +1269,27 @@ auto decode_action(std::span<const std::byte> bytes) -> result<action_record> {
             return std::unexpected(corrupt("invalid action timeout"));
         timeout = std::chrono::seconds{static_cast<std::int64_t>(*count)};
     }
-    return action_record{action_input{std::move(*command),
-                                      *cwd,
-                                      std::move(env),
-                                      std::move(*outputs),
-                                      *inputs,
-                                      *toolchain,
-                                      std::move(*platform_result),
-                                      timeout},
+    auto remote_eligible = false;
+    const auto* eligible_value = find(*source, "remote_eligible");
+    if ((*version == 1 && eligible_value) || (*version == 2 && !eligible_value)) {
+        return std::unexpected(corrupt("invalid action fields for record version"));
+    }
+    if (eligible_value) {
+        const auto* eligible = std::get_if<bool>(&eligible_value->data);
+        if (!eligible || !*eligible) {
+            return std::unexpected(corrupt("invalid remote execution eligibility"));
+        }
+        remote_eligible = *eligible;
+    }
+    return action_record{action_input{.command = std::move(*command),
+                                      .cwd = *cwd,
+                                      .env = std::move(env),
+                                      .outputs = std::move(*outputs),
+                                      .inputs = *inputs,
+                                      .toolchain = *toolchain,
+                                      .platform = std::move(*platform_result),
+                                      .timeout = timeout,
+                                      .remote_eligible = remote_eligible},
                          *sandbox};
 }
 

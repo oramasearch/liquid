@@ -26,3 +26,6 @@ directly.
 
 The public command table and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
+
+Repository status includes bytes still remote in both text and JSON. Build explanation renderers
+also name the non-hermetic-read reason and its path for remote-eligibility diagnostics.

@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
@@ -13,6 +14,13 @@
 #include <unistd.h>
 
 extern char** environ;
+
+#ifndef LIQUID_READ_GUARD_PATH
+#define LIQUID_READ_GUARD_PATH ""
+#endif
+#ifndef LIQUID_READ_GUARD_FILENAME
+#define LIQUID_READ_GUARD_FILENAME "liquid-read-guard"
+#endif
 
 namespace liquid::sandbox_detail {
 namespace {
@@ -47,8 +55,38 @@ auto create_file(const std::filesystem::path& path) -> result<void> {
     return {};
 }
 
-auto write_bootstrap(const launch_request& request, const std::filesystem::path& script)
-    -> result<void> {
+auto read_guard_path() -> result<std::filesystem::path> {
+    auto candidates = std::vector<std::filesystem::path>{};
+    if (const auto* configured = std::getenv("LIQUID_READ_GUARD"))
+        candidates.emplace_back(configured);
+    candidates.emplace_back(LIQUID_READ_GUARD_PATH);
+    auto code = std::error_code{};
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", code);
+    if (!code) {
+        candidates.push_back(executable.parent_path() / "../libexec/liquid" /
+                             LIQUID_READ_GUARD_FILENAME);
+    }
+    for (const auto& candidate : candidates) {
+        if (!candidate.empty() && std::filesystem::is_regular_file(candidate))
+            return std::filesystem::canonical(candidate);
+    }
+    return std::unexpected(error{
+        errc::not_found, "cannot locate the remote action read guard", LIQUID_READ_GUARD_FILENAME});
+}
+
+auto read_violation(const launch_request& request) -> std::optional<std::string> {
+    if (!request.remote_eligible)
+        return {};
+    auto input = std::ifstream{request.sandbox_root / "read-violation"};
+    auto path = std::string{};
+    if (input && std::getline(input, path) && !path.empty())
+        return path;
+    return {};
+}
+
+auto write_bootstrap(const launch_request& request,
+                     const std::filesystem::path& script,
+                     const std::optional<std::filesystem::path>& read_guard) -> result<void> {
     auto stream = std::ofstream{script, std::ios::binary | std::ios::trunc};
     if (!stream)
         return std::unexpected(error{errc::io, "cannot create sandbox bootstrap", script.string()});
@@ -81,9 +119,20 @@ auto write_bootstrap(const launch_request& request, const std::filesystem::path&
     }
     stream << "/usr/bin/mount -t proc proc " << quote((request.sandbox_root / "proc").string())
            << "\n";
+    if (request.remote_eligible) {
+        stream << "/usr/bin/mount --bind " << quote(read_guard->string()) << ' '
+               << quote(rooted("/liquid/read-guard").string()) << "\n";
+        stream << "/usr/bin/mount --bind "
+               << quote((request.sandbox_root / "read-violation").string()) << ' '
+               << quote(rooted("/liquid/read-violation").string()) << "\n";
+    }
     stream << "unset PWD\n";
     stream << "exec /usr/bin/unshare --root=" << quote(request.sandbox_root.string())
            << " --wd=" << quote(request.cwd) << " -- ";
+    if (request.remote_eligible) {
+        stream << "/liquid/read-guard /liquid/read-violation " << quote(request.work_root) << ' '
+               << quote(request.toolchain_root) << ' ';
+    }
     for (const auto& argument : request.command)
         stream << quote(argument) << ' ';
     stream << "\n";
@@ -175,8 +224,27 @@ auto launch(const launch_request& request) -> result<launch_result> {
         if (!created)
             return std::unexpected(created.error());
     }
+    if (request.remote_eligible) {
+        created = ensure_directory(request.sandbox_root / "liquid");
+        if (!created)
+            return std::unexpected(created.error());
+        for (const auto& path : {request.sandbox_root / "liquid/read-guard",
+                                 request.sandbox_root / "liquid/read-violation",
+                                 request.sandbox_root / "read-violation"}) {
+            auto file = create_file(path);
+            if (!file)
+                return std::unexpected(file.error());
+        }
+    }
     const auto script = request.sandbox_root / "bootstrap.sh";
-    auto written = write_bootstrap(request, script);
+    auto read_guard = std::optional<std::filesystem::path>{};
+    if (request.remote_eligible) {
+        auto located = read_guard_path();
+        if (!located)
+            return std::unexpected(located.error());
+        read_guard = std::move(*located);
+    }
+    auto written = write_bootstrap(request, script, read_guard);
     if (!written)
         return std::unexpected(written.error());
     const auto stdout_descriptor =
@@ -231,13 +299,13 @@ auto launch(const launch_request& request) -> result<launch_result> {
     for (;;) {
         const auto waited = ::waitpid(pid, &status, WNOHANG);
         if (waited == pid)
-            return launch_result{exit_code(status), false};
+            return launch_result{exit_code(status), false, read_violation(request)};
         if (waited < 0)
             return std::unexpected(error{errc::io, std::strerror(errno), "waitpid"});
         if (deadline && std::chrono::steady_clock::now() >= *deadline) {
             ::kill(-pid, SIGKILL);
             ::waitpid(pid, &status, 0);
-            return launch_result{128 + SIGKILL, true};
+            return launch_result{128 + SIGKILL, true, read_violation(request)};
         }
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }

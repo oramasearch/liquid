@@ -44,7 +44,8 @@ translation, not a redesign:
 
 ```
 action  { v, kind:"action", inputs: digest(tree), command: [argv…], cwd, env: {k: v}, outputs: [path…],
-          platform: { os, arch }, toolchain: digest(tree), sandbox: digest(sandbox definition), timeout_s? }
+          platform: { os, arch }, toolchain: digest(tree), sandbox: digest(sandbox definition),
+          timeout_s?, remote_eligible? }
 result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, blob: digest } … ],
           stdout: digest, stderr: digest, manifest: [ { path, digest } … ],   # everything the action read, with content hashes
           timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
@@ -88,7 +89,7 @@ read, so a large input tree costs nothing to set up (features/06: data movement 
 
 | Platform | Mechanism | What it guarantees |
 |---|---|---|
-| Linux | user + mount + pid + net namespaces (unprivileged `unshare`), the sandbox root bind-mounted as the only visible filesystem besides `/proc` and a private `/tmp`; seccomp is not required for correctness | a read outside the mount is impossible, not merely recorded |
+| Linux | user + mount + pid + net namespaces (unprivileged `unshare`), the sandbox root bind-mounted as the only visible filesystem besides `/proc` and a private `/tmp`; a remote-eligible action adds the static read guard | an eligible read outside input/toolchain roots returns `EACCES` and the normalized path; other actions retain the namespace boundary |
 | macOS | `sandbox-exec` profile denying file reads outside the mount and the fixed toolchain path, denying network; the mount is the only readable tree | the same guarantee with a weaker tool; the observation layer is unchanged |
 | Windows | Phase 2: no sandbox and no mount; actions run with declared inputs only, `wrap` refuses with `errc::unsupported` and the reason; Phase 6 brings Cloud Files and a job-object sandbox | honest about the gap |
 
@@ -97,6 +98,11 @@ and `TMPDIR` to sandbox-private directories, `LANG=C.UTF-8`, `TZ=UTC`, `SOURCE_D
 from the change's time, nothing inherited). The sandbox definition (the mount layout, the
 environment, the enforcement profile) is itself a record and its digest is in the action, so
 two machines with different sandbox definitions never share a cache entry by accident.
+
+`action_input::remote_eligible` defaults off. When enabled on Linux, the read guard observes open
+system calls across the action's process tree and reports the first path outside the input and
+toolchain roots. The executor returns that path as an unauthorized error before scheduling code
+can dispatch the action. The flag is part of action and candidate identity; #18 owns setting it.
 
 ## The cache: lookup by manifest, tiers over one store
 

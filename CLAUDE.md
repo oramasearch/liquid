@@ -38,7 +38,11 @@ and policy check/explain commands. Liquid #56 adds content-keyed Autotools and C
 facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
 and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
-SPDX/CycloneDX documents or distinctly marked binary inference. The repository object model,
+SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
+remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
+materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
+refusal for remote-eligible actions. The REAPI transport and scheduling policy remain later Phase 3
+work. The repository object model,
 internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Full materialisation works on every platform; lazy VFS mounts use

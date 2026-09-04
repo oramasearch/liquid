@@ -185,6 +185,12 @@ set_target_properties(liquid-wrap-hook PROPERTIES
   C_VISIBILITY_PRESET hidden
   POSITION_INDEPENDENT_CODE ON)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(liquid-read-guard src/sandbox/read_guard.c)
+  target_link_options(liquid-read-guard PRIVATE -static)
+  target_compile_features(liquid-read-guard PRIVATE c_std_99)
+endif()
+
 # automerge-cpp is the private CRDT engine. Keep it static even when libliquid is shared;
 # no dependency header or target is part of liquid's installed interface.
 set(LIQUID_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
@@ -304,6 +310,12 @@ target_compile_definitions(libliquid PRIVATE
   LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
   LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
 add_dependencies(libliquid liquid-wrap-hook)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(libliquid PRIVATE
+    LIQUID_READ_GUARD_PATH="$<TARGET_FILE:liquid-read-guard>"
+    LIQUID_READ_GUARD_FILENAME="$<TARGET_FILE_NAME:liquid-read-guard>")
+  add_dependencies(libliquid liquid-read-guard)
+endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio libzstd_static ZLIB::ZLIB
@@ -371,6 +383,10 @@ install(TARGETS libliquid EXPORT liquidTargets
 install(TARGETS liquid-wrap-hook
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid
   RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  install(TARGETS liquid-read-guard
+    RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)
+endif()
 install(TARGETS boost_capy EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

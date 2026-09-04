@@ -32,6 +32,7 @@ struct LIQUID_EXPORT action_input {
     digest toolchain;
     liquid::platform platform;
     std::optional<std::chrono::seconds> timeout;
+    bool remote_eligible{};
 };
 
 struct LIQUID_EXPORT result_id {
@@ -68,7 +69,8 @@ enum class cache_miss_reason : std::uint8_t {
     never_built,
     divergent_result_quarantined,
     unknown,
-    policy_refused
+    policy_refused,
+    non_hermetic_read
 };
 
 struct LIQUID_EXPORT line_change {
@@ -381,6 +383,8 @@ namespace build {
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
                                                              action_input input);
+[[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
+record_remote_result(repository& source, action_input input, action_result value);
 [[nodiscard]] LIQUID_EXPORT runtime::task<action_result> result(repository& source, result_id id);
 [[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report> verify_provenance(repository& source,
                                                                                result_id id);

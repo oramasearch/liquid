@@ -151,6 +151,17 @@ auto blob_contents(repository& source, digest id) -> runtime::task<std::vector<s
     if (record->size > std::numeric_limits<std::size_t>::max()) {
         co_return std::unexpected(why_error(errc::io, "input is too large to compare"));
     }
+    if (record->content.alg == algorithm::blake3 || record->content.alg == algorithm::sha256 ||
+        record->content.alg == algorithm::blake3_keyed) {
+        auto contents = co_await repository_detail::build_access::get(source, record->content);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        if (contents->size() != record->size) {
+            co_return std::unexpected(why_error(errc::corrupt, "input blob size does not match"));
+        }
+        co_return contents;
+    }
     auto output = std::vector<std::byte>{};
     output.reserve(static_cast<std::size_t>(record->size));
     for (const auto& chunk : record->chunks) {
@@ -322,7 +333,7 @@ auto load_stats(const std::filesystem::path& path) -> result<cache_report> {
             const auto text = std::string_view{key}.substr(7);
             const auto parsed = std::from_chars(text.data(), text.data() + text.size(), index);
             if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
-                index > static_cast<unsigned>(cache_miss_reason::policy_refused)) {
+                index > static_cast<unsigned>(cache_miss_reason::non_hermetic_read)) {
                 return std::unexpected(why_error(errc::corrupt, "invalid cache statistics", path));
             }
             output.misses_by_reason[static_cast<cache_miss_reason>(index)] = value;

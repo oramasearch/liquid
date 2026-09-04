@@ -5,7 +5,8 @@
 > [`features/06-distributed-execution.md`](../features/06-distributed-execution.md),
 > [`features/05-caching.md`](../features/05-caching.md) (the remote tier),
 > [`features/09-artifact-service.md`](../features/09-artifact-service.md) (deltas). This page is the
-> design the Phase 3 issues implement; it is written before them and corrected by them.
+> design the Phase 3 issues implement. The build-without-bytes slice described below is now
+> implemented; transport and scheduling remain later work.
 
 Phase 2 built the local action path: records for actions and results
 ([`build-engine.md`](build-engine.md)), observation by the mount, the signed disk cache, `liquid
@@ -41,26 +42,39 @@ BLAKE3 candidate key.
 
 ## Build without the bytes, as the only mode (#17)
 
-A remote `ActionResult` names output blobs by digest and size. liquid records the result and each
-output as a blob record whose bytes are *not yet local*: the blob carries a location (`remote`,
-the backend and instance name) beside its digest. Nothing is fetched at that point.
+A remote `ActionResult` names output blobs by digest and size. `build::record_remote_result`
+records the result and each output as a version 2 blob record whose bytes are *not yet local*: the
+blob carries its whole-content digest plus a `remote` location containing a source id and instance
+name. Registering that record persists its chunk boundaries without fetching content.
 
 Bytes arrive on read. The lazy VFS (`vfs.md`) already hydrates chunks from the store on page
 fault; the remote location adds a second source behind the same hydration queue, fetched over
-`ByteStream.Read` in chunk-sized ranges and written into the local store as ordinary chunks.
+`remote_blob_source::read_range` in chunk-sized ranges and written into the local store as ordinary
+chunks. The source interface also provides `find_missing` and `write`; it contains no gRPC or
+protobuf type, so the unresolved transport choice does not leak into libliquid.
 A build whose outputs are never read therefore transfers no output bytes, and a consecutive remote
 action that consumes them runs on the backend with the inputs already in its CAS.
 
 Materialisation (`materialise`) of a tree containing remote blobs fetches them then; `liquid
-status` shows how many bytes of a tree are still remote.
+status` shows how many bytes of the current tree are still remote. A chunk stops contributing as
+soon as its verified bytes enter the local store.
 
-**Hermeticity at the read.** The mount observes every read an action makes. A read outside the
-input tree (an absolute path on the host, an undeclared environment file) is recorded in the
-manifest today and makes the result non-reproducible elsewhere. In Phase 3 that read is a
-*failure at the read*: when an action is eligible for remote execution, the sandbox refuses reads
-outside the input tree and the toolchain tree, and the executor reports the path before anything
-is dispatched. The non-hermetic action from the exit criterion is caught on the first local run,
-never as a confusing remote error.
+**Hermeticity at the read.** `action_input::remote_eligible` defaults to false until the cost model
+in #18 sets it. On Linux, an eligible action runs under the sandbox read guard. The guard inspects
+file-open system calls, returns `EACCES` for a path outside the input and toolchain roots, follows
+forked processes, and writes the first offending normalized path into the launch report. The
+executor returns `errc::unauthorized` with that path before a remote dispatcher can accept the
+action. `cache_miss_reason::non_hermetic_read` gives `wrap --explain` and `liquid why` the same
+path-bearing vocabulary when scheduling starts using the eligibility flag.
+
+## What the tests taught
+
+The on-disk test source is a second liquid store and counts `read_range` calls and bytes. Recording
+an unused remote result performs zero reads. A range crossing three chunk boundaries performs
+three reads for exactly those complete chunks; repeating the range performs none, and full
+materialisation fetches only the remaining chunks. A second remote result can name a tree
+containing the first output without a client read. In the privileged Linux sandbox,
+`/etc/hostname` is refused on its first open and is returned as the diagnostic context.
 
 ## The toolchain is an input; racing by cost (#18)
 
@@ -148,6 +162,5 @@ as local, and the non-hermetic fixture refused at the read.
 
 ## How to change
 
-This page precedes its implementation. A Phase 3 issue that finds the design wrong changes this
-page in the same commit as the code and says why in the commit body, as the Phase 2 issues did for
-`build-engine.md`.
+Keep this page synchronized with each Phase 3 implementation. A change to remote record identity,
+hydration, or eligibility must update the corresponding section and its verification evidence.

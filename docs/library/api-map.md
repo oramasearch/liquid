@@ -58,14 +58,14 @@ owning issue in `error::context`.
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
-| `liquid/store.hpp` | #1, #7, #8, #46, #53, #58, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, rule counts, and pack compaction |
-| `liquid/object.hpp` | #2, #50, #62 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #40, #41, #42, #50, #52, #53, #58, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, typed retention policy, and retention explanations |
+| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains and key-version lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
+| `liquid/repository.hpp` | #2, #11, #17, #40, #41, #42, #50, #52, #53, #58, #116 | implemented | `repository`: open, encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, typed retention policy, and retention explanations |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61 | implemented local executor, wrapper, disk cache, verification, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility and provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
-| `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #17, #57, #60, #56, #58, #61 | implemented local executor, remote-result recording, wrapper, disk cache, verification, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility and provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/remote.hpp` | #17, Phase 6 | implemented source interface; declared service handle | `remote_blob_source`: transport-neutral missing/read/write operations; `remote`: later hosted push and pull |
 
 ### `liquid/error.hpp`
 
@@ -143,6 +143,8 @@ struct store_options {
   std::uint64_t pack_size{};
   std::shared_ptr<keyring> keys;       // null preserves plaintext-store behaviour
   std::string write_key;               // empty selects keyring::default_key_id()
+  bool durable{};
+  std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -170,6 +172,8 @@ class store {                          // the chunk store: chunks, packs, liquid
   runtime::task<std::vector<std::byte>> get(digest);              // verified on read
   runtime::task<std::uint64_t> read(digest, std::uint64_t offset, std::span<std::byte> into);
   runtime::task<bool> contains(digest);
+  runtime::task<blob_availability> has(digest);
+  runtime::task<void> register_remote(blob);
   runtime::task<std::optional<object_key_version>> key_version(digest);
   runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
   runtime::task<collection_report> collect(collection_options = {});   // epoch marking
@@ -179,9 +183,25 @@ class store {                          // the chunk store: chunks, packs, liquid
 Chunking (FastCDC), packs, compression, the index and its tuning are internal; none of them
 appears in a signature. File I/O is Corosio's `random_access_file` and `stream_file` on the
 io_context's worker pool, behind the private boundary. `store_options` names the plaintext hash
-algorithm, pack size, optional keyring, optional write key id, and optional durable pack-write
-acknowledgement. A non-null keyring enables trust-domain encrypted objects; see
+algorithm, pack size, optional keyring, optional write key id, optional durable pack-write
+acknowledgement, and the remote source map. A non-null keyring enables trust-domain encrypted objects; see
 [encryption.md](encryption.md).
+
+### `liquid/remote.hpp`
+
+```cpp
+struct remote_blob_location { std::string source, instance; };
+class remote_blob_source {
+ public:
+  virtual runtime::task<std::vector<digest>> find_missing(std::string, std::vector<digest>) = 0;
+  virtual runtime::task<std::uint64_t> read_range(std::string, digest, std::uint64_t,
+                                                  std::span<std::byte>) = 0;
+  virtual runtime::task<void> write(std::string, digest, std::vector<std::byte>) = 0;
+};
+```
+
+The interface is transport-neutral. A later REAPI or hosted implementation stays behind it; the
+store and VFS depend only on range reads and digest verification.
 
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 Lease destruction has no storage effect; expiry is the authority. Collection reports are plain
@@ -220,7 +240,8 @@ commitments. [attestations.md](attestations.md) is the complete schema and wire-
 ```cpp
 enum class node_kind : std::uint8_t { blob, tree, change, action, result_, attestation, repo };
 struct blob   { std::vector<digest> chunks; std::uint64_t size;
-                std::vector<std::uint64_t> chunk_sizes; };
+                std::vector<std::uint64_t> chunk_sizes; digest content;
+                std::optional<remote_blob_location> remote; };
 struct tree_entry { std::string name; std::uint32_t mode; node_kind kind; digest id; };
 struct tree   { std::vector<tree_entry> entries; };                   // sorted by name
 struct change { change_id id; std::vector<change_id> parents; actor author;
@@ -260,12 +281,14 @@ class repository {
                              std::optional<change_id> = {});
   runtime::task<std::vector<std::string>> diff_keys(std::string path, change_id a, change_id b);
   runtime::task<void> write_file(std::string path, std::filesystem::path source);   // streams a large file in; one drip
+  runtime::task<void> write_remote(std::string path, blob);
+  runtime::task<digest> store_remote_blob(blob);
   runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
   runtime::task<void> remove(std::string path);
   runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
   runtime::task<std::vector<ref>> refs();                 // name → change_id
   runtime::task<void> set_ref(std::string name, change_id);
-  result<repository_status> status();                     // pending drips, paused, conflicts, oversized directories
+  result<repository_status> status();                     // includes bytes still remote in this tree
   runtime::task<std::vector<change>> log(log_options = {});
   runtime::task<snapshot> at(change_id);                 // time travel
   runtime::task<readability_report> readability(std::optional<change_id> = {});
@@ -387,7 +410,8 @@ under `src/vfs/`; see [`vfs.md`](vfs.md).
 enum class cache_status : std::uint8_t { miss, hit, divergent };
 enum class cache_miss_reason { input_changed, command_changed, environment_changed,
   toolchain_changed, sandbox_changed, never_built, divergent_result_quarantined, unknown,
-  policy_refused };
+  policy_refused, non_hermetic_read };
+struct action_input { /* command, roots, platform, timeout */ bool remote_eligible; };
 struct cache_miss { cache_miss_reason reason; std::string path;
   std::optional<digest> expected, actual; /* argv, environment, tool, line, attribution, detail */ };
 enum class policy_scope : std::uint8_t { paths, toolchain, all_inputs };
@@ -471,6 +495,7 @@ struct verified_action {
 struct verify_report { std::uint64_t considered; std::vector<verified_action> actions; };
 namespace build {
 runtime::task<result_id> execute(repository&, action_input);
+runtime::task<result_id> record_remote_result(repository&, action_input, action_result);
 runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
 runtime::task<verify_report> verify(repository&, verify_options = {});

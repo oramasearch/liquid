@@ -102,7 +102,25 @@ TEST(Records, action_records_are_canonical_and_round_trip) {
     EXPECT_EQ(decoded->input.platform.os, record.input.platform.os);
     EXPECT_EQ(decoded->input.platform.arch, record.input.platform.arch);
     EXPECT_EQ(decoded->input.timeout, record.input.timeout);
+    EXPECT_FALSE(decoded->input.remote_eligible);
     EXPECT_EQ(liquid::to_string(decoded->sandbox), liquid::to_string(record.sandbox));
+    auto reencoded = liquid::objects::encode(*decoded);
+    ASSERT_TRUE(reencoded) << reencoded.error().message;
+    EXPECT_EQ(*reencoded, *encoded);
+}
+
+TEST(Records, remote_eligible_action_round_trips_as_version_two) {
+    const auto record = liquid::objects::action_record{.input = {.command = {"clang"},
+                                                                 .inputs = example_digest(0x01),
+                                                                 .toolchain = example_digest(0x02),
+                                                                 .platform = {"linux", "x86_64"},
+                                                                 .remote_eligible = true},
+                                                       .sandbox = example_digest(0x03)};
+    auto encoded = liquid::objects::encode(record);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_action(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_TRUE(decoded->input.remote_eligible);
     auto reencoded = liquid::objects::encode(*decoded);
     ASSERT_TRUE(reencoded) << reencoded.error().message;
     EXPECT_EQ(*reencoded, *encoded);

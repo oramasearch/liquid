@@ -50,3 +50,7 @@ result timing, durable trace edges, critical-path queries, and Chrome trace-even
 Input-policy cases cover refusal and warning reports, verified approved identities, invalid
 signatures, registered profiles, independent-builder quorums, toolchain inputs, subject-index
 recovery, and cache isolation after a policy change.
+
+Remote-output coverage uses an on-disk counting source to distinguish registration from transfer,
+prove chunk-exact hydration and materialisation, and exercise local/remote/absent store status.
+The privileged Linux build suite also proves eligible actions reject and name a host-path read.

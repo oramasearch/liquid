@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
         return print_random(argv[2]);
     }
     if (strcmp(argv[1], "outside-read") == 0) {
-        return open("/etc/passwd", O_RDONLY) < 0 ? 0 : 1;
+        return open("/etc/hostname", O_RDONLY) < 0 ? 0 : 1;
     }
     if (strcmp(argv[1], "outside-write") == 0) {
         return copy_file("input.txt", "undeclared.txt");

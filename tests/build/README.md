@@ -47,3 +47,8 @@ and `why_slow` target selection.
 invalid-signature and unknown-profile rejection, two-distinct-identity reproducibility quorum,
 toolchain traversal, subject-index rebuild after reopen, pre-spawn refusal in the Linux mount
 environment, and policy-bound candidate keys.
+
+`test_remote_outputs.cpp` uses a second on-disk liquid store as a counting remote source. It proves
+zero-byte unused results, exact chunk-range hydration and cache reuse, on-demand materialisation,
+tri-state availability, and metadata-only consumption by a consecutive remote result. The Linux
+executor fixture marks one action eligible and verifies `/etc/hostname` is refused and reported.
