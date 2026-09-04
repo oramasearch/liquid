@@ -256,8 +256,8 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    `result<T>` errors everywhere, opaque handles, plain value records, digests that carry their
    algorithm, and coroutine-native waiting operations; a header not on the map is not public.
    **The object model
-   is `docs/library/object-model.md`**: canonical-CBOR records in the store, one automerge
-   document per repository, liquid's own `node_id` (survives moves) and `change_id` (the digest
+   is `docs/library/object-model.md`**: canonical-CBOR records in the store, one small repository
+   document plus one automerge document per directory (decided 2026-09-04 by measurement), liquid's own `node_id` (survives moves) and `change_id` (the digest
    of the change record, never automerge's `ChangeHash`), conflicts and symbols reserved in the
    change record from the first commit.
 8. **The chunk index is liquid's own storage engine, built from scratch** (Steve, 2026-09-03;
