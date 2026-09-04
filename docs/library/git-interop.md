@@ -29,4 +29,4 @@ snapshots, then run `git fsck` against the export.
 
 `liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid
 repository when needed. `liquid export git <path> [ref]` exports the repository rooted at the
-current directory.
+current directory. The client prints import counts and every reported export degradation.
