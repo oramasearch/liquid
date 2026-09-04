@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <set>
 
 #include <zlib.h>
 
@@ -604,6 +605,7 @@ auto object_store::peel(const sha1& id) -> result<sha1> {
 
 auto object_store::refs() -> result<std::map<std::string, sha1>> {
     std::map<std::string, sha1> output;
+    std::map<std::string, std::string> symbolic;
     const auto root = directory_ / "refs";
     std::error_code code;
     for (std::filesystem::recursive_directory_iterator it{root, code}, end; !code && it != end;
@@ -613,11 +615,17 @@ auto object_store::refs() -> result<std::map<std::string, sha1>> {
         const auto value = read_file(it->path());
         if (!value)
             return std::unexpected(value.error());
-        const auto parsed = parse_sha1(
-            trim(std::string{reinterpret_cast<const char*>(value->data()), value->size()}));
+        const auto name = std::filesystem::relative(it->path(), directory_).generic_string();
+        const auto text =
+            trim(std::string{reinterpret_cast<const char*>(value->data()), value->size()});
+        if (text.starts_with("ref: ")) {
+            symbolic.emplace(name, text.substr(5));
+            continue;
+        }
+        const auto parsed = parse_sha1(text);
         if (!parsed)
             return std::unexpected(failure(errc::corrupt, "invalid Git ref", it->path().string()));
-        output.emplace(std::filesystem::relative(it->path(), directory_).generic_string(), *parsed);
+        output.emplace(name, *parsed);
     }
     if (code)
         return std::unexpected(failure(errc::io, code.message(), root.string()));
@@ -635,6 +643,23 @@ auto object_store::refs() -> result<std::map<std::string, sha1>> {
                 return std::unexpected(
                     failure(errc::corrupt, "invalid packed Git ref", packed.string()));
             output.try_emplace(line.substr(space + 1), *parsed);
+        }
+    }
+    for (const auto& [name, target] : symbolic) {
+        auto current = target;
+        std::set<std::string> visited{name};
+        for (;;) {
+            if (!visited.insert(current).second)
+                return std::unexpected(failure(errc::corrupt, "cyclic symbolic Git ref", name));
+            if (const auto found = output.find(current); found != output.end()) {
+                output.emplace(name, found->second);
+                break;
+            }
+            const auto next = symbolic.find(current);
+            if (next == symbolic.end())
+                return std::unexpected(
+                    failure(errc::corrupt, "symbolic Git ref target is missing", current));
+            current = next->second;
         }
     }
     return output;

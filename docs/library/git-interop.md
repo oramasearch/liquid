@@ -12,7 +12,8 @@ Complete fixture coverage follows in this issue.
 Git commit names map bidirectionally through repository metadata: `git.commit.<sha1>` stores the
 liquid change identifier, and `git.change.<change-id>` stores the Git name. A change also records
 `git_commit` in its signed metadata. Git files retain regular, executable, and symbolic-link
-modes. Git submodules become nested-repository placeholders.
+modes. Git submodules become nested-repository placeholders. Loose, packed, and symbolic refs are
+resolved before the reachable graph is walked.
 
 ## Compatibility
 
