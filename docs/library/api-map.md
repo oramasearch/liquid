@@ -21,14 +21,21 @@ concurrency rule are all cheap now and expensive to retrofit. The map also says 
 3. **Values are plain.** Records (`digest`, `tree_entry`, `change`, `drip`, `error`) are aggregates
    of standard types: `std::string`, `std::vector`, `std::array`, `std::optional`, `std::span`,
    `std::chrono`. They may gain fields; they never lose or reorder them before 1.0 is declared.
-4. **No third-party type is visible.** Not Zetta, ever. Not Boost.Capy, Corosio, automerge-cpp,
-   RocksDB, BLAKE3, tree-sitter. They live behind the handles. If a facility from one of them must
-   reach a client, it is wrapped in a liquid type.
+4. **No third-party type is visible, with one exception.** Not Zetta, ever. Not Corosio,
+   automerge-cpp, zstd, BLAKE3, tree-sitter: they live behind the handles. The exception is
+   **Boost.Capy, the coroutine substrate** (Steve, 2026-09-03: "use the coroutine library that we
+   have"): its `task` and `io_result` reach clients through `liquid/runtime.hpp`, the one header
+   that names Capy, so a substrate change is a change there and nowhere else (Zetta's pattern).
 5. **Every reference carries its algorithm.** A `digest` is `(algorithm, bytes)`; its text form is
    `blake3:<hex>` or `sha256:<hex>`. Nothing in the API takes bare bytes as an identity.
-6. **Synchronous for Phase 1.** Every call may block on I/O and says so. The async surface arrives
-   with the daemon (Phase 4) as its own header and is a decision then, not a leak now (see
-   *Open*).
+6. **Coroutine-native.** Every function that performs I/O or may wait returns
+   `liquid::task<T>` (`boost::capy::task<liquid::result<T>>`) and is `co_await`ed; pure computation
+   (hashing, chunking, encoding, parsing) is synchronous and returns `result<T>` directly. liquid
+   tasks run on a Corosio `io_context` executor: a client that owns one (lake, liquify) awaits
+   liquid tasks from its own coroutines; a client that does not (the CLI, tests) uses
+   `runtime::block_on`, which owns one. Blocking third-party work goes through `runtime::offload`,
+   never a raw thread. Errors stay in `result<T>`; composition with Capy's `when_all`/`timeout`
+   goes through the adapters in `runtime.hpp`.
 7. **Exported explicitly.** Every public class and free function carries `LIQUID_EXPORT`. Templates
    and inline functions in public headers touch only public types; nothing inline reaches private
    state.
@@ -45,6 +52,7 @@ owning issue in `error::context`.
 | `liquid/liquid.hpp` | now | implemented | umbrella |
 | `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
+| `liquid/runtime.hpp` | #96 | declared | the Capy seam: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, text round trip |
 | `liquid/store.hpp` | #1, #8 | declared | `store`: content in, digests out; leases and collection |
@@ -69,6 +77,24 @@ std::string_view to_string(errc);
 
 `unsupported` is the answer of every function whose phase has not landed: the header compiles and
 links from day one, and callers can be written against it before the store exists.
+
+### `liquid/runtime.hpp`
+
+```cpp
+namespace liquid::runtime {
+template <class T> using task = boost::capy::task<result<T>>;   // every I/O function returns this
+using boost::capy::io_result;  using boost::capy::when_all;  using boost::capy::timeout;  using boost::capy::delay;
+class context;                        // owns a Corosio io_context and its threads; opaque
+template <class T> result<T> block_on(task<T>);                // run to completion on a private context (CLI, tests)
+void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared pool
+template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking work on the pool; resumes on the caller's executor
+}
+```
+
+Corosio never appears here; `src/runtime/net.hpp` is the private seam adapter TUs include for
+sockets, timers and files. Coroutine functions take their parameters **by value** and are never
+capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard]]`; after
+`offload` the continuation is back on the caller's executor before any Corosio object is touched.
 
 ### `liquid/hash.hpp`
 
@@ -98,18 +124,19 @@ are checked against the official implementation.
 ```cpp
 class store {                          // the chunk store: chunks, packs, liquid's own index
  public:
-  static result<store> open(const std::filesystem::path&, const store_options& = {});
-  result<digest> put(std::span<const std::byte>);                 // chunked, deduplicated, indexed
-  result<std::vector<std::byte>> get(const digest&);              // verified on read
-  result<std::uint64_t> read(const digest&, std::uint64_t offset, std::span<std::byte> into);
-  result<bool> contains(const digest&);
-  result<lease> lease_root(const digest&, std::chrono::seconds ttl);   // GC roots are leases
-  result<collection_report> collect(const collection_options& = {});   // epoch marking
+  static runtime::task<store> open(std::filesystem::path, store_options = {});
+  runtime::task<digest> put(std::vector<std::byte>);              // chunked, deduplicated, indexed
+  runtime::task<std::vector<std::byte>> get(digest);              // verified on read
+  runtime::task<std::uint64_t> read(digest, std::uint64_t offset, std::span<std::byte> into);
+  runtime::task<bool> contains(digest);
+  runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
+  runtime::task<collection_report> collect(collection_options = {});   // epoch marking
 };
 ```
 
-Chunking (FastCDC), packs, compression, the index engine and its tuning are internal; none of
-them appears in a signature. `store_options` names the algorithm and the pack size only.
+Chunking (FastCDC), packs, compression, the index and its tuning are internal; none of them
+appears in a signature. File I/O is Corosio's `random_access_file` and `stream_file` on the
+io_context's worker pool, behind the private seam. `store_options` names the algorithm and the pack size only.
 
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 
@@ -135,21 +162,21 @@ optional `conflict` record on a change (liquid #40).
 ```cpp
 class repository {
  public:
-  static result<repository> create(const std::filesystem::path&, const repository_options& = {});
-  static result<repository> open(const std::filesystem::path&);
-  result<tree> root();                                   // the working copy is a change
-  result<change_id> head();
-  result<std::vector<std::byte>> read(std::string_view path);
-  result<void> write(std::string_view path, std::span<const std::byte>);   // becomes a drip
-  result<std::vector<change>> log(const log_options& = {});
-  result<snapshot> at(const change_id&);                 // time travel
-  result<void> nest(const repository& source, std::string_view path);
-  result<repository> split(std::string_view path, const std::filesystem::path& into);
-  result<void> combine(const repository& other, std::optional<std::string_view> at);
-  result<std::vector<conflict>> conflicts();             // #40: conflicts are values
-  result<void> undo(const op_id&);                       // #41: the operation log
-  result<void> lock(std::string_view path);              // #42
-  result<void> unlock(std::string_view path);
+  static runtime::task<repository> create(std::filesystem::path, repository_options = {});
+  static runtime::task<repository> open(std::filesystem::path);
+  runtime::task<tree> root();                            // the working copy is a change
+  runtime::task<change_id> head();
+  runtime::task<std::vector<std::byte>> read(std::string path);
+  runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
+  runtime::task<std::vector<change>> log(log_options = {});
+  runtime::task<snapshot> at(change_id);                 // time travel
+  runtime::task<void> nest(const repository& source, std::string path);
+  runtime::task<repository> split(std::string path, std::filesystem::path into);
+  runtime::task<void> combine(const repository& other, std::optional<std::string> at);
+  runtime::task<std::vector<conflict>> conflicts();      // #40: conflicts are values
+  runtime::task<void> undo(op_id);                       // #41: the operation log
+  runtime::task<void> lock(std::string path);            // #42
+  runtime::task<void> unlock(std::string path);
 };
 ```
 
@@ -160,11 +187,11 @@ struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
               std::vector<std::byte> signature; std::chrono::sys_seconds at; };
 class capture {                        // the journal, as a subscription
  public:
-  result<subscription> subscribe(std::function<void(const drip&)>);
-  result<void> pause();  result<void> resume();  result<capture_status> status();
+  result<subscription> subscribe(std::function<void(const drip&)>);   // registration is synchronous
+  runtime::task<void> pause();  runtime::task<void> resume();  result<capture_status> status();
 };
 struct actor { std::string taap_id; };                   // TAAP/1 subject
-class signer { public: result<std::vector<std::byte>> sign(std::span<const std::byte>); };
+class signer { public: runtime::task<std::vector<std::byte>> sign(std::vector<std::byte>); };   // custody may be remote
 result<bool> verify(const actor&, std::span<const std::byte> payload, std::span<const std::byte> signature);
 class key_provider { /* pluggable custody: file, age, passphrase, later KMS/TPM (liquid #51) */ };
 ```
@@ -181,6 +208,8 @@ key custody providers). Their headers live beside their sources, never under `in
 
 ## ABI policy
 
+- **Boost.Capy is a public dependency** (`Boost::capy` linked `PUBLIC`); Corosio is private.
+  Consumers get Capy transitively and may await liquid tasks from their own Capy coroutines.
 - **Static by default.** One binary to ship; liquify and lake link `liquid::liquid` as a pinned
   submodule and take API changes as deliberate pin bumps. No compatibility promise exists between
   pins before 1.0, and none is implied by `SOVERSION 0`.
@@ -206,6 +235,6 @@ refactor.
 
 ## Open
 
-- **The async surface.** Whether Phase 4's daemon API exposes coroutines (and therefore a Capy
-  type), callbacks, or a liquid-owned awaitable. Decide with the daemon (liquid #21).
+- ~~The async surface.~~ **Resolved (Steve, 2026-09-03):** coroutine-native on Capy from the
+  first header; see rules 4 and 6.
 - **Where the automerge document boundary sits** for very large trees (features/17).
