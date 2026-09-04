@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <limits>
 #include <map>
 #include <random>
 #include <regex>
@@ -35,13 +36,15 @@ struct working_entry {
     digest object{};
     std::map<std::string, working_entry> entries;
 };
-struct operation_record {
+struct stored_operation {
     op_id id{};
     std::string kind;
     std::string from;
     std::string to;
     node_id node{};
     std::optional<working_entry> prior;
+    actor by;
+    std::chrono::sys_seconds at;
 };
 struct persisted_drip {
     std::vector<std::byte> body;
@@ -53,7 +56,7 @@ struct repository_document {
     std::map<std::string, change_id> refs;
     std::map<node_id, digest> dirs;
     std::optional<change_id> head;
-    std::vector<operation_record> operations;
+    std::vector<stored_operation> operations;
     std::vector<std::string> locks;
     std::vector<conflict> conflict_values;
     std::vector<persisted_drip> drips;
@@ -74,6 +77,13 @@ auto digest_value(const digest& value) -> cbor::value {
     return map({{"alg", cbor::value{static_cast<std::uint64_t>(value.alg)}},
                 {"bytes", bytes(value.bytes)}});
 }
+auto actor_value(const actor& value) -> cbor::value {
+    return map({{"taap_id", cbor::value{value.taap_id}},
+                {"algorithm", cbor::value{value.algorithm}},
+                {"fingerprint", cbor::value{value.fingerprint}},
+                {"public_key", bytes(value.public_key)},
+                {"key_fingerprint", cbor::value{value.key_fingerprint}}});
+}
 auto find(const cbor::value& value, std::string_view key) -> const cbor::value* {
     const auto* fields = std::get_if<cbor::value::map>(&value.data);
     if (!fields)
@@ -93,6 +103,31 @@ auto decode_digest(const cbor::value& value) -> result<digest> {
     digest output{static_cast<algorithm>(*number), {}};
     std::ranges::copy(*data, output.bytes.begin());
     return output;
+}
+auto decode_actor(const cbor::value& value) -> result<actor> {
+    const auto* taap_id = find(value, "taap_id");
+    const auto* algorithm = find(value, "algorithm");
+    const auto* fingerprint = find(value, "fingerprint");
+    const auto* public_key = find(value, "public_key");
+    const auto* key_fingerprint = find(value, "key_fingerprint");
+    const auto* taap_id_text = taap_id ? std::get_if<std::string>(&taap_id->data) : nullptr;
+    const auto* algorithm_text = algorithm ? std::get_if<std::string>(&algorithm->data) : nullptr;
+    const auto* fingerprint_text =
+        fingerprint ? std::get_if<std::string>(&fingerprint->data) : nullptr;
+    const auto* public_key_bytes =
+        public_key ? std::get_if<cbor::value::bytes>(&public_key->data) : nullptr;
+    const auto* key_fingerprint_text =
+        key_fingerprint ? std::get_if<std::string>(&key_fingerprint->data) : nullptr;
+    if (!taap_id_text || !algorithm_text || !fingerprint_text || !public_key_bytes ||
+        !key_fingerprint_text) {
+        return std::unexpected(
+            failure(errc::corrupt, "invalid operation actor", "repository document"));
+    }
+    return actor{*taap_id_text,
+                 *algorithm_text,
+                 *fingerprint_text,
+                 *public_key_bytes,
+                 *key_fingerprint_text};
 }
 auto encode_entry(const working_entry& entry) -> cbor::value {
     auto children = cbor::value::array{};
@@ -154,6 +189,8 @@ auto encode_repository_document(const repository_document& value)
                  {"from", cbor::value{operation.from}},
                  {"to", cbor::value{operation.to}},
                  {"node", bytes(operation.node)},
+                 {"by", actor_value(operation.by)},
+                 {"at", cbor::value{operation.at.time_since_epoch().count()}},
                  {"prior",
                   operation.prior ? encode_entry(*operation.prior) : cbor::value{cbor::null{}}}}));
     auto locks = cbor::value::array{};
@@ -256,6 +293,8 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         const auto* from = find(item, "from");
         const auto* to = find(item, "to");
         const auto* node = find(item, "node");
+        const auto* by = find(item, "by");
+        const auto* at = find(item, "at");
         const auto* prior = find(item, "prior");
         const auto* kind_text =
             operation_kind ? std::get_if<std::string>(&operation_kind->data) : nullptr;
@@ -282,8 +321,41 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     failure(errc::corrupt, "invalid operation node", "repository document"));
             std::ranges::copy(*node_bytes, identity.begin());
         }
-        output.operations.push_back(
-            {op_id{*digest}, *kind_text, *from_text, *to_text, identity, std::move(previous)});
+        auto operation_actor = actor{};
+        auto operation_time = std::chrono::sys_seconds{};
+        if (by || at) {
+            if (!by || !at) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid operation metadata", "repository document"));
+            }
+            auto seconds = std::optional<std::int64_t>{};
+            if (const auto* signed_seconds = std::get_if<std::int64_t>(&at->data)) {
+                seconds = *signed_seconds;
+            } else if (const auto* unsigned_seconds = std::get_if<std::uint64_t>(&at->data);
+                       unsigned_seconds &&
+                       *unsigned_seconds <=
+                           static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+                seconds = static_cast<std::int64_t>(*unsigned_seconds);
+            }
+            if (!seconds) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid operation timestamp", "repository document"));
+            }
+            auto decoded_actor = decode_actor(*by);
+            if (!decoded_actor) {
+                return std::unexpected(decoded_actor.error());
+            }
+            operation_actor = std::move(*decoded_actor);
+            operation_time = std::chrono::sys_seconds{std::chrono::seconds{*seconds}};
+        }
+        output.operations.push_back({op_id{*digest},
+                                     *kind_text,
+                                     *from_text,
+                                     *to_text,
+                                     identity,
+                                     std::move(previous),
+                                     std::move(operation_actor),
+                                     operation_time});
     }
     if (!std::holds_alternative<cbor::null>(head->data)) {
         auto digest = decode_digest(*head);
@@ -627,6 +699,22 @@ struct repository::impl {
         current.drips.push_back({std::move(*body), std::move(*encoded_signature)});
         co_return result<void>{};
     }
+    void record_operation(op_id id,
+                          std::string kind,
+                          std::string from,
+                          std::string to,
+                          node_id node,
+                          std::optional<working_entry> prior) {
+        current.operations.push_back(
+            {std::move(id),
+             std::move(kind),
+             std::move(from),
+             std::move(to),
+             node,
+             std::move(prior),
+             signing_key.identity(),
+             std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())});
+    }
     runtime::task<digest> snapshot(working_entry& entry) {
         tree value{};
         for (auto& [name, child] : entry.entries) {
@@ -939,8 +1027,8 @@ struct repository::impl {
         auto operation_hash = hash(hash_algorithm, std::span<const std::byte>{reference->bytes});
         if (!operation_hash)
             co_return std::unexpected(operation_hash.error());
-        current.operations.push_back(
-            {op_id{*operation_hash}, "write", path, {}, found->second.node, prior});
+        record_operation(
+            op_id{*operation_hash}, "write", path, {}, found->second.node, std::move(prior));
         auto signed_drip = co_await append_drip("write", found->second.node);
         if (!signed_drip)
             co_return std::unexpected(signed_drip.error());
@@ -1479,8 +1567,7 @@ runtime::task<void> repository::move(std::string from, std::string to) {
         hash(impl_->hash_algorithm, std::span<const std::byte>{impl_->current.root.node});
     if (!hash_value)
         co_return std::unexpected(hash_value.error());
-    impl_->current.operations.push_back(
-        {op_id{*hash_value}, "move", from, to, moved_node, std::nullopt});
+    impl_->record_operation(op_id{*hash_value}, "move", from, to, moved_node, std::nullopt);
     auto signed_drip = co_await impl_->append_drip("move", moved_node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
@@ -1515,8 +1602,7 @@ runtime::task<void> repository::remove(std::string path) {
     auto hash_value = hash(impl_->hash_algorithm, std::span<const std::byte>{prior.node});
     if (!hash_value)
         co_return std::unexpected(hash_value.error());
-    impl_->current.operations.push_back(
-        {op_id{*hash_value}, "remove", path, {}, prior.node, prior});
+    impl_->record_operation(op_id{*hash_value}, "remove", path, {}, prior.node, std::move(prior));
     auto signed_drip = co_await impl_->append_drip("remove", prior.node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
@@ -1814,6 +1900,23 @@ runtime::task<std::vector<conflict>> repository::conflicts() {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return impl_->current.conflict_values;
 }
+runtime::task<std::vector<operation_record>> repository::operations(log_options) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto output = std::vector<operation_record>{};
+    output.reserve(impl_->current.operations.size());
+    for (auto operation = impl_->current.operations.rbegin();
+         operation != impl_->current.operations.rend();
+         ++operation) {
+        output.push_back({operation->id,
+                          operation->kind,
+                          operation->from,
+                          operation->to,
+                          operation->by,
+                          operation->at});
+    }
+    co_return output;
+}
 runtime::task<void> repository::undo(op_id operation) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -1995,8 +2098,8 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
     auto operation_hash = hash(source.impl_->hash_algorithm, std::span<const std::byte>{identity});
     if (!operation_hash)
         co_return std::unexpected(operation_hash.error());
-    source.impl_->current.operations.push_back(
-        {op_id{*operation_hash}, "mkdir", path, {}, identity, std::nullopt});
+    source.impl_->record_operation(
+        op_id{*operation_hash}, "mkdir", path, {}, identity, std::nullopt);
     auto signed_drip = co_await source.impl_->append_drip("mkdir", identity);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());

@@ -525,6 +525,32 @@ TEST(Repository, undo_move_restores_the_original_node_identity) {
     EXPECT_EQ(restored->entries.front().node, identity);
 }
 
+TEST(Repository, operations_are_newest_first_with_their_metadata) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("before", content("value"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("before", "after")));
+    repository = {};
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    if (!reopened) {
+        ADD_FAILURE() << reopened.error().context << ": " << reopened.error().message;
+        return;
+    }
+
+    auto operations = liquid::runtime::block_on(reopened->operations());
+    ASSERT_TRUE(operations);
+    ASSERT_EQ(operations->size(), 2U);
+    EXPECT_EQ(operations->front().kind, "move");
+    EXPECT_EQ(operations->front().from, "before");
+    EXPECT_EQ(operations->front().to, "after");
+    EXPECT_FALSE(operations->front().by.taap_id.empty());
+    EXPECT_GT(operations->front().at.time_since_epoch().count(), 0);
+    EXPECT_EQ(operations->back().kind, "write");
+}
+
 TEST(Repository, cross_directory_move_is_recovered_before_cut) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));

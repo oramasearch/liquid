@@ -244,6 +244,7 @@ class repository {
   runtime::task<repository> split(std::string path, std::filesystem::path into);
   runtime::task<void> combine(repository other, std::optional<std::string> at);
   runtime::task<std::vector<conflict>> conflicts();      // #40: conflicts are values
+  runtime::task<std::vector<operation_record>> operations(log_options = {}); // newest first
   runtime::task<void> undo(op_id);                       // #41: the operation log
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
@@ -279,6 +280,11 @@ Repository change IDs are computed with that selected store algorithm, including
 `key_readability` is `{ key_id, version, readable }`. `revision_readability` is a `change_id` and
 the sorted key-version set used by its blobs. `readability_report` contains those revision rows and
 the three required rotation, revocation, and metadata-disclosure statements.
+
+`operation_record` is `{ op_id id, std::string kind, std::string from, std::string to, actor by,
+std::chrono::sys_seconds at }`. `operations()` returns the repository document's recorded
+operations newest first. Existing repository documents without operation metadata remain readable;
+their records return an empty actor and epoch timestamp.
 
 ### `liquid/vfs.hpp`
 

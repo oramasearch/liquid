@@ -136,7 +136,7 @@ Rules liquid's wrapper enforces on top of automerge-cpp, until the upstream issu
 | `nest(source, path)` | the entry at `path` becomes `kind: repo` with the source's `repo_id` and pinned change; `nested[path]` mirrors it. The nested repository keeps its own document and its own history; its files are visible because `root()` descends into nested repositories through the store. |
 | `split(path, into)` | new `repo` record and document; the subtree's entries move (same `node_id`s) into it; the original keeps `path` as a `repo` entry. History of the subtree is preserved by construction: the old changes still reference the old trees, and the new repository's `root_change` names the change it was split from. |
 | `combine(other, at)` | one change with parents in both repositories (`change_ref` carries `repo_id`); path collisions become conflict values. |
-| `undo(op_id)` | every operation above appends an `op` record to `ops` (`{ id, kind, at, by, inverse }`); undo applies the inverse as a new operation. Undo never rewrites history. |
+| `operations()` / `undo(op_id)` | every operation above appends an `op` record to `ops` (`{ id, kind, from, to, at, by, inverse }`). `operations()` returns them newest first; `undo` applies an inverse as a new operation. Undo never rewrites history. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
 
 ## Document boundary
