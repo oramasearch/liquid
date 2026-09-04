@@ -32,11 +32,10 @@ h2c is prior knowledge only. HTTP/1 upgrade is not implemented.
 
 TLS callers first configure Corosio's `tls_context` with `set_alpn({"h2"})`, complete the Corosio
 TLS handshake, then call `validate_tls_protocol`. That helper is the one selected-protocol hook.
-Corosio #3 has not yet exposed its negotiated ALPN value, so the hook currently returns empty and
-accepts an endpoint explicitly configured for `h2`. Once the vendored Corosio revision includes
-#3, the same helper will require the selected value to be `h2`; no HTTP/2 framing change is needed.
-TLS interoperability is deferred to that Corosio update. The current phase interoperability proof
-uses plaintext h2c.
+The vendored Corosio revision exposes the negotiated value through `tls_stream::selected_alpn()`;
+the hook requires it to be `h2` before HTTP/2 processes any frames. TLS and h2c therefore share the
+same framing layer, while TLS rejects a handshake that selects no application protocol or one other
+than `h2`.
 
 ## Limits
 
@@ -66,5 +65,11 @@ It starts the NativeLink configuration with host networking, then runs
 `Http2Interop.GetsCapabilitiesFromNativeLinkOverH2c`. The test sends the empty protobuf
 `GetCapabilitiesRequest` through this layer and requires a gRPC response and `grpc-status: 0`.
 The same script starts a one-request private HTTP/2 test server and invokes it through
-`grpcurl -plaintext`, proving the server direction. It prints a skip diagnostic when Docker is
-unavailable. TLS peer coverage waits for Corosio #3.
+`grpcurl -plaintext`, proving the server direction.
+
+`tools/reapi-peers/run-tls-interop.sh build-linux` starts NativeLink with the committed
+self-signed certificate and offers `h2` from liquid's TLS client. The client requires Corosio to
+report `h2` after the handshake before sending `GetCapabilities`; it then requires a gRPC response
+and `grpc-status: 0`. The script starts liquid's private server with the same certificate and uses
+`grpcurl -insecure` to reach it, which proves server-side ALPN selection and TLS gRPC framing. It
+prints a skip diagnostic when Docker is unavailable.

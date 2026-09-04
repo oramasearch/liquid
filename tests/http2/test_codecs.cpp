@@ -10,8 +10,10 @@
 #include <boost/corosio/endpoint.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/ipv4_address.hpp>
+#include <boost/corosio/openssl_stream.hpp>
 #include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/tcp_socket.hpp>
+#include <boost/corosio/tls_context.hpp>
 
 #include "http2/connection.hpp"
 #include "http2/frame.hpp"
@@ -138,6 +140,64 @@ auto connect_and_run(boost::corosio::io_context& context, boost::corosio::endpoi
     co_return co_await client_session(socket);
 }
 
+auto query_capabilities(boost::capy::any_stream& stream,
+                        std::string_view scheme,
+                        std::string_view authority) -> liquid::runtime::task<void> {
+    auto client = liquid::http2::connection{stream, liquid::http2::endpoint_role::client};
+    auto started = co_await client.start();
+    if (!started) {
+        co_return std::unexpected(started.error());
+    }
+    const auto headers = std::array{
+        liquid::http2::header_field{":method", "POST", false},
+        liquid::http2::header_field{":scheme", std::string{scheme}, false},
+        liquid::http2::header_field{
+            ":path", "/build.bazel.remote.execution.v2.Capabilities/GetCapabilities", false},
+        liquid::http2::header_field{":authority", std::string{authority}, false},
+        liquid::http2::header_field{"content-type", "application/grpc", false},
+        liquid::http2::header_field{"te", "trailers", false},
+    };
+    auto stream_id = co_await client.open_stream(headers, false);
+    if (!stream_id) {
+        co_return std::unexpected(stream_id.error());
+    }
+    const auto request = liquid::http2::encode_grpc_message({false, {}});
+    if (!request) {
+        co_return std::unexpected(request.error());
+    }
+    auto sent = co_await client.send_data(*stream_id, *request, true);
+    if (!sent) {
+        co_return std::unexpected(sent.error());
+    }
+    auto response_headers = co_await client.receive_headers(*stream_id);
+    if (!response_headers) {
+        co_return std::unexpected(response_headers.error());
+    }
+    auto response_body = co_await client.receive_data(*stream_id);
+    if (!response_body) {
+        co_return std::unexpected(response_body.error());
+    }
+    const auto response = liquid::http2::decode_grpc_messages(*response_body);
+    if (!response || response->empty()) {
+        co_return std::unexpected(liquid::error{liquid::errc::corrupt,
+                                                "GetCapabilities returned no gRPC message",
+                                                "NativeLink HTTP/2 peer"});
+    }
+    auto trailers = co_await client.receive_headers(*stream_id);
+    if (!trailers) {
+        co_return std::unexpected(trailers.error());
+    }
+    const auto status = std::find_if(trailers->begin(), trailers->end(), [](const auto& header) {
+        return header.name == "grpc-status";
+    });
+    if (status == trailers->end() || status->value != "0") {
+        co_return std::unexpected(liquid::error{liquid::errc::unavailable,
+                                                "GetCapabilities did not finish with grpc-status 0",
+                                                "NativeLink HTTP/2 peer"});
+    }
+    co_return {};
+}
+
 auto get_capabilities(boost::corosio::io_context& context, liquid::result<void>* output)
     -> boost::capy::task<> {
     auto socket = boost::corosio::tcp_socket{context};
@@ -148,70 +208,41 @@ auto get_capabilities(boost::corosio::io_context& context, liquid::result<void>*
             liquid::errc::unavailable, connect_error.message(), "NativeLink HTTP/2 peer"});
         co_return;
     }
-
     auto stream = boost::capy::any_stream{&socket};
-    auto client = liquid::http2::connection{stream, liquid::http2::endpoint_role::client};
-    auto started = co_await client.start();
-    if (!started) {
-        *output = std::unexpected(started.error());
+    *output = co_await query_capabilities(stream, "http", "127.0.0.1:50051");
+}
+
+auto get_capabilities_over_tls(boost::corosio::io_context& context, liquid::result<void>* output)
+    -> boost::capy::task<> {
+    auto tls_context = boost::corosio::tls_context{};
+    if (const auto error = tls_context.set_alpn({"h2"})) {
+        *output = std::unexpected(
+            liquid::error{liquid::errc::io, error.message(), "NativeLink TLS ALPN configuration"});
         co_return;
     }
-    const auto headers = std::array{
-        liquid::http2::header_field{":method", "POST", false},
-        liquid::http2::header_field{":scheme", "http", false},
-        liquid::http2::header_field{
-            ":path", "/build.bazel.remote.execution.v2.Capabilities/GetCapabilities", false},
-        liquid::http2::header_field{":authority", "127.0.0.1:50051", false},
-        liquid::http2::header_field{"content-type", "application/grpc", false},
-        liquid::http2::header_field{"te", "trailers", false},
-    };
-    auto stream_id = co_await client.open_stream(headers, false);
-    if (!stream_id) {
-        *output = std::unexpected(stream_id.error());
+    auto socket = boost::corosio::tcp_socket{context};
+    const auto [connect_error] = co_await socket.connect(
+        boost::corosio::endpoint{boost::corosio::ipv4_address::loopback(), 50053});
+    if (connect_error) {
+        *output = std::unexpected(liquid::error{
+            liquid::errc::unavailable, connect_error.message(), "NativeLink TLS HTTP/2 peer"});
         co_return;
     }
-    const auto request = liquid::http2::encode_grpc_message({false, {}});
-    if (!request) {
-        *output = std::unexpected(request.error());
+    auto tls_stream = boost::corosio::openssl_stream{&socket, tls_context};
+    const auto [handshake_error] =
+        co_await tls_stream.handshake(boost::corosio::tls_stream::client);
+    if (handshake_error) {
+        *output = std::unexpected(liquid::error{
+            liquid::errc::io, handshake_error.message(), "NativeLink TLS HTTP/2 handshake"});
         co_return;
     }
-    auto sent = co_await client.send_data(*stream_id, *request, true);
-    if (!sent) {
-        *output = std::unexpected(sent.error());
+    const auto protocol = liquid::http2::validate_tls_protocol(tls_stream);
+    if (!protocol) {
+        *output = std::unexpected(protocol.error());
         co_return;
     }
-    auto response_headers = co_await client.receive_headers(*stream_id);
-    if (!response_headers) {
-        *output = std::unexpected(response_headers.error());
-        co_return;
-    }
-    auto response_body = co_await client.receive_data(*stream_id);
-    if (!response_body) {
-        *output = std::unexpected(response_body.error());
-        co_return;
-    }
-    const auto response = liquid::http2::decode_grpc_messages(*response_body);
-    if (!response || response->empty()) {
-        *output = std::unexpected(liquid::error{liquid::errc::corrupt,
-                                                "GetCapabilities returned no gRPC message",
-                                                "NativeLink HTTP/2 peer"});
-        co_return;
-    }
-    auto trailers = co_await client.receive_headers(*stream_id);
-    if (!trailers) {
-        *output = std::unexpected(trailers.error());
-        co_return;
-    }
-    const auto status = std::find_if(trailers->begin(), trailers->end(), [](const auto& header) {
-        return header.name == "grpc-status";
-    });
-    if (status == trailers->end() || status->value != "0") {
-        *output = std::unexpected(liquid::error{liquid::errc::unavailable,
-                                                "GetCapabilities did not finish with grpc-status 0",
-                                                "NativeLink HTTP/2 peer"});
-        co_return;
-    }
-    *output = {};
+    auto stream = boost::capy::any_stream{&tls_stream};
+    *output = co_await query_capabilities(stream, "https", "127.0.0.1:50053");
 }
 
 TEST(Http2Frame, RoundTripsEnvelope) {
@@ -301,6 +332,18 @@ TEST(Http2Interop, GetsCapabilitiesFromNativeLinkOverH2c) {
     auto context = boost::corosio::io_context{};
     auto output = liquid::result<void>{};
     boost::capy::run_async(context.get_executor())(get_capabilities(context, &output));
+    context.run();
+    ASSERT_TRUE(output.has_value()) << (output ? "" : output.error().message);
+}
+
+TEST(Http2Interop, GetsCapabilitiesFromNativeLinkOverTls) {
+    if (std::getenv("LIQUID_HTTP2_NATIVE_LINK_TLS") == nullptr) {
+        GTEST_SKIP() << "Docker TLS peer unavailable: set LIQUID_HTTP2_NATIVE_LINK_TLS after "
+                        "starting NativeLink";
+    }
+    auto context = boost::corosio::io_context{};
+    auto output = liquid::result<void>{};
+    boost::capy::run_async(context.get_executor())(get_capabilities_over_tls(context, &output));
     context.run();
     ASSERT_TRUE(output.has_value()) << (output ? "" : output.error().message);
 }

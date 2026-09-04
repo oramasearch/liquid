@@ -1,0 +1,27 @@
+{
+  stores: [{
+    name: "cas",
+    filesystem: {
+      content_path: "/tmp/nativelink/content",
+      temp_path: "/tmp/nativelink/tmp",
+      eviction_policy: { max_bytes: 1073741824 },
+    },
+  }],
+  schedulers: [{ name: "scheduler", simple: { supported_platform_properties: {} } }],
+  servers: [{
+    listener: {
+      http: {
+        socket_address: "0.0.0.0:50053",
+        tls: {
+          cert_file: "/certs/nativelink-tls-cert.pem",
+          key_file: "/certs/nativelink-tls-key.pem",
+        },
+      },
+    },
+    services: {
+      cas: [{ instance_name: "", cas_store: "cas" }],
+      capabilities: [{ instance_name: "", remote_execution: { scheduler: "scheduler" } }],
+      bytestream: [{ instance_name: "", cas_store: "cas" }],
+    },
+  }],
+}

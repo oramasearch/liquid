@@ -38,8 +38,7 @@ struct connection_options {
 
 [[nodiscard]] auto selected_tls_protocol(const boost::corosio::tls_stream& stream) noexcept
     -> std::string_view;
-[[nodiscard]] auto validate_tls_protocol(const boost::corosio::tls_stream& stream,
-                                         bool endpoint_configures_h2) -> result<void>;
+[[nodiscard]] auto validate_tls_protocol(const boost::corosio::tls_stream& stream) -> result<void>;
 
 class connection {
 public:
