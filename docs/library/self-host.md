@@ -32,6 +32,21 @@ actions=7 hits=0 misses=7 processes_started=6 probes_started=0 outer=miss
 `LIQUID_SELF_HOST` sets `CMAKE_SUPPRESS_REGENERATION` for that build tree. It defaults to off, so
 ordinary developer builds retain CMake's automatic regeneration.
 
+The next clean run reached zstd's shared-library target even though libliquid links only the static
+target. Its versioned-library link action failed because the sandbox filesystem does not implement
+symbolic-link creation:
+
+```text
+Creating library symlink _deps/zstd_source-build/lib/libzstd.so.1
+CMake Error: failed to create symbolic link
+'_deps/zstd_source-build/lib/libzstd.so.1': Function not implemented
+actions=430 hits=0 misses=430 processes_started=429 probes_started=0 outer=miss
+```
+
+The dependency configuration now disables `ZSTD_BUILD_SHARED`. zstd already marks
+`libzstd_static` as position-independent, so both static and shared libliquid continue to link the
+same private codec without building an unused artifact.
+
 The exec-time hook is different from a build input path. Before self-hosting, CMake compiled the
 full `$<TARGET_FILE:liquid-wrap-hook>` value into libliquid. The defect was found directly in both
 bootstrap artifacts:
