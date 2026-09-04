@@ -240,6 +240,7 @@ add_library(libliquid
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
   src/drip.cpp
+  src/delta.cpp
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
@@ -350,6 +351,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/attestation.cpp
     src/cli/capture.cpp
     src/cli/compose.cpp
+    src/cli/delta.cpp
     src/cli/gc.cpp
     src/cli/facts.cpp
     src/cli/git.cpp

@@ -33,3 +33,7 @@ whole-content availability as absent, remote, or local and fetches only missing 
 through the configured source before verifying and writing them through the ordinary pack path.
 Once a chunk is local, reads load that verified chunk directly; this also handles one-chunk blobs
 whose content and chunk digests are identical without resolving the remote registration again.
+
+Delta records are detected as their own kind and retain source, target, and patch-blob digests.
+`delta/1` attestations retain their delta record, and the subject index provides the signed target
+catalog. Delta fetch uses ordinary registered remote blobs for a missing patch or target.

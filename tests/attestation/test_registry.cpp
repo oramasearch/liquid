@@ -58,6 +58,11 @@ auto example(std::string_view profile) -> liquid::attestation {
                             {"derived", true},
                             {"inferred", false},
                             {"components", std::vector<std::string>{"pkg:cpp/liquid"}}};
+    } else if (profile == "delta/1") {
+        value.attributes = {{"source", "blake3:source"},
+                            {"target", "blake3:target"},
+                            {"algorithm", "zstd-patch"},
+                            {"delta", "blake3:delta"}};
     } else if (profile == "model_provenance/1") {
         value.subject_kind = liquid::attestation_subject_kind::model;
         value.attributes = {{"training_dataset", "blake3:dataset"},
@@ -106,7 +111,7 @@ auto sign_unknown_profile(liquid::attestation value) -> liquid::attestation {
 
 TEST(AttestationRegistry, all_profiles_accept_examples_and_reject_missing_required_fields) {
     const auto& registry = liquid::attestation_profile_registry::global();
-    ASSERT_EQ(registry.profiles().size(), 10U);
+    ASSERT_EQ(registry.profiles().size(), 11U);
     for (const auto& profile : registry.profiles()) {
         auto accepted = registry.validate(example(profile.name));
         ASSERT_TRUE(accepted) << profile.name << ": " << accepted.error().message;

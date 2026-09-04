@@ -26,8 +26,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
-> structured `slsa_provenance/1`, signed `sbom/1`, and repository redaction are implemented; hosted
-> remote operations remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
+> structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented; hosted
+> remote service operations remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
@@ -96,6 +96,13 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > `remote_blob_location` and the repository's configured `remote_blob_source`; tests use its
 > on-disk double while the REAPI transport remains undecided.
 
+> **Phase 3 delta delivery is implemented.** `liquid delta create` stores a zstd reference patch,
+> content-addressed delta record, and signed `delta/1` attestation. Apply and fetch verify source,
+> patch-blob, and final target digests. Fetch finds the local signed target catalog and uses the
+> store's registered remote blobs when the patch or target remains remote, otherwise falling back
+> to content-defined chunks. The executable-aware algorithm id is reserved because its measured
+> Mach-O candidate was larger than the generic patch.
+
 ## Where this sits
 
 liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module of
@@ -134,7 +141,7 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
-- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, read-time hermeticity, explicit local replay, and the remaining Phase 3 design.
+- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.

@@ -117,6 +117,7 @@ public:
     [[nodiscard]] runtime::task<bool> contains(digest id);
     [[nodiscard]] runtime::task<blob_availability> has(digest id);
     [[nodiscard]] runtime::task<void> register_remote(blob value);
+    [[nodiscard]] std::vector<digest> attestations(digest subject) const;
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<lease> lease_root(digest id, std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
@@ -133,8 +134,6 @@ private:
     void begin_object_batch();
     void abort_object_batch();
     [[nodiscard]] runtime::task<void> commit_object_batch();
-    [[nodiscard]] std::vector<digest> attestations(digest subject) const;
-
     friend struct repository_detail::store_access;
     struct impl;
     std::unique_ptr<impl> impl_;

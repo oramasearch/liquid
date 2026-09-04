@@ -127,6 +127,20 @@ record from that stored ordered chunk list, and records one drip. The in-memory 
 uses the same stored list, so both paths produce the same blob record. Raw blob chunks remain
 readable under encryption through their parent object's trust-domain key.
 
+## Delta records and remote fetch
+
+`delta_record` is a 108-byte versioned record: eight-byte `LQDLTA` version magic, source digest,
+target digest, one-byte algorithm id, and patch-blob digest. The reference registry classifies it as
+`delta` and traverses all three digests. A `delta/1` attestation traverses to its record. The public
+`store::attestations(subject)` view exposes the rebuilt subject index used by delta discovery and
+attestation policy without exposing pack or index types.
+
+The on-disk `remote_blob_source` test double from #17 supplies registered patch and target blobs.
+Its range reads retain the store's per-chunk and whole-object verification. `fetch_delta` uses a
+verified catalog match when available; otherwise it reads the target through ordinary local or
+registered remote chunk metadata. Content-defined chunks remain the baseline delivery mechanism,
+and the reconstructed destination is always checked against the requested target digest.
+
 The default suite exercises this path with a deterministic sparse 256 MiB file. The labelled
 `large-40g` test uses a 40 GiB file and a 40-byte file through the same `write_file` call. It
 verifies three 4 KiB ranges through `store::read`, verifies the middle range through VFS hydration,

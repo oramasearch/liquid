@@ -58,7 +58,8 @@ owning issue in `error::context`.
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
-| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains and key-version lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #11, #17, #40, #41, #42, #50, #52, #53, #58, #116 | implemented | `repository`: open, encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, typed retention policy, and retention explanations |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
@@ -174,6 +175,7 @@ class store {                          // the chunk store: chunks, packs, liquid
   runtime::task<bool> contains(digest);
   runtime::task<blob_availability> has(digest);
   runtime::task<void> register_remote(blob);
+  std::vector<digest> attestations(digest subject) const;
   runtime::task<std::optional<object_key_version>> key_version(digest);
   runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
   runtime::task<collection_report> collect(collection_options = {});   // epoch marking
@@ -202,6 +204,35 @@ class remote_blob_source {
 
 The interface is transport-neutral. A later REAPI or hosted implementation stays behind it; the
 store and VFS depend only on range reads and digest verification.
+
+### `liquid/delta.hpp`
+
+```cpp
+enum class delta_algorithm : std::uint8_t { zstd_patch = 1, executable_sections = 2 };
+struct delta_record { digest source, target; delta_algorithm algorithm; digest blob; };
+struct delta_creation {
+  delta_record value; digest record, attestation;
+  std::uint64_t source_bytes, target_bytes, delta_bytes;
+};
+enum class delta_fetch_method : std::uint8_t { delta, chunks };
+struct delta_fetch_result {
+  delta_fetch_method method; digest source, target;
+  std::optional<digest> record, attestation;
+};
+result<std::vector<std::byte>> make_delta(delta_algorithm, source_bytes, target_bytes);
+result<std::vector<std::byte>> apply_delta(const delta_record&, source_bytes, delta_bytes);
+runtime::task<delta_creation> create_delta(store&, source_path, target_path,
+                                           delta_algorithm = delta_algorithm::zstd_patch);
+runtime::task<void> apply_delta(store&, digest record, source_path, destination_path);
+runtime::task<delta_fetch_result> fetch_delta(store&, digest target, source_path, destination_path);
+```
+
+The codec is synchronous CPU work. Store/file operations are Capy tasks. `apply_delta` checks the
+source, patch-blob, and target digests; `fetch_delta` checks the final target on delta and chunk
+paths. The signed target catalog is local; its patch and fallback target may hydrate through a
+registered `remote_blob_source` as defined by #17. Algorithm 2 is reserved and currently returns
+`errc::unsupported`; [distribution.md](distribution.md#executable-aware-algorithm-reservation)
+records the measurement it must beat.
 
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 Lease destruction has no storage effect; expiry is the authority. Collection reports are plain

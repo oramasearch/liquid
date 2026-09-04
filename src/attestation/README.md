@@ -8,3 +8,4 @@ optional differing-output digest pairs emitted by the build verifier.
 typed SLSA v1 predicate.
 `sbom/1` validates the format, canonical record digest, derived and inferred flags, and component
 claims used by SPDX/CycloneDX generation.
+`delta/1` validates source, target, algorithm, and delta-record digest claims for artifact delivery.

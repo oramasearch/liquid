@@ -16,3 +16,5 @@ persisted rule, lease ID, and expiry.
 
 The SBOM command tests exercise SPDX and CycloneDX output for the wrapped CMake fixture and
 check each format's identifying field.
+`delta.cmake` drives create, apply, and catalog fetch through the executable and compares target,
+applied, and fetched file digests.
