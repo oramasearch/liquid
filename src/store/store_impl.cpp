@@ -9,9 +9,15 @@
 #include <string_view>
 #include <system_error>
 
+#include <boost/capy/buffers.hpp>
+#include <boost/capy/ex/this_coro.hpp>
+
+#include "../runtime/net.hpp"
+#include "blake3.h"
 #include "chunker.hpp"
 #include "collector.hpp"
 #include "faults.hpp"
+#include "hash/sha256.h"
 #include "references.hpp"
 
 namespace liquid::store_detail {
@@ -41,6 +47,58 @@ constexpr std::array<std::byte, 8> objects_magic_v3{std::byte{'L'},
                                                     std::byte{3},
                                                     std::byte{0},
                                                     std::byte{0}};
+constexpr std::array<std::byte, 8> objects_magic_v4{std::byte{'L'},
+                                                    std::byte{'Q'},
+                                                    std::byte{'O'},
+                                                    std::byte{'B'},
+                                                    std::byte{'J'},
+                                                    std::byte{4},
+                                                    std::byte{0},
+                                                    std::byte{0}};
+
+constexpr std::size_t file_window_size = 8U * 1024U * 1024U;
+
+class incremental_digest {
+public:
+    incremental_digest(algorithm alg, const std::optional<crypto_detail::key>& key) {
+        if (key) {
+            algorithm_ = algorithm::blake3_keyed;
+            blake3_hasher_init_keyed(&blake3_, reinterpret_cast<const std::uint8_t*>(key->data()));
+            return;
+        }
+        algorithm_ = alg;
+        if (algorithm_ == algorithm::blake3) {
+            blake3_hasher_init(&blake3_);
+            return;
+        }
+        sha256_init(&sha256_);
+    }
+
+    void update(std::span<const std::byte> input) {
+        if (algorithm_ == algorithm::blake3 || algorithm_ == algorithm::blake3_keyed) {
+            blake3_hasher_update(&blake3_, input.data(), input.size());
+            return;
+        }
+        sha256_update(&sha256_, reinterpret_cast<const BYTE*>(input.data()), input.size());
+    }
+
+    [[nodiscard]] digest finish() {
+        digest output{algorithm_, {}};
+        if (algorithm_ == algorithm::blake3 || algorithm_ == algorithm::blake3_keyed) {
+            blake3_hasher_finalize(&blake3_,
+                                   reinterpret_cast<std::uint8_t*>(output.bytes.data()),
+                                   output.bytes.size());
+            return output;
+        }
+        sha256_final(&sha256_, reinterpret_cast<BYTE*>(output.bytes.data()));
+        return output;
+    }
+
+private:
+    algorithm algorithm_{algorithm::blake3};
+    blake3_hasher blake3_{};
+    SHA256_CTX sha256_{};
+};
 
 error store_error(errc code, std::string message, std::string context) {
     return {code, std::move(message), std::move(context)};
@@ -229,7 +287,10 @@ runtime::task<void> store_backend::load_objects() {
     const bool version_three =
         bytes.size() >= objects_magic_v3.size() &&
         std::equal(objects_magic_v3.begin(), objects_magic_v3.end(), bytes.begin());
-    if ((!version_one && !version_two && !version_three) || bytes.size() < 12)
+    const bool version_four =
+        bytes.size() >= objects_magic_v4.size() &&
+        std::equal(objects_magic_v4.begin(), objects_magic_v4.end(), bytes.begin());
+    if ((!version_one && !version_two && !version_three && !version_four) || bytes.size() < 12)
         co_return std::unexpected(store_error(errc::corrupt, "invalid object map", path.string()));
     const auto count = get_u32(bytes, 8);
     std::size_t at = 12;
@@ -244,7 +305,7 @@ runtime::task<void> store_backend::load_objects() {
         at += 32;
         object.size = get_u64(bytes, at);
         at += 8;
-        if (version_two || version_three) {
+        if (version_two || version_three || version_four) {
             if (at == bytes.size())
                 co_return std::unexpected(
                     store_error(errc::corrupt, "truncated object encryption flag", path.string()));
@@ -265,7 +326,7 @@ runtime::task<void> store_backend::load_objects() {
                 at += size;
             }
         }
-        if (version_three) {
+        if (version_three || version_four) {
             if (at + 35 > bytes.size()) {
                 co_return std::unexpected(
                     store_error(errc::corrupt, "truncated object descriptor", path.string()));
@@ -293,10 +354,12 @@ runtime::task<void> store_backend::load_objects() {
                 store_error(errc::corrupt, "truncated object chunks", path.string()));
         const auto chunks = get_u32(bytes, at);
         at += 4;
-        if (chunks > (bytes.size() - at) / 33)
+        const auto chunk_record_size = version_four ? 41U : 33U;
+        if (chunks > (bytes.size() - at) / chunk_record_size)
             co_return std::unexpected(
                 store_error(errc::corrupt, "truncated object chunks", path.string()));
         object.chunks.reserve(chunks);
+        object.chunk_sizes.reserve(version_four ? chunks : 0);
         for (std::uint32_t chunk = 0; chunk < chunks; ++chunk) {
             digest id{};
             if (!valid_algorithm(std::to_integer<unsigned char>(bytes[at])))
@@ -306,6 +369,30 @@ runtime::task<void> store_backend::load_objects() {
             std::copy_n(bytes.begin() + at, 32, id.bytes.begin());
             at += 32;
             object.chunks.push_back(id);
+            if (version_four) {
+                object.chunk_sizes.push_back(get_u64(bytes, at));
+                at += 8;
+            }
+        }
+        if (version_four) {
+            auto total = std::uint64_t{};
+            for (const auto size : object.chunk_sizes) {
+                if (size > object.size - total) {
+                    co_return std::unexpected(
+                        store_error(errc::corrupt, "invalid object chunk sizes", path.string()));
+                }
+                total += size;
+            }
+            if (total != object.size) {
+                co_return std::unexpected(
+                    store_error(errc::corrupt, "invalid object chunk sizes", path.string()));
+            }
+        }
+        if (!object.key_id.empty()) {
+            for (const auto& chunk : object.chunks)
+                chunk_keys_.try_emplace(to_string(chunk), object.key_id);
+            if (object.has_descriptor)
+                chunk_keys_.try_emplace(to_string(object.descriptor), object.key_id);
         }
         objects_.emplace(to_string(object.id), std::move(object));
     }
@@ -323,9 +410,33 @@ runtime::task<void> store_backend::save_objects() {
 }
 
 runtime::task<void> store_backend::stage_objects() {
-    std::vector<std::byte> bytes(objects_magic_v3.begin(), objects_magic_v3.end());
+    auto raw_sizes = std::map<std::string, std::uint64_t>{};
+    const auto needs_sizes = std::ranges::any_of(objects_, [](const auto& entry) {
+        return entry.second.chunk_sizes.empty() && !entry.second.chunks.empty();
+    });
+    if (needs_sizes) {
+        for (const auto& [unused, pack] : packs_) {
+            for (const auto& entry : pack.entries)
+                raw_sizes.try_emplace(to_string(entry.id), entry.raw_length);
+        }
+    }
+    std::vector<std::byte> bytes(objects_magic_v4.begin(), objects_magic_v4.end());
     put_u32(bytes, static_cast<std::uint32_t>(objects_.size()));
-    for (const auto& [unused, object] : objects_) {
+    for (auto& [unused, object] : objects_) {
+        if (object.chunk_sizes.empty() && !object.chunks.empty()) {
+            for (const auto& chunk : object.chunks) {
+                const auto size = raw_sizes.find(to_string(chunk));
+                if (size == raw_sizes.end()) {
+                    co_return std::unexpected(store_error(
+                        errc::corrupt, "object references a missing chunk", to_string(object.id)));
+                }
+                object.chunk_sizes.push_back(size->second);
+            }
+        }
+        if (object.chunk_sizes.size() != object.chunks.size()) {
+            co_return std::unexpected(store_error(
+                errc::corrupt, "object chunk sizes are incomplete", to_string(object.id)));
+        }
         bytes.push_back(std::byte{static_cast<unsigned char>(object.id.alg)});
         bytes.insert(bytes.end(), object.id.bytes.begin(), object.id.bytes.end());
         put_u64(bytes, object.size);
@@ -346,9 +457,11 @@ runtime::task<void> store_backend::stage_objects() {
                      reinterpret_cast<const std::byte*>(object.kind.data()),
                      reinterpret_cast<const std::byte*>(object.kind.data() + object.kind.size()));
         put_u32(bytes, static_cast<std::uint32_t>(object.chunks.size()));
-        for (const auto& chunk : object.chunks) {
+        for (std::size_t index = 0; index < object.chunks.size(); ++index) {
+            const auto& chunk = object.chunks[index];
             bytes.push_back(std::byte{static_cast<unsigned char>(chunk.alg)});
             bytes.insert(bytes.end(), chunk.bytes.begin(), chunk.bytes.end());
+            put_u64(bytes, object.chunk_sizes[index]);
         }
     }
     co_return co_await write_file(root_ / "packs" / "objects.meta.tmp", std::move(bytes));
@@ -529,6 +642,12 @@ store_backend::load_snapshot_object(const stored_object& object,
 }
 
 runtime::task<void> store_backend::add_object(stored_object object) {
+    if (!object.key_id.empty()) {
+        for (const auto& chunk : object.chunks)
+            chunk_keys_.try_emplace(to_string(chunk), object.key_id);
+        if (object.has_descriptor)
+            chunk_keys_.try_emplace(to_string(object.descriptor), object.key_id);
+    }
     objects_[to_string(object.id)] = std::move(object);
     co_return co_await save_objects();
 }
@@ -600,6 +719,7 @@ runtime::task<digest> store_backend::put(std::vector<std::byte> input) {
         if (!stored)
             co_return std::unexpected(stored.error());
         object.chunks.push_back(*id);
+        object.chunk_sizes.push_back(part.size);
     }
     auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
     const auto descriptor_id = encryption
@@ -623,11 +743,233 @@ runtime::task<digest> store_backend::put(std::vector<std::byte> input) {
     co_return whole;
 }
 
-runtime::task<std::vector<std::byte>> store_backend::get(digest id) {
+runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error)
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put_file"));
+    try {
+        std::optional<crypto_detail::domain_keys> encryption;
+        std::string key_id;
+        if (options_.keys) {
+            if (options_.write_key.empty()) {
+                auto default_key = options_.keys->default_key_id();
+                if (!default_key)
+                    co_return std::unexpected(default_key.error());
+                key_id = std::move(*default_key);
+            } else {
+                key_id = options_.write_key;
+            }
+            auto data = co_await options_.keys->data_key(key_id, true);
+            if (!data)
+                co_return std::unexpected(data.error());
+            auto derived = crypto_detail::derive_domain_keys(*data);
+            crypto_detail::wipe(*data);
+            if (!derived)
+                co_return std::unexpected(derived.error());
+            encryption = std::move(*derived);
+        }
+
+        const auto executor = co_await boost::capy::this_coro::executor;
+        boost::corosio::random_access_file file(executor.context());
+        file.open(source, boost::corosio::file_base::read_only);
+        const auto source_size = file.size();
+        auto hash_key = std::optional<crypto_detail::key>{};
+        if (encryption)
+            hash_key = encryption->chunk_mac;
+        auto whole_hasher = incremental_digest{options_.hash_algorithm, hash_key};
+        auto streaming = chunker{};
+        auto object = stored_object{};
+        object.size = source_size;
+        object.key_id = key_id;
+        auto window = std::vector<std::byte>(
+            static_cast<std::size_t>(std::min<std::uint64_t>(file_window_size, source_size)));
+        auto offset = std::uint64_t{};
+        while (offset < source_size) {
+            const auto wanted = static_cast<std::size_t>(
+                std::min<std::uint64_t>(window.size(), source_size - offset));
+            auto read = std::size_t{};
+            while (read < wanted) {
+                auto [ec, count] = co_await file.read_some_at(
+                    offset + read,
+                    boost::capy::mutable_buffer(window.data() + read, wanted - read));
+                if (ec || count == 0) {
+                    co_return std::unexpected(store_error(
+                        errc::io, ec ? ec.message() : "unexpected end of file", source.string()));
+                }
+                read += count;
+            }
+            const auto input = std::span<const std::byte>(window).first(wanted);
+            whole_hasher.update(input);
+            for (auto& chunk : streaming.feed(input)) {
+                const auto id = encryption
+                                    ? crypto_detail::keyed_digest(encryption->chunk_mac, chunk)
+                                    : hash(options_.hash_algorithm, chunk);
+                if (!id)
+                    co_return std::unexpected(id.error());
+                const auto chunk_size = chunk.size();
+                auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+                if (!stored)
+                    co_return std::unexpected(stored.error());
+                object.chunks.push_back(*id);
+                object.chunk_sizes.push_back(chunk_size);
+            }
+            offset += wanted;
+        }
+        if (source_size <= window.size())
+            object.kind =
+                detect_object_kind(std::span<const std::byte>(window).first(window.size()));
+        file.close();
+        for (auto& chunk : streaming.finish()) {
+            const auto id = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, chunk)
+                                       : hash(options_.hash_algorithm, chunk);
+            if (!id)
+                co_return std::unexpected(id.error());
+            const auto chunk_size = chunk.size();
+            auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+            if (!stored)
+                co_return std::unexpected(stored.error());
+            object.chunks.push_back(*id);
+            object.chunk_sizes.push_back(chunk_size);
+        }
+        object.id = whole_hasher.finish();
+        if (objects_.contains(to_string(object.id)))
+            co_return object.id;
+        auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
+        const auto descriptor_id =
+            encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, descriptor)
+                       : hash(options_.hash_algorithm, descriptor);
+        if (!descriptor_id)
+            co_return std::unexpected(descriptor_id.error());
+        auto descriptor_stored =
+            co_await store_chunk(*descriptor_id, std::move(descriptor), encryption);
+        if (!descriptor_stored)
+            co_return std::unexpected(descriptor_stored.error());
+        object.descriptor = *descriptor_id;
+        object.has_descriptor = true;
+        const auto whole = object.id;
+        auto saved = co_await add_object(std::move(object));
+        if (!saved)
+            co_return std::unexpected(saved.error());
+        index_.set_highest_pack_id(descriptor_stored->location.pack_id);
+        auto flushed = co_await index_.flush();
+        if (!flushed)
+            co_return std::unexpected(flushed.error());
+        co_return whole;
+    } catch (const std::system_error& caught) {
+        co_return std::unexpected(store_error(errc::io, caught.what(), source.string()));
+    } catch (const std::exception& caught) {
+        co_return std::unexpected(store_error(errc::internal, caught.what(), source.string()));
+    }
+}
+
+runtime::task<void> store_backend::get_to_file(digest id, std::filesystem::path destination) {
     const auto it = objects_.find(to_string(id));
     if (it == objects_.end())
         co_return std::unexpected(
             store_error(errc::not_found, "object is not present", to_string(id)));
+    try {
+        std::optional<crypto_detail::domain_keys> encryption;
+        if (!it->second.key_id.empty()) {
+            if (!options_.keys) {
+                co_return std::unexpected(store_error(
+                    errc::unauthorized, "encrypted object key is unavailable", it->second.key_id));
+            }
+            auto data = co_await options_.keys->data_key(it->second.key_id, false);
+            if (!data)
+                co_return std::unexpected(data.error());
+            auto derived = crypto_detail::derive_domain_keys(*data);
+            crypto_detail::wipe(*data);
+            if (!derived)
+                co_return std::unexpected(derived.error());
+            encryption = std::move(*derived);
+        }
+        auto hash_key = std::optional<crypto_detail::key>{};
+        if (encryption)
+            hash_key = encryption->chunk_mac;
+        auto whole_hasher = incremental_digest{id.alg, hash_key};
+        const auto executor = co_await boost::capy::this_coro::executor;
+        boost::corosio::random_access_file file(executor.context());
+        file.open(destination,
+                  boost::corosio::file_base::read_write | boost::corosio::file_base::create |
+                      boost::corosio::file_base::truncate);
+        auto offset = std::uint64_t{};
+        auto cached_id = std::optional<digest>{};
+        auto cached_bytes = std::vector<std::byte>{};
+        for (const auto& chunk : it->second.chunks) {
+            if (!cached_id || cached_id->alg != chunk.alg || cached_id->bytes != chunk.bytes) {
+                auto raw = co_await load_chunk(chunk, encryption);
+                if (!raw)
+                    co_return std::unexpected(raw.error());
+                cached_id = chunk;
+                cached_bytes = std::move(*raw);
+            }
+            whole_hasher.update(cached_bytes);
+            auto written = std::size_t{};
+            while (written < cached_bytes.size()) {
+                auto [ec, count] = co_await file.write_some_at(
+                    offset + written,
+                    boost::capy::const_buffer(cached_bytes.data() + written,
+                                              cached_bytes.size() - written));
+                if (ec || count == 0) {
+                    co_return std::unexpected(store_error(
+                        errc::io, ec ? ec.message() : "short file write", destination.string()));
+                }
+                written += count;
+            }
+            offset += cached_bytes.size();
+        }
+        file.close();
+        if (offset != it->second.size) {
+            co_return std::unexpected(store_error(
+                errc::corrupt, "object length differs from its chunk list", to_string(id)));
+        }
+        const auto actual = whole_hasher.finish();
+        if (actual.alg != id.alg || actual.bytes != id.bytes) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "object digest verification failed", to_string(id)));
+        }
+        co_return result<void>{};
+    } catch (const std::system_error& caught) {
+        co_return std::unexpected(store_error(errc::io, caught.what(), destination.string()));
+    } catch (const std::exception& caught) {
+        co_return std::unexpected(store_error(errc::internal, caught.what(), destination.string()));
+    }
+}
+
+result<blob> store_backend::blob_for(digest id) const {
+    const auto found = objects_.find(to_string(id));
+    if (found == objects_.end()) {
+        return std::unexpected(
+            store_error(errc::not_found, "object is not present", to_string(id)));
+    }
+    if (found->second.chunks.size() != found->second.chunk_sizes.size()) {
+        return std::unexpected(
+            store_error(errc::corrupt, "object chunk sizes are unavailable", to_string(id)));
+    }
+    return blob{found->second.chunks, found->second.size, found->second.chunk_sizes};
+}
+
+runtime::task<std::vector<std::byte>> store_backend::get(digest id) {
+    const auto it = objects_.find(to_string(id));
+    if (it == objects_.end()) {
+        std::optional<crypto_detail::domain_keys> encryption;
+        if (id.alg == algorithm::blake3_keyed) {
+            const auto key = chunk_keys_.find(to_string(id));
+            if (key == chunk_keys_.end() || !options_.keys) {
+                co_return std::unexpected(store_error(
+                    errc::unauthorized, "encrypted chunk key is unavailable", to_string(id)));
+            }
+            auto data = co_await options_.keys->data_key(key->second, false);
+            if (!data)
+                co_return std::unexpected(data.error());
+            auto derived = crypto_detail::derive_domain_keys(*data);
+            crypto_detail::wipe(*data);
+            if (!derived)
+                co_return std::unexpected(derived.error());
+            encryption = std::move(*derived);
+        }
+        co_return co_await load_chunk(id, encryption);
+    }
     std::optional<crypto_detail::domain_keys> encryption;
     if (!it->second.key_id.empty()) {
         if (!options_.keys)
@@ -664,9 +1006,17 @@ runtime::task<std::vector<std::byte>> store_backend::get(digest id) {
 runtime::task<std::uint64_t>
 store_backend::read(digest id, std::uint64_t offset, std::span<std::byte> into) {
     const auto it = objects_.find(to_string(id));
-    if (it == objects_.end())
-        co_return std::unexpected(
-            store_error(errc::not_found, "object is not present", to_string(id)));
+    if (it == objects_.end()) {
+        auto raw = co_await get(id);
+        if (!raw)
+            co_return std::unexpected(raw.error());
+        if (offset >= raw->size() || into.empty())
+            co_return std::uint64_t{0};
+        const auto amount =
+            static_cast<std::size_t>(std::min<std::uint64_t>(into.size(), raw->size() - offset));
+        std::copy_n(raw->begin() + static_cast<std::size_t>(offset), amount, into.begin());
+        co_return amount;
+    }
     std::optional<crypto_detail::domain_keys> encryption;
     if (!it->second.key_id.empty()) {
         if (!options_.keys)
@@ -686,7 +1036,16 @@ store_backend::read(digest id, std::uint64_t offset, std::span<std::byte> into) 
     const auto wanted = std::min<std::uint64_t>(into.size(), it->second.size - offset);
     std::uint64_t position = 0;
     std::uint64_t copied = 0;
-    for (const auto& chunk : it->second.chunks) {
+    const auto has_sizes = it->second.chunk_sizes.size() == it->second.chunks.size();
+    for (std::size_t index = 0; index < it->second.chunks.size(); ++index) {
+        const auto& chunk = it->second.chunks[index];
+        if (has_sizes) {
+            const auto end = position + it->second.chunk_sizes[index];
+            if (end <= offset) {
+                position = end;
+                continue;
+            }
+        }
         auto raw = co_await load_chunk(chunk, encryption);
         if (!raw)
             co_return std::unexpected(raw.error());

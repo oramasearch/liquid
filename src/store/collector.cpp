@@ -257,8 +257,13 @@ runtime::task<collection_report> collector::run(collection_options options) {
         if (!live_objects.insert(object_key).second)
             continue;
         const auto object = snapshot_objects.find(object_key);
-        if (object == snapshot_objects.end())
+        if (object == snapshot_objects.end()) {
+            if (snapshot_locations.contains(object_key)) {
+                live_chunks.insert(object_key);
+                reasons.try_emplace(object_key, reason);
+            }
             continue;
+        }
         auto descriptor =
             encode_chunk_list(object->second.size, object->second.key_id, object->second.chunks);
         const auto chunk_references = registry.extract("chunk-list", descriptor);
@@ -338,8 +343,13 @@ runtime::task<collection_report> collector::run(collection_options options) {
         if (!live_objects.insert(object_key).second)
             continue;
         const auto object = store_.objects_.find(object_key);
-        if (object == store_.objects_.end())
+        if (object == store_.objects_.end()) {
+            if (snapshot_locations.contains(object_key)) {
+                live_chunks.insert(object_key);
+                reasons.try_emplace(object_key, reason);
+            }
             continue;
+        }
         for (const auto& chunk : object->second.chunks) {
             live_chunks.insert(to_string(chunk));
             reasons.try_emplace(to_string(chunk), reason);

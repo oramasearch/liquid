@@ -9,6 +9,7 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_store.cpp
   store/test_gc.cpp
+  ${PROJECT_SOURCE_DIR}/src/store/chunker.cpp
   ${PROJECT_SOURCE_DIR}/src/objects/records.cpp
   ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
   test_version.cpp
@@ -58,8 +59,14 @@ target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
 
 add_executable(liquid-store-large-tests test_store_large.cpp)
+target_include_directories(liquid-store-large-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
 gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large)
+
+add_executable(liquid-store-40g-tests test_store_40g.cpp)
+target_include_directories(liquid-store-40g-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-store-40g-tests PRIVATE liquid::liquid GTest::gtest_main)
+gtest_discover_tests(liquid-store-40g-tests PROPERTIES LABELS large-40g)
 
 # The index is private implementation code.  Compile its two private sources
 # into this test target so the same assertions work for static and shared

@@ -53,6 +53,28 @@ runtime::task<digest> store::put(std::vector<std::byte> input) {
     co_return co_await impl_->value->put(std::move(input));
 }
 
+runtime::task<digest> store::put_file(std::filesystem::path source) {
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::put_file"});
+    co_return co_await impl_->value->put_file(std::move(source));
+}
+
+runtime::task<void> store::get_to_file(digest id, std::filesystem::path destination) {
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::get_to_file"});
+    co_return co_await impl_->value->get_to_file(id, std::move(destination));
+}
+
+result<blob> store::blob_for(digest id) const {
+    if (!impl_) {
+        return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::blob_for"});
+    }
+    return impl_->value->blob_for(id);
+}
+
 runtime::task<std::vector<std::byte>> store::get(digest id) {
     if (!impl_)
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});

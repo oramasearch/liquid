@@ -12,6 +12,7 @@
 #include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "store/chunker.hpp"
 
 namespace {
 
@@ -64,6 +65,20 @@ liquid::store_options encrypted_options(const std::shared_ptr<liquid::keyring>& 
     return options;
 }
 
+void write_bytes(const std::filesystem::path& path, std::span<const std::byte> contents) {
+    std::filesystem::create_directories(path.parent_path());
+    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+    ASSERT_TRUE(output);
+    output.write(reinterpret_cast<const char*>(contents.data()),
+                 static_cast<std::streamsize>(contents.size()));
+    ASSERT_TRUE(output);
+}
+
+auto read_bytes(const std::filesystem::path& path) -> std::vector<char> {
+    auto input = std::ifstream{path, std::ios::binary};
+    return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
+
 TEST(Store, ChunkingProducesStableObjectIdentity) {
     const auto source = bytes(4U * 1024U * 1024U, 4);
     temporary_store first_path;
@@ -75,6 +90,82 @@ TEST(Store, ChunkingProducesStableObjectIdentity) {
     ASSERT_TRUE(first.has_value());
     ASSERT_TRUE(second.has_value());
     EXPECT_EQ(liquid::to_string(*first), liquid::to_string(*second));
+}
+
+TEST(Store, StreamingChunkerMatchesInMemoryBoundaries) {
+    const auto source = bytes(3U * 1024U * 1024U + 317U, 24);
+    const auto expected = liquid::store_detail::fastcdc(source);
+    auto streaming = liquid::store_detail::chunker{};
+    auto actual = std::vector<std::vector<std::byte>>{};
+    for (std::size_t offset = 0; offset < source.size();) {
+        const auto size = std::min<std::size_t>(7919, source.size() - offset);
+        auto chunks = streaming.feed(std::span<const std::byte>(source).subspan(offset, size));
+        actual.insert(actual.end(),
+                      std::make_move_iterator(chunks.begin()),
+                      std::make_move_iterator(chunks.end()));
+        offset += size;
+    }
+    auto final = streaming.finish();
+    actual.insert(
+        actual.end(), std::make_move_iterator(final.begin()), std::make_move_iterator(final.end()));
+    ASSERT_EQ(actual.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        const auto range = expected[index];
+        EXPECT_EQ(actual[index],
+                  std::vector<std::byte>(source.begin() + range.offset,
+                                         source.begin() + range.offset + range.size));
+    }
+}
+
+TEST(Store, PutFileMatchesPutAndStreamsBack) {
+    temporary_store source_root;
+    temporary_store memory_root;
+    temporary_store file_root;
+    const auto source = bytes(8U * 1024U * 1024U + 123U, 25);
+    const auto source_path = source_root.path() / "source.bin";
+    const auto output_path = source_root.path() / "output.bin";
+    write_bytes(source_path, source);
+    auto memory_store = open_store(memory_root.path());
+    const auto memory_id = liquid::runtime::block_on(memory_store.put(source));
+    ASSERT_TRUE(memory_id) << memory_id.error().message;
+    memory_store = {};
+    auto file_store = open_store(file_root.path());
+    const auto file_id = liquid::runtime::block_on(file_store.put_file(source_path));
+    ASSERT_TRUE(file_id) << file_id.error().message;
+    EXPECT_EQ(liquid::to_string(*file_id), liquid::to_string(*memory_id));
+    file_store = {};
+    EXPECT_EQ(read_bytes(memory_root.path() / "packs" / "objects.meta"),
+              read_bytes(file_root.path() / "packs" / "objects.meta"));
+    file_store = open_store(file_root.path());
+    const auto exported = liquid::runtime::block_on(file_store.get_to_file(*file_id, output_path));
+    ASSERT_TRUE(exported) << exported.error().message;
+    EXPECT_EQ(read_bytes(output_path), read_bytes(source_path));
+}
+
+TEST(Store, EncryptedPutFileMatchesPutChunkList) {
+    temporary_store source_root;
+    temporary_store memory_root;
+    temporary_store file_root;
+    const auto source = bytes(8U * 1024U * 1024U + 123U, 26);
+    const auto source_path = source_root.path() / "source.bin";
+    write_bytes(source_path, source);
+    auto memory_keys = keys_for("private", "streaming passphrase");
+    auto memory_store = open_store(memory_root.path(), encrypted_options(memory_keys));
+    const auto memory_id = liquid::runtime::block_on(memory_store.put(source));
+    ASSERT_TRUE(memory_id) << memory_id.error().message;
+    memory_store = {};
+    std::filesystem::create_directories(file_root.path());
+    std::filesystem::copy(memory_root.path() / "keys",
+                          file_root.path() / "keys",
+                          std::filesystem::copy_options::recursive);
+    auto file_keys = keys_for("private", "streaming passphrase");
+    auto file_store = open_store(file_root.path(), encrypted_options(file_keys));
+    const auto file_id = liquid::runtime::block_on(file_store.put_file(source_path));
+    ASSERT_TRUE(file_id) << file_id.error().message;
+    EXPECT_EQ(liquid::to_string(*file_id), liquid::to_string(*memory_id));
+    file_store = {};
+    EXPECT_EQ(read_bytes(memory_root.path() / "packs" / "objects.meta"),
+              read_bytes(file_root.path() / "packs" / "objects.meta"));
 }
 
 TEST(Store, HoldsBlake3AndSha256ObjectsAcrossReopen) {

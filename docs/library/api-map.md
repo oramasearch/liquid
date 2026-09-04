@@ -56,10 +56,10 @@ owning issue in `error::context`.
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
-| `liquid/store.hpp` | #1, #7, #8, #46 | implemented | `store`: content in, digests out; encrypted trust domains; leases, collection, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #46, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
-| `liquid/drip.hpp` | #4, #5, #48 | implemented (#5); declared (#4, #48) | `drip`, `capture`: the journal as a subscription, pause and resume |
+| `liquid/repository.hpp` | #2, #40, #41, #42, #116 | implemented | `repository`: open, read, memory and streaming-file writes, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
+| `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #111 | implemented (#4, #7, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
