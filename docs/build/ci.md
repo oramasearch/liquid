@@ -56,7 +56,8 @@ sandbox tests run for real:
 docker build -t liquid-linux-ci tools/linux-ci
 docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-linux-ci \
   bash -c 'cmake -S . -B build-linux -G Ninja && cmake --build build-linux -- -k 0 \
-           && ctest --test-dir build-linux --output-on-failure -LE "large|sim-long|realworld"'
+           && ctest --test-dir build-linux --output-on-failure --timeout 600 \
+                    -LE "large|sim-long|realworld"'
 ```
 
 `-k 0` keeps building past the first failure so one run lists every portability error. Run the
@@ -76,6 +77,22 @@ allocated loop configuration, and issues one offloaded root lookup after `fuse_e
 explicit unmount. That lookup wakes the blocked libfuse worker without blocking the runtime
 executor. A successful named run reports one passed test and no skipped tests.
 
-As of this change `main` compiles on Linux and the mount scenario passes there. The drip restart
-failure remains tracked in https://github.com/oramasearch/liquid/issues/130. To change the
-toolchain, edit the Dockerfile and the workflow together; they must agree on the compiler version.
+Run the Linux restart scenario by itself with:
+
+```sh
+docker run --rm --memory 2g -v "$PWD":/src -w /src liquid-linux-ci \
+  ctest --test-dir build-linux --output-on-failure --timeout 600 \
+  -R '^Drip.restart_replays_the_persisted_journal$'
+```
+
+The apparent restart growth was not journal replay, reconciliation, stat metadata, or inotify
+record parsing. A debugger caught `capture::open` suspended at its first `runtime::offload`, with
+the blocking pool idle and no wake queued on the caller. The pool could finish before the caller
+registered its `async_event` wait; Capy events are executor-affine and unsafe for concurrent shared
+access, so the set/wait race could lose the wake. `offload` now registers the caller continuation
+before dispatch and has the pool use `run_async` to schedule a caller-executor coroutine which
+queues that continuation. A successful named run reports one passed test.
+
+As of this change `main` compiles on Linux, and both the mount and drip restart scenarios pass
+there. To change the toolchain, edit the Dockerfile and the workflow together; they must agree on
+the compiler version.

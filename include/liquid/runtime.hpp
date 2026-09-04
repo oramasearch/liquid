@@ -50,11 +50,12 @@ boost::capy::task<> complete_block_on(task<T> coroutine,
 
 template <class T> struct offload_state {
     std::optional<result<T>> output;
-    boost::capy::async_event done;
+    boost::capy::continuation completion;
 };
 
 template <class T> task<void> wake_offload(std::shared_ptr<offload_state<T>> state) {
-    state->done.set();
+    const auto executor = co_await boost::capy::this_coro::executor;
+    executor.post(state->completion);
     co_return {};
 }
 
@@ -77,6 +78,31 @@ run_blocking(Callable callable, std::shared_ptr<offload_state<T>> state, Executo
 }
 
 LIQUID_EXPORT void run_on_pool(boost::capy::task<> coroutine);
+
+template <class Callable, class T, class Executor> class offload_awaiter {
+public:
+    offload_awaiter(Callable callable, std::shared_ptr<offload_state<T>> state, Executor executor)
+        : callable_(std::move(callable)), state_(std::move(state)), executor_(std::move(executor)) {
+    }
+
+    [[nodiscard]] bool await_ready() const noexcept {
+        return false;
+    }
+
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle,
+                                          const boost::capy::io_env*) {
+        state_->completion.h = handle;
+        run_on_pool(run_blocking<Callable, T>(std::move(callable_), state_, executor_));
+        return std::noop_coroutine();
+    }
+
+    void await_resume() const noexcept {}
+
+private:
+    Callable callable_;
+    std::shared_ptr<offload_state<T>> state_;
+    Executor executor_;
+};
 
 } // namespace detail
 
@@ -127,13 +153,8 @@ template <class Callable> task<std::invoke_result_t<Callable>> offload(Callable 
     try {
         auto state = std::make_shared<detail::offload_state<output_type>>();
         const auto executor = co_await boost::capy::this_coro::executor;
-        detail::run_on_pool(
-            detail::run_blocking<Callable, output_type>(std::move(callable), state, executor));
-        auto [event_error] = co_await state->done.wait();
-        if (event_error) {
-            co_return std::unexpected(
-                error{errc::internal, event_error.message(), "runtime::offload"});
-        }
+        co_await detail::offload_awaiter<Callable, output_type, decltype(executor)>{
+            std::move(callable), state, executor};
         if (!state->output.has_value()) {
             co_return std::unexpected(error{errc::internal,
                                             "blocking operation completed without a result",

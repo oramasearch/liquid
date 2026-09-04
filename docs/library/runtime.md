@@ -25,8 +25,8 @@ workers. At process exit it stops the context, joins those threads, then destroy
 
 `spawn` reports its `result<void>` to a completion callback. `offload` moves the blocking
 callable into a coroutine frame and launches it on the compute pool. Completion posts a
-runtime-side wake to the caller executor; only that executor sets the Capy async event that
-resumes the caller.
+runtime-side wake to the caller executor; that wake queues the caller's continuation directly.
+The blocking pool never resumes the caller and never touches an executor-affine Capy event.
 
 Use `runtime::as_io` when a liquid task must participate in Capy's `when_all` or `timeout`.
 The adapter preserves the liquid `result<T>` as the I/O payload; Capy's outer error code remains
@@ -61,9 +61,10 @@ cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON
 cmake --build build-shared && ctest --test-dir build-shared --output-on-failure
 ```
 
-`tests/test_runtime.cpp` verifies value and error return, laziness, executor return after
-offloading, completion, concurrent spawned tasks, the singleton shared context, a spawned store
-round trip, and two liquid tasks composed with `when_all`. The install-consumer proof in
+`tests/test_runtime.cpp` verifies value and error return, laziness, executor return across a series
+of immediate offloads, completion, concurrent spawned tasks, the singleton shared context, a
+spawned store round trip, and two liquid tasks composed with `when_all`. The immediate operations
+exercise completion racing with caller suspension. The install-consumer proof in
 [`libliquid.md`](libliquid.md) verifies that an installed consumer receives Capy transitively.
 
 ## How to change
