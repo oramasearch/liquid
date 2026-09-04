@@ -13,10 +13,10 @@
 namespace liquid::objects {
 
 struct repo_record {
-    node_id repo_id{};
-    std::string name;
-    std::int64_t created{};
-    std::optional<repo_ref> root_change;
+  node_id repo_id{};
+  std::string name;
+  std::int64_t created{};
+  std::optional<repo_ref> root_change;
 };
 
 [[nodiscard]] auto encode(const blob &value) -> result<std::vector<std::byte>>;
