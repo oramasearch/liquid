@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +50,11 @@ struct LIQUID_EXPORT change_id {
     digest value;
 };
 
+struct LIQUID_EXPORT change_ref {
+    node_id repo_id{};
+    change_id id{};
+};
+
 struct LIQUID_EXPORT repo_ref {
     node_id repo_id{};
     change_id id{};
@@ -61,11 +67,12 @@ struct LIQUID_EXPORT conflict {
 
 struct LIQUID_EXPORT change {
     change_id id;
-    std::vector<change_id> parents;
+    std::vector<change_ref> parents;
     actor author;
     std::string message;
     std::chrono::sys_seconds at;
     digest root;
+    std::map<std::string, std::string> metadata;
     std::optional<liquid::conflict> conflict;
     std::vector<liquid::conflict> conflicts;
     std::optional<digest> symbols;

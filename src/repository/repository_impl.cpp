@@ -1866,16 +1866,28 @@ runtime::task<void> repository::remove(std::string path) {
 runtime::task<change_id> repository::cut(std::string message) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    change_input input{};
+    if (impl_->current.head)
+        input.parents.push_back({impl_->current.repository, *impl_->current.head});
+    input.author = impl_->signing_key.identity();
+    input.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    input.message = std::move(message);
+    input.ref = "main";
+    co_return co_await record(std::move(input));
+}
+runtime::task<change_id> repository::record(change_input input) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     auto root = co_await impl_->snapshot(impl_->current.root);
     if (!root)
         co_return std::unexpected(root.error());
     change value{};
-    if (impl_->current.head)
-        value.parents = {*impl_->current.head};
-    value.author = impl_->signing_key.identity();
-    value.message = std::move(message);
-    value.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    value.parents = std::move(input.parents);
+    value.author = std::move(input.author);
+    value.message = std::move(input.message);
+    value.at = input.at;
     value.root = *root;
+    value.metadata = std::move(input.metadata);
     value.conflicts = impl_->current.conflict_values;
     auto body = objects::encode_change_body(value);
     if (!body)
@@ -1895,8 +1907,11 @@ runtime::task<change_id> repository::cut(std::string message) {
     if (!stored)
         co_return std::unexpected(stored.error());
     change_id id{*stored};
-    impl_->current.head = id;
-    impl_->current.refs["main"] = id;
+    if (input.ref) {
+        impl_->current.head = id;
+        impl_->current.refs[*input.ref] = id;
+    }
+    impl_->current.pending_drips = 0;
     auto saved = co_await impl_->checkpoint(*root);
     if (!saved)
         co_return std::unexpected(saved.error());
@@ -1950,7 +1965,7 @@ runtime::task<std::vector<change>> repository::log(log_options) {
             co_return std::unexpected(value.error());
         output.push_back(*value);
         next = value->parents.empty() ? std::optional<change_id>{}
-                                      : std::optional<change_id>{value->parents.front()};
+                                      : std::optional<change_id>{value->parents.front().id};
     }
     co_return output;
 }

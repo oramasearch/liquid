@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -55,7 +56,23 @@ struct LIQUID_EXPORT repository_options {
     verify_config verify{};
 };
 
-struct LIQUID_EXPORT log_options {};
+struct LIQUID_EXPORT log_options {
+    std::optional<change_id> from;
+    bool first_parent{};
+};
+
+struct LIQUID_EXPORT change_input {
+    std::vector<change_ref> parents;
+    actor author;
+    std::chrono::sys_seconds at;
+    std::string message;
+    std::map<std::string, std::string> metadata;
+    std::optional<std::string> ref;
+};
+
+struct LIQUID_EXPORT write_options {
+    std::uint32_t mode{0100644};
+};
 
 struct LIQUID_EXPORT ref {
     std::string name;
@@ -133,6 +150,7 @@ public:
     [[nodiscard]] runtime::task<void> move(std::string from, std::string to);
     [[nodiscard]] runtime::task<void> remove(std::string path);
     [[nodiscard]] runtime::task<change_id> cut(std::string message);
+    [[nodiscard]] runtime::task<change_id> record(change_input input);
     [[nodiscard]] runtime::task<std::vector<ref>> refs();
     [[nodiscard]] runtime::task<void> set_ref(std::string name, change_id id);
     [[nodiscard]] result<repository_status> status();

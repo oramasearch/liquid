@@ -414,6 +414,20 @@ auto milliseconds_value(const cbor::value& value) -> result<std::chrono::millise
     if (!count || *count > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
         return std::unexpected(corrupt("invalid action timing"));
     return std::chrono::milliseconds{static_cast<std::int64_t>(*count)};
+auto encode_change_ref(const change_ref& value) -> cbor::value {
+    return map({{"repo", encode_node_id(value.repo_id)}, {"id", encode_change_id(value.id)}});
+}
+
+auto decode_change_ref(const cbor::value& value) -> result<change_ref> {
+    const auto* repository = find(value, "repo");
+    const auto* id = find(value, "id");
+    if (!repository || !id)
+        return std::unexpected(corrupt("change reference is missing fields"));
+    auto decoded_repository = decode_node_id(*repository);
+    auto decoded_id = decode_change_id(*id);
+    if (!decoded_repository || !decoded_id)
+        return std::unexpected(corrupt("invalid change reference"));
+    return change_ref{*decoded_repository, *decoded_id};
 }
 
 } // namespace
@@ -466,7 +480,10 @@ auto encode_change_body_value(const change& value, bool include_signature)
     -> result<std::vector<std::byte>> {
     auto parents = cbor::value::array{};
     for (const auto& parent : value.parents)
-        parents.push_back(encode_change_id(parent));
+        parents.push_back(encode_change_ref(parent));
+    auto metadata = cbor::value::map{};
+    for (const auto& [key, value] : value.metadata)
+        metadata.emplace_back(cbor::value{key}, cbor::value{value});
     auto conflicts = cbor::value::array{};
     for (const auto& item : value.conflicts) {
         auto refs = cbor::value::array{};
@@ -482,6 +499,7 @@ auto encode_change_body_value(const change& value, bool include_signature)
         {"at", cbor::value{value.at.time_since_epoch().count()}},
         {"message", cbor::value{value.message}},
         {"root", encode_digest(value.root)},
+        {"metadata", cbor::value{std::move(metadata)}},
         {"conflicts", std::move(conflicts)},
         {"symbols", value.symbols ? encode_digest(*value.symbols) : cbor::value{cbor::null{}}}};
     if (include_signature) {
@@ -790,6 +808,7 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
     const auto* at = find(*source, "at");
     const auto* message = find(*source, "message");
     const auto* root = find(*source, "root");
+    const auto* metadata = find(*source, "metadata");
     const auto* parent_values = parents ? std::get_if<cbor::value::array>(&parents->data) : nullptr;
     const auto* who = author ? std::get_if<std::string>(&author->data) : nullptr;
     const auto* signed_when = at ? std::get_if<std::int64_t>(&at->data) : nullptr;
@@ -812,13 +831,25 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
                   *root_digest,
                   {},
                   {},
+                  {},
                   std::nullopt,
                   {}};
     for (const auto& item : *parent_values) {
-        auto parent = decode_change_id(item);
+        auto parent = decode_change_ref(item);
         if (!parent)
             return std::unexpected(parent.error());
         output.parents.push_back(*parent);
+    }
+    if (metadata) {
+        const auto* fields = std::get_if<cbor::value::map>(&metadata->data);
+        if (!fields)
+            return std::unexpected(corrupt("invalid change metadata"));
+        for (const auto& [key, value] : *fields) {
+            const auto* name = std::get_if<std::string>(&key.data);
+            const auto* text = std::get_if<std::string>(&value.data);
+            if (!name || !text || !output.metadata.emplace(*name, *text).second)
+                return std::unexpected(corrupt("invalid change metadata entry"));
+        }
     }
     const auto* conflicts = find(*source, "conflicts");
     const auto* symbols = find(*source, "symbols");

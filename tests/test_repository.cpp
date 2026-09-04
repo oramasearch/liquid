@@ -219,6 +219,41 @@ TEST(Repository, ReadabilityReportsExactBlobKeyVersionsAcrossRotation) {
     EXPECT_EQ(text(*new_value), "new");
 }
 
+TEST(Repository, record_preserves_imported_change_fields) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("contents"))));
+
+    liquid::change_input input{};
+    input.author = liquid::actor{"git:author@example.test"};
+    input.at = std::chrono::sys_seconds{std::chrono::seconds{123456789}};
+    input.message = "imported Git change";
+    input.metadata.emplace("git_commit", "0123456789012345678901234567890123456789");
+    input.ref = "imported";
+    const auto id = liquid::runtime::block_on(repository.record(std::move(input)));
+    ASSERT_TRUE(id) << id.error().message;
+
+    const auto history = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(history) << history.error().message;
+    ASSERT_EQ(history->size(), 1U);
+    EXPECT_EQ(history->front().id.value.alg, id->value.alg);
+    EXPECT_EQ(history->front().id.value.bytes, id->value.bytes);
+    EXPECT_TRUE(history->front().parents.empty());
+    EXPECT_EQ(history->front().author.taap_id, "git:author@example.test");
+    EXPECT_EQ(history->front().at, std::chrono::sys_seconds{std::chrono::seconds{123456789}});
+    EXPECT_EQ(history->front().message, "imported Git change");
+    EXPECT_EQ(history->front().metadata.at("git_commit"),
+              "0123456789012345678901234567890123456789");
+    const auto refs = liquid::runtime::block_on(repository.refs());
+    ASSERT_TRUE(refs) << refs.error().message;
+    ASSERT_EQ(refs->size(), 1U);
+    EXPECT_EQ(refs->front().name, "imported");
+    EXPECT_EQ(refs->front().id.value.alg, id->value.alg);
+    EXPECT_EQ(refs->front().id.value.bytes, id->value.bytes);
+}
+
 TEST(Repository, write_undo_and_locks_are_recorded) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
