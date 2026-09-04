@@ -14,6 +14,7 @@ on each desktop platform.
 | macOS | `macos-15` | Homebrew LLVM, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, current Chocolatey CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
+| Linux self-host | `ubuntu-24.04` | Clang 19, CMake, Ninja, libfuse3 | CMake bootstrap, two `liquid wrap` builds, 100% second-run disk hits, byte-identical static library and CLI, shared libliquid build |
 
 `CMakeLists.txt` selects Homebrew LLVM on macOS, a versioned `clang++` on Linux, and `clang-cl`
 for both C and C++ on Windows before `project()`. GoogleTest enables C when FetchContent adds it;
@@ -34,6 +35,14 @@ repository at no cost. Linux arm64 verification is deferred until a suitable run
 
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
 `-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
+
+The self-host job bind-mounts its checkout at `/liquid/work`, configures both build trees outside
+the sandbox with `LIQUID_SELF_HOST=ON`, and gives the wrapped build no network access. It caps Ninja
+at two concurrent jobs so compiler memory use stays bounded while the FUSE server retains the input
+snapshot. The second invocation must report zero misses, zero started processes, an outer cache hit,
+and a 100% disk hit rate. The job then compares the CMake and wrapped `liquid version` output,
+`libliquid.a`, and `liquid` bytes. A separate shared build proves the private static zstd codec is
+position-independent. A missing `/dev/fuse` fails this job rather than skipping the self-host proof.
 
 The Linux jobs install `libfuse3-dev`, `fuse3`, Autoconf, and Automake. Configuration requires the `fuse3`
 pkg-config package on Linux, and the mount test exercises a 64 MiB repository through libfuse3
@@ -100,6 +109,27 @@ queues that continuation. A successful named run reports one passed test.
 As of this change `main` compiles on Linux, and both the mount and drip restart scenarios pass
 there. To change the toolchain, edit the Dockerfile and the workflow together; they must agree on
 the compiler version.
+
+Run the self-host proof at the same fixed path as CI. Configuration performs FetchContent downloads
+before either wrapped invocation; only the build step is sandboxed:
+
+```sh
+docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-linux-ci \
+  bash -c 'set -euo pipefail
+    mkdir -p /liquid/work
+    mount --bind /src /liquid/work
+    cd /liquid/work
+    cmake -S . -B .liquid-build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DLIQUID_BUILD_TESTS=OFF -DLIQUID_SELF_HOST=ON
+    cmake -S . -B build-wrapped -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DLIQUID_BUILD_TESTS=OFF -DLIQUID_SELF_HOST=ON
+    cmake --build .liquid-build/cmake -- -j2
+    export LIQUID_WRAP_CACHE=/liquid/work/.liquid-build/self-host-cache
+    ./.liquid-build/cmake/liquid wrap --no-verify cmake --build build-wrapped -- -j2
+    ./.liquid-build/cmake/liquid wrap --no-verify cmake --build build-wrapped -- -j2
+    cmp .liquid-build/cmake/libliquid.a build-wrapped/libliquid.a
+    cmp .liquid-build/cmake/liquid build-wrapped/liquid'
+```
 
 The CLI documentation check extracts the backticked command cell from each Markdown table row.
 It must not split table rows into CMake lists: CMake policy CMP0007 differs on whether the leading

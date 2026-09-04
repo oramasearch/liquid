@@ -79,6 +79,11 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > names the responsible rule and lease. Memory and remote cache tiers remain separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
 
+> **Build: liquid builds liquid.** Linux CI configures FetchContent dependencies outside the
+> sandbox, builds the static library and CLI under `liquid wrap` twice, requires a 100% disk hit rate
+> on the second run, and compares both outputs byte for byte with the CMake bootstrap. Static and
+> shared libliquid builds remain covered.
+
 > **Phase 3 build-without-bytes is implemented behind a transport-neutral remote blob source.**
 > Remote result records retain source and instance locations without fetching outputs. Store reads,
 > VFS hydration, and materialisation fetch verified logical chunks only on demand, while `liquid

@@ -41,8 +41,10 @@ and retention explanations. Liquid #61 adds signed `sbom/1` attestations with gr
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
 remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
 materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
-refusal for remote-eligible actions. The REAPI transport and scheduling policy remain later Phase 3
-work. The repository object model,
+refusal for remote-eligible actions. Liquid #59 configures liquid's FetchContent dependencies
+outside the sandbox, builds liquid under `liquid wrap`, requires a fully cached second run, and
+compares the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI
+transport and scheduling policy remain later Phase 3 work. The repository object model,
 internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Full materialisation works on every platform; lazy VFS mounts use
