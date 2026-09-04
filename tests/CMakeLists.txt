@@ -48,10 +48,7 @@ add_executable(liquid-tests
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
 if(UNIX)
-  target_sources(liquid-tests PRIVATE
-    test_sync.cpp
-    ${PROJECT_SOURCE_DIR}/src/sync/codec.cpp)
-  target_link_libraries(liquid-tests PRIVATE libzstd_static)
+  target_sources(liquid-tests PRIVATE test_sync.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid

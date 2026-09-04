@@ -28,6 +28,10 @@ writing those bytes through a SHA-256-configured store, and retain both object
 identifiers. The two references resolve independently to the same bytes. This
 does not rewrite existing references.
 
+Sync pack receipt verifies bytes with the transmitted algorithm and preserves that identifier in
+the receiving store. The receiving store's configured algorithm continues to control later local
+writes; it does not rewrite a verified remote identifier.
+
 The CRDT actor identifier is a fixed BLAKE3 derivation of the TAAP identifier and
 device identifier. It is not a store digest or object reference, so selecting a
 store algorithm does not alter CRDT actor identity.

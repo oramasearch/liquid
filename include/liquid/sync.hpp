@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -59,6 +60,39 @@ struct LIQUID_EXPORT sync_endpoint_options {
     std::string bearer_token;
     journal_cursor cursor;
     std::size_t batch_items{256};
+};
+
+using sync_authorizer = std::function<runtime::task<void>(const sync_item&)>;
+
+struct LIQUID_EXPORT sync_server_options {
+    sync_authorizer authorize;
+    std::size_t batch_items{256};
+};
+
+class LIQUID_EXPORT sync_server {
+public:
+    explicit sync_server(repository& subject, sync_server_options options = {});
+    sync_server(repository& subject, store& objects, sync_server_options options = {});
+    ~sync_server();
+    sync_server(sync_server&&) noexcept;
+    sync_server& operator=(sync_server&&) noexcept;
+    sync_server(const sync_server&) = delete;
+    sync_server& operator=(const sync_server&) = delete;
+
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    handle_push(std::span<const std::byte> request);
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    handle_pull(std::span<const std::byte> request);
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    handle_find_missing(std::span<const std::byte> request);
+    [[nodiscard]] runtime::task<void> handle_chunks(std::span<const std::byte> request);
+    [[nodiscard]] runtime::task<std::uint64_t>
+    handle_chunks(digest id, std::uint64_t offset, std::span<std::byte> output);
+    [[nodiscard]] static result<std::vector<std::byte>> encode_error(const error& value);
+
+private:
+    struct impl;
+    std::unique_ptr<impl> impl_;
 };
 
 class LIQUID_EXPORT sync_session {

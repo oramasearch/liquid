@@ -35,11 +35,12 @@ measures a fresh-process repository open for the automerge-cpp adoption comparis
 Focused CRDT cases verify commit metadata, compact checkpoint journal replay, corrupt-sync
 atomicity, and upstream sync convergence; the repository replica case also covers distinct clone
 actors and multi-round sync.
-The Unix integration case in `test_sync.cpp` exchanges two disk repositories through an in-process
-HTTP server double, measures missing-object bytes across repeated pushes, pulls into an empty
-repository, rejects a corrupted TAAP signature without changing state, and runs the CLI push/pull
-round trip. The test target compiles the private wire codec directly so shared-library visibility
-remains hidden. Header compilation keeps the public sync API covered on every platform.
+The Unix integration case in `test_sync.cpp` exchanges two disk repositories through the public
+server behind a small socket transport, measures missing-object bytes across repeated pushes,
+pulls into an empty repository, and rejects both a corrupted TAAP signature and an authorization
+callback without changing state. Its CLI case starts the real `serve sync` process and invokes the
+real push and pull commands. The private wire codec stays in libliquid. Header compilation keeps
+the public sync API covered on every platform.
 
 Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,

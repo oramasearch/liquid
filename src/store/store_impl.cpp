@@ -961,9 +961,9 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
         encryption = std::move(*derived);
     }
     digest whole{};
+    const auto algorithm_value = hash_algorithm;
     std::vector<chunk_range> ranges;
     if (!encryption && input.size() > 4U * 1024U * 1024U) {
-        const auto algorithm_value = hash_algorithm;
         auto hashed = co_await runtime::offload([input, algorithm_value] {
             const auto output = hash(algorithm_value, input);
             if (!output)
@@ -979,7 +979,7 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
         ranges = std::move(*chunked);
     } else {
         const auto hashed = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, input)
-                                       : hash(hash_algorithm, input);
+                                       : hash(algorithm_value, input);
         if (!hashed)
             co_return std::unexpected(hashed.error());
         whole = *hashed;
@@ -1012,7 +1012,7 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     for (const auto part : ranges) {
         const auto bytes = std::span<const std::byte>(input).subspan(part.offset, part.size);
         const auto id = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, bytes)
-                                   : hash(hash_algorithm, bytes);
+                                   : hash(algorithm_value, bytes);
         if (!id)
             co_return std::unexpected(id.error());
         auto stored = co_await store_chunk(
@@ -1025,7 +1025,7 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
     const auto descriptor_id = encryption
                                    ? crypto_detail::keyed_digest(encryption->chunk_mac, descriptor)
-                                   : hash(hash_algorithm, descriptor);
+                                   : hash(algorithm_value, descriptor);
     if (!descriptor_id)
         co_return std::unexpected(descriptor_id.error());
     auto descriptor_stored =

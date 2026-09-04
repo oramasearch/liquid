@@ -2,8 +2,8 @@
 
 `liquid` is a thin command-line client of libliquid. Repository commands open from the current
 directory unless a command names another repository; `wrap` instead snapshots the current working
-tree into its project cache. Every library operation runs through `runtime::block_on`; the CLI does
-not read repository storage directly.
+tree into its project cache. One-shot commands run library operations through `runtime::block_on`;
+`serve sync` awaits them on its listener executor. The CLI does not read repository storage directly.
 
 `init` imports regular files already present in its target directory through
 `repository::write_file`. Subsequent external edits need the watcher-backed capture service from
@@ -24,6 +24,7 @@ that the table and `liquid --help` name the same commands.
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
+| `serve` | `serve sync <path> [--listen <address>] [--port <port>]` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
@@ -66,6 +67,10 @@ chunk.
 `push` and `pull` print metadata item, object, byte, and cursor counts. They use `LIQUID_TOKEN` as
 an optional bearer credential and never print it. A URL must use HTTP or HTTPS and identify one
 lake repository.
+`serve sync` opens the named existing repository and serves the sync routes with
+`oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
+listener. It has no built-in authentication policy, so the default is appropriate for local use;
+network services embed the public server with their own authorization callback.
 `version --json` is also available for scripts. Text output is line-oriented and stable. A library
 error always has this shape and exits with status 1:
 

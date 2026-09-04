@@ -38,6 +38,8 @@ whole-content availability as absent, remote, or local and fetches only missing 
 through the configured source before verifying and writing them through the ordinary pack path.
 Once a chunk is local, reads load that verified chunk directly; this also handles one-chunk blobs
 whose content and chunk digests are identical without resolving the remote registration again.
+Verified sync insertion selects the transmitted digest algorithm after checking the bytes, while
+ordinary local insertion continues to use the store configuration.
 
 REAPI negotiation may require SHA-256 objects in a repository whose ordinary identity is BLAKE3.
 The repository and REAPI adapters can insert verified raw objects under an explicit supported

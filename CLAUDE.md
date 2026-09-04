@@ -56,7 +56,8 @@ internal CRDT metadata document, canonical CBOR codec, and drip journal are impl
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Repositories can use a caller-owned shared store with independent
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,
-missing-object sessions, the HTTP/1.1 lake client, and CLI push/pull. Full materialisation works on
+missing-object sessions, the HTTP/1.1 lake client, and CLI push/pull. Liquid #165 adds the public
+repository sync server, per-change authorization, and the `serve sync` HTTP adapter. Full materialisation works on
 every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,

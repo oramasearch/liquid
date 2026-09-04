@@ -113,6 +113,19 @@ runtime::task<digest> store::put_plain(std::vector<std::byte> input, algorithm h
     co_return co_await impl_->value->put_plain(std::move(input), hash_algorithm);
 }
 
+runtime::task<digest> store::put_verified(digest id, std::vector<std::byte> input) {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::put_verified"});
+    }
+    auto actual = hash(id.alg, input);
+    if (!actual || actual->alg != id.alg || actual->bytes != id.bytes) {
+        co_return std::unexpected(
+            error{errc::corrupt, "object digest verification failed", to_string(id)});
+    }
+    co_return co_await impl_->value->put_plain(std::move(input), id.alg);
+}
+
 runtime::task<digest> store::put_encrypted(std::vector<std::byte> input, std::string key_id) {
     if (!impl_) {
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});

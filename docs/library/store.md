@@ -38,6 +38,10 @@ digest, and an individually zstd-compressed payload. A sealed pack ends with a s
 and a footer containing the table location and checksum. The table carries the algorithm tag, so it
 remains the source for rebuilding index run sets.
 
+Ordinary writes use the store's configured hash algorithm. Verified sync receipt instead preserves
+the algorithm tag carried by each frame after recomputing that exact digest, so a BLAKE3 and a
+SHA-256 object can coexist in either configured store without changing remote identity.
+
 The `repositories/` directory appears only when a caller supplies one open store to
 `repository::create` or `repository::open`; it is not part of a repository-local store's checkout
 layout. Repository documents, directory checkpoints, trees, blobs, and chunks are still stored

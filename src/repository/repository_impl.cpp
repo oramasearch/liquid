@@ -3754,7 +3754,7 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
             co_return std::unexpected(saved.error());
         }
         auto copied =
-            crdt::directory_document::load(*saved, "local", impl_->root_path.generic_string());
+            crdt::directory_document::load_sync(*saved, "local", impl_->root_path.generic_string());
         if (!copied) {
             co_return std::unexpected(copied.error());
         }

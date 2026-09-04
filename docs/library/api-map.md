@@ -61,14 +61,14 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160 | implemented | `repository`: open, encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | #16, #17, #18 | implemented | REAPI endpoint, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations; and the move-only negotiated REAPI client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
-| `liquid/sync.hpp` | #160, Phase 6 | implemented | signed metadata items and reports, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/sync.hpp` | #160, #165, Phase 6 | implemented | signed metadata items and reports, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
 
@@ -242,6 +242,19 @@ enum class sync_item_kind : std::uint8_t { drip = 1, change = 2, directory = 3, 
 struct sync_item;       // signed actor/body, repository and directory IDs, root marker, ref value
 struct sync_export { journal_cursor cursor; std::size_t count; bool done; std::vector<digest> objects; };
 struct sync_report { journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received; };
+using sync_authorizer = std::function<runtime::task<void>(const sync_item&)>;
+struct sync_server_options { sync_authorizer authorize; std::size_t batch_items{256}; };
+class sync_server {
+ public:
+  explicit sync_server(repository&, sync_server_options = {});
+  sync_server(repository&, store&, sync_server_options = {});
+  runtime::task<std::vector<std::byte>> handle_push(std::span<const std::byte>);
+  runtime::task<std::vector<std::byte>> handle_pull(std::span<const std::byte>);
+  runtime::task<std::vector<std::byte>> handle_find_missing(std::span<const std::byte>);
+  runtime::task<void> handle_chunks(std::span<const std::byte>);
+  runtime::task<std::uint64_t> handle_chunks(digest, std::uint64_t, std::span<std::byte>);
+  static result<std::vector<std::byte>> encode_error(const error&);
+};
 class sync_session {
  public:
   runtime::task<sync_transfer_report> send(std::span<const digest> roots);
@@ -255,6 +268,9 @@ class sync_endpoint final : public remote_blob_source {
 };
 ```
 
+`sync_server` verifies that an explicitly supplied store belongs to the repository. Its optional
+authorization task runs for change items before an atomic metadata import; transport adapters call
+the byte-span handlers and do not include private codec headers.
 `repository::export_drips(cursor, span)` emits bounded pages of journal records, signed changes,
 upstream directory sync messages, refs, and referenced object roots. `import_drips(span)` verifies
 and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
