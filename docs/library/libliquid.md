@@ -42,11 +42,12 @@ target_link_libraries(app PRIVATE liquid::liquid)
 ```
 
 `cmake --install build --prefix <p>` lays out `bin/liquid`, `lib/libliquid.a`, `include/liquid/`,
-`lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, `liquidTargets.cmake`,
-`liquidPrivateTargets.cmake`) and the vendored Capy package under `lib/cmake/boost_capy/`.
-The package config finds the installed `Boost::capy` target before importing `liquid::liquid`, so
-consumers receive Capy's headers, compile options, and link library transitively. Corosio remains
-a private link dependency.
+`lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, and
+`liquidTargets.cmake`), plus Capy's public headers under `include/boost/`. The liquid export owns
+Capy's `liquid::capy` library target and recreates its `Boost::capy` alias. It carries its
+internal Corosio archive to satisfy static linking, while `libliquid` links Corosio privately.
+Consumers receive Capy's headers, compile options, and link library transitively without
+installing Capy's test support archives.
 
 **Verify.** Static: `cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build`.
 Shared: `cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON` then
@@ -54,6 +55,8 @@ Shared: `cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON` then
 install consumer, install to a temporary prefix, configure a separate CMake project whose
 `CMakeLists.txt` calls `find_package(liquid CONFIG REQUIRED)` and links its executable to
 `liquid::liquid`, then build and run that executable with the prefix in `CMAKE_PREFIX_PATH`.
+Its source should `co_await` a `liquid::runtime::task<T>` so the check also compiles Capy's
+exported coroutine headers.
 
 **Change.** New public headers go under `include/liquid/` and into `liquid.hpp`; new sources into
 the `libliquid` target. The public surface, its rules and the ABI policy are
