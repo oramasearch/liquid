@@ -207,8 +207,13 @@ class repository {
 ```cpp
 struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
               std::vector<std::byte> signature; std::chrono::sys_seconds at; };
+struct capture_options { std::vector<std::string> exclude;            // glob patterns from config
+                         std::chrono::milliseconds coalesce_window{200};
+                         bool attribution{false}; };                   // Phase 2 turns it on
 class capture {                        // the journal, as a subscription
  public:
+  static runtime::task<capture> open(std::filesystem::path workspace, capture_options = {});   // starts the watcher
+  runtime::task<void> close();
   result<subscription> subscribe(std::function<void(const drip&)>);   // registration is synchronous
   runtime::task<void> pause();  runtime::task<void> resume();  result<capture_status> status();
 };

@@ -157,7 +157,11 @@ The layout from here:
   directories** is two transactions (remove in the source, put in the target) carrying the same
   `node_id`; the operation log records it as one move, and a cut that observes only one half is
   a torn move the next cut completes (the `ops` record names both halves).
-- **Drips** name the directory document(s) they touched; the journal is per repository.
+- **Drips** name the directory document(s) they touched; the journal is per repository. The
+  journal is readable by **cursor**: `journal::read(cursor, max)` returns the next records and the
+  cursor after them, `journal::end()` the current tail, and cursors are plain values consumers
+  persist, so every consumer of the drip stream (capture's subscribers, the daemon, sync) resumes
+  exactly where it stopped, at-least-once.
 - **Cutting a change** walks directory documents from the root and emits `tree` records
   bottom-up as before; unchanged subtrees reuse their previous `tree` digest without loading
   their documents (the parent entry records the child's last tree digest, refreshed at cut).
