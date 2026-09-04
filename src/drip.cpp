@@ -28,9 +28,13 @@ result<subscription> capture::subscribe(std::function<void(const drip&)>) {
     return unavailable<subscription>("liquid #5");
 }
 
-result<void> capture::pause() { return unavailable<void>("liquid #48"); }
+runtime::task<void> capture::pause() {
+    co_return unavailable<void>("liquid #48");
+}
 
-result<void> capture::resume() { return unavailable<void>("liquid #48"); }
+runtime::task<void> capture::resume() {
+    co_return unavailable<void>("liquid #48");
+}
 
 result<capture_status> capture::status() {
     return unavailable<capture_status>("liquid #48");

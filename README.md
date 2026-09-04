@@ -20,7 +20,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > **Status: the Phase 1 library surface is declared.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error and digest APIs
-> are implemented, including BLAKE3 and SHA-256. Store, repository, capture, identity, VFS and
+> are implemented, including BLAKE3 and SHA-256. The public waiting operations are lazy
+> Boost.Capy tasks, backed by a private Corosio runtime. Store, repository, capture, identity, VFS and
 > remote operations remain `unsupported` until their owning issues land. `liquid version` and
 > `liquid hello` remain unchanged, and `find_package(liquid)` works from an install.
 
@@ -47,6 +48,7 @@ and Zetta's.
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
+- [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 | | |
 |---|---|
@@ -146,6 +148,8 @@ GitHub Actions builds and tests clean checkouts on Linux, macOS, and Windows; se
 [`docs/build/ci.md`](docs/build/ci.md) for the toolchains and coverage.
 
 ```sh
+git clone --recurse-submodules git@github.com:oramasearch/liquid.git
+cd liquid
 cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
 ./build/liquid hello
 cmake --install build --prefix /opt/liquid        # bin/liquid, lib/libliquid.a, include/liquid/, lib/cmake/liquid/

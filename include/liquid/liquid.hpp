@@ -7,6 +7,7 @@
 #include "liquid/object.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/repository.hpp"
+#include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "liquid/version.hpp"
 #include "liquid/vfs.hpp"

@@ -8,6 +8,7 @@
 
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/runtime.hpp"
 
 namespace liquid {
 
@@ -24,7 +25,7 @@ public:
     signer(const signer&) = delete;
     signer& operator=(const signer&) = delete;
 
-    [[nodiscard]] result<std::vector<std::byte>> sign(std::span<const std::byte> payload);
+    [[nodiscard]] runtime::task<std::vector<std::byte>> sign(std::vector<std::byte> payload);
 
 private:
     struct impl;

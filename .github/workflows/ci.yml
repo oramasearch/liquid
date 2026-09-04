@@ -24,6 +24,9 @@ jobs:
             platform: windows
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
 
       - name: Install Linux toolchain
         if: matrix.platform == 'linux'
@@ -112,6 +115,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
 
       - name: Install toolchain
         shell: bash

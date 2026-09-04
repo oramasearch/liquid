@@ -29,7 +29,7 @@ concurrency rule are all cheap now and expensive to retrofit. The map also says 
 5. **Every reference carries its algorithm.** A `digest` is `(algorithm, bytes)`; its text form is
    `blake3:<hex>` or `sha256:<hex>`. Nothing in the API takes bare bytes as an identity.
 6. **Coroutine-native.** Every function that performs I/O or may wait returns
-   `liquid::task<T>` (`boost::capy::task<liquid::result<T>>`) and is `co_await`ed; pure computation
+   `liquid::runtime::task<T>` (`boost::capy::task<liquid::result<T>>`) and is `co_await`ed; pure computation
    (hashing, chunking, encoding, parsing) is synchronous and returns `result<T>` directly. liquid
    tasks run on a Corosio `io_context` executor: a client that owns one (lake, liquify) awaits
    liquid tasks from its own coroutines; a client that does not (the CLI, tests) uses
@@ -52,7 +52,7 @@ owning issue in `error::context`.
 | `liquid/liquid.hpp` | now | implemented | umbrella |
 | `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
-| `liquid/runtime.hpp` | #96 | declared | the Capy seam: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `block_on`, `spawn`, `offload`, `context` |
+| `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, text round trip |
 | `liquid/store.hpp` | #1, #8 | declared | `store`: content in, digests out; leases and collection |
@@ -84,6 +84,7 @@ links from day one, and callers can be written against it before the store exist
 namespace liquid::runtime {
 template <class T> using task = boost::capy::task<result<T>>;   // every I/O function returns this
 using boost::capy::io_result;  using boost::capy::when_all;  using boost::capy::timeout;  using boost::capy::delay;
+template <class T> boost::capy::io_task<result<T>> as_io(task<T>); // adapt a liquid task for Capy composition
 class context;                        // owns a Corosio io_context and its threads; opaque
 template <class T> result<T> block_on(task<T>);                // run to completion on a private context (CLI, tests)
 void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared pool
@@ -91,7 +92,7 @@ template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blockin
 }
 ```
 
-Corosio never appears here; `src/runtime/net.hpp` is the private seam adapter TUs include for
+Corosio never appears here; `src/runtime/net.hpp` is the private adapter TUs include for
 sockets, timers and files. Coroutine functions take their parameters **by value** and are never
 capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard]]`; after
 `offload` the continuation is back on the caller's executor before any Corosio object is touched.
@@ -136,7 +137,7 @@ class store {                          // the chunk store: chunks, packs, liquid
 
 Chunking (FastCDC), packs, compression, the index and its tuning are internal; none of them
 appears in a signature. File I/O is Corosio's `random_access_file` and `stream_file` on the
-io_context's worker pool, behind the private seam. `store_options` names the algorithm and the pack size only.
+io_context's worker pool, behind the private boundary. `store_options` names the algorithm and the pack size only.
 
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 
@@ -170,9 +171,9 @@ class repository {
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
   runtime::task<std::vector<change>> log(log_options = {});
   runtime::task<snapshot> at(change_id);                 // time travel
-  runtime::task<void> nest(const repository& source, std::string path);
+  runtime::task<void> nest(repository source, std::string path);
   runtime::task<repository> split(std::string path, std::filesystem::path into);
-  runtime::task<void> combine(const repository& other, std::optional<std::string> at);
+  runtime::task<void> combine(repository other, std::optional<std::string> at);
   runtime::task<std::vector<conflict>> conflicts();      // #40: conflicts are values
   runtime::task<void> undo(op_id);                       // #41: the operation log
   runtime::task<void> lock(std::string path);            // #42
@@ -203,7 +204,7 @@ Object subjects (attestations *about* a drip or artifact) wait on the TAAP spec 
 
 `src/store/` (chunker, packs, the RocksDB index, GC), `src/crdt/` (automerge-cpp and the
 metadata documents), `src/capture/` (the journal, OS watchers, coalescing), `src/vfs/` (Cloud
-Files, File Provider, FUSE), `src/net/` (Corosio), `src/identity/` (the TAAP implementation and
+Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
 
 ## ABI policy

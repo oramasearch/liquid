@@ -17,11 +17,18 @@ the version API; `errc`, `error` and `result<T>`; algorithm-tagged digests with 
 SHA-256; plain object, drip and identity values; and opaque store, repository, capture, signer,
 key-provider, mount and remote handles. Hashing, digest text conversion and the error model are
 implemented. Operations owned by later issues return `errc::unsupported` and name that issue in
-`error::context`. Rules: `std::expected` at the boundary, no exceptions across it, **never a
-Zetta type**, and no third-party type in a public header. The CLI never carries behaviour the
-library lacks.
+`error::context`. Waiting operations return lazy `runtime::task<T>` values and are exercised from
+synchronous code through `runtime::block_on`. Rules: `std::expected` at the boundary, no
+exceptions across it, **never a Zetta type**, and no third-party type in a public header except
+Boost.Capy through `liquid/runtime.hpp`. The CLI never carries behaviour the library lacks.
 
 **Consume.**
+
+Clone with both vendored runtime dependencies:
+
+```sh
+git clone --recurse-submodules git@github.com:oramasearch/liquid.git
+```
 
 ```cmake
 # as a submodule (liquify)
@@ -35,7 +42,11 @@ target_link_libraries(app PRIVATE liquid::liquid)
 ```
 
 `cmake --install build --prefix <p>` lays out `bin/liquid`, `lib/libliquid.a`, `include/liquid/`,
-`lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, `liquidTargets.cmake`).
+`lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, `liquidTargets.cmake`,
+`liquidPrivateTargets.cmake`) and the vendored Capy package under `lib/cmake/boost_capy/`.
+The package config finds the installed `Boost::capy` target before importing `liquid::liquid`, so
+consumers receive Capy's headers, compile options, and link library transitively. Corosio remains
+a private link dependency.
 
 **Verify.** Static: `cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build`.
 Shared: `cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON` then

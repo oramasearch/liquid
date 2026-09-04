@@ -4,13 +4,13 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <span>
-#include <string_view>
+#include <string>
 #include <vector>
 
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/object.hpp"
+#include "liquid/runtime.hpp"
 
 namespace liquid {
 
@@ -36,25 +36,22 @@ public:
     repository(const repository&) = delete;
     repository& operator=(const repository&) = delete;
 
-    [[nodiscard]] static result<repository> create(
-        const std::filesystem::path& path, const repository_options& options = {});
-    [[nodiscard]] static result<repository> open(const std::filesystem::path& path);
-    [[nodiscard]] result<tree> root();
-    [[nodiscard]] result<change_id> head();
-    [[nodiscard]] result<std::vector<std::byte>> read(std::string_view path);
-    [[nodiscard]] result<void> write(
-        std::string_view path, std::span<const std::byte> contents);
-    [[nodiscard]] result<std::vector<change>> log(const log_options& options = {});
-    [[nodiscard]] result<snapshot> at(const change_id& id);
-    [[nodiscard]] result<void> nest(const repository& source, std::string_view path);
-    [[nodiscard]] result<repository> split(
-        std::string_view path, const std::filesystem::path& into);
-    [[nodiscard]] result<void> combine(
-        const repository& other, std::optional<std::string_view> at);
-    [[nodiscard]] result<std::vector<conflict>> conflicts();
-    [[nodiscard]] result<void> undo(const op_id& operation);
-    [[nodiscard]] result<void> lock(std::string_view path);
-    [[nodiscard]] result<void> unlock(std::string_view path);
+    [[nodiscard]] static runtime::task<repository> create(std::filesystem::path path,
+                                                          repository_options options = {});
+    [[nodiscard]] static runtime::task<repository> open(std::filesystem::path path);
+    [[nodiscard]] runtime::task<tree> root();
+    [[nodiscard]] runtime::task<change_id> head();
+    [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
+    [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
+    [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
+    [[nodiscard]] runtime::task<snapshot> at(change_id id);
+    [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
+    [[nodiscard]] runtime::task<repository> split(std::string path, std::filesystem::path into);
+    [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);
+    [[nodiscard]] runtime::task<std::vector<conflict>> conflicts();
+    [[nodiscard]] runtime::task<void> undo(op_id operation);
+    [[nodiscard]] runtime::task<void> lock(std::string path);
+    [[nodiscard]] runtime::task<void> unlock(std::string path);
 
 private:
     struct impl;

@@ -6,6 +6,7 @@ add_executable(liquid-tests
   test_object.cpp
   test_remote.cpp
   test_repository.cpp
+  test_runtime.cpp
   test_store.cpp
   test_version.cpp
   test_vfs.cpp
@@ -25,6 +26,7 @@ add_executable(liquid-header-tests
   headers/object.cpp
   headers/remote.cpp
   headers/repository.cpp
+  headers/runtime.cpp
   headers/store.cpp
   headers/version.cpp
   headers/vfs.cpp)

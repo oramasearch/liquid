@@ -64,6 +64,17 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # libliquid — everything under include/liquid/ is the public API.
 # -----------------------------------------------------------------------------
 include(FetchContent)
+
+set(BOOST_CAPY_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(BOOST_CAPY_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BOOST_CAPY_BUILD_BENCH    OFF CACHE BOOL "" FORCE)
+add_subdirectory(modules/capy EXCLUDE_FROM_ALL)
+
+set(BOOST_COROSIO_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(BOOST_COROSIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BOOST_COROSIO_BUILD_PERF     OFF CACHE BOOL "" FORCE)
+add_subdirectory(modules/corosio EXCLUDE_FROM_ALL)
+
 FetchContent_Declare(blake3_source
   GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
   GIT_TAG        1.8.7
@@ -106,11 +117,15 @@ add_library(libliquid
   src/object.cpp
   src/remote.cpp
   src/repository.cpp
+  src/runtime/runtime.cpp
   src/store.cpp
   src/version.cpp
   src/vfs.cpp
 )
 add_library(liquid::liquid ALIAS libliquid)
+# Capy's standalone install export includes these unlinked helper archives. Build them so the
+# parent install can carry the complete upstream Boost::capy package for liquid consumers.
+add_dependencies(libliquid boost_capy_test_suite boost_capy_test_suite_main)
 set_target_properties(libliquid PROPERTIES
   OUTPUT_NAME liquid            # libliquid.a / libliquid.dylib / libliquid.so
   EXPORT_NAME liquid            # find_package(liquid) → liquid::liquid
@@ -123,6 +138,9 @@ target_include_directories(libliquid PUBLIC
   $<INSTALL_INTERFACE:include>
   PRIVATE ${blake3_source_SOURCE_DIR}/c)
 target_compile_features(libliquid PUBLIC cxx_std_26)
+target_link_libraries(libliquid
+  PUBLIC Boost::capy
+  PRIVATE Boost::corosio)
 if(BUILD_SHARED_LIBS)
   target_link_libraries(libliquid PRIVATE liquid_blake3)
 else()
@@ -154,12 +172,21 @@ install(TARGETS libliquid EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS boost_corosio EXPORT liquidPrivateTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ ${CMAKE_CURRENT_BINARY_DIR}/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+# EXCLUDE_FROM_ALL also excludes Capy's own install rules from the parent install script.
+install(SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/modules/capy/cmake_install.cmake)
 if(LIQUID_BUILD_CLI)
   install(TARGETS liquid-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(EXPORT liquidTargets NAMESPACE liquid::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/liquid)
+install(EXPORT liquidPrivateTargets NAMESPACE Boost::
+  FILE liquidPrivateTargets.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/liquid)
 configure_package_config_file(cmake/liquidConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/liquidConfig.cmake
