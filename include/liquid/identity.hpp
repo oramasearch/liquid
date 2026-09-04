@@ -17,6 +17,10 @@
 
 namespace liquid {
 
+namespace encryption_detail {
+class leaf_cipher;
+}
+
 namespace store_detail {
 class store_backend;
 }
@@ -199,6 +203,7 @@ private:
     std::unique_ptr<impl> impl_;
 
     friend class store_detail::store_backend;
+    friend class encryption_detail::leaf_cipher;
 };
 
 } // namespace liquid

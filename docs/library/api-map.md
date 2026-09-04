@@ -58,7 +58,7 @@ owning issue in `error::context`.
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2, #50 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, `scan_result/1` attestation, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #40, #41, #42, #50, #53, #116 | implemented | `repository`: open, read, memory and streaming-file writes, redaction, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks |
+| `liquid/repository.hpp` | #2, #40, #41, #42, #50, #52, #53, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -224,10 +224,12 @@ class repository {
   runtime::task<tree> root();                            // the working copy is a change
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
+  runtime::task<std::vector<std::byte>> read_decrypted(std::string path);  // explicit leaf/file decryption
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
   runtime::task<void> redact(std::string path, std::optional<change_id> = {});
   runtime::task<void> redact(std::string path, std::vector<std::byte> replacement,
                              std::optional<change_id> = {});
+  runtime::task<std::vector<std::string>> diff_keys(std::string path, change_id a, change_id b);
   runtime::task<void> write_file(std::string path, std::filesystem::path source);   // streams a large file in; one drip
   runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
   runtime::task<void> remove(std::string path);
@@ -261,9 +263,14 @@ struct write_options { std::uint32_t mode{0100644}; };
 // log_options gains: std::optional<change_id> from; bool first_parent{false};  (full DAG, topological order, by default)
 ```
 
+`repository_options::encrypt.paths` is an ordered vector of `{ path, key_id, mode,
+encrypted_regex }`. The first repository-relative glob match selects leaf or file mode. Leaf mode
+is implemented for JSON and `.env`; [leaf-encryption.md](leaf-encryption.md) defines its envelope,
+normalization, enforcement, and JSON Pointer key paths.
+
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
-`repository_options` is a plain record with `checkpoint_interval` and `store`; its `store_options`
+`repository_options` is a plain record with `checkpoint_interval`, `store`, and `encrypt`; its `store_options`
 member selects the object-store hash algorithm and, when configured, its key custody. Pass the
 same options to `create` and `open` so later writes and reads use the intended store settings.
 Repository change IDs are computed with that selected store algorithm, including IDs returned by

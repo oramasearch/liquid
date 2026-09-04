@@ -21,9 +21,25 @@ struct testing;
 struct vfs_access;
 } // namespace repository_detail
 
+enum class encryption_mode : std::uint8_t { leaf, file };
+
+struct LIQUID_EXPORT encryption_path_rule {
+    std::string path;
+    std::string key_id;
+    encryption_mode mode{encryption_mode::leaf};
+    std::string encrypted_regex{".*"};
+
+    auto operator==(const encryption_path_rule&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT encryption_config {
+    std::vector<encryption_path_rule> paths;
+};
+
 struct LIQUID_EXPORT repository_options {
     std::uint64_t checkpoint_interval{64};
     store_options store{};
+    encryption_config encrypt{};
 };
 
 struct LIQUID_EXPORT log_options {};
@@ -82,6 +98,7 @@ public:
     [[nodiscard]] runtime::task<tree> root();
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
+    [[nodiscard]] runtime::task<std::vector<std::byte>> read_decrypted(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
     [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
     [[nodiscard]] runtime::task<void> redact(std::string path,
@@ -89,6 +106,8 @@ public:
     [[nodiscard]] runtime::task<void> redact(std::string path,
                                              std::vector<std::byte> replacement,
                                              std::optional<change_id> change = std::nullopt);
+    [[nodiscard]] runtime::task<std::vector<std::string>>
+    diff_keys(std::string path, change_id change_a, change_id change_b);
     [[nodiscard]] runtime::task<void> move(std::string from, std::string to);
     [[nodiscard]] runtime::task<void> remove(std::string path);
     [[nodiscard]] runtime::task<change_id> cut(std::string message);

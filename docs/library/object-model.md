@@ -84,7 +84,10 @@ The **repository document** (one per repository; directories are their own docum
   "refs":    map name → change_id text        # "main" → "blake3:…"
   "locks":   map path-pattern → { by: actor, since: time, authority: "advisory"|"lake" }   # liquid #42
   "nested":  map path → { repo_id, pinned: change_id text }                              # nest/split
-  "config":  map                 # lock patterns, encryption rules, chunking overrides
+  "config":  {
+    "encrypt": { "paths": [ { "path": glob, "key_id": text,
+                                "mode": "leaf"|"file", "encrypted_regex": text } … ] }
+  }                              # ordered encryption rules; first matching path wins
   "ops":     list of op          # the operation log, liquid #41
 }
 ```

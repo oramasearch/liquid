@@ -6,15 +6,20 @@
 #include <functional>
 #include <map>
 #include <random>
+#include <regex>
 #include <set>
 #include <string_view>
 #include <utility>
 
 #include "crdt/document.hpp"
 #include "encoding/cbor.hpp"
+#include "encryption/leaf.hpp"
+#include "formats/dotenv.hpp"
+#include "formats/json.hpp"
 #include "identity/taap.hpp"
 #include "objects/records.hpp"
 #include "repository/merge.hpp"
+#include "repository/store_access.hpp"
 #include "repository/testing.hpp"
 #include "store/pack.hpp"
 #include "vfs/repository_access.hpp"
@@ -52,6 +57,7 @@ struct repository_document {
     std::vector<std::string> locks;
     std::vector<conflict> conflict_values;
     std::vector<persisted_drip> drips;
+    std::vector<encryption_path_rule> encryption_rules;
     std::uint64_t pending_drips{};
 };
 
@@ -158,6 +164,15 @@ auto encode_repository_document(const repository_document& value)
     for (const auto& drip : value.drips) {
         drips.push_back(map({{"body", bytes(drip.body)}, {"sig", bytes(drip.signature)}}));
     }
+    auto encryption_paths = cbor::value::array{};
+    for (const auto& rule : value.encryption_rules) {
+        encryption_paths.push_back(
+            map({{"path", cbor::value{rule.path}},
+                 {"key_id", cbor::value{rule.key_id}},
+                 {"mode", cbor::value{rule.mode == encryption_mode::leaf ? "leaf" : "file"}},
+                 {"encrypted_regex", cbor::value{rule.encrypted_regex}}}));
+    }
+    auto config = map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
@@ -167,6 +182,7 @@ auto encode_repository_document(const repository_document& value)
                              {"ops", cbor::value{std::move(ops)}},
                              {"head", std::move(head)},
                              {"locks", cbor::value{std::move(locks)}},
+                             {"config", std::move(config)},
                              {"drips", cbor::value{std::move(drips)}},
                              {"pending", cbor::value{value.pending_drips}}}));
 }
@@ -183,6 +199,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* ops = find(*decoded, "ops");
     const auto* head = find(*decoded, "head");
     const auto* locks = find(*decoded, "locks");
+    const auto* config = find(*decoded, "config");
     const auto* drip_values = find(*decoded, "drips");
     const auto* pending = find(*decoded, "pending");
     const auto* v = version ? std::get_if<std::uint64_t>(&version->data) : nullptr;
@@ -280,6 +297,36 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
             return std::unexpected(failure(errc::corrupt, "invalid lock", "repository document"));
         output.locks.push_back(*text);
     }
+    if (config) {
+        const auto* encrypt = find(*config, "encrypt");
+        const auto* paths = encrypt ? find(*encrypt, "paths") : nullptr;
+        const auto* path_values = paths ? std::get_if<cbor::value::array>(&paths->data) : nullptr;
+        if (!encrypt || !path_values) {
+            return std::unexpected(
+                failure(errc::corrupt, "invalid encryption config", "repository document"));
+        }
+        for (const auto& item : *path_values) {
+            const auto* path = find(item, "path");
+            const auto* key_id = find(item, "key_id");
+            const auto* mode = find(item, "mode");
+            const auto* encrypted_regex = find(item, "encrypted_regex");
+            const auto* path_text = path ? std::get_if<std::string>(&path->data) : nullptr;
+            const auto* key_text = key_id ? std::get_if<std::string>(&key_id->data) : nullptr;
+            const auto* mode_text = mode ? std::get_if<std::string>(&mode->data) : nullptr;
+            const auto* regex_text =
+                encrypted_regex ? std::get_if<std::string>(&encrypted_regex->data) : nullptr;
+            if (!path_text || !key_text || !mode_text ||
+                (*mode_text != "leaf" && *mode_text != "file") || !regex_text) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid encryption path rule", "repository document"));
+            }
+            output.encryption_rules.push_back(
+                {*path_text,
+                 *key_text,
+                 *mode_text == "leaf" ? encryption_mode::leaf : encryption_mode::file,
+                 *regex_text});
+        }
+    }
     for (const auto& item : *saved_drips) {
         const auto* body = find(item, "body");
         const auto* signature = find(item, "sig");
@@ -359,6 +406,83 @@ auto same_path_or_descendant(std::string_view path, std::string_view root) -> bo
     return path == root ||
            (path.size() > root.size() && path.starts_with(root) && path[root.size()] == '/');
 }
+
+auto glob_matches(std::string_view pattern, std::string_view path) -> bool {
+    auto previous = std::vector<bool>(path.size() + 1);
+    previous[0] = true;
+    for (std::size_t pattern_index = 0; pattern_index < pattern.size();) {
+        auto current = std::vector<bool>(path.size() + 1);
+        if (pattern[pattern_index] == '*') {
+            const auto recursive =
+                pattern_index + 1 < pattern.size() && pattern[pattern_index + 1] == '*';
+            pattern_index += recursive ? 2 : 1;
+            current[0] = previous[0];
+            for (std::size_t path_index = 1; path_index <= path.size(); ++path_index) {
+                const auto consumable = recursive || path[path_index - 1] != '/';
+                current[path_index] =
+                    previous[path_index] || (consumable && current[path_index - 1]);
+            }
+        } else {
+            for (std::size_t path_index = 1; path_index <= path.size(); ++path_index) {
+                const auto character_matches =
+                    pattern[pattern_index] == '?' || pattern[pattern_index] == path[path_index - 1];
+                const auto allowed = pattern[pattern_index] != '?' || path[path_index - 1] != '/';
+                current[path_index] = previous[path_index - 1] && character_matches && allowed;
+            }
+            ++pattern_index;
+        }
+        previous = std::move(current);
+    }
+    return previous[path.size()];
+}
+
+auto validate_encryption_rules(const std::vector<encryption_path_rule>& rules) -> result<void> {
+    for (const auto& rule : rules) {
+        if (rule.path.empty() || rule.path.front() == '/' || rule.key_id.empty()) {
+            return std::unexpected(
+                failure(errc::invalid_argument, "invalid encryption path rule", rule.path));
+        }
+        if (rule.key_id.find_first_of(":]") != std::string::npos) {
+            return std::unexpected(failure(errc::invalid_argument,
+                                           "encryption key id cannot contain ':' or ']'",
+                                           rule.key_id));
+        }
+        if (rule.mode == encryption_mode::leaf) {
+            try {
+                static_cast<void>(std::regex{rule.encrypted_regex});
+            } catch (const std::regex_error& caught) {
+                return std::unexpected(
+                    failure(errc::invalid_argument, caught.what(), rule.encrypted_regex));
+            }
+        }
+    }
+    return {};
+}
+
+auto encryption_rule_for(const repository_document& document, std::string_view path)
+    -> const encryption_path_rule* {
+    for (const auto& rule : document.encryption_rules) {
+        if (glob_matches(rule.path, path)) {
+            return &rule;
+        }
+    }
+    return nullptr;
+}
+
+auto leaf_format(std::string_view path) -> std::string_view {
+    if (path.ends_with(".json")) {
+        return "json";
+    }
+    if (path.ends_with(".env")) {
+        return "dotenv";
+    }
+    return {};
+}
+
+auto string_bytes(std::string_view input) -> std::vector<std::byte> {
+    return {reinterpret_cast<const std::byte*>(input.data()),
+            reinterpret_cast<const std::byte*>(input.data() + input.size())};
+}
 } // namespace
 
 struct repository::impl {
@@ -370,15 +494,18 @@ struct repository::impl {
     std::uint64_t directory_load_count{};
     std::map<node_id, crdt::directory_document> directory_cache;
     signer signing_key;
+    std::shared_ptr<keyring> keys;
     impl(std::filesystem::path path,
          store value,
          repository_document document,
          signer key,
+         std::shared_ptr<keyring> encryption_keys,
          std::uint64_t interval,
          algorithm algorithm_value)
         : root_path(std::move(path)), objects(std::move(value)), current(std::move(document)),
           checkpoint_interval(std::max(std::uint64_t{1}, interval)),
-          hash_algorithm(algorithm_value), signing_key(std::move(key)) {}
+          hash_algorithm(algorithm_value), signing_key(std::move(key)),
+          keys(std::move(encryption_keys)) {}
     auto marker() const -> std::filesystem::path {
         return root_path / "LIQUID_REPO";
     }
@@ -413,7 +540,8 @@ struct repository::impl {
             auto saved_document = document.save();
             if (!saved_document)
                 co_return std::unexpected(saved_document.error());
-            auto saved_id = co_await objects.put(std::move(*saved_document));
+            auto saved_id = co_await repository_detail::store_access::put_plain(
+                objects, std::move(*saved_document));
             if (!saved_id)
                 co_return std::unexpected(saved_id.error());
             current.dirs[node] = *saved_id;
@@ -421,7 +549,8 @@ struct repository::impl {
         auto encoded = encode_repository_document(current);
         if (!encoded)
             co_return std::unexpected(encoded.error());
-        auto stored = co_await objects.put(std::move(*encoded));
+        auto stored =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
         if (!stored)
             co_return std::unexpected(stored.error());
         auto temporary = marker();
@@ -518,7 +647,7 @@ struct repository::impl {
         auto encoded = objects::encode(value);
         if (!encoded)
             co_return std::unexpected(encoded.error());
-        co_return co_await objects.put(std::move(*encoded));
+        co_return co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
     }
     runtime::task<tree> root_tree() {
         auto snapshot_id = co_await snapshot(current.root);
@@ -570,6 +699,194 @@ struct repository::impl {
         co_return std::unexpected(
             failure(errc::invalid_argument, "redaction path is empty", "repository::redact"));
     }
+
+    runtime::task<std::vector<std::byte>> blob_contents(digest reference, std::string path) {
+        auto encoded = co_await objects.get(reference);
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        auto record = objects::decode_blob(*encoded);
+        if (!record) {
+            co_return std::unexpected(record.error());
+        }
+        auto output = std::vector<std::byte>{};
+        output.reserve(static_cast<std::size_t>(record->size));
+        for (const auto& chunk : record->chunks) {
+            auto content = co_await objects.get(chunk);
+            if (!content) {
+                co_return std::unexpected(content.error());
+            }
+            output.insert(output.end(), content->begin(), content->end());
+        }
+        if (output.size() != record->size) {
+            co_return std::unexpected(
+                failure(errc::corrupt, "blob size does not match content", std::move(path)));
+        }
+        co_return output;
+    }
+    runtime::task<std::vector<std::byte>> read_at(std::string path, change_id revision) {
+        auto change_bytes = co_await objects.get(revision.value);
+        if (!change_bytes) {
+            co_return std::unexpected(change_bytes.error());
+        }
+        auto saved_change = objects::decode_change(*change_bytes, hash_algorithm);
+        if (!saved_change) {
+            co_return std::unexpected(saved_change.error());
+        }
+        auto parts = split_path(path);
+        if (!parts) {
+            co_return std::unexpected(parts.error());
+        }
+        auto tree_reference = saved_change->root;
+        for (std::size_t index = 0; index < parts->size(); ++index) {
+            auto tree_bytes = co_await objects.get(tree_reference);
+            if (!tree_bytes) {
+                co_return std::unexpected(tree_bytes.error());
+            }
+            auto directory = objects::decode_tree(*tree_bytes);
+            if (!directory) {
+                co_return std::unexpected(directory.error());
+            }
+            const auto found =
+                std::ranges::find(directory->entries, (*parts)[index], &tree_entry::name);
+            if (found == directory->entries.end()) {
+                co_return std::unexpected(
+                    failure(errc::not_found, "file does not exist at change", path));
+            }
+            if (index + 1 == parts->size()) {
+                if (found->kind != node_kind::blob) {
+                    co_return std::unexpected(
+                        failure(errc::not_found, "path is not a file at change", path));
+                }
+                co_return co_await blob_contents(found->ref, std::move(path));
+            }
+            if (found->kind != node_kind::tree) {
+                co_return std::unexpected(
+                    failure(errc::not_found, "path component is not a directory", path));
+            }
+            tree_reference = found->ref;
+        }
+        co_return std::unexpected(failure(errc::not_found, "file does not exist at change", path));
+    }
+    runtime::task<std::vector<std::byte>>
+    encrypt_json_write(std::string path,
+                       std::vector<std::byte> contents,
+                       encryption_path_rule rule,
+                       std::optional<digest> prior_reference) {
+        const auto source =
+            std::string_view{reinterpret_cast<const char*>(contents.data()), contents.size()};
+        auto parsed = formats::json::parse(source);
+        if (!parsed) {
+            co_return std::unexpected(parsed.error());
+        }
+        const auto leaf_rule = encryption_detail::leaf_rule{rule.key_id, rule.encrypted_regex};
+        if (prior_reference) {
+            auto prior_bytes = co_await blob_contents(*prior_reference, path);
+            if (!prior_bytes) {
+                co_return std::unexpected(prior_bytes.error());
+            }
+            const auto prior_source = std::string_view{
+                reinterpret_cast<const char*>(prior_bytes->data()), prior_bytes->size()};
+            auto prior_ciphertext = formats::json::parse(prior_source);
+            if (!prior_ciphertext) {
+                co_return std::unexpected(prior_ciphertext.error());
+            }
+            auto prior_plaintext = co_await encryption_detail::leaf_cipher::decrypt_json(
+                *prior_ciphertext, leaf_rule, keys);
+            if (!prior_plaintext) {
+                co_return std::unexpected(prior_plaintext.error());
+            }
+            auto preserved = encryption_detail::preserve_json_envelopes(
+                *parsed, *prior_plaintext, *prior_ciphertext, leaf_rule);
+            if (!preserved) {
+                co_return std::unexpected(preserved.error());
+            }
+        }
+        auto encrypted = co_await encryption_detail::leaf_cipher::encrypt_json(
+            std::move(*parsed), leaf_rule, keys);
+        if (!encrypted) {
+            co_return std::unexpected(encrypted.error());
+        }
+        auto written = formats::json::write(*encrypted);
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        co_return string_bytes(*written);
+    }
+    runtime::task<std::vector<std::byte>>
+    encrypt_dotenv_write(std::string path,
+                         std::vector<std::byte> contents,
+                         encryption_path_rule rule,
+                         std::optional<digest> prior_reference) {
+        const auto source =
+            std::string_view{reinterpret_cast<const char*>(contents.data()), contents.size()};
+        auto parsed = formats::dotenv::parse(source);
+        if (!parsed) {
+            co_return std::unexpected(parsed.error());
+        }
+        const auto leaf_rule = encryption_detail::leaf_rule{rule.key_id, rule.encrypted_regex};
+        if (prior_reference) {
+            auto prior_bytes = co_await blob_contents(*prior_reference, path);
+            if (!prior_bytes) {
+                co_return std::unexpected(prior_bytes.error());
+            }
+            const auto prior_source = std::string_view{
+                reinterpret_cast<const char*>(prior_bytes->data()), prior_bytes->size()};
+            auto prior_ciphertext = formats::dotenv::parse(prior_source);
+            if (!prior_ciphertext) {
+                co_return std::unexpected(prior_ciphertext.error());
+            }
+            auto prior_plaintext = co_await encryption_detail::leaf_cipher::decrypt_dotenv(
+                *prior_ciphertext, leaf_rule, keys);
+            if (!prior_plaintext) {
+                co_return std::unexpected(prior_plaintext.error());
+            }
+            auto preserved = encryption_detail::preserve_dotenv_envelopes(
+                *parsed, *prior_plaintext, *prior_ciphertext, leaf_rule);
+            if (!preserved) {
+                co_return std::unexpected(preserved.error());
+            }
+        }
+        auto encrypted = co_await encryption_detail::leaf_cipher::encrypt_dotenv(
+            std::move(*parsed), leaf_rule, keys);
+        if (!encrypted) {
+            co_return std::unexpected(encrypted.error());
+        }
+        auto written = formats::dotenv::write(*encrypted);
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        co_return string_bytes(*written);
+    }
+    runtime::task<std::vector<std::byte>> prepare_write(std::string path,
+                                                        std::vector<std::byte> contents,
+                                                        std::optional<digest> prior_reference) {
+        const auto* selected = encryption_rule_for(current, path);
+        if (!selected) {
+            co_return contents;
+        }
+        auto rule = *selected;
+        if (rule.mode == encryption_mode::file) {
+            const auto source =
+                std::string_view{reinterpret_cast<const char*>(contents.data()), contents.size()};
+            if (encryption_detail::is_envelope(source, rule.key_id)) {
+                co_return contents;
+            }
+            co_return co_await encryption_detail::leaf_cipher::encrypt_file(
+                std::move(contents), std::move(path), rule.key_id, keys);
+        }
+        const auto format = leaf_format(path);
+        if (format == "json") {
+            co_return co_await encrypt_json_write(
+                std::move(path), std::move(contents), std::move(rule), prior_reference);
+        }
+        if (format == "dotenv") {
+            co_return co_await encrypt_dotenv_write(
+                std::move(path), std::move(contents), std::move(rule), prior_reference);
+        }
+        co_return std::unexpected(
+            failure(errc::unsupported, "leaf encryption supports JSON and .env", path));
+    }
     auto locked(std::string_view path) const -> bool {
         return std::ranges::any_of(current.locks, [&](const auto& pattern) {
             return same_path_or_descendant(path, pattern);
@@ -584,7 +901,8 @@ struct repository::impl {
         auto encoded = objects::encode(record);
         if (!encoded)
             co_return std::unexpected(encoded.error());
-        auto reference = co_await objects.put(std::move(*encoded));
+        auto reference =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
         if (!reference)
             co_return std::unexpected(reference.error());
         auto parent = parent_for(current.root, *parts, true, hash_algorithm);
@@ -639,6 +957,10 @@ repository::repository(repository&&) noexcept = default;
 auto repository::operator=(repository&&) noexcept -> repository& = default;
 runtime::task<repository> repository::create(std::filesystem::path path,
                                              repository_options options) {
+    auto valid_rules = validate_encryption_rules(options.encrypt.paths);
+    if (!valid_rules) {
+        co_return std::unexpected(valid_rules.error());
+    }
     auto code = std::error_code{};
     std::filesystem::create_directories(path, code);
     if (code)
@@ -647,6 +969,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
         co_return std::unexpected(
             failure(errc::already_exists, "repository already exists", path.string()));
     const auto hash_algorithm = options.store.hash_algorithm;
+    auto keys = options.store.keys;
     auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
     if (!objects)
         co_return std::unexpected(objects.error());
@@ -654,6 +977,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.repository = random_id();
     document.root.node = random_id();
     document.root.object.alg = hash_algorithm;
+    document.encryption_rules = std::move(options.encrypt.paths);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -662,6 +986,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
                                           std::move(*objects),
                                           std::move(document),
                                           std::move(*signing_key),
+                                          std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
     auto saved = co_await output.impl_->persist();
@@ -680,6 +1005,7 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!document_id)
         co_return std::unexpected(document_id.error());
     const auto hash_algorithm = options.store.hash_algorithm;
+    auto keys = options.store.keys;
     auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
     if (!objects)
         co_return std::unexpected(objects.error());
@@ -698,6 +1024,9 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
             co_return std::unexpected(replayed.error());
         document = std::move(replayed);
     }
+    auto valid_rules = validate_encryption_rules(document->encryption_rules);
+    if (!valid_rules)
+        co_return std::unexpected(valid_rules.error());
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -706,6 +1035,7 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
                                           std::move(*objects),
                                           std::move(*document),
                                           std::move(*signing_key),
+                                          std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
     co_return output;
@@ -729,28 +1059,87 @@ runtime::task<std::vector<std::byte>> repository::read(std::string path) {
     auto* entry = lookup(impl_->current.root, *parts);
     if (!entry || entry->kind != entry_kind::file)
         co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
-    auto encoded = co_await impl_->objects.get(entry->object);
-    if (!encoded)
-        co_return std::unexpected(encoded.error());
-    auto blob = objects::decode_blob(*encoded);
-    if (!blob)
-        co_return std::unexpected(blob.error());
-    std::vector<std::byte> output;
-    output.reserve(static_cast<std::size_t>(blob->size));
-    for (const auto& chunk : blob->chunks) {
-        auto content = co_await impl_->objects.get(chunk);
-        if (!content)
-            co_return std::unexpected(content.error());
-        output.insert(output.end(), content->begin(), content->end());
+    co_return co_await impl_->blob_contents(entry->object, std::move(path));
+}
+runtime::task<std::vector<std::byte>> repository::read_decrypted(std::string path) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
-    if (output.size() != blob->size)
-        co_return std::unexpected(failure(errc::corrupt, "blob size does not match content", path));
-    co_return output;
+    auto raw = co_await read(path);
+    if (!raw) {
+        co_return std::unexpected(raw.error());
+    }
+    const auto* rule = encryption_rule_for(impl_->current, path);
+    if (!rule) {
+        co_return raw;
+    }
+    if (rule->mode == encryption_mode::file) {
+        co_return co_await encryption_detail::leaf_cipher::decrypt_file(
+            std::move(*raw), std::move(path), rule->key_id, impl_->keys);
+    }
+    const auto format = leaf_format(path);
+    const auto source = std::string_view{reinterpret_cast<const char*>(raw->data()), raw->size()};
+    const auto leaf_rule = encryption_detail::leaf_rule{rule->key_id, rule->encrypted_regex};
+    if (format == "json") {
+        auto parsed = formats::json::parse(source);
+        if (!parsed) {
+            co_return std::unexpected(parsed.error());
+        }
+        auto decrypted = co_await encryption_detail::leaf_cipher::decrypt_json(
+            std::move(*parsed), leaf_rule, impl_->keys);
+        if (!decrypted) {
+            co_return std::unexpected(decrypted.error());
+        }
+        auto written = formats::json::write(*decrypted);
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        co_return string_bytes(*written);
+    }
+    if (format == "dotenv") {
+        auto parsed = formats::dotenv::parse(source);
+        if (!parsed) {
+            co_return std::unexpected(parsed.error());
+        }
+        auto decrypted = co_await encryption_detail::leaf_cipher::decrypt_dotenv(
+            std::move(*parsed), leaf_rule, impl_->keys);
+        if (!decrypted) {
+            co_return std::unexpected(decrypted.error());
+        }
+        auto written = formats::dotenv::write(*decrypted);
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        co_return string_bytes(*written);
+    }
+    co_return std::unexpected(
+        failure(errc::unsupported, "leaf encryption supports JSON and .env", path));
 }
 runtime::task<void> repository::write(std::string path, std::vector<std::byte> contents) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    auto content = co_await impl_->objects.put(std::move(contents));
+    if (impl_->locked(path))
+        co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+    auto parts = split_path(path);
+    if (!parts)
+        co_return std::unexpected(parts.error());
+    auto* current_entry = lookup(impl_->current.root, *parts);
+    const auto* encryption_rule = encryption_rule_for(impl_->current, path);
+    auto prior_reference = std::optional<digest>{};
+    if (current_entry && current_entry->kind == entry_kind::file) {
+        prior_reference = current_entry->object;
+    }
+    auto prepared = co_await impl_->prepare_write(path, std::move(contents), prior_reference);
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
+    contents = std::move(*prepared);
+    auto content = encryption_rule && encryption_rule->mode == encryption_mode::file
+                       ? co_await repository_detail::store_access::put_encrypted(
+                             impl_->objects, std::move(contents), encryption_rule->key_id)
+                   : encryption_rule ? co_await repository_detail::store_access::put_plain(
+                                           impl_->objects, std::move(contents))
+                                     : co_await impl_->objects.put(std::move(contents));
     if (!content)
         co_return std::unexpected(content.error());
     auto record = impl_->objects.blob_for(*content);
@@ -761,6 +1150,12 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
 runtime::task<void> repository::write_file(std::string path, std::filesystem::path source) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    if (encryption_rule_for(impl_->current, path)) {
+        auto contents = co_await store_detail::read_file(source);
+        if (!contents)
+            co_return std::unexpected(contents.error());
+        co_return co_await write(std::move(path), std::move(*contents));
+    }
     auto content = co_await impl_->objects.put_file(std::move(source));
     if (!content)
         co_return std::unexpected(content.error());
@@ -769,7 +1164,6 @@ runtime::task<void> repository::write_file(std::string path, std::filesystem::pa
         co_return std::unexpected(record.error());
     co_return co_await impl_->record_blob(std::move(path), std::move(*record));
 }
-
 runtime::task<void> repository::redact(std::string path, std::optional<change_id> change) {
     if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -955,6 +1349,78 @@ repository::redact_impl(std::string path, std::vector<std::byte> replacement, di
     }
     co_return result<void>{};
 }
+
+runtime::task<std::vector<std::string>>
+repository::diff_keys(std::string path, change_id change_a, change_id change_b) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto* rule = encryption_rule_for(impl_->current, path);
+    if (!rule) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "path is not declared encrypted", path));
+    }
+    auto left = co_await impl_->read_at(path, change_a);
+    if (!left) {
+        co_return std::unexpected(left.error());
+    }
+    auto right = co_await impl_->read_at(path, change_b);
+    if (!right) {
+        co_return std::unexpected(right.error());
+    }
+    if (rule->mode == encryption_mode::file) {
+        if (*left == *right) {
+            co_return std::vector<std::string>{};
+        }
+        co_return std::vector<std::string>{path};
+    }
+    const auto format = leaf_format(path);
+    const auto left_source =
+        std::string_view{reinterpret_cast<const char*>(left->data()), left->size()};
+    const auto right_source =
+        std::string_view{reinterpret_cast<const char*>(right->data()), right->size()};
+    const auto leaf_rule = encryption_detail::leaf_rule{rule->key_id, rule->encrypted_regex};
+    if (format == "json") {
+        auto left_document = formats::json::parse(left_source);
+        auto right_document = formats::json::parse(right_source);
+        if (!left_document) {
+            co_return std::unexpected(left_document.error());
+        }
+        if (!right_document) {
+            co_return std::unexpected(right_document.error());
+        }
+        auto left_valid = encryption_detail::validate_json(*left_document, leaf_rule);
+        auto right_valid = encryption_detail::validate_json(*right_document, leaf_rule);
+        if (!left_valid) {
+            co_return std::unexpected(left_valid.error());
+        }
+        if (!right_valid) {
+            co_return std::unexpected(right_valid.error());
+        }
+        co_return encryption_detail::diff_json(*left_document, *right_document);
+    }
+    if (format == "dotenv") {
+        auto left_document = formats::dotenv::parse(left_source);
+        auto right_document = formats::dotenv::parse(right_source);
+        if (!left_document) {
+            co_return std::unexpected(left_document.error());
+        }
+        if (!right_document) {
+            co_return std::unexpected(right_document.error());
+        }
+        auto left_valid = encryption_detail::validate_dotenv(*left_document, leaf_rule);
+        auto right_valid = encryption_detail::validate_dotenv(*right_document, leaf_rule);
+        if (!left_valid) {
+            co_return std::unexpected(left_valid.error());
+        }
+        if (!right_valid) {
+            co_return std::unexpected(right_valid.error());
+        }
+        co_return encryption_detail::diff_dotenv(*left_document, *right_document);
+    }
+    co_return std::unexpected(
+        failure(errc::unsupported, "leaf encryption supports JSON and .env", path));
+}
 runtime::task<void> repository::move(std::string from, std::string to) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -1087,7 +1553,8 @@ runtime::task<change_id> repository::cut(std::string message) {
     auto encoded = objects::encode(value);
     if (!encoded)
         co_return std::unexpected(encoded.error());
-    auto stored = co_await impl_->objects.put(std::move(*encoded));
+    auto stored =
+        co_await repository_detail::store_access::put_plain(impl_->objects, std::move(*encoded));
     if (!stored)
         co_return std::unexpected(stored.error());
     change_id id{*stored};

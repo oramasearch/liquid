@@ -654,24 +654,59 @@ runtime::task<void> store_backend::add_object(stored_object object) {
 }
 
 runtime::task<digest> store_backend::put(std::vector<std::byte> input) {
-    auto [lock_error, guard] = co_await mutation_.scoped_lock();
-    if (lock_error)
-        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put"));
-    std::optional<crypto_detail::domain_keys> encryption;
-    std::string key_id;
+    auto key_id = std::optional<std::string>{};
     if (options_.keys) {
         if (options_.write_key.empty()) {
             auto default_key = options_.keys->default_key_id();
-            if (!default_key)
+            if (!default_key) {
                 co_return std::unexpected(default_key.error());
+            }
             key_id = std::move(*default_key);
         } else {
             key_id = options_.write_key;
         }
-        auto versioned = co_await options_.keys->write_key(key_id);
+        auto versioned = co_await options_.keys->write_key(*key_id);
         if (!versioned)
             co_return std::unexpected(versioned.error());
         key_id = std::move(*versioned);
+    }
+    co_return co_await put_selected(std::move(input), std::move(key_id));
+}
+
+runtime::task<digest> store_backend::put_plain(std::vector<std::byte> input) {
+    co_return co_await put_selected(std::move(input), std::nullopt);
+}
+
+runtime::task<digest> store_backend::put_encrypted(std::vector<std::byte> input,
+                                                   std::string key_id) {
+    if (key_id.empty()) {
+        co_return std::unexpected(
+            store_error(errc::invalid_argument, "encrypted put requires a key id", "store::put"));
+    }
+    if (!options_.keys) {
+        co_return std::unexpected(
+            store_error(errc::unauthorized, "encrypted object keyring is unavailable", key_id));
+    }
+    auto versioned = co_await options_.keys->write_key(key_id);
+    if (!versioned) {
+        co_return std::unexpected(versioned.error());
+    }
+    co_return co_await put_selected(std::move(input), std::move(*versioned));
+}
+
+runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
+                                                  std::optional<std::string> selected_key) {
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error)
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put"));
+    std::optional<crypto_detail::domain_keys> encryption;
+    auto key_id = std::string{};
+    if (selected_key) {
+        if (!options_.keys) {
+            co_return std::unexpected(store_error(
+                errc::unauthorized, "encrypted object keyring is unavailable", *selected_key));
+        }
+        key_id = std::move(*selected_key);
         auto data = co_await options_.keys->data_key(key_id, true);
         if (!data)
             co_return std::unexpected(data.error());

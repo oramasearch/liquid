@@ -19,6 +19,9 @@
 namespace liquid {
 
 class repository;
+namespace repository_detail {
+struct store_access;
+}
 
 struct LIQUID_EXPORT store_options {
     algorithm hash_algorithm{algorithm::blake3};
@@ -114,6 +117,11 @@ private:
 
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
+    [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
+                                                      std::string key_id);
+
+    friend struct repository_detail::store_access;
     struct impl;
     std::unique_ptr<impl> impl_;
 };

@@ -215,7 +215,10 @@ add_library(libliquid
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
   src/drip.cpp
+  src/encryption/leaf.cpp
   src/error.cpp
+  src/formats/dotenv.cpp
+  src/formats/json.cpp
   src/hash.cpp
   src/hash/sha256.c
   src/identity.cpp
