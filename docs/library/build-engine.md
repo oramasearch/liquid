@@ -15,9 +15,10 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, and #60 implement the local
-action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA provenance,
-cache diagnostics, build observability, and build-input attestation policy:
+**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, and #56 implement the
+local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
+provenance, cache diagnostics, build observability, build-input attestation policy, and configure
+facts:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -32,7 +33,9 @@ exec hook. Verification re-executes sampled cached actions, emits signed attesta
 quarantines divergent results. Each result references a verified, device-signed
 `slsa_provenance/1` attestation derived from its action and manifest. Before execution, repository
 policy can require verified registered-profile attestations for source and toolchain blobs. Memory
-caching and remote caching and execution remain their own issues.
+caching and remote caching and execution remain their own issues. Configure checks additionally
+populate a shared content-addressed fact base and can be answered across projects without starting
+the probe.
 
 ## Records in the store
 
@@ -321,8 +324,46 @@ driver remains the outer action. FUSE shutdown must wake the request loop throug
 because an attribute lookup of the mount root can be answered from the kernel cache without waking
 the blocked worker.
 
-The configure fact base (#56) is the same mechanism applied to `AC_CHECK_*` probes: a probe is
-an action keyed by (toolchain, sysroot, target), and its result is a cached fact.
+### Configure fact base
+
+The configure fact base (#56) applies action caching to `AC_CHECK_*`, CMake `try_compile`, and the
+common `check_*` families. The exec trace recognizes compiler commands containing `conftest.c`,
+CMake `CMakeScratch/TryCompile-*` directories, and `cmTC_*` outputs. Its canonical probe form is the
+normalized compiler argv and working directory plus the digest of the test program. Project roots,
+Autotools temporary filenames, CMake scratch identifiers, and `cmTC_*` names are replaced by fixed
+tokens. Equivalent checks in unrelated source trees therefore have one probe identity.
+
+Each stored record has this logical shape:
+
+```
+fact { v:1, probe: normalized compiler invocation and test program,
+       key: { toolchain: digest(compiler bytes), sysroot: digest(explicit sysroot tree), target },
+       answer: { exit, outputs: [{path, mode, blob}], variables: {name: value}, result? } }
+```
+
+The BLAKE3 digest of the canonical record is its identifier. `.fact` records live below the shared
+fact directory's `records/`; `INDEX` is a sorted projection containing toolchain, sysroot, target,
+probe digest, and fact digest. Opening the base rebuilds that projection from verified record
+filenames. A lookup compares all three key fields exactly. A changed compiler byte, explicit
+sysroot byte, or target triple cannot select the old answer.
+
+After an Autotools run, `config.log` cache assignments become variable-bearing facts. A later
+project with the same key receives those `ac_cv_*` values in the fixed configure environment, so
+the shell skips the check and no compiler process begins. Common CMake INTERNAL check entries are
+replayed as `-D` cache inputs. Successful compiler-probe facts also retain their action-result
+digest and output digests; unsuccessful checks retain the nonzero observable answer.
+
+`LIQUID_FACTS_CACHE` selects the shared directory. Otherwise `LIQUID_WRAP_CACHE/facts`, the
+platform cache directory, or a working-tree fallback is used, in that order. `liquid facts list`
+and `show` inspect records. `liquid facts export` emits a self-contained `fact-bundle/1` JSON record
+for the Phase 3/6 transport to distribute with referenced cache objects; this issue does not add a
+lake dependency or a remote transport.
+
+`liquid wrap --target <triple>` changes only the fact key. When it names a foreign target, matching
+cache variables may answer the configuration. If configuration reaches an uncached Autotools or
+CMake compiler probe, the sandbox-only exec hook exits before the compiler entry point and `wrap`
+returns `errc::unsupported` naming the target. It never falls back to running a foreign probe on
+the host.
 
 ## What Phase 2 does not do
 
@@ -356,6 +397,10 @@ stored local trace and its Chrome trace-event projection do not invent either me
 - Input-policy tests cover refusal and warning reports, unapproved and invalid signers, unknown
   profile rejection, two distinct reproducibility signers, toolchain traversal, store-index rebuild,
   and policy-bound candidate keys.
+- An Autotools fixture populates facts, then a second project with a separate action cache and the
+  same fact directory starts zero feature probes. Exact-key tests change toolchain, sysroot, and target
+  independently and observe misses. A foreign target's uncached probe is refused before a compiler
+  wrapper can execute.
 
 ## How to change
 

@@ -21,6 +21,7 @@
 #endif
 
 #include "build/cache.hpp"
+#include "build/facts.hpp"
 #include "build/materialise.hpp"
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
@@ -817,6 +818,59 @@ auto fixed_environment(const wrap_options& options) -> std::map<std::string, std
     return environment;
 }
 
+auto apply_cached_variables(std::vector<std::string>& command,
+                            std::map<std::string, std::string>& environment,
+                            const std::map<std::string, std::string>& variables) -> void {
+    auto cmake_configure = !command.empty() &&
+                           std::filesystem::path{command.front()}.filename() == "cmake" &&
+                           std::ranges::find(command, "--build") == command.end();
+    for (const auto& [name, answer] : variables) {
+        if (name.starts_with("ac_cv_")) {
+            environment.insert_or_assign(name, answer);
+        } else if (cmake_configure) {
+            command.push_back("-D" + name + "=" + answer);
+        }
+    }
+}
+
+auto probe_program_digest(const observation_log& observed, std::int64_t pid)
+    -> std::optional<digest> {
+    auto lock = std::scoped_lock{observed.mutex};
+    for (const auto& request : observed.requests) {
+        if (request.pid != pid || !request.content) {
+            continue;
+        }
+        const auto path = std::filesystem::path{request.path};
+        const auto extension = path.extension().string();
+        if (path.filename().string().starts_with("conftest.") ||
+            (request.path.contains("CMakeScratch/TryCompile-") &&
+             (extension == ".c" || extension == ".cc" || extension == ".cpp" ||
+              extension == ".cxx"))) {
+            return request.content;
+        }
+    }
+    return std::nullopt;
+}
+
+runtime::task<std::string>
+probe_program_text(repository& source, const observation_log& observed, std::int64_t pid) {
+    const auto program = probe_program_digest(observed, pid);
+    if (!program) {
+        co_return std::string{};
+    }
+    auto contents = co_await blob_contents(source, *program);
+    if (!contents) {
+        co_return std::unexpected(contents.error());
+    }
+    co_return std::string{reinterpret_cast<const char*>(contents->data()), contents->size()};
+}
+
+auto shareable_probe_program(std::string_view program) -> bool {
+    return program.contains("#include <") ||
+           program.contains("Override any GCC internal prototype") ||
+           program.contains("CMAKE_HAVE_") || program.contains("HAVE_");
+}
+
 runtime::task<digest> store_toolchain(repository& source,
                                       const std::set<std::string>& executables) {
     auto value = tree{};
@@ -1322,6 +1376,8 @@ execute_observed_run(repository& source,
 
 runtime::task<void> publish_observed_run(repository& source,
                                          build_detail::disk_cache& cache,
+                                         build_detail::fact_base& facts,
+                                         const fact_key& facts_key,
                                          wrap_state& state,
                                          const std::filesystem::path& state_path,
                                          const std::filesystem::path& toolchain_path,
@@ -1333,6 +1389,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                          cache_plan& plan,
                                          observed_run& run,
                                          const wrap_options& options,
+                                         bool fact_answers_used,
                                          bool outer_miss_recorded,
                                          wrap_report& report) {
     report.exit = run.launch.exit;
@@ -1383,6 +1440,35 @@ runtime::task<void> publish_observed_run(repository& source,
     for (const auto& [pid, paths] : writes)
         all_writes.insert(paths.begin(), paths.end());
     for (const auto& process : run.processes) {
+        auto program = co_await probe_program_text(source, *run.observations, process.pid);
+        if (!program) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(program.error());
+        }
+        const auto is_probe = build_detail::probe_process(process.command, process.cwd) &&
+                              shareable_probe_program(*program);
+        if (is_probe && !fact_answers_used && !plan.processes.contains(process.key)) {
+            ++report.probes_started;
+            auto answer = fact_answer{};
+            const auto found = writes.find(process.pid);
+            answer.exit = found == writes.end() || found->second.empty() ? 1 : 0;
+            if (found != writes.end()) {
+                auto outputs = co_await collect_action_outputs(source, found->second);
+                if (!outputs) {
+                    static_cast<void>(remove_run(run.directory));
+                    co_return std::unexpected(outputs.error());
+                }
+                answer.outputs = std::move(*outputs);
+            }
+            auto canonical = build_detail::canonical_probe(process.command, process.cwd, *program);
+            if (answer.outputs.empty()) {
+                auto recorded = facts.put(std::move(canonical), facts_key, std::move(answer));
+                if (!recorded) {
+                    static_cast<void>(remove_run(run.directory));
+                    co_return std::unexpected(recorded.error());
+                }
+            }
+        }
         if (process.pid == driver_pid || plan.processes.contains(process.key) ||
             !state.tools.contains(process.executable) ||
             has_writing_descendant(process, run.processes, writes)) {
@@ -1413,6 +1499,21 @@ runtime::task<void> publish_observed_run(repository& source,
         if (!published) {
             static_cast<void>(remove_run(run.directory));
             co_return std::unexpected(published.error());
+        }
+        if (is_probe && !fact_answers_used) {
+            auto answer = fact_answer{.exit = 0, .result = published->result};
+            auto outputs = co_await collect_action_outputs(source, found->second);
+            if (!outputs) {
+                static_cast<void>(remove_run(run.directory));
+                co_return std::unexpected(outputs.error());
+            }
+            answer.outputs = std::move(*outputs);
+            auto canonical = build_detail::canonical_probe(process.command, process.cwd, *program);
+            auto recorded = facts.put(std::move(canonical), facts_key, std::move(answer));
+            if (!recorded) {
+                static_cast<void>(remove_run(run.directory));
+                co_return std::unexpected(recorded.error());
+            }
         }
         plan.next_actions.push_back(*published);
         auto recorded = co_await record_rebuilt_action(
@@ -1696,6 +1797,23 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (code || !std::filesystem::is_directory(working_tree))
         co_return std::unexpected(wrap_error(
             errc::invalid_argument, "wrap working tree is not a directory", working_tree));
+    auto fact_directory = options.fact_directory
+                              ? liquid::result<std::filesystem::path>{*options.fact_directory}
+                              : build_detail::default_fact_directory(working_tree);
+    if (!fact_directory)
+        co_return std::unexpected(fact_directory.error());
+    auto facts = build_detail::fact_base{*fact_directory};
+    auto facts_opened = facts.open();
+    if (!facts_opened)
+        co_return std::unexpected(facts_opened.error());
+    auto facts_key = build_detail::detect_fact_key(options.target);
+    if (!facts_key)
+        co_return std::unexpected(facts_key.error());
+    auto action_environment = fixed_environment(options);
+    const auto fact_variables = build_detail::cached_variables(facts, *facts_key);
+    apply_cached_variables(command, action_environment, fact_variables);
+    if (build_detail::foreign_target(*facts_key))
+        action_environment["LIQUID_WRAP_REFUSE_PROBES"] = "1";
     auto cache_directory = options.cache_directory
                                ? liquid::result<std::filesystem::path>{*options.cache_directory}
                                : wrap_cache_directory(working_tree);
@@ -1760,7 +1878,6 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
         co_return std::unexpected(sandbox.error());
     auto report = wrap_report{};
     auto outer_miss_recorded = false;
-    const auto action_environment = fixed_environment(options);
     auto outer_input = action_input{.command = command,
                                     .cwd = "",
                                     .env = action_environment,
@@ -1831,8 +1948,19 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                              options);
     if (!run)
         co_return std::unexpected(run.error());
+    if (build_detail::foreign_target(*facts_key) &&
+        std::ranges::any_of(run->processes, [](const traced_process& process) {
+            return build_detail::probe_process(process.command, process.cwd);
+        })) {
+        static_cast<void>(remove_run(run->directory));
+        co_return std::unexpected(wrap_error(errc::unsupported,
+                                             "configure fact missing; foreign probe was refused",
+                                             facts_key->target));
+    }
     auto published = co_await publish_observed_run(*source,
                                                    cache,
+                                                   facts,
+                                                   *facts_key,
                                                    *state,
                                                    state_path,
                                                    toolchain_path,
@@ -1844,10 +1972,14 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    plan,
                                                    *run,
                                                    options,
+                                                   !fact_variables.empty(),
                                                    outer_miss_recorded,
                                                    report);
     if (!published)
         co_return std::unexpected(published.error());
+    auto recorded = build_detail::record_configuration_facts(working_tree, *facts_key, facts);
+    if (!recorded)
+        co_return std::unexpected(recorded.error());
     auto completed =
         co_await complete_report(*cache_directory, *source, cache, wrap_started, report);
     if (!completed) {

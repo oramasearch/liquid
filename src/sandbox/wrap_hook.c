@@ -73,6 +73,30 @@ static void append_hex(char* output, size_t* offset, const char* input, size_t s
     }
 }
 
+static int bytes_contain(const char* input, size_t size, const char* needle) {
+    const size_t needle_size = strlen(needle);
+    if (needle_size == 0 || needle_size > size) {
+        return 0;
+    }
+    for (size_t index = 0; index + needle_size <= size; ++index) {
+        if (memcmp(input + index, needle, needle_size) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int is_configure_probe(const char* directory, const char* arguments, size_t argument_size) {
+    return strstr(directory, "CMakeScratch/TryCompile-") != NULL ||
+           strstr(directory, "CMakeTmp") != NULL ||
+           bytes_contain(arguments, argument_size, "conftest.c") ||
+           bytes_contain(arguments, argument_size, "conftest.cc") ||
+           bytes_contain(arguments, argument_size, "conftest.cpp") ||
+           bytes_contain(arguments, argument_size, "CMakeScratch/TryCompile-") ||
+           bytes_contain(arguments, argument_size, "CMakeTmp") ||
+           bytes_contain(arguments, argument_size, "cmTC_");
+}
+
 static int planned_hit(uint64_t key) {
     const char* path = getenv("LIQUID_WRAP_PLAN");
     FILE* input = fopen(path == NULL ? "/liquid/plan" : path, "r");
@@ -172,6 +196,10 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
         }
     }
 
+    if (getenv("LIQUID_WRAP_REFUSE_PROBES") != NULL &&
+        is_configure_probe(directory, arguments, (size_t)argument_size)) {
+        _exit(125);
+    }
     const int status = planned_hit(key);
     if (status >= 0) {
         append_finished();
@@ -242,6 +270,30 @@ static void append_hex(char* output, size_t* offset, const char* input, size_t s
         output[(*offset)++] = digits[value >> 4U];
         output[(*offset)++] = digits[value & 0x0fU];
     }
+}
+
+static int bytes_contain(const char* input, size_t size, const char* needle) {
+    const size_t needle_size = strlen(needle);
+    if (needle_size == 0 || needle_size > size) {
+        return 0;
+    }
+    for (size_t index = 0; index + needle_size <= size; ++index) {
+        if (memcmp(input + index, needle, needle_size) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int is_configure_probe(const char* directory, const char* arguments, size_t argument_size) {
+    return strstr(directory, "CMakeScratch/TryCompile-") != NULL ||
+           strstr(directory, "CMakeTmp") != NULL ||
+           bytes_contain(arguments, argument_size, "conftest.c") ||
+           bytes_contain(arguments, argument_size, "conftest.cc") ||
+           bytes_contain(arguments, argument_size, "conftest.cpp") ||
+           bytes_contain(arguments, argument_size, "CMakeScratch/TryCompile-") ||
+           bytes_contain(arguments, argument_size, "CMakeTmp") ||
+           bytes_contain(arguments, argument_size, "cmTC_");
 }
 
 static int planned_hit(uint64_t key) {
@@ -335,6 +387,10 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
                 liquid_wrap_traced = 1;
             }
         }
+    }
+    if (getenv("LIQUID_WRAP_REFUSE_PROBES") != NULL &&
+        is_configure_probe(directory, arguments, argument_size)) {
+        _exit(125);
     }
     const int status = planned_hit(key);
     if (status >= 0) {

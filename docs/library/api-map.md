@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #57 | implemented local executor, wrapper, disk cache, verification, provenance, diagnostics, and observability | action execution and results, typed cache explanations, critical alerts, reproducibility verification, provenance verification, retained build traces, critical paths, Chrome export, tier and byte reports; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #57, #60, #56 | implemented local executor, wrapper, disk cache, verification, provenance, diagnostics, observability, input policy, and configure facts | action execution and results, typed cache explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification, provenance verification, JSON/DSSE projection, tier and byte reports; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -430,6 +430,13 @@ struct provenance_report {
   result_id result; digest attestation; liquid::attestation statement; action_result value;
   bool verified; std::string reason;
 };
+struct fact_key { digest toolchain, sysroot; std::string target; };
+struct fact_answer {
+  int exit; std::vector<action_output> outputs;
+  std::map<std::string, std::string> variables; std::optional<digest> result;
+};
+struct configure_fact { digest id; std::string probe; fact_key key; fact_answer answer; };
+struct fact_bundle { digest id; std::vector<configure_fact> facts; };
 enum class verify_selection : std::uint8_t { sample, all, changed, action };
 struct verify_options {
   verify_selection selection; std::optional<digest> action; bool explain;
@@ -464,6 +471,9 @@ runtime::task<policy_report> check_policy(repository&, result_id);
 runtime::task<policy_report> check_policy(std::filesystem::path, std::string target);
 result<policy_report> explain_policy(repository&);
 runtime::task<policy_report> explain_policy(std::filesystem::path);
+runtime::task<std::vector<configure_fact>> facts_list(std::optional<std::filesystem::path> = {});
+runtime::task<configure_fact> facts_show(digest, std::optional<std::filesystem::path> = {});
+runtime::task<std::string> facts_export(std::optional<std::filesystem::path> = {});
 }
 ```
 
@@ -488,6 +498,11 @@ returns cumulative completed-wrap statistics; the repository member remains scop
 handle.
 `check_policy` returns a complete per-rule report without executing an action; build entry points
 turn an unsatisfied `refuse` rule into `errc::unauthorized` before lookup or sandbox launch.
+Configure facts are immutable content-addressed records. Their exact key is compiler content,
+explicit sysroot-tree content, and target triple; lookup does not admit partial matches.
+`facts_export` returns a `fact-bundle/1` JSON record for later transport layers. `wrap_options`
+accepts optional target and fact-directory fields, and a foreign target never executes an uncached
+probe.
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 

@@ -45,8 +45,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > compatibility losses.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
-> reproducibility verification, signed SLSA provenance, record-derived cache diagnostics, and
-> dependency-aware build observability and build-input policy.**
+> sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
+> dependency-aware build observability, build-input policy, and a cross-project configure fact base.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -70,6 +70,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
+> Autotools cache variables and common CMake check results are facts keyed by compiler content,
+> explicit sysroot content, and target triple; `liquid facts` inspects or exports them. `wrap --target`
+> refuses to execute an uncached probe for a foreign target.
 
 ## Where this sits
 
@@ -207,6 +210,7 @@ The first shippable build product wraps an existing project without adding liqui
 ```sh
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --jobs 8 --explain cmake --build build
+liquid wrap --target aarch64-unknown-linux-gnu ./configure
 ```
 
 The second command reuses valid compile and link results before their tools start. Linux requires

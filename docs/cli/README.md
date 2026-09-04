@@ -37,8 +37,9 @@ that the table and `liquid --help` name the same commands.
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its trace. | available on Linux with FUSE and on macOS with macFUSE |
+| `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
@@ -61,12 +62,21 @@ error: <code>: <message> (<context>)
 Invalid command usage exits with status 2 and starts with `error: usage:`.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
-outer action's status. `--explain` adds one `miss:` line for each changed manifest path. `--jobs`
+number of uncached feature probes observed, plus the outer action's status. `--explain`
+adds one `miss:` line for each changed manifest path. `--jobs`
 sets driver parallelism and the compilation-database seed width; `--no-cache` executes and records
 the observation without publishing or serving cache entries. The persistent project cache defaults
 to the platform cache directory and can be relocated with `LIQUID_WRAP_CACHE`. On completion,
 `wrap` schedules the configured local verification sample on the shared runtime; `--no-verify`
 skips that background work.
+
+`--target <triple>` selects configure facts for that target. A foreign target is lookup-only: if
+an Autotools `conftest` or CMake `try_compile` is not answered by matching facts, `wrap` reports an
+unsupported error after the hook refuses the compiler process. `LIQUID_FACTS_CACHE` relocates the
+shared fact base independently of per-project action caches.
+
+`facts list` prints every fact with its content key and answer. `facts show <digest>` selects one
+record. `facts export` writes the `fact-bundle/1` JSON record used by later remote-cache work.
 
 `verify` opens the current project's wrap cache. A digest selects one action, `--all` selects every
 cached result, and `--changed` selects results without a recorded verification. Each line names the
@@ -165,6 +175,10 @@ liquid why build/CMakeFiles/app.dir/main.cpp.o
 liquid why blake3:<action-or-result-digest> --json
 liquid why-slow build/app
 liquid cache stats --json
+liquid wrap --target aarch64-unknown-linux-gnu ./configure
+liquid facts list
+liquid facts show blake3:<fact-digest>
+liquid facts export
 liquid pause
 liquid resume
 liquid watch
