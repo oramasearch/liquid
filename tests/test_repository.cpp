@@ -3,6 +3,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -40,19 +41,51 @@ auto content(std::string value) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(value.data() + value.size())};
 }
 
+auto physical_copies(const std::filesystem::path& packs, const liquid::digest& id) -> std::size_t {
+    auto copies = std::size_t{};
+    for (const auto& entry : std::filesystem::directory_iterator(packs)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".pack") {
+            continue;
+        }
+        auto input = std::ifstream{entry.path(), std::ios::binary};
+        const auto raw = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+        auto offset = std::size_t{16};
+        while (offset + 49 <= raw.size() &&
+               std::string_view{raw.data() + offset, 7} == "LQFRAM\x01") {
+            auto compressed = std::uint32_t{};
+            for (auto byte = 0U; byte != 4; ++byte) {
+                compressed |=
+                    static_cast<std::uint32_t>(static_cast<unsigned char>(raw[offset + 12 + byte]))
+                    << (byte * 8U);
+            }
+            if (compressed > raw.size() - offset - 49) {
+                break;
+            }
+            const auto algorithm = static_cast<unsigned char>(raw[offset + 16]);
+            const auto* digest_bytes = reinterpret_cast<const std::byte*>(raw.data() + offset + 17);
+            if (algorithm == static_cast<unsigned char>(id.alg) &&
+                std::ranges::equal(std::span{digest_bytes, id.bytes.size()}, id.bytes)) {
+                ++copies;
+            }
+            offset += 49 + compressed;
+        }
+    }
+    return copies;
+}
+
 auto text(const std::vector<std::byte>& value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
 auto sha256_options() -> liquid::repository_options {
     liquid::repository_options options;
-    options.store.hash_algorithm = liquid::algorithm::sha256;
+    options.storage.hash_algorithm = liquid::algorithm::sha256;
     return options;
 }
 
 auto encrypted_options(const std::shared_ptr<liquid::keyring>& keys) -> liquid::repository_options {
     liquid::repository_options options;
-    options.store.keys = keys;
+    options.storage.keys = keys;
     return options;
 }
 
@@ -62,6 +95,46 @@ auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
                     .has_value());
     EXPECT_TRUE(keys->set_default_key_id("repository").has_value());
     return keys;
+}
+
+TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {
+    temporary_repository location;
+    auto opened_store =
+        liquid::runtime::block_on(liquid::store::open(location.path() / "customer-store"));
+    ASSERT_TRUE(opened_store);
+    auto shared_store = std::move(*opened_store);
+    auto options = liquid::repository_options{};
+    options.store = &shared_store;
+    auto first = liquid::runtime::block_on(liquid::repository::create("first", options));
+    auto second = liquid::runtime::block_on(liquid::repository::create("second", options));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(second);
+
+    auto payload = std::vector<std::byte>(4096, std::byte{0x5a});
+    auto expected = liquid::hash(liquid::algorithm::blake3, payload);
+    ASSERT_TRUE(expected);
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("shared.bin", payload)));
+    ASSERT_TRUE(liquid::runtime::block_on(second->write("shared.bin", payload)));
+    ASSERT_TRUE(liquid::runtime::block_on(first->cut("first")));
+    ASSERT_TRUE(liquid::runtime::block_on(second->cut("second")));
+    EXPECT_EQ(physical_copies(location.path() / "customer-store" / "packs", *expected), 1U);
+
+    auto collected = liquid::runtime::block_on(first->collect());
+    ASSERT_TRUE(collected);
+    auto still_present = liquid::runtime::block_on(second->read("shared.bin"));
+    ASSERT_TRUE(still_present);
+    EXPECT_EQ(*still_present, payload);
+
+    *first = liquid::repository{};
+    *second = liquid::repository{};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open("second", options));
+    ASSERT_TRUE(reopened);
+    auto restored = liquid::runtime::block_on(reopened->read("shared.bin"));
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(*restored, payload);
+    auto store_still_open = liquid::runtime::block_on(shared_store.contains(*expected));
+    ASSERT_TRUE(store_still_open);
+    EXPECT_TRUE(*store_still_open);
 }
 
 void expect_sha256(const liquid::digest& value) {
@@ -514,7 +587,7 @@ TEST(Repository, Sha256StoreRoundTripsRecords) {
     expect_sha256(snapshot->root.entries.front().ref);
 
     auto store = liquid::runtime::block_on(
-        liquid::store::open(location.path() / ".liquid-store", options.store));
+        liquid::store::open(location.path() / ".liquid-store", options.storage));
     ASSERT_TRUE(store) << store.error().message;
     const auto encoded_blob =
         liquid::runtime::block_on(store->get(snapshot->root.entries.front().ref));

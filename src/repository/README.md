@@ -1,7 +1,9 @@
 # Repository implementation
 
 Repository mutations update the working tree, directory documents, signed drip bodies, and local
-store. Redaction persists the caller's replacement and a signed marker before targeted store
+or caller-owned shared store. A shared-store path argument is hashed into a repository-specific
+state directory; the handle borrows the store, and repository, directory, ref, and result lease
+owners carry the repository identity. Redaction persists the caller's replacement and a signed marker before targeted store
 tombstoning, pack compaction, and the required `not_found` verification.
 
 At every cut and configured drip interval, cached directory documents are compact-saved, stored,

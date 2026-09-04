@@ -417,10 +417,12 @@ normalization, enforcement, and JSON Pointer key paths.
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
-`repository_options` is a plain record with `checkpoint_interval`, `store`, `encrypt`, `cache`,
-`verify`, `policy`, and `retention`; its `store_options`
-member selects the object-store hash algorithm and, when configured, its key custody. Pass the
-same options to `create` and `open` so later writes and reads use the intended store settings.
+`repository_options` is a plain record with `checkpoint_interval`, caller-owned `store`, local
+`storage`, `encrypt`, `cache`, `verify`, `policy`, and `retention`. `storage` selects the
+object-store hash algorithm and key custody when `store` is null. When `store` points to an open
+caller-owned store, that store's configuration is authoritative and the caller keeps it alive for
+the repository's lifetime. Pass the same placement to `create` and `open` so later writes and reads
+use the intended store.
 Repository change IDs are computed with that selected store algorithm, including IDs returned by
 `log` and accepted by `at`.
 

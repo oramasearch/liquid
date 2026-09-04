@@ -1637,6 +1637,11 @@ runtime::task<std::optional<object_key_version>> store_backend::key_version(dige
 
 runtime::task<std::shared_ptr<lease_state>> store_backend::lease_root(digest id,
                                                                       std::chrono::seconds ttl) {
+    co_return co_await lease_root(id, ttl, {});
+}
+
+runtime::task<std::shared_ptr<lease_state>>
+store_backend::lease_root(digest id, std::chrono::seconds ttl, std::string owner) {
     auto [lock_error, guard] = co_await mutation_.scoped_lock();
     if (lock_error)
         co_return std::unexpected(
@@ -1645,7 +1650,20 @@ runtime::task<std::shared_ptr<lease_state>> store_backend::lease_root(digest id,
         co_return std::unexpected(
             store_error(errc::not_found, "lease root is not present", to_string(id)));
     }
-    co_return co_await create_lease(root_ / "leases", id, ttl);
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (ttl < std::chrono::seconds::zero() || ttl > std::chrono::sys_seconds::max() - now) {
+        co_return std::unexpected(
+            store_error(errc::invalid_argument, "lease ttl is invalid", "store::lease_root"));
+    }
+    co_return co_await create_lease_until(root_ / "leases", id, now + ttl, std::move(owner));
+}
+
+const std::filesystem::path& store_backend::root_path() const noexcept {
+    return root_;
+}
+
+const store_options& store_backend::configuration() const noexcept {
+    return options_;
 }
 
 runtime::task<collection_report> store_backend::collect(collection_options options) {

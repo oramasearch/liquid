@@ -28,6 +28,11 @@ Collector explanations carry object-level reasons and count live policy roots by
 digest. The map updates when records are stored and rebuilds from attestation objects when the store
 opens; build-input policy still loads and verifies every indexed record before counting it.
 
+Repository internals can query the opened store's root and configuration without exposing either
+through the public store API. This places per-repository checkpoint and journal entry points under
+`repositories/` and creates repository-identified lease owners while all immutable objects remain
+in the common packs and index.
+
 Remote blob registrations are persisted separately in `packs/remotes.meta`. The store reports
 whole-content availability as absent, remote, or local and fetches only missing logical chunks
 through the configured source before verifying and writing them through the ordinary pack path.

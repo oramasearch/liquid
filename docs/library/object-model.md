@@ -22,7 +22,8 @@ checkpoints can be loaded shallowly.
 codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
 working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
 composition, conflict values, operation inversion, advisory locks, and the repository status are
-implemented over the local store.
+implemented over either a repository-local store or a caller-owned store shared by multiple
+repositories.
 
 ## The two layers, precisely
 
@@ -85,6 +86,21 @@ sbom        { v, kind:"sbom", format:text, document:bytes }
 
 Trees and blobs are values: two repositories with the same content share every record and every
 chunk, because the store is one.
+
+## Repository placement
+
+`repository_options::store` may point to an open caller-owned `store`. In that form, the path
+argument to `repository::create` and `repository::open` is an opaque repository identifier rather
+than a checkout path. libliquid hashes that identifier into
+`<store>/repositories/<identifier-hash>/`, where it keeps that repository's `LIQUID_REPO` and
+`LIQUID_JOURNAL` entry points. Repository checkpoints and directory documents remain ordinary
+content-addressed objects in the shared store. The caller must keep the store alive until every
+repository opened on it has been destroyed.
+
+When `repository_options::store` is null, the path retains its original meaning and libliquid
+opens `<path>/.liquid-store`. `repository_options::storage` configures that owned store. A split
+from a shared-store repository creates the destination identifier in the same store, so both
+repositories continue sharing immutable objects and chunks.
 
 Local writes retain `blob/1` identity. A remote output uses `blob/2`: `digest` identifies the
 complete byte stream while the parallel chunk arrays define independently verifiable range

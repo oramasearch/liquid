@@ -47,6 +47,22 @@ runtime::task<store> store::open(std::filesystem::path path, store_options optio
     co_return output;
 }
 
+result<std::filesystem::path> store::root_path() const {
+    if (!impl_) {
+        return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::root_path"});
+    }
+    return impl_->value->root_path();
+}
+
+result<store_options> store::configuration() const {
+    if (!impl_) {
+        return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::configuration"});
+    }
+    return impl_->value->configuration();
+}
+
 runtime::task<digest> store::put(std::vector<std::byte> input) {
     if (!impl_)
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});
@@ -179,6 +195,20 @@ runtime::task<lease> store::lease_root(digest id, std::chrono::seconds ttl) {
     auto state = co_await impl_->value->lease_root(id, ttl);
     if (!state)
         co_return std::unexpected(state.error());
+    lease output;
+    output.impl_ = std::make_unique<lease::impl>(std::move(*state));
+    co_return output;
+}
+
+runtime::task<lease> store::lease_root(digest id, std::chrono::seconds ttl, std::string owner) {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::lease_root"});
+    }
+    auto state = co_await impl_->value->lease_root(id, ttl, std::move(owner));
+    if (!state) {
+        co_return std::unexpected(state.error());
+    }
     lease output;
     output.impl_ = std::make_unique<lease::impl>(std::move(*state));
     co_return output;

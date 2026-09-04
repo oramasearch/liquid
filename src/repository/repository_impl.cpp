@@ -1367,6 +1367,58 @@ auto string_bytes(std::string_view input) -> std::vector<std::byte> {
     return {reinterpret_cast<const std::byte*>(input.data()),
             reinterpret_cast<const std::byte*>(input.data() + input.size())};
 }
+
+auto identifier_path(store& objects, const std::filesystem::path& identifier)
+    -> result<std::filesystem::path> {
+    const auto text = identifier.generic_string();
+    if (text.empty()) {
+        return std::unexpected(
+            failure(errc::invalid_argument, "repository identifier is empty", "repository"));
+    }
+    auto id = hash(algorithm::blake3, string_bytes(text));
+    if (!id) {
+        return std::unexpected(id.error());
+    }
+    auto root = repository_detail::store_access::root_path(objects);
+    if (!root) {
+        return std::unexpected(root.error());
+    }
+    const auto encoded = to_string(*id);
+    const auto separator = encoded.find(':');
+    return *root / "repositories" / encoded.substr(separator + 1);
+}
+
+struct prepared_repository_store {
+    std::filesystem::path state_path;
+    std::unique_ptr<store> owned;
+    store* objects{};
+    store_options configuration;
+};
+
+auto prepare_repository_store(std::filesystem::path path, repository_options& options)
+    -> runtime::task<prepared_repository_store> {
+    if (options.store) {
+        auto configuration = repository_detail::store_access::configuration(*options.store);
+        if (!configuration) {
+            co_return std::unexpected(configuration.error());
+        }
+        auto state_path = identifier_path(*options.store, path);
+        if (!state_path) {
+            co_return std::unexpected(state_path.error());
+        }
+        co_return prepared_repository_store{
+            std::move(*state_path), nullptr, options.store, std::move(*configuration)};
+    }
+    auto configuration = options.storage;
+    auto opened = co_await store::open(path / ".liquid-store", std::move(options.storage));
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    auto owned = std::make_unique<store>(std::move(*opened));
+    auto* objects = owned.get();
+    co_return prepared_repository_store{
+        std::move(path), std::move(owned), objects, std::move(configuration)};
+}
 } // namespace
 
 struct repository::impl {
@@ -1378,7 +1430,8 @@ struct repository::impl {
     static constexpr auto lease_ttl = std::chrono::days{30};
 
     std::filesystem::path root_path;
-    store objects;
+    std::unique_ptr<store> owned_objects;
+    store& objects;
     repository_document current;
     std::uint64_t checkpoint_interval{64};
     algorithm hash_algorithm;
@@ -1393,16 +1446,30 @@ struct repository::impl {
     cache_report cache_statistics;
     std::map<std::string, std::pair<cache_status, std::optional<cache_miss>>> cache_lookups;
     impl(std::filesystem::path path,
-         store value,
+         std::unique_ptr<store> owned,
+         store& value,
          repository_document document,
          signer key,
          std::shared_ptr<keyring> encryption_keys,
          std::uint64_t interval,
          algorithm algorithm_value)
-        : root_path(std::move(path)), objects(std::move(value)), current(std::move(document)),
-          checkpoint_interval(std::max(std::uint64_t{1}, interval)),
+        : root_path(std::move(path)), owned_objects(std::move(owned)), objects(value),
+          current(std::move(document)), checkpoint_interval(std::max(std::uint64_t{1}, interval)),
           hash_algorithm(algorithm_value), signing_key(std::move(key)),
           keys(std::move(encryption_keys)) {}
+    auto lease_owner(std::string_view kind) const -> std::string {
+        constexpr auto digits = std::string_view{"0123456789abcdef"};
+        auto output = std::string{"repository:"};
+        output.reserve(output.size() + current.repository.size() * 2 + kind.size() + 1);
+        for (const auto value : current.repository) {
+            const auto byte = std::to_integer<unsigned char>(value);
+            output.push_back(digits[byte >> 4U]);
+            output.push_back(digits[byte & 0x0fU]);
+        }
+        output.push_back('\n');
+        output.append(kind);
+        return output;
+    }
     auto marker() const -> std::filesystem::path {
         return root_path / "LIQUID_REPO";
     }
@@ -1527,7 +1594,8 @@ struct repository::impl {
         if (retained && retained->id.alg == id.alg && retained->id.bytes == id.bytes) {
             co_return co_await retained->value.renew(lease_ttl);
         }
-        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        auto replacement = co_await repository_detail::store_access::lease_root(
+            objects, id, lease_ttl, lease_owner("checkpoint"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -1542,13 +1610,19 @@ struct repository::impl {
     }
     runtime::task<void> sync_retention_roots(std::string owner_prefix,
                                              std::vector<repository_detail::retention_root> roots) {
-        const auto directory = root_path / ".liquid-store" / "leases";
+        auto store_root = repository_detail::store_access::root_path(objects);
+        if (!store_root) {
+            co_return std::unexpected(store_root.error());
+        }
+        const auto directory = *store_root / "leases";
+        const auto scoped_prefix = lease_owner(owner_prefix);
         auto existing = co_await store_detail::load_leases(directory);
         if (!existing) {
             co_return std::unexpected(existing.error());
         }
         auto retained_ids = std::set<std::string>{};
-        for (const auto& desired : roots) {
+        for (auto& desired : roots) {
+            desired.owner = lease_owner(desired.owner);
             const auto expiry = desired.expiry.value_or(std::chrono::sys_seconds::max());
             const auto matching = std::ranges::find_if(*existing, [&](const auto& record) {
                 return record.owner == desired.owner && record.root.alg == desired.root.alg &&
@@ -1565,7 +1639,7 @@ struct repository::impl {
             }
         }
         for (const auto& record : *existing) {
-            if (!record.owner.starts_with(owner_prefix) || retained_ids.contains(record.id)) {
+            if (!record.owner.starts_with(scoped_prefix) || retained_ids.contains(record.id)) {
                 continue;
             }
             auto state = std::make_shared<store_detail::lease_state>();
@@ -1584,7 +1658,8 @@ struct repository::impl {
             existing->second.id.bytes == id.bytes) {
             co_return co_await existing->second.value.renew(lease_ttl);
         }
-        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        auto replacement = co_await repository_detail::store_access::lease_root(
+            objects, id, lease_ttl, lease_owner("directory"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -2119,18 +2194,19 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_retention) {
         co_return std::unexpected(valid_retention.error());
     }
+    auto prepared = co_await prepare_repository_store(std::move(path), options);
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
     auto code = std::error_code{};
-    std::filesystem::create_directories(path, code);
+    std::filesystem::create_directories(prepared->state_path, code);
     if (code)
-        co_return std::unexpected(failure(errc::io, code.message(), path.string()));
-    if (std::filesystem::exists(path / "LIQUID_REPO"))
-        co_return std::unexpected(
-            failure(errc::already_exists, "repository already exists", path.string()));
-    const auto hash_algorithm = options.store.hash_algorithm;
-    auto keys = options.store.keys;
-    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
-    if (!objects)
-        co_return std::unexpected(objects.error());
+        co_return std::unexpected(failure(errc::io, code.message(), prepared->state_path.string()));
+    if (std::filesystem::exists(prepared->state_path / "LIQUID_REPO"))
+        co_return std::unexpected(failure(
+            errc::already_exists, "repository already exists", prepared->state_path.string()));
+    const auto hash_algorithm = prepared->configuration.hash_algorithm;
+    auto keys = prepared->configuration.keys;
     repository_document document{};
     document.repository = random_id();
     document.root.node = random_id();
@@ -2145,8 +2221,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
     repository output;
-    output.impl_ = std::make_unique<impl>(std::move(path),
-                                          std::move(*objects),
+    auto* objects = prepared->objects;
+    output.impl_ = std::make_unique<impl>(std::move(prepared->state_path),
+                                          std::move(prepared->owned),
+                                          *objects,
                                           std::move(document),
                                           std::move(*signing_key),
                                           std::move(keys),
@@ -2158,7 +2236,11 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     co_return output;
 }
 runtime::task<repository> repository::open(std::filesystem::path path, repository_options options) {
-    auto marker = co_await store_detail::read_file(path / "LIQUID_REPO");
+    auto prepared = co_await prepare_repository_store(std::move(path), options);
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
+    auto marker = co_await store_detail::read_file(prepared->state_path / "LIQUID_REPO");
     if (!marker)
         co_return std::unexpected(marker.error());
     auto text = std::string{reinterpret_cast<const char*>(marker->data()), marker->size()};
@@ -2167,19 +2249,16 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     auto document_id = parse_digest(text);
     if (!document_id)
         co_return std::unexpected(document_id.error());
-    const auto hash_algorithm = options.store.hash_algorithm;
-    auto keys = options.store.keys;
-    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
-    if (!objects)
-        co_return std::unexpected(objects.error());
-    auto saved = co_await objects->get(*document_id);
+    const auto hash_algorithm = prepared->configuration.hash_algorithm;
+    auto keys = prepared->configuration.keys;
+    auto saved = co_await prepared->objects->get(*document_id);
     if (!saved)
         co_return std::unexpected(saved.error());
     auto document = decode_repository_document(*saved);
     if (!document)
         co_return std::unexpected(document.error());
-    if (std::filesystem::exists(path / "LIQUID_JOURNAL")) {
-        auto journal = co_await store_detail::read_file(path / "LIQUID_JOURNAL");
+    if (std::filesystem::exists(prepared->state_path / "LIQUID_JOURNAL")) {
+        auto journal = co_await store_detail::read_file(prepared->state_path / "LIQUID_JOURNAL");
         if (!journal)
             co_return std::unexpected(journal.error());
         auto replayed = decode_repository_document(*journal);
@@ -2201,8 +2280,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
     repository output;
-    output.impl_ = std::make_unique<impl>(std::move(path),
-                                          std::move(*objects),
+    auto* objects = prepared->objects;
+    output.impl_ = std::make_unique<impl>(std::move(prepared->state_path),
+                                          std::move(prepared->owned),
+                                          *objects,
                                           std::move(*document),
                                           std::move(*signing_key),
                                           std::move(keys),
@@ -3238,7 +3319,11 @@ runtime::task<repository> repository::split(std::string path, std::filesystem::p
         co_return std::unexpected(failure(errc::not_found, "subtree does not exist", path));
     repository_options options;
     options.checkpoint_interval = impl_->checkpoint_interval;
-    options.store.hash_algorithm = impl_->hash_algorithm;
+    if (!impl_->owned_objects) {
+        options.store = &impl_->objects;
+    } else {
+        options.storage.hash_algorithm = impl_->hash_algorithm;
+    }
     auto destination = co_await create(std::move(into), std::move(options));
     if (!destination)
         co_return std::unexpected(destination.error());
@@ -4353,7 +4438,7 @@ runtime::task<repository> repository_detail::testing::clone(const repository& so
         co_return std::unexpected(failure(errc::io, code.message(), destination.string()));
     repository_options options;
     options.checkpoint_interval = source.impl_->checkpoint_interval;
-    options.store.hash_algorithm = source.impl_->hash_algorithm;
+    options.storage.hash_algorithm = source.impl_->hash_algorithm;
     co_return co_await repository::open(std::move(destination), std::move(options));
 }
 

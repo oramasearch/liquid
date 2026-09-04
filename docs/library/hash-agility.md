@@ -17,7 +17,7 @@ BLAKE3 remains the default. Set `store_options::hash_algorithm` to `sha256` to
 write SHA-256 object and chunk identifiers. The store keeps a separate index
 memtable and immutable run set for each algorithm, allowing the two forms to
 resolve side by side. Reopening a repository with the same
-`repository_options::store` preserves its selected write algorithm; the option
+`repository_options::storage` preserves its selected write algorithm; the option
 also reserves the repository boundary for future key custody configuration.
 Change IDs reconstructed by `log` use that algorithm and can be passed directly
 to `at`. Repository directory creation uses it for both the placeholder object

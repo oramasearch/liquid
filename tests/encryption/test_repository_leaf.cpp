@@ -51,7 +51,7 @@ auto configured_options(liquid::encryption_path_rule rule)
     EXPECT_TRUE(keys->add("team", provider));
     EXPECT_TRUE(keys->set_default_key_id("team"));
     liquid::repository_options options;
-    options.store.keys = keys;
+    options.storage.keys = keys;
     options.encrypt.paths.push_back(std::move(rule));
     return {std::move(options), std::move(keys)};
 }

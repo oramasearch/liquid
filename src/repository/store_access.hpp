@@ -9,6 +9,20 @@
 namespace liquid::repository_detail {
 
 struct store_access {
+    [[nodiscard]] static auto root_path(const store& source) -> result<std::filesystem::path> {
+        return source.root_path();
+    }
+
+    [[nodiscard]] static auto configuration(const store& source) -> result<store_options> {
+        return source.configuration();
+    }
+
+    [[nodiscard]] static auto
+    lease_root(store& source, digest id, std::chrono::seconds ttl, std::string owner)
+        -> runtime::task<lease> {
+        return source.lease_root(id, ttl, std::move(owner));
+    }
+
     [[nodiscard]] static auto blob_for(const store& source, digest id) -> result<blob> {
         return source.blob_for(id);
     }
