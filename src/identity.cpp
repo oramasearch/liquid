@@ -10,14 +10,18 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <utility>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/stat.h>
 #endif
 
 #include "crypto/crypto.hpp"
+#include "identity/key_version.hpp"
 #include "identity/taap.hpp"
 #include "monocypher-ed25519.h"
 #include "monocypher.h"
@@ -26,15 +30,24 @@
 namespace liquid {
 namespace {
 
-constexpr std::array<std::byte, 8> key_magic{std::byte{'L'},
-                                             std::byte{'Q'},
-                                             std::byte{'K'},
-                                             std::byte{'E'},
-                                             std::byte{'Y'},
-                                             std::byte{1},
-                                             std::byte{0},
-                                             std::byte{0}};
+constexpr std::array<std::byte, 8> key_magic_v1{std::byte{'L'},
+                                                std::byte{'Q'},
+                                                std::byte{'K'},
+                                                std::byte{'E'},
+                                                std::byte{'Y'},
+                                                std::byte{1},
+                                                std::byte{0},
+                                                std::byte{0}};
+constexpr std::array<std::byte, 8> key_magic_v2{std::byte{'L'},
+                                                std::byte{'Q'},
+                                                std::byte{'K'},
+                                                std::byte{'E'},
+                                                std::byte{'Y'},
+                                                std::byte{2},
+                                                std::byte{0},
+                                                std::byte{0}};
 constexpr std::string_view key_wrap_context = "liquid store data key wrapping v1";
+constexpr std::size_t boxed_key_size = 24 + 16 + 32;
 
 error key_error(errc code, std::string message, std::string context) {
     return {code, std::move(message), std::move(context)};
@@ -42,6 +55,11 @@ error key_error(errc code, std::string message, std::string context) {
 
 void put_u32(std::vector<std::byte>& out, std::uint32_t value) {
     for (unsigned index = 0; index != 4; ++index)
+        out.push_back(std::byte{static_cast<unsigned char>(value >> (index * 8U))});
+}
+
+void put_u64(std::vector<std::byte>& out, std::uint64_t value) {
+    for (unsigned index = 0; index != 8; ++index)
         out.push_back(std::byte{static_cast<unsigned char>(value >> (index * 8U))});
 }
 
@@ -54,10 +72,19 @@ std::uint32_t get_u32(std::span<const std::byte> bytes, std::size_t at) {
     return value;
 }
 
+std::uint64_t get_u64(std::span<const std::byte> bytes, std::size_t at) {
+    if (at + 8 > bytes.size())
+        return 0;
+    std::uint64_t value = 0;
+    for (unsigned index = 0; index != 8; ++index)
+        value |= std::uint64_t(std::to_integer<unsigned char>(bytes[at + index])) << (index * 8U);
+    return value;
+}
+
 bool valid_key_id(std::string_view key_id) {
     return !key_id.empty() && key_id != "." && key_id != ".." &&
            key_id.size() <= std::numeric_limits<std::uint16_t>::max() &&
-           key_id.find_first_of("/\\") == std::string_view::npos &&
+           key_id.find_first_of("/\\@") == std::string_view::npos &&
            key_id.find('\0') == std::string_view::npos;
 }
 
@@ -70,40 +97,99 @@ result<void> validate_argon2(argon2_parameters parameters) {
     return {};
 }
 
-struct wrapped_data_key {
+struct wrapped_key_file {
     std::array<std::byte, 16> salt{};
     argon2_parameters parameters{};
-    std::vector<std::byte> boxed;
+    std::uint64_t current_version{1};
+    std::map<std::uint64_t, std::vector<std::byte>> versions;
+    std::set<std::uint64_t> revoked;
 };
 
-result<wrapped_data_key> parse_wrapped_data_key(std::span<const std::byte> bytes,
+result<wrapped_key_file> parse_wrapped_key_file(std::span<const std::byte> bytes,
                                                 std::string_view key_id) {
-    constexpr std::size_t header_size = key_magic.size() + 16 + 12;
-    constexpr std::size_t boxed_size = 24 + 16 + 32;
-    if (bytes.size() != header_size + boxed_size ||
-        !std::equal(key_magic.begin(), key_magic.end(), bytes.begin())) {
+    constexpr std::size_t legacy_header_size = key_magic_v1.size() + 16 + 12;
+    const bool legacy = bytes.size() == legacy_header_size + boxed_key_size &&
+                        std::equal(key_magic_v1.begin(), key_magic_v1.end(), bytes.begin());
+    const bool current =
+        bytes.size() >= 52 && std::equal(key_magic_v2.begin(), key_magic_v2.end(), bytes.begin());
+    if (!legacy && !current) {
         return std::unexpected(
             key_error(errc::corrupt, "invalid wrapped data key", std::string(key_id)));
     }
-    wrapped_data_key output;
-    std::copy_n(bytes.begin() + key_magic.size(), output.salt.size(), output.salt.begin());
+    wrapped_key_file output;
+    std::copy_n(bytes.begin() + key_magic_v1.size(), output.salt.size(), output.salt.begin());
     output.parameters = {get_u32(bytes, 24), get_u32(bytes, 28), get_u32(bytes, 32)};
     auto valid = validate_argon2(output.parameters);
     if (!valid)
         return std::unexpected(
             key_error(errc::corrupt, "invalid wrapped data-key parameters", std::string(key_id)));
-    output.boxed.assign(bytes.begin() + header_size, bytes.end());
+    if (legacy) {
+        output.versions.emplace(
+            1, std::vector<std::byte>{bytes.begin() + legacy_header_size, bytes.end()});
+        return output;
+    }
+    output.current_version = get_u64(bytes, 36);
+    const auto version_count = get_u32(bytes, 44);
+    const auto revoked_count = get_u32(bytes, 48);
+    const auto expected = 52U + static_cast<std::size_t>(version_count) * (8U + boxed_key_size) +
+                          static_cast<std::size_t>(revoked_count) * 8U;
+    if (output.current_version == 0 || expected != bytes.size()) {
+        return std::unexpected(
+            key_error(errc::corrupt, "invalid wrapped key-version table", std::string(key_id)));
+    }
+    std::size_t at = 52;
+    for (std::uint32_t index = 0; index != version_count; ++index) {
+        const auto version = get_u64(bytes, at);
+        at += 8;
+        if (version == 0 || output.versions.contains(version)) {
+            return std::unexpected(
+                key_error(errc::corrupt, "invalid wrapped key version", std::string(key_id)));
+        }
+        output.versions.emplace(
+            version,
+            std::vector<std::byte>{bytes.begin() + at, bytes.begin() + at + boxed_key_size});
+        at += boxed_key_size;
+    }
+    for (std::uint32_t index = 0; index != revoked_count; ++index) {
+        const auto version = get_u64(bytes, at);
+        at += 8;
+        if (version == 0 || output.versions.contains(version) ||
+            !output.revoked.insert(version).second) {
+            return std::unexpected(
+                key_error(errc::corrupt, "invalid revoked key version", std::string(key_id)));
+        }
+    }
+    if (!output.versions.contains(output.current_version) &&
+        !output.revoked.contains(output.current_version)) {
+        return std::unexpected(
+            key_error(errc::corrupt, "current key version is missing", std::string(key_id)));
+    }
     return output;
 }
 
-std::vector<std::byte> encode_wrapped_data_key(const wrapped_data_key& wrapped) {
-    std::vector<std::byte> output(key_magic.begin(), key_magic.end());
+std::vector<std::byte> encode_wrapped_key_file(const wrapped_key_file& wrapped) {
+    std::vector<std::byte> output(key_magic_v2.begin(), key_magic_v2.end());
     output.insert(output.end(), wrapped.salt.begin(), wrapped.salt.end());
     put_u32(output, wrapped.parameters.memory_kib);
     put_u32(output, wrapped.parameters.iterations);
     put_u32(output, wrapped.parameters.lanes);
-    output.insert(output.end(), wrapped.boxed.begin(), wrapped.boxed.end());
+    put_u64(output, wrapped.current_version);
+    put_u32(output, static_cast<std::uint32_t>(wrapped.versions.size()));
+    put_u32(output, static_cast<std::uint32_t>(wrapped.revoked.size()));
+    for (const auto& [version, boxed] : wrapped.versions) {
+        put_u64(output, version);
+        output.insert(output.end(), boxed.begin(), boxed.end());
+    }
+    for (const auto version : wrapped.revoked)
+        put_u64(output, version);
     return output;
+}
+
+std::vector<std::string> encryption_limits() {
+    return {"Rotation does not rewrite history.",
+            "Revoking a collaborator prevents future access; it does not recall what they have.",
+            "Metadata — paths, sizes, change structure and timing — remains visible unless "
+            "separately protected."};
 }
 
 runtime::task<void> write_atomic(std::filesystem::path path, std::vector<std::byte> bytes) {
@@ -112,7 +198,17 @@ runtime::task<void> write_atomic(std::filesystem::path path, std::vector<std::by
     if (!written)
         co_return std::unexpected(written.error());
     try {
+#if defined(_WIN32)
+        if (!MoveFileExW(std::filesystem::path{temporary}.c_str(),
+                         path.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            const auto code =
+                std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+            co_return std::unexpected(key_error(errc::io, code.message(), path.string()));
+        }
+#else
         std::filesystem::rename(temporary, path);
+#endif
     } catch (const std::exception& caught) {
         co_return std::unexpected(key_error(errc::io, caught.what(), path.string()));
     }
@@ -1009,9 +1105,36 @@ result<std::array<std::byte, 32>> key_file_provider::derive_kek(std::span<const 
     return impl_->key;
 }
 
+namespace {
+
+result<crypto_detail::key> derive_wrapping_key(result<crypto_detail::key> kek) {
+    if (!kek)
+        return std::unexpected(kek.error());
+    auto wrapping = crypto_detail::derive_key(*kek, key_wrap_context);
+    crypto_detail::wipe(*kek);
+    return wrapping;
+}
+
+result<crypto_detail::key> unwrap_key(const crypto_detail::key& wrapping,
+                                      std::span<const std::byte> boxed,
+                                      std::string_view reference) {
+    auto opened = crypto_detail::open(wrapping, {}, boxed);
+    if (!opened || opened->size() != crypto_detail::key{}.size()) {
+        if (opened)
+            crypto_detail::wipe(*opened);
+        return std::unexpected(
+            key_error(errc::unauthorized, "cannot unwrap data key", std::string{reference}));
+    }
+    crypto_detail::key output{};
+    std::copy_n(opened->begin(), output.size(), output.begin());
+    crypto_detail::wipe(*opened);
+    return output;
+}
+
+} // namespace
+
 struct keyring::impl {
     std::map<std::string, std::shared_ptr<key_provider>, std::less<>> providers;
-    std::map<std::string, std::array<std::byte, 32>, std::less<>> data_keys;
     std::string default_key;
     std::filesystem::path keys_path;
 };
@@ -1056,9 +1179,52 @@ runtime::task<void> keyring::attach(std::filesystem::path keys_path) {
     }
 }
 
+runtime::task<std::string> keyring::write_key(std::string key_id) {
+    if (!valid_key_id(key_id)) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "invalid key id", std::move(key_id)));
+    }
+    if (!impl_->providers.contains(key_id)) {
+        co_return std::unexpected(
+            key_error(errc::unauthorized, "key is unavailable", std::move(key_id)));
+    }
+    if (impl_->keys_path.empty()) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "keyring is not attached to a store", key_id));
+    }
+    const auto path = impl_->keys_path / (key_id + ".wrapped");
+    if (!std::filesystem::exists(path)) {
+        const auto reference = identity_detail::versioned_key_id(key_id, 1);
+        auto data = co_await data_key(reference, true);
+        if (!data)
+            co_return std::unexpected(data.error());
+        crypto_detail::wipe(*data);
+        co_return reference;
+    }
+    auto raw = co_await store_detail::read_file(path);
+    if (!raw)
+        co_return std::unexpected(raw.error());
+    auto file = parse_wrapped_key_file(*raw, key_id);
+    if (!file)
+        co_return std::unexpected(file.error());
+    const auto reference = identity_detail::versioned_key_id(key_id, file->current_version);
+    if (!file->versions.contains(file->current_version)) {
+        co_return std::unexpected(
+            key_error(errc::unauthorized, "write key version is unavailable", reference));
+    }
+    co_return reference;
+}
+
 runtime::task<std::array<std::byte, 32>> keyring::data_key(std::string key_id,
                                                            bool create_if_missing) {
-    const auto provider = impl_->providers.find(key_id);
+    auto parsed = identity_detail::parse_key_reference(key_id);
+    if (!parsed)
+        co_return std::unexpected(parsed.error());
+    if (!valid_key_id(parsed->key_id)) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "invalid key id", std::move(key_id)));
+    }
+    const auto provider = impl_->providers.find(parsed->key_id);
     if (provider == impl_->providers.end()) {
         co_return std::unexpected(
             key_error(errc::unauthorized, "key is unavailable", std::move(key_id)));
@@ -1067,61 +1233,65 @@ runtime::task<std::array<std::byte, 32>> keyring::data_key(std::string key_id,
         co_return std::unexpected(
             key_error(errc::invalid_argument, "keyring is not attached to a store", key_id));
     }
-    if (const auto cached = impl_->data_keys.find(key_id); cached != impl_->data_keys.end())
-        co_return cached->second;
-    const auto path = impl_->keys_path / (key_id + ".wrapped");
+    const auto version = parsed->version.value_or(1);
+    const auto reference = identity_detail::versioned_key_id(parsed->key_id, version);
+    const auto path = impl_->keys_path / (parsed->key_id + ".wrapped");
     if (!std::filesystem::exists(path)) {
-        if (!create_if_missing) {
+        if (!create_if_missing || version != 1) {
             co_return std::unexpected(
-                key_error(errc::unauthorized, "wrapped data key is unavailable", key_id));
+                key_error(errc::unauthorized, "wrapped data key is unavailable", reference));
         }
         auto data = crypto_detail::random_key();
         if (!data)
             co_return std::unexpected(data.error());
-        wrapped_data_key wrapped;
-        auto random = crypto_detail::random_bytes(wrapped.salt);
-        if (!random)
+        wrapped_key_file file;
+        auto random = crypto_detail::random_bytes(file.salt);
+        if (!random) {
+            crypto_detail::wipe(*data);
             co_return std::unexpected(random.error());
-        auto kek = provider->second->derive_kek(wrapped.salt, wrapped.parameters);
-        if (!kek)
-            co_return std::unexpected(kek.error());
-        auto wrapping_key = crypto_detail::derive_key(*kek, key_wrap_context);
-        if (!wrapping_key)
-            co_return std::unexpected(wrapping_key.error());
-        auto boxed = crypto_detail::seal(*wrapping_key, {}, *data);
-        crypto_wipe(kek->data(), kek->size());
-        crypto_wipe(wrapping_key->data(), wrapping_key->size());
-        if (!boxed)
+        }
+        auto wrapping =
+            derive_wrapping_key(provider->second->derive_kek(file.salt, file.parameters));
+        if (!wrapping) {
+            crypto_detail::wipe(*data);
+            co_return std::unexpected(wrapping.error());
+        }
+        auto boxed = crypto_detail::seal(*wrapping, {}, *data);
+        crypto_detail::wipe(*wrapping);
+        if (!boxed) {
+            crypto_detail::wipe(*data);
             co_return std::unexpected(boxed.error());
-        wrapped.boxed = std::move(*boxed);
-        auto written = co_await write_atomic(path, encode_wrapped_data_key(wrapped));
-        if (!written)
+        }
+        file.versions.emplace(1, std::move(*boxed));
+        auto written = co_await write_atomic(path, encode_wrapped_key_file(file));
+        if (!written) {
+            crypto_detail::wipe(*data);
             co_return std::unexpected(written.error());
-        impl_->data_keys[key_id] = *data;
-        co_return *data;
+        }
+        auto output = *data;
+        crypto_detail::wipe(*data);
+        co_return output;
     }
     auto raw = co_await store_detail::read_file(path);
     if (!raw)
         co_return std::unexpected(raw.error());
-    auto wrapped = parse_wrapped_data_key(*raw, key_id);
-    if (!wrapped)
-        co_return std::unexpected(wrapped.error());
-    auto kek = provider->second->derive_kek(wrapped->salt, wrapped->parameters);
-    if (!kek)
-        co_return std::unexpected(kek.error());
-    auto wrapping_key = crypto_detail::derive_key(*kek, key_wrap_context);
-    crypto_wipe(kek->data(), kek->size());
-    if (!wrapping_key)
-        co_return std::unexpected(wrapping_key.error());
-    auto data = crypto_detail::open(*wrapping_key, {}, wrapped->boxed);
-    crypto_wipe(wrapping_key->data(), wrapping_key->size());
-    if (!data || data->size() != 32) {
-        co_return std::unexpected(key_error(errc::unauthorized, "cannot unwrap data key", key_id));
+    auto file = parse_wrapped_key_file(*raw, parsed->key_id);
+    if (!file)
+        co_return std::unexpected(file.error());
+    const auto boxed = file->versions.find(version);
+    if (boxed == file->versions.end()) {
+        co_return std::unexpected(
+            key_error(errc::unauthorized, "data key version is unavailable", reference));
     }
-    std::array<std::byte, 32> output{};
-    std::copy_n(data->begin(), output.size(), output.begin());
-    crypto_wipe(data->data(), data->size());
-    impl_->data_keys[key_id] = output;
+    auto wrapping = derive_wrapping_key(provider->second->derive_kek(file->salt, file->parameters));
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    auto data = unwrap_key(*wrapping, boxed->second, reference);
+    crypto_detail::wipe(*wrapping);
+    if (!data)
+        co_return std::unexpected(data.error());
+    auto output = *data;
+    crypto_detail::wipe(*data);
     co_return output;
 }
 
@@ -1131,33 +1301,167 @@ runtime::task<void> keyring::rewrap(std::string key_id,
         co_return std::unexpected(
             key_error(errc::invalid_argument, "key provider is null", key_id));
     }
-    auto data = co_await data_key(key_id, false);
-    if (!data)
-        co_return std::unexpected(data.error());
+    if (!valid_key_id(key_id)) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "invalid key id", std::move(key_id)));
+    }
+    const auto provider = impl_->providers.find(key_id);
+    if (provider == impl_->providers.end()) {
+        co_return std::unexpected(
+            key_error(errc::unauthorized, "key is unavailable", std::move(key_id)));
+    }
+    if (impl_->keys_path.empty()) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "keyring is not attached to a store", key_id));
+    }
     const auto path = impl_->keys_path / (key_id + ".wrapped");
     auto raw = co_await store_detail::read_file(path);
     if (!raw)
         co_return std::unexpected(raw.error());
-    auto wrapped = parse_wrapped_data_key(*raw, key_id);
-    if (!wrapped)
-        co_return std::unexpected(wrapped.error());
-    auto kek = new_provider->derive_kek(wrapped->salt, wrapped->parameters);
-    if (!kek)
-        co_return std::unexpected(kek.error());
-    auto wrapping_key = crypto_detail::derive_key(*kek, key_wrap_context);
-    crypto_wipe(kek->data(), kek->size());
-    if (!wrapping_key)
-        co_return std::unexpected(wrapping_key.error());
-    auto boxed = crypto_detail::seal(*wrapping_key, {}, *data);
-    crypto_wipe(wrapping_key->data(), wrapping_key->size());
-    crypto_wipe(data->data(), data->size());
-    if (!boxed)
-        co_return std::unexpected(boxed.error());
-    wrapped->boxed = std::move(*boxed);
-    auto written = co_await write_atomic(path, encode_wrapped_data_key(*wrapped));
+    auto file = parse_wrapped_key_file(*raw, key_id);
+    if (!file)
+        co_return std::unexpected(file.error());
+    if (file->versions.empty()) {
+        co_return std::unexpected(key_error(
+            errc::unauthorized, "no held data key version can authenticate the KEK", key_id));
+    }
+    auto old_wrapping =
+        derive_wrapping_key(provider->second->derive_kek(file->salt, file->parameters));
+    if (!old_wrapping)
+        co_return std::unexpected(old_wrapping.error());
+    auto new_wrapping = derive_wrapping_key(new_provider->derive_kek(file->salt, file->parameters));
+    if (!new_wrapping) {
+        crypto_detail::wipe(*old_wrapping);
+        co_return std::unexpected(new_wrapping.error());
+    }
+    auto replacement = *file;
+    replacement.versions.clear();
+    for (const auto& [version, boxed] : file->versions) {
+        const auto reference = identity_detail::versioned_key_id(key_id, version);
+        auto data = unwrap_key(*old_wrapping, boxed, reference);
+        if (!data) {
+            crypto_detail::wipe(*old_wrapping);
+            crypto_detail::wipe(*new_wrapping);
+            co_return std::unexpected(data.error());
+        }
+        auto reboxed = crypto_detail::seal(*new_wrapping, {}, *data);
+        crypto_detail::wipe(*data);
+        if (!reboxed) {
+            crypto_detail::wipe(*old_wrapping);
+            crypto_detail::wipe(*new_wrapping);
+            co_return std::unexpected(reboxed.error());
+        }
+        replacement.versions.emplace(version, std::move(*reboxed));
+    }
+    crypto_detail::wipe(*old_wrapping);
+    crypto_detail::wipe(*new_wrapping);
+    auto written = co_await write_atomic(path, encode_wrapped_key_file(replacement));
     if (!written)
         co_return std::unexpected(written.error());
     impl_->providers[std::move(key_id)] = std::move(new_provider);
+    co_return result<void>{};
+}
+
+runtime::task<rotation_report> keyring::rotate(std::string key_id) {
+    if (!valid_key_id(key_id)) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "invalid key id", std::move(key_id)));
+    }
+    const auto provider = impl_->providers.find(key_id);
+    if (provider == impl_->providers.end()) {
+        co_return std::unexpected(
+            key_error(errc::unauthorized, "key is unavailable", std::move(key_id)));
+    }
+    if (impl_->keys_path.empty()) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "keyring is not attached to a store", key_id));
+    }
+    const auto path = impl_->keys_path / (key_id + ".wrapped");
+    auto raw = co_await store_detail::read_file(path);
+    if (!raw)
+        co_return std::unexpected(raw.error());
+    auto file = parse_wrapped_key_file(*raw, key_id);
+    if (!file)
+        co_return std::unexpected(file.error());
+    if (file->versions.empty()) {
+        co_return std::unexpected(key_error(
+            errc::unauthorized, "no held data key version can authenticate the KEK", key_id));
+    }
+    auto wrapping = derive_wrapping_key(provider->second->derive_kek(file->salt, file->parameters));
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    const auto authentication = file->versions.contains(file->current_version)
+                                    ? file->versions.find(file->current_version)
+                                    : file->versions.begin();
+    const auto authentication_reference =
+        identity_detail::versioned_key_id(key_id, authentication->first);
+    auto authenticated = unwrap_key(*wrapping, authentication->second, authentication_reference);
+    if (!authenticated) {
+        crypto_detail::wipe(*wrapping);
+        co_return std::unexpected(authenticated.error());
+    }
+    crypto_detail::wipe(*authenticated);
+    auto highest = file->current_version;
+    if (!file->versions.empty())
+        highest = std::max(highest, file->versions.rbegin()->first);
+    if (!file->revoked.empty())
+        highest = std::max(highest, *file->revoked.rbegin());
+    if (highest == std::numeric_limits<std::uint64_t>::max()) {
+        crypto_detail::wipe(*wrapping);
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "key version space is exhausted", key_id));
+    }
+    auto data = crypto_detail::random_key();
+    if (!data) {
+        crypto_detail::wipe(*wrapping);
+        co_return std::unexpected(data.error());
+    }
+    auto boxed = crypto_detail::seal(*wrapping, {}, *data);
+    crypto_detail::wipe(*data);
+    crypto_detail::wipe(*wrapping);
+    if (!boxed)
+        co_return std::unexpected(boxed.error());
+    const auto previous = file->current_version;
+    const auto next = highest + 1;
+    file->current_version = next;
+    file->versions.emplace(next, std::move(*boxed));
+    auto written = co_await write_atomic(path, encode_wrapped_key_file(*file));
+    if (!written)
+        co_return std::unexpected(written.error());
+    co_return rotation_report{std::move(key_id), previous, next, encryption_limits()};
+}
+
+runtime::task<void> keyring::revoke(std::string key_id, std::uint64_t version) {
+    if (!valid_key_id(key_id) || version == 0) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "invalid key id or version", std::move(key_id)));
+    }
+    if (!impl_->providers.contains(key_id)) {
+        co_return std::unexpected(
+            key_error(errc::unauthorized, "key is unavailable", std::move(key_id)));
+    }
+    if (impl_->keys_path.empty()) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "keyring is not attached to a store", key_id));
+    }
+    const auto path = impl_->keys_path / (key_id + ".wrapped");
+    auto raw = co_await store_detail::read_file(path);
+    if (!raw)
+        co_return std::unexpected(raw.error());
+    auto file = parse_wrapped_key_file(*raw, key_id);
+    if (!file)
+        co_return std::unexpected(file.error());
+    if (file->revoked.contains(version))
+        co_return result<void>{};
+    if (file->versions.erase(version) == 0) {
+        const auto reference = identity_detail::versioned_key_id(key_id, version);
+        co_return std::unexpected(
+            key_error(errc::not_found, "data key version does not exist", reference));
+    }
+    file->revoked.insert(version);
+    auto written = co_await write_atomic(path, encode_wrapped_key_file(*file));
+    if (!written)
+        co_return std::unexpected(written.error());
     co_return result<void>{};
 }
 

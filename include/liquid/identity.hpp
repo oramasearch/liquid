@@ -107,6 +107,13 @@ struct LIQUID_EXPORT argon2_parameters {
     std::uint32_t lanes{1};
 };
 
+struct LIQUID_EXPORT rotation_report {
+    std::string key_id;
+    std::uint64_t previous_version{};
+    std::uint64_t new_version{};
+    std::vector<std::string> limits;
+};
+
 class LIQUID_EXPORT key_provider {
 public:
     key_provider() = default;
@@ -179,9 +186,12 @@ public:
     [[nodiscard]] result<void> set_default_key_id(std::string key_id);
     [[nodiscard]] runtime::task<void> rewrap(std::string key_id,
                                              std::shared_ptr<key_provider> new_provider);
+    [[nodiscard]] runtime::task<rotation_report> rotate(std::string key_id);
+    [[nodiscard]] runtime::task<void> revoke(std::string key_id, std::uint64_t version);
 
 private:
     [[nodiscard]] runtime::task<void> attach(std::filesystem::path keys_path);
+    [[nodiscard]] runtime::task<std::string> write_key(std::string key_id);
     [[nodiscard]] runtime::task<std::array<std::byte, 32>> data_key(std::string key_id,
                                                                     bool create_if_missing);
 

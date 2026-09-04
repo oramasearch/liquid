@@ -46,6 +46,22 @@ struct LIQUID_EXPORT snapshot {
     tree root;
 };
 
+struct LIQUID_EXPORT key_readability {
+    std::string key_id;
+    std::uint64_t version{};
+    bool readable{};
+};
+
+struct LIQUID_EXPORT revision_readability {
+    change_id revision;
+    std::vector<key_readability> keys;
+};
+
+struct LIQUID_EXPORT readability_report {
+    std::vector<revision_readability> revisions;
+    std::vector<std::string> limits;
+};
+
 struct LIQUID_EXPORT op_id {
     digest value;
 };
@@ -76,6 +92,8 @@ public:
     [[nodiscard]] result<repository_status> status();
     [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
     [[nodiscard]] runtime::task<snapshot> at(change_id id);
+    [[nodiscard]] runtime::task<readability_report>
+    readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
     [[nodiscard]] runtime::task<repository> split(std::string path, std::filesystem::path into);
     [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);

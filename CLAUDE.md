@@ -15,8 +15,9 @@ Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
 error and digest APIs plus liquid #1's local chunk store, liquid #4's TAAP/1 actor identities,
-liquid #111's key rotation and chain verification, and signed drips and changes, liquid #7's trust-domain
-encrypted objects, liquid #8's leased-root garbage collection with pack compaction, liquid #55's
+liquid #111's identity-key rotation and chain verification, and signed drips and changes, liquid #7's
+trust-domain encrypted objects, liquid #53's versioned data-key rotation, revocation, and repository
+readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
 deterministic crash simulator, and liquid #116's bounded-memory file and repository streaming are
 implemented, while operations owned by later issues return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
