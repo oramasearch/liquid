@@ -50,6 +50,7 @@ and Zetta's.
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |
 | **[docs/features/](docs/features/)** | What liquid does. 25 feature areas, each traceable to the research. |
+| **[docs/build/](docs/build/)** | Local and GitHub Actions build verification. |
 | **[docs/standards/](docs/standards/)** | External standards liquid depends on — currently [TAAP/1](docs/standards/taap-1-spec-draft.md), vendored until it has its own repository. |
 
 Start with **[docs/research/99-synthesis/](docs/research/99-synthesis/)** for the
@@ -138,6 +139,9 @@ library, never the other way round).
 `LIQUID_BUILD_BENCH=ON` adds the optional `bench/chunk-index/chunk-index-bench` target and
 fetches its RocksDB and LMDB dependencies. It defaults to OFF, so the default configure does not
 fetch or build benchmark code.
+
+GitHub Actions builds and tests clean checkouts on Linux, macOS, and Windows; see
+[`docs/build/ci.md`](docs/build/ci.md) for the toolchains and coverage.
 
 ```sh
 cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build

@@ -24,6 +24,19 @@ if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT LIQUID_USE_SYSTEM_COMPILER)
         break()
       endif()
     endforeach()
+  elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    find_program(LIQUID_CLANGCL "clang-cl")
+    if(LIQUID_CLANGCL)
+      set(CMAKE_C_COMPILER "${LIQUID_CLANGCL}" CACHE FILEPATH "")
+      set(CMAKE_CXX_COMPILER "${LIQUID_CLANGCL}" CACHE FILEPATH "")
+    endif()
+  endif()
+
+  if(NOT DEFINED CMAKE_CXX_COMPILER)
+    message(FATAL_ERROR
+      "liquid requires a modern Clang compiler. Install Homebrew LLVM on macOS, "
+      "clang++-17 or newer on Linux, or clang-cl on Windows; alternatively set "
+      "CMAKE_CXX_COMPILER explicitly or enable LIQUID_USE_SYSTEM_COMPILER.")
   endif()
 endif()
 
