@@ -7,3 +7,6 @@ round trip. `Http2Interop.GetsCapabilitiesFromNativeLinkOverH2c` uses the peer s
 
 TLS framing is covered by the common connection code. A negotiated TLS peer test waits for
 Corosio #3 to expose the selected ALPN protocol.
+
+The HTTP/2 source files are compiled into these private test executables. This keeps their symbols
+out of the shared library's public ABI while exercising the same source in static and shared builds.
