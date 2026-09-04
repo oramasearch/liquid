@@ -310,6 +310,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    in `docs/library/chunk-index-benchmark.md` (liquid #45) is the bar: at 10M entries, at least
    RocksDB-tuned's insert and point-lookup rates and no more than its footprint. Design in
    `docs/library/store.md` (liquid #1).
+9. **Transport is liquid's own: HTTP/2 with gRPC framing and a protobuf codec on Corosio** (Steve,
+   2026-09-05; bridge decision 9). No `grpc++`, no `protobuf`, no code generator. REAPI v2 is spoken
+   through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
+   same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
+   `docs/library/distribution.md`.
 
 **Still open:**
 
