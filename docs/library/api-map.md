@@ -56,11 +56,11 @@ owning issue in `error::context`.
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
-| `liquid/store.hpp` | #1, #7, #8, #46, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains; leases, collection, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #40, #41, #42, #116 | implemented | `repository`: open, read, memory and streaming-file writes, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
+| `liquid/repository.hpp` | #2, #40, #41, #42, #53, #116 | implemented | `repository`: open, read, memory and streaming-file writes, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
-| `liquid/identity.hpp` | #4, #7, #51, #111 | implemented (#4, #7, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, keyring and custody providers |
+| `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
@@ -141,6 +141,7 @@ struct store_options {
   std::shared_ptr<keyring> keys;       // null preserves plaintext-store behaviour
   std::string write_key;               // empty selects keyring::default_key_id()
 };
+struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
   bool dry_run; std::chrono::seconds min_lease_age; bool explain;
   double compact_below{0.5}; bool compact_only;
@@ -164,6 +165,7 @@ class store {                          // the chunk store: chunks, packs, liquid
   runtime::task<std::vector<std::byte>> get(digest);              // verified on read
   runtime::task<std::uint64_t> read(digest, std::uint64_t offset, std::span<std::byte> into);
   runtime::task<bool> contains(digest);
+  runtime::task<std::optional<object_key_version>> key_version(digest);
   runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
   runtime::task<collection_report> collect(collection_options = {});   // epoch marking
 };
@@ -205,6 +207,10 @@ optional `conflict` record on a change (liquid #40).
 ### `liquid/repository.hpp`
 
 ```cpp
+struct key_readability { std::string key_id; std::uint64_t version; bool readable; };
+struct revision_readability { change_id revision; std::vector<key_readability> keys; };
+struct readability_report { std::vector<revision_readability> revisions;
+                            std::vector<std::string> limits; };
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
@@ -222,6 +228,7 @@ class repository {
   result<repository_status> status();                     // pending drips, paused, conflicts, oversized directories
   runtime::task<std::vector<change>> log(log_options = {});
   runtime::task<snapshot> at(change_id);                 // time travel
+  runtime::task<readability_report> readability(std::optional<change_id> = {});
   runtime::task<void> nest(repository source, std::string path);
   runtime::task<repository> split(std::string path, std::filesystem::path into);
   runtime::task<void> combine(repository other, std::optional<std::string> at);
@@ -252,6 +259,10 @@ member selects the object-store hash algorithm and, when configured, its key cus
 same options to `create` and `open` so later writes and reads use the intended store settings.
 Repository change IDs are computed with that selected store algorithm, including IDs returned by
 `log` and accepted by `at`.
+
+`key_readability` is `{ key_id, version, readable }`. `revision_readability` is a `change_id` and
+the sorted key-version set used by its blobs. `readability_report` contains those revision rows and
+the three required rotation, revocation, and metadata-disclosure statements.
 
 ### `liquid/vfs.hpp`
 
@@ -310,10 +321,20 @@ result<verified_identity> verify_chain(std::span<const identity_document> docume
 struct signature { std::string algorithm; std::string signing_key_identifier; std::string signing_key_label;
                    std::string signature_purpose; std::string signed_at; std::vector<std::byte> bytes; };   // TAAP/1 §6.7
 struct argon2_parameters { std::uint32_t memory_kib; std::uint32_t iterations; std::uint32_t lanes; };
+struct rotation_report { std::string key_id; std::uint64_t previous_version, new_version;
+                         std::vector<std::string> limits; };
 class key_provider { protected: virtual result<std::array<std::byte, 32>> derive_kek(span, argon2_parameters) const = 0; };
 class passphrase_provider final : public key_provider { public: result<std::array<std::byte, 32>> derive(span, argon2_parameters = {}) const; };
 class key_file_provider final : public key_provider { public: static runtime::task<std::shared_ptr<key_file_provider>> open(std::filesystem::path); };
-class keyring { public: result<void> add(std::string, std::shared_ptr<key_provider>); result<std::string> default_key_id() const; result<void> set_default_key_id(std::string); runtime::task<void> rewrap(std::string, std::shared_ptr<key_provider>); };
+class keyring {
+ public:
+  result<void> add(std::string, std::shared_ptr<key_provider>);
+  result<std::string> default_key_id() const;
+  result<void> set_default_key_id(std::string);
+  runtime::task<void> rewrap(std::string, std::shared_ptr<key_provider>);
+  runtime::task<rotation_report> rotate(std::string);
+  runtime::task<void> revoke(std::string, std::uint64_t);
+};
 ```
 
 `capture_status` makes overflow and recrawl visible because watcher events are hints, not a
@@ -341,8 +362,9 @@ from that key at or after `declared_at` fail; earlier signatures remain valid an
 `identity/<identity-fingerprint>/documents/NNN.cbor`, replaces the active local private key after
 the successor is signed, and `verify_chain` returns the current key set.
 `passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
-objects. Recipient, KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains
-liquid #4 work.
+objects. The keyring retains held data-key versions, rotates future writes, rewraps every held
+version when the KEK changes, and records revocation after deleting a wrapped version. Recipient,
+KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liquid #4 work.
 
 ## Deliberately internal
 

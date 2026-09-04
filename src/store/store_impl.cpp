@@ -18,6 +18,7 @@
 #include "collector.hpp"
 #include "faults.hpp"
 #include "hash/sha256.h"
+#include "identity/key_version.hpp"
 #include "references.hpp"
 
 namespace liquid::store_detail {
@@ -667,6 +668,10 @@ runtime::task<digest> store_backend::put(std::vector<std::byte> input) {
         } else {
             key_id = options_.write_key;
         }
+        auto versioned = co_await options_.keys->write_key(key_id);
+        if (!versioned)
+            co_return std::unexpected(versioned.error());
+        key_id = std::move(*versioned);
         auto data = co_await options_.keys->data_key(key_id, true);
         if (!data)
             co_return std::unexpected(data.error());
@@ -759,6 +764,10 @@ runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
             } else {
                 key_id = options_.write_key;
             }
+            auto versioned = co_await options_.keys->write_key(key_id);
+            if (!versioned)
+                co_return std::unexpected(versioned.error());
+            key_id = std::move(*versioned);
             auto data = co_await options_.keys->data_key(key_id, true);
             if (!data)
                 co_return std::unexpected(data.error());
@@ -1083,6 +1092,43 @@ runtime::task<bool> store_backend::contains(digest id) {
     if (!found)
         co_return std::unexpected(found.error());
     co_return found->has_value();
+}
+
+runtime::task<std::optional<object_key_version>> store_backend::key_version(digest id) {
+    const auto object = objects_.find(to_string(id));
+    std::string reference;
+    if (object != objects_.end()) {
+        reference = object->second.key_id;
+    } else if (const auto keyed_chunk = chunk_keys_.find(to_string(id));
+               keyed_chunk != chunk_keys_.end()) {
+        reference = keyed_chunk->second;
+    } else {
+        auto chunk = index_.find(id);
+        if (!chunk)
+            co_return std::unexpected(chunk.error());
+        if (!*chunk) {
+            co_return std::unexpected(
+                store_error(errc::not_found, "object is not present", to_string(id)));
+        }
+    }
+    if (reference.empty())
+        co_return std::optional<object_key_version>{};
+    auto parsed = identity_detail::parse_key_reference(reference);
+    if (!parsed) {
+        co_return std::unexpected(
+            store_error(errc::corrupt, "object has an invalid key version", reference));
+    }
+    bool readable = false;
+    if (options_.keys) {
+        auto data = co_await options_.keys->data_key(reference, false);
+        if (data) {
+            crypto_detail::wipe(*data);
+            readable = true;
+        } else if (data.error().code != errc::unauthorized) {
+            co_return std::unexpected(data.error());
+        }
+    }
+    co_return object_key_version{std::move(parsed->key_id), parsed->version.value_or(1), readable};
 }
 
 runtime::task<std::shared_ptr<lease_state>> store_backend::lease_root(digest id,

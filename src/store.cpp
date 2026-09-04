@@ -96,6 +96,14 @@ runtime::task<bool> store::contains(digest id) {
     co_return co_await impl_->value->contains(id);
 }
 
+runtime::task<std::optional<object_key_version>> store::key_version(digest id) {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::key_version"});
+    }
+    co_return co_await impl_->value->key_version(id);
+}
+
 runtime::task<lease> store::lease_root(digest id, std::chrono::seconds ttl) {
     if (!impl_)
         co_return std::unexpected(

@@ -42,6 +42,7 @@ public:
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<bool> contains(digest id);
+    [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>> lease_root(digest id,
                                                                          std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options);

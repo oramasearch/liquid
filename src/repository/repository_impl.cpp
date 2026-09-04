@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <random>
 #include <string_view>
@@ -916,6 +917,104 @@ runtime::task<snapshot> repository::at(change_id id) {
     if (!tree)
         co_return std::unexpected(tree.error());
     co_return snapshot{id, *tree};
+}
+runtime::task<readability_report> repository::readability(std::optional<change_id> revision) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    readability_report output;
+    output.limits = {
+        "Rotation does not rewrite history.",
+        "Revoking a collaborator prevents future access; it does not recall what they have.",
+        "Metadata — paths, sizes, change structure and timing — remains visible unless separately "
+        "protected."};
+    std::vector<change> revisions;
+    if (revision) {
+        auto bytes = co_await impl_->objects.get(revision->value);
+        if (!bytes)
+            co_return std::unexpected(bytes.error());
+        auto value = objects::decode_change(*bytes, impl_->hash_algorithm);
+        if (!value)
+            co_return std::unexpected(value.error());
+        value->id = *revision;
+        revisions.push_back(std::move(*value));
+    } else {
+        auto next = impl_->current.refs.contains("main")
+                        ? std::optional<change_id>{impl_->current.refs.at("main")}
+                        : impl_->current.head;
+        while (next) {
+            auto bytes = co_await impl_->objects.get(next->value);
+            if (!bytes)
+                co_return std::unexpected(bytes.error());
+            auto value = objects::decode_change(*bytes, impl_->hash_algorithm);
+            if (!value)
+                co_return std::unexpected(value.error());
+            value->id = *next;
+            next = value->parents.empty() ? std::optional<change_id>{}
+                                          : std::optional<change_id>{value->parents.front()};
+            revisions.push_back(std::move(*value));
+        }
+    }
+    for (const auto& revision_value : revisions) {
+        std::map<std::pair<std::string, std::uint64_t>, bool> keys;
+        const auto record_key = [&](digest id) -> runtime::task<void> {
+            auto version = co_await impl_->objects.key_version(id);
+            if (!version)
+                co_return std::unexpected(version.error());
+            if (*version) {
+                auto [found, inserted] = keys.emplace(
+                    std::pair{(*version)->key_id, (*version)->version}, (*version)->readable);
+                if (!inserted)
+                    found->second = found->second && (*version)->readable;
+            }
+            co_return result<void>{};
+        };
+        std::function<runtime::task<void>(digest)> visit_tree;
+        visit_tree = [&](digest tree_id) -> runtime::task<void> {
+            auto tree_bytes = co_await impl_->objects.get(tree_id);
+            if (!tree_bytes)
+                co_return std::unexpected(tree_bytes.error());
+            auto tree_value = objects::decode_tree(*tree_bytes);
+            if (!tree_value)
+                co_return std::unexpected(tree_value.error());
+            for (const auto& entry : tree_value->entries) {
+                if (entry.kind == node_kind::tree) {
+                    auto visited = co_await visit_tree(entry.ref);
+                    if (!visited)
+                        co_return std::unexpected(visited.error());
+                    continue;
+                }
+                if (entry.kind != node_kind::blob)
+                    continue;
+                auto recorded = co_await record_key(entry.ref);
+                if (!recorded)
+                    co_return std::unexpected(recorded.error());
+                auto blob_bytes = co_await impl_->objects.get(entry.ref);
+                if (!blob_bytes) {
+                    if (blob_bytes.error().code == errc::unauthorized)
+                        continue;
+                    co_return std::unexpected(blob_bytes.error());
+                }
+                auto blob_value = objects::decode_blob(*blob_bytes);
+                if (!blob_value)
+                    co_return std::unexpected(blob_value.error());
+                for (const auto& chunk : blob_value->chunks) {
+                    recorded = co_await record_key(chunk);
+                    if (!recorded)
+                        co_return std::unexpected(recorded.error());
+                }
+            }
+            co_return result<void>{};
+        };
+        auto visited = co_await visit_tree(revision_value.root);
+        if (!visited)
+            co_return std::unexpected(visited.error());
+        revision_readability readable;
+        readable.revision = revision_value.id;
+        for (const auto& [key, held] : keys)
+            readable.keys.push_back({key.first, key.second, held});
+        output.revisions.push_back(std::move(readable));
+    }
+    co_return output;
 }
 runtime::task<void> repository::nest(repository source, std::string path) {
     if (!impl_ || !source.impl_)

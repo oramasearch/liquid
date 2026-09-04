@@ -50,6 +50,20 @@ auto sha256_options() -> liquid::repository_options {
     return options;
 }
 
+auto encrypted_options(const std::shared_ptr<liquid::keyring>& keys) -> liquid::repository_options {
+    liquid::repository_options options;
+    options.store.keys = keys;
+    return options;
+}
+
+auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
+    auto keys = std::make_shared<liquid::keyring>();
+    EXPECT_TRUE(keys->add("repository", std::make_shared<liquid::passphrase_provider>("secret"))
+                    .has_value());
+    EXPECT_TRUE(keys->set_default_key_id("repository").has_value());
+    return keys;
+}
+
 void expect_sha256(const liquid::digest& value) {
     EXPECT_EQ(value.alg, liquid::algorithm::sha256);
     EXPECT_TRUE(liquid::to_string(value).starts_with("sha256:"));
@@ -144,6 +158,65 @@ TEST(Repository, create_write_move_cut_open_and_time_travel) {
     ASSERT_TRUE(value);
     EXPECT_EQ(text(*value), "one");
     EXPECT_TRUE(std::filesystem::exists(location.path() / "LIQUID_REPO"));
+}
+
+TEST(Repository, ReadabilityReportsExactBlobKeyVersionsAcrossRotation) {
+    temporary_repository location;
+    auto keys = encryption_keys();
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create(location.path(), encrypted_options(keys)));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("old.txt", content("old"))));
+    const auto first = liquid::runtime::block_on(repository.cut("first"));
+    ASSERT_TRUE(first) << first.error().message;
+    const auto rotated = liquid::runtime::block_on(keys->rotate("repository"));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    const auto new_source = location.path() / "new-source";
+    const auto new_contents = content("new");
+    write_file(new_source, new_contents);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write_file("new.txt", new_source)));
+    const auto second = liquid::runtime::block_on(repository.cut("second"));
+    ASSERT_TRUE(second) << second.error().message;
+
+    const auto report = liquid::runtime::block_on(repository.readability());
+    ASSERT_TRUE(report) << report.error().message;
+    ASSERT_EQ(report->revisions.size(), 2U);
+    EXPECT_EQ(liquid::to_string(report->revisions[0].revision.value),
+              liquid::to_string(second->value));
+    ASSERT_EQ(report->revisions[0].keys.size(), 2U);
+    EXPECT_EQ(report->revisions[0].keys[0].key_id, "repository");
+    EXPECT_EQ(report->revisions[0].keys[0].version, 1U);
+    EXPECT_TRUE(report->revisions[0].keys[0].readable);
+    EXPECT_EQ(report->revisions[0].keys[1].key_id, "repository");
+    EXPECT_EQ(report->revisions[0].keys[1].version, 2U);
+    EXPECT_TRUE(report->revisions[0].keys[1].readable);
+    EXPECT_EQ(liquid::to_string(report->revisions[1].revision.value),
+              liquid::to_string(first->value));
+    ASSERT_EQ(report->revisions[1].keys.size(), 1U);
+    EXPECT_EQ(report->revisions[1].keys[0].key_id, "repository");
+    EXPECT_EQ(report->revisions[1].keys[0].version, 1U);
+    EXPECT_TRUE(report->revisions[1].keys[0].readable);
+    ASSERT_EQ(report->limits.size(), 3U);
+    EXPECT_EQ(report->limits[1],
+              "Revoking a collaborator prevents future access; it does not recall what they "
+              "have.");
+
+    const auto revoked = liquid::runtime::block_on(keys->revoke("repository", 1));
+    ASSERT_TRUE(revoked) << revoked.error().message;
+    const auto current = liquid::runtime::block_on(repository.readability(*second));
+    ASSERT_TRUE(current) << current.error().message;
+    ASSERT_EQ(current->revisions.size(), 1U);
+    ASSERT_EQ(current->revisions[0].keys.size(), 2U);
+    EXPECT_FALSE(current->revisions[0].keys[0].readable);
+    EXPECT_TRUE(current->revisions[0].keys[1].readable);
+    const auto old_value = liquid::runtime::block_on(repository.read("old.txt"));
+    ASSERT_FALSE(old_value);
+    EXPECT_EQ(old_value.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(old_value.error().context, "repository@1");
+    const auto new_value = liquid::runtime::block_on(repository.read("new.txt"));
+    ASSERT_TRUE(new_value) << new_value.error().message;
+    EXPECT_EQ(text(*new_value), "new");
 }
 
 TEST(Repository, write_undo_and_locks_are_recorded) {

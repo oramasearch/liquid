@@ -370,14 +370,14 @@ TEST(Store, EncryptedFailuresAreUnauthorizedOrCorrupt) {
     const auto absent_key = liquid::runtime::block_on(plaintext.get(*id));
     ASSERT_FALSE(absent_key.has_value());
     EXPECT_EQ(absent_key.error().code, liquid::errc::unauthorized);
-    EXPECT_EQ(absent_key.error().context, "private");
+    EXPECT_EQ(absent_key.error().context, "private@1");
     plaintext = {};
     auto wrong_keys = keys_for("private", "wrong passphrase");
     auto wrong = open_store(temporary.path(), encrypted_options(wrong_keys));
     const auto wrong_key = liquid::runtime::block_on(wrong.get(*id));
     ASSERT_FALSE(wrong_key.has_value());
     EXPECT_EQ(wrong_key.error().code, liquid::errc::unauthorized);
-    EXPECT_EQ(wrong_key.error().context, "private");
+    EXPECT_EQ(wrong_key.error().context, "private@1");
     wrong = {};
     auto reopened = open_store(temporary.path(), encrypted_options(good_keys));
     const auto pack = temporary.path() / "packs" / "pack-1.pack";
@@ -393,6 +393,93 @@ TEST(Store, EncryptedFailuresAreUnauthorizedOrCorrupt) {
     const auto corrupt = liquid::runtime::block_on(reopened.get(*id));
     ASSERT_FALSE(corrupt.has_value());
     EXPECT_EQ(corrupt.error().code, liquid::errc::corrupt);
+}
+
+TEST(Store, RotationVersionsFutureWritesWithoutRewritingPacks) {
+    temporary_store temporary;
+    auto keys = keys_for("private", "rotation passphrase");
+    auto store = open_store(temporary.path(), encrypted_options(keys));
+    const auto old_source = bytes(256U * 1024U, 91);
+    const auto new_source = bytes(256U * 1024U, 92);
+    const auto old_id = liquid::runtime::block_on(store.put(old_source));
+    ASSERT_TRUE(old_id) << old_id.error().message;
+    const auto pack = temporary.path() / "packs" / "pack-1.pack";
+    std::ifstream before_input(pack, std::ios::binary);
+    const std::vector<char> before((std::istreambuf_iterator<char>(before_input)), {});
+
+    const auto rotated = liquid::runtime::block_on(keys->rotate("private"));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    EXPECT_EQ(rotated->key_id, "private");
+    EXPECT_EQ(rotated->previous_version, 1U);
+    EXPECT_EQ(rotated->new_version, 2U);
+    ASSERT_EQ(rotated->limits.size(), 3U);
+    EXPECT_EQ(rotated->limits[0], "Rotation does not rewrite history.");
+    std::ifstream after_input(pack, std::ios::binary);
+    const std::vector<char> after((std::istreambuf_iterator<char>(after_input)), {});
+    EXPECT_EQ(after, before);
+
+    const auto new_id = liquid::runtime::block_on(store.put(new_source));
+    ASSERT_TRUE(new_id) << new_id.error().message;
+    const auto old_version = liquid::runtime::block_on(store.key_version(*old_id));
+    const auto new_version = liquid::runtime::block_on(store.key_version(*new_id));
+    ASSERT_TRUE(old_version);
+    ASSERT_TRUE(new_version);
+    ASSERT_TRUE(*old_version);
+    ASSERT_TRUE(*new_version);
+    EXPECT_EQ((*old_version)->key_id, "private");
+    EXPECT_EQ((*old_version)->version, 1U);
+    EXPECT_TRUE((*old_version)->readable);
+    EXPECT_EQ((*new_version)->key_id, "private");
+    EXPECT_EQ((*new_version)->version, 2U);
+    EXPECT_TRUE((*new_version)->readable);
+    auto old_value = liquid::runtime::block_on(store.get(*old_id));
+    auto new_value = liquid::runtime::block_on(store.get(*new_id));
+    ASSERT_TRUE(old_value) << old_value.error().message;
+    ASSERT_TRUE(new_value) << new_value.error().message;
+    EXPECT_EQ(*old_value, old_source);
+    EXPECT_EQ(*new_value, new_source);
+
+    const auto revoked = liquid::runtime::block_on(keys->revoke("private", 1));
+    ASSERT_TRUE(revoked) << revoked.error().message;
+    old_value = liquid::runtime::block_on(store.get(*old_id));
+    new_value = liquid::runtime::block_on(store.get(*new_id));
+    ASSERT_FALSE(old_value);
+    EXPECT_EQ(old_value.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(old_value.error().context, "private@1");
+    ASSERT_TRUE(new_value) << new_value.error().message;
+    EXPECT_EQ(*new_value, new_source);
+    const auto revoked_version = liquid::runtime::block_on(store.key_version(*old_id));
+    ASSERT_TRUE(revoked_version);
+    ASSERT_TRUE(*revoked_version);
+    EXPECT_FALSE((*revoked_version)->readable);
+}
+
+TEST(Store, RotationWithWrongKekChangesNoFiles) {
+    temporary_store temporary;
+    auto good_keys = keys_for("private", "correct passphrase");
+    auto store = open_store(temporary.path(), encrypted_options(good_keys));
+    const auto id = liquid::runtime::block_on(store.put(bytes(256U * 1024U, 93)));
+    ASSERT_TRUE(id) << id.error().message;
+    store = {};
+    const auto key_path = temporary.path() / "keys" / "private.wrapped";
+    const auto pack_path = temporary.path() / "packs" / "pack-1.pack";
+    std::ifstream key_before_input(key_path, std::ios::binary);
+    const std::vector<char> key_before((std::istreambuf_iterator<char>(key_before_input)), {});
+    std::ifstream pack_before_input(pack_path, std::ios::binary);
+    const std::vector<char> pack_before((std::istreambuf_iterator<char>(pack_before_input)), {});
+
+    auto wrong_keys = keys_for("private", "wrong passphrase");
+    store = open_store(temporary.path(), encrypted_options(wrong_keys));
+    const auto rotated = liquid::runtime::block_on(wrong_keys->rotate("private"));
+    ASSERT_FALSE(rotated);
+    EXPECT_EQ(rotated.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(rotated.error().context, "private@1");
+    std::ifstream key_after_input(key_path, std::ios::binary);
+    const std::vector<char> key_after((std::istreambuf_iterator<char>(key_after_input)), {});
+    std::ifstream pack_after_input(pack_path, std::ios::binary);
+    const std::vector<char> pack_after((std::istreambuf_iterator<char>(pack_after_input)), {});
+    EXPECT_EQ(key_after, key_before);
+    EXPECT_EQ(pack_after, pack_before);
 }
 
 TEST(Store, EncryptedRangeReadsAndKekRewrapDoNotRewritePacks) {

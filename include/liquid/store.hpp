@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -23,6 +24,12 @@ struct LIQUID_EXPORT store_options {
     std::shared_ptr<keyring> keys;
     std::string write_key;
     bool durable{};
+};
+
+struct LIQUID_EXPORT object_key_version {
+    std::string key_id;
+    std::uint64_t version{};
+    bool readable{};
 };
 
 struct LIQUID_EXPORT collection_options {
@@ -96,6 +103,7 @@ public:
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<bool> contains(digest id);
+    [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<lease> lease_root(digest id, std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
 
