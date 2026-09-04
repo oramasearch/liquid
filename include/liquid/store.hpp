@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "liquid/export.hpp"
@@ -23,9 +24,35 @@ struct LIQUID_EXPORT store_options {
     bool durable{};
 };
 
-struct LIQUID_EXPORT collection_options {};
+struct LIQUID_EXPORT collection_options {
+    bool dry_run{};
+    std::chrono::seconds min_lease_age{};
+    bool explain{};
+};
 
-struct LIQUID_EXPORT collection_report {};
+struct LIQUID_EXPORT retained_chunk {
+    digest id{};
+    std::string reason;
+};
+
+struct LIQUID_EXPORT partial_pack {
+    std::uint32_t id{};
+    double live_fraction{};
+};
+
+struct LIQUID_EXPORT collection_report {
+    std::uint64_t roots{};
+    std::uint64_t live_objects{};
+    std::uint64_t live_chunks{};
+    std::uint64_t dead_chunks{};
+    std::uint64_t bytes_reclaimed{};
+    std::uint64_t bytes_reclaimable_in_partially_dead_packs{};
+    std::uint64_t packs_deleted{};
+    std::uint64_t epoch{};
+    std::vector<std::string> unknown_kinds;
+    std::vector<partial_pack> partially_dead_packs;
+    std::vector<retained_chunk> retained_chunks;
+};
 
 class LIQUID_EXPORT lease {
 public:
@@ -36,7 +63,11 @@ public:
     lease(const lease&) = delete;
     lease& operator=(const lease&) = delete;
 
+    [[nodiscard]] runtime::task<void> renew(std::chrono::seconds ttl);
+    [[nodiscard]] runtime::task<void> release();
+
 private:
+    friend class store;
     struct impl;
     std::unique_ptr<impl> impl_;
 };
@@ -54,8 +85,8 @@ public:
                                                    store_options options = {});
     [[nodiscard]] runtime::task<digest> put(std::vector<std::byte> input);
     [[nodiscard]] runtime::task<std::vector<std::byte>> get(digest id);
-    [[nodiscard]] runtime::task<std::uint64_t> read(digest id, std::uint64_t offset,
-                                                    std::span<std::byte> into);
+    [[nodiscard]] runtime::task<std::uint64_t>
+    read(digest id, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<bool> contains(digest id);
     [[nodiscard]] runtime::task<lease> lease_root(digest id, std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
@@ -65,4 +96,4 @@ private:
     std::unique_ptr<impl> impl_;
 };
 
-}  // namespace liquid
+} // namespace liquid

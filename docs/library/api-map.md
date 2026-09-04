@@ -56,7 +56,7 @@ owning issue in `error::context`.
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
-| `liquid/store.hpp` | #1, #7, #8 | implemented (#1, #7); declared (#8) | `store`: content in, digests out; encrypted trust domains; leases and collection |
+| `liquid/store.hpp` | #1, #7, #8 | implemented | `store`: content in, digests out; encrypted trust domains; leases and collection |
 | `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
@@ -132,6 +132,16 @@ struct store_options {
   std::shared_ptr<keyring> keys;       // null preserves plaintext-store behaviour
   std::string write_key;               // empty selects keyring::default_key_id()
 };
+struct collection_options { bool dry_run; std::chrono::seconds min_lease_age; bool explain; };
+struct collection_report {
+  std::uint64_t roots, live_objects, live_chunks, dead_chunks, bytes_reclaimed;
+  std::uint64_t bytes_reclaimable_in_partially_dead_packs, packs_deleted, epoch;
+  std::vector<std::string> unknown_kinds;
+  std::vector<partial_pack> partially_dead_packs;
+  std::vector<retained_chunk> retained_chunks;
+};
+class lease { public: runtime::task<void> renew(std::chrono::seconds ttl);
+                       runtime::task<void> release(); };
 class store {                          // the chunk store: chunks, packs, liquid's own index
  public:
   static runtime::task<store> open(std::filesystem::path, store_options = {});
@@ -152,6 +162,8 @@ acknowledgement. A non-null keyring enables trust-domain encrypted objects; see
 [encryption.md](encryption.md).
 
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
+Lease destruction has no storage effect; expiry is the authority. Collection reports are plain
+values, and [gc.md](gc.md) defines their epoch and crash semantics.
 
 ### `liquid/object.hpp`
 

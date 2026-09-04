@@ -192,10 +192,13 @@ add_library(libliquid
   src/runtime/runtime.cpp
   src/store.cpp
   src/store/chunker.cpp
+  src/store/collector.cpp
   src/store/faults.cpp
   src/store/index.cpp
+  src/store/leases.cpp
   src/store/mapped_file.cpp
   src/store/pack.cpp
+  src/store/references.cpp
   src/store/store_impl.cpp
   src/version.cpp
   src/vfs.cpp

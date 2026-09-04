@@ -1,9 +1,9 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process local stores (liquid #1, #7).** `store::open`, `put`,
+**Status: implemented for single-process local stores (liquid #1, #7, #8).** `store::open`, `put`,
 `get`, `read`, and `contains` are Capy coroutines. The same operations support encrypted
-objects when supplied a keyring. Leases and collection remain unsupported
-until liquid #8.
+objects when supplied a keyring. Leased roots and epoch collection are implemented as Capy
+coroutines; see [gc.md](gc.md).
 
 ## What and why
 
@@ -20,6 +20,8 @@ share chunks without a file-per-object bottleneck.
 <root>/packs/objects.meta ordered input digest → chunk-list descriptors
 <root>/index/MANIFEST
 <root>/index/run-<seq>.idx
+<root>/leases/lease-<id>-<generation>.lease
+<root>/gc/MANIFEST       committed epoch and per-pack tombstone bitmaps
 <root>/keys/<key-id>.wrapped   encrypted trust-domain data key
 <root>/tmp/
 ```
@@ -55,9 +57,11 @@ Encrypted frames use the encrypted variant of the frame magic, and their compres
 replaced by `nonce[24] || tag[16] || ciphertext`. The nonce comes from the operating system random
 source for every new chunk. Recovery can structurally recognize a complete encrypted frame; its
 AEAD authentication and keyed digest are verified when the chunk is read with its trust-domain
-key. The object map format is now `LQOBJ2`: each record adds an encryption flag and, when set, a
-length-prefixed key id. Its chunk-list descriptor contains the same key id and is encrypted too.
-`LQOBJ1` plaintext metadata remains readable.
+key. The object map format is now `LQOBJ3`: each record carries the descriptor digest and object
+kind in addition to `LQOBJ2`'s encryption flag and optional length-prefixed key id. A zero
+descriptor algorithm is the sentinel for legacy records that predate stored chunk-list objects.
+Its chunk-list descriptor contains the same key id and is encrypted too. `LQOBJ1` plaintext and `LQOBJ2`
+encrypted metadata remain readable.
 
 Every encrypted read first unwraps the domain data key, then authenticates and decompresses each
 requested chunk and verifies its keyed id. A missing or wrong key is `unauthorized` with the key
@@ -83,7 +87,16 @@ defaults to `false`; setting it to `true` calls `sync_data` on the pack before a
 The ordering makes a process crash safe: complete frames can be found by the recovery scan, and torn
 frames are ignored. A power loss needs `durable` for the operating system to make that guarantee.
 An interrupted put may remain as an orphan: **acknowledged ⊆ visible ⊆ correct**. A visible object
-is always verified against its digest, and collection in liquid #8 reclaims orphans.
+is always verified against its digest, and collection reclaims unleased orphans.
+
+## Garbage collection
+
+Collection snapshots unexpired leased roots and marks objects and chunks through a per-kind
+reference registry. The mark bitmap is working state for that epoch only; the committed manifest
+records tombstones for dead physical frames. Frames written after the epoch high-water position
+are live without joining the snapshot and cannot become tombstones. The index is rebuilt without
+dead chunks before wholly dead packs are removed; partial packs are reported for liquid #46. The
+full lease model, crash order, report fields, and verification are in [gc.md](gc.md).
 
 ## Index
 

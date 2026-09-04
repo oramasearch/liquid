@@ -5,21 +5,28 @@
 #include "store/store_impl.hpp"
 
 namespace liquid {
-namespace {
-
-template <class T>
-result<T> unavailable(const char* issue) {
-    return std::unexpected(error{errc::unsupported, "not implemented", issue});
-}
-
-}  // namespace
-
-struct lease::impl {};
+struct lease::impl {
+    explicit impl(std::shared_ptr<store_detail::lease_state> value) : value(std::move(value)) {}
+    std::shared_ptr<store_detail::lease_state> value;
+};
 
 lease::lease() noexcept = default;
 lease::~lease() = default;
 lease::lease(lease&&) noexcept = default;
 lease& lease::operator=(lease&&) noexcept = default;
+
+runtime::task<void> lease::renew(std::chrono::seconds ttl) {
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "lease is not active", "lease::renew"});
+    co_return co_await store_detail::renew_lease(impl_->value, ttl);
+}
+
+runtime::task<void> lease::release() {
+    if (!impl_)
+        co_return result<void>{};
+    co_return co_await store_detail::release_lease(impl_->value);
+}
 
 struct store::impl {
     explicit impl(std::unique_ptr<store_detail::store_backend> value) : value(std::move(value)) {}
@@ -33,38 +40,57 @@ store& store::operator=(store&&) noexcept = default;
 
 runtime::task<store> store::open(std::filesystem::path path, store_options options) {
     auto backend = co_await store_detail::store_backend::open(std::move(path), options);
-    if (!backend) co_return std::unexpected(backend.error());
+    if (!backend)
+        co_return std::unexpected(backend.error());
     store output;
     output.impl_ = std::make_unique<impl>(std::move(*backend));
     co_return output;
 }
 
 runtime::task<digest> store::put(std::vector<std::byte> input) {
-    if (!impl_) co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});
+    if (!impl_)
+        co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});
     co_return co_await impl_->value->put(std::move(input));
 }
 
 runtime::task<std::vector<std::byte>> store::get(digest id) {
-    if (!impl_) co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});
+    if (!impl_)
+        co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});
     co_return co_await impl_->value->get(id);
 }
 
-runtime::task<std::uint64_t> store::read(digest id, std::uint64_t offset, std::span<std::byte> into) {
-    if (!impl_) co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::read"});
+runtime::task<std::uint64_t>
+store::read(digest id, std::uint64_t offset, std::span<std::byte> into) {
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::read"});
     co_return co_await impl_->value->read(id, offset, into);
 }
 
 runtime::task<bool> store::contains(digest id) {
-    if (!impl_) co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::contains"});
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::contains"});
     co_return co_await impl_->value->contains(id);
 }
 
-runtime::task<lease> store::lease_root(digest, std::chrono::seconds) {
-    co_return unavailable<lease>("liquid #8");
+runtime::task<lease> store::lease_root(digest id, std::chrono::seconds ttl) {
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::lease_root"});
+    auto state = co_await impl_->value->lease_root(id, ttl);
+    if (!state)
+        co_return std::unexpected(state.error());
+    lease output;
+    output.impl_ = std::make_unique<lease::impl>(std::move(*state));
+    co_return output;
 }
 
-runtime::task<collection_report> store::collect(collection_options) {
-    co_return unavailable<collection_report>("liquid #8");
+runtime::task<collection_report> store::collect(collection_options options) {
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::collect"});
+    co_return co_await impl_->value->collect(options);
 }
 
-}  // namespace liquid
+} // namespace liquid

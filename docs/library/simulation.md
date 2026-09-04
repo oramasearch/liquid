@@ -8,11 +8,12 @@ implementations land.
 
 `tests/sim/` runs a seeded schedule against a real local store, interrupts one selected disk
 operation, destroys the store object without a close, and opens the directory again. It exercises
-puts, gets, range reads, and explicit reopens. Input sizes range from 40 bytes to 4 MiB; previously
+rooted puts, orphan puts, gets, range reads, lease renewals, collections, and explicit reopens.
+Input sizes range from 40 bytes to 4 MiB; previously
 generated inputs are deliberately reused to exercise deduplication.
 
-The harness has an in-memory model of acknowledged objects. After recovery it proves
-**acknowledged ⊆ visible ⊆ correct**: every acknowledged object is readable and byte-identical,
+The harness has an in-memory model of acknowledged, leased objects. After recovery it proves
+**acknowledged and rooted ⊆ visible ⊆ correct**: every acknowledged rooted object is readable and byte-identical,
 and every recovered orphan that is readable has the expected digest and bytes. An interrupted put
 may be visible because a complete content-addressed object is correct even if its response did not
 reach the caller. Collection in liquid #8 reclaims those orphans. Unknown digests return
@@ -45,7 +46,7 @@ the same operation sequence and fault point on every platform.
 
 `src/store/faults.{hpp,cpp}` is private test instrumentation. The normal process-global injector
 pointer is null, so a point costs one atomic load and branch. Tests can install an injector that
-throws before or after every logical file write and manifest rename. The store translates that
+throws before or after every logical file write, manifest rename, and collected-pack removal. The store translates that
 exception into its ordinary error result; the simulator then drops the store object to model an
 abrupt process stop.
 
