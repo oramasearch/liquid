@@ -113,6 +113,14 @@ the compiler version.
 Run the self-host proof at the same fixed path as CI. Configuration performs FetchContent downloads
 before either wrapped invocation; only the build step is sandboxed:
 
+The first full self-host run exposed an algorithmic stall after all 306 compile actions completed.
+The complete debugger capture is in [`self-host-hang.txt`](self-host-hang.txt). Its active worker is
+resuming `graph_builder::collect_repositories` while the CLI thread waits in
+`runtime::block_on<wrap_report>` and the other runtime and blocking-pool workers are idle. SBOM
+finalization was walking the complete input tree again for every action output. Process CPU time
+continued to advance during repeated debugger samples, distinguishing this repeated traversal from
+a FUSE unmount wait or a lock held across a nested runtime.
+
 ```sh
 docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-linux-ci \
   bash -c 'set -euo pipefail
