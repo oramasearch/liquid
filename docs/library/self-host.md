@@ -16,6 +16,22 @@ checkout path would make the action command differ between workers and would poi
 sandbox at a path that does not exist. Local Linux verification bind-mounts the checkout at
 `/liquid/work` before configuring; the CI job uses the same layout.
 
+The wrapped tree also sets `LIQUID_SELF_HOST=ON`. A VFS snapshot does not preserve the configured
+tree's host timestamps, so Ninja otherwise tries to regenerate even when the CMake inputs are
+unchanged. Regeneration is a configure operation and FetchContent needs the network. The first
+clean Linux run identified the boundary:
+
+```text
+[1/2] Re-running CMake...
+[0/8] Performing download step (git clone) for 'blake3_source-populate'
+fatal: unable to access 'https://github.com/BLAKE3-team/BLAKE3.git/': Could not resolve host
+ninja: error: rebuilding 'build.ninja': subcommand failed
+actions=7 hits=0 misses=7 processes_started=6 probes_started=0 outer=miss
+```
+
+`LIQUID_SELF_HOST` sets `CMAKE_SUPPRESS_REGENERATION` for that build tree. It defaults to off, so
+ordinary developer builds retain CMake's automatic regeneration.
+
 The exec-time hook is different from a build input path. Before self-hosting, CMake compiled the
 full `$<TARGET_FILE:liquid-wrap-hook>` value into libliquid. The defect was found directly in both
 bootstrap artifacts:

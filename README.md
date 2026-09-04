@@ -232,7 +232,9 @@ liquid wrap --target aarch64-unknown-linux-gnu ./configure
 The second command reuses valid compile and link results before their tools start. Linux requires
 libfuse3; macOS requires macFUSE. See [`docs/cli/README.md`](docs/cli/README.md) for options and
 platform availability. Build-tree binaries locate the private exec-time hook relative to the
-binary, so an absolute checkout path is not embedded in libliquid or the CLI.
+binary, so an absolute checkout path is not embedded in libliquid or the CLI. Configure the
+separate wrapped tree with `-DLIQUID_SELF_HOST=ON`; dependency fetching remains in configuration,
+while its build step cannot regenerate CMake inside the network-denied sandbox.
 
 `LIQUID_BUILD_BENCH=ON` adds the optional `bench/chunk-index/chunk-index-bench` target and
 fetches its RocksDB and LMDB dependencies. It defaults to OFF, so the default configure does not
