@@ -44,14 +44,13 @@ auto protocol_error(std::string message) -> error {
 
 } // namespace
 
-auto selected_tls_protocol(const boost::corosio::tls_stream&) noexcept -> std::string_view {
-    return {};
+auto selected_tls_protocol(const boost::corosio::tls_stream& stream) noexcept -> std::string_view {
+    return stream.selected_alpn();
 }
 
-auto validate_tls_protocol(const boost::corosio::tls_stream& stream, bool endpoint_configures_h2)
-    -> result<void> {
+auto validate_tls_protocol(const boost::corosio::tls_stream& stream) -> result<void> {
     const auto selected = selected_tls_protocol(stream);
-    if (selected == "h2" || (selected.empty() && endpoint_configures_h2)) {
+    if (selected == "h2") {
         return {};
     }
     return std::unexpected(
