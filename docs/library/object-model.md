@@ -210,8 +210,10 @@ fixture in `tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree
 - Undo: undoing a recorded move restores the old path without minting a new `node_id`.
 - Composition: `split` then `nest` the result back; `root()` is byte-identical to before;
   `log` of the nested repository shows the pre-split history.
-- Conflict: two replicas write the same path; after sync the change carries one conflict value
-  and both `ref`s are recoverable from it.
+- Conflict: create a repository, write and cut `a.txt`, clone it twice, write different values in
+  each clone, and exchange directory-document sync frames both ways. Each working copy keeps its
+  CRDT-selected entry and reports one `a.txt` conflict value containing the base, left and right
+  references. The next cut carries that value; an ordinary resolution write clears it.
 
 The Phase 1 merge helper preserves both differing object references in a `conflict` value. The
 entry remains readable from the local directory document while callers resolve that value.

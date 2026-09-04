@@ -202,4 +202,50 @@ TEST(Repository, cross_directory_move_is_recovered_before_cut) {
   EXPECT_EQ(text(*moved), "value");
 }
 
+TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_value) {
+  temporary_repository source_path;
+  temporary_repository left_path;
+  temporary_repository right_path;
+  auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+  ASSERT_TRUE(source);
+  ASSERT_TRUE(liquid::runtime::block_on(source->write("a.txt", content("base"))));
+  ASSERT_TRUE(liquid::runtime::block_on(source->cut("base")));
+  auto left = liquid::runtime::block_on(
+      liquid::repository_detail::testing::clone(*source, left_path.path()));
+  auto right = liquid::runtime::block_on(
+      liquid::repository_detail::testing::clone(*source, right_path.path()));
+  ASSERT_TRUE(left);
+  ASSERT_TRUE(right);
+  ASSERT_TRUE(liquid::runtime::block_on(left->write("a.txt", content("left"))));
+  ASSERT_TRUE(liquid::runtime::block_on(right->write("a.txt", content("right"))));
+  ASSERT_TRUE(liquid::runtime::block_on(liquid::repository_detail::testing::sync(*left, *right)));
+
+  auto left_conflicts = liquid::runtime::block_on(left->conflicts());
+  auto right_conflicts = liquid::runtime::block_on(right->conflicts());
+  ASSERT_TRUE(left_conflicts);
+  ASSERT_TRUE(right_conflicts);
+  ASSERT_EQ(left_conflicts->size(), 1U);
+  ASSERT_EQ(right_conflicts->size(), 1U);
+  EXPECT_EQ(left_conflicts->front().path, "a.txt");
+  EXPECT_EQ(left_conflicts->front().refs.size(), 3U);
+  ASSERT_EQ(left_conflicts->front().refs.size(), right_conflicts->front().refs.size());
+  for (std::size_t index = 0; index < left_conflicts->front().refs.size(); ++index) {
+    EXPECT_EQ(left_conflicts->front().refs[index].alg, right_conflicts->front().refs[index].alg);
+    EXPECT_EQ(left_conflicts->front().refs[index].bytes,
+              right_conflicts->front().refs[index].bytes);
+  }
+
+  auto cut = liquid::runtime::block_on(left->cut("record conflict"));
+  ASSERT_TRUE(cut);
+  auto history = liquid::runtime::block_on(left->log());
+  ASSERT_TRUE(history);
+  ASSERT_FALSE(history->empty());
+  EXPECT_EQ(history->front().conflicts.size(), 1U);
+  ASSERT_TRUE(liquid::runtime::block_on(left->write("a.txt", content("resolved"))));
+  ASSERT_TRUE(liquid::runtime::block_on(left->cut("resolve conflict")));
+  auto resolved = liquid::runtime::block_on(left->conflicts());
+  ASSERT_TRUE(resolved);
+  EXPECT_TRUE(resolved->empty());
+}
+
 } // namespace

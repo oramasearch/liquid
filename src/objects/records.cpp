@@ -271,6 +271,36 @@ auto decode_change(std::span<const std::byte> bytes) -> result<change> {
       return std::unexpected(parent.error());
     output.parents.push_back(*parent);
   }
+  const auto *conflicts = find(*source, "conflicts");
+  const auto *symbols = find(*source, "symbols");
+  const auto *signature = find(*source, "sig");
+  const auto *values = conflicts ? std::get_if<cbor::value::array>(&conflicts->data) : nullptr;
+  const auto *sig = signature ? std::get_if<cbor::value::bytes>(&signature->data) : nullptr;
+  if (!values || !symbols || !sig)
+    return std::unexpected(corrupt("invalid change extensions"));
+  for (const auto &item : *values) {
+    const auto *path = find(item, "path");
+    const auto *references = find(item, "refs");
+    const auto *name = path ? std::get_if<std::string>(&path->data) : nullptr;
+    const auto *refs = references ? std::get_if<cbor::value::array>(&references->data) : nullptr;
+    if (!name || !refs)
+      return std::unexpected(corrupt("invalid conflict value"));
+    conflict value{*name, {}};
+    for (const auto &reference : *refs) {
+      auto decoded = decode_digest(reference);
+      if (!decoded)
+        return std::unexpected(decoded.error());
+      value.refs.push_back(*decoded);
+    }
+    output.conflicts.push_back(std::move(value));
+  }
+  if (!std::holds_alternative<cbor::null>(symbols->data)) {
+    auto symbol = decode_digest(*symbols);
+    if (!symbol)
+      return std::unexpected(symbol.error());
+    output.symbols = *symbol;
+  }
+  output.sig = *sig;
   auto digest = digest_of(bytes);
   if (!digest)
     return std::unexpected(digest.error());

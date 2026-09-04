@@ -567,6 +567,8 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
                 .emplace(parts->back(),
                          working_entry{entry_kind::file, random_id(), 0100644, *reference, {}})
                 .first;
+  std::erase_if(impl_->current.conflict_values,
+                [&](const conflict &value) { return value.path == path; });
   auto operation_hash = hash(algorithm::blake3, std::span<const std::byte>{reference->bytes});
   if (!operation_hash)
     co_return std::unexpected(operation_hash.error());
@@ -915,6 +917,84 @@ auto repository_detail::testing::last_operation(repository &value) -> op_id {
   return value.impl_ && !value.impl_->current.operations.empty()
              ? value.impl_->current.operations.back().id
              : op_id{};
+}
+
+runtime::task<repository> repository_detail::testing::clone(const repository &source,
+                                                            std::filesystem::path destination) {
+  if (!source.impl_)
+    co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+  std::error_code code;
+  std::filesystem::copy(source.impl_->root_path, destination,
+                        std::filesystem::copy_options::recursive, code);
+  if (code)
+    co_return std::unexpected(failure(errc::io, code.message(), destination.string()));
+  co_return co_await repository::open(std::move(destination));
+}
+
+runtime::task<void> repository_detail::testing::sync(repository &left, repository &right) {
+  if (!left.impl_ || !right.impl_)
+    co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+  if (left.impl_->current.repository != right.impl_->current.repository)
+    co_return std::unexpected(failure(errc::invalid_argument, "repository identities differ"));
+
+  auto left_document = co_await left.impl_->directory(left.impl_->current.root.node);
+  if (!left_document)
+    co_return std::unexpected(left_document.error());
+  auto right_document = co_await right.impl_->directory(right.impl_->current.root.node);
+  if (!right_document)
+    co_return std::unexpected(right_document.error());
+
+  auto left_sync = crdt::sync_state{};
+  auto right_sync = crdt::sync_state{};
+  auto outgoing = (*left_document)->generate_sync_message(left_sync);
+  if (!outgoing)
+    co_return std::unexpected(outgoing.error());
+  if (*outgoing) {
+    auto received = (*right_document)->receive_sync_message(right_sync, **outgoing);
+    if (!received)
+      co_return std::unexpected(received.error());
+  }
+  outgoing = (*right_document)->generate_sync_message(right_sync);
+  if (!outgoing)
+    co_return std::unexpected(outgoing.error());
+  if (*outgoing) {
+    auto received = (*left_document)->receive_sync_message(left_sync, **outgoing);
+    if (!received)
+      co_return std::unexpected(received.error());
+  }
+
+  for (const auto &[path, left_entry] : left.impl_->current.root.entries) {
+    auto right_entry = right.impl_->current.root.entries.find(path);
+    if (right_entry == right.impl_->current.root.entries.end() ||
+        left_entry.node != right_entry->second.node)
+      continue;
+    auto base = std::optional<digest>{};
+    for (const auto &operation : left.impl_->current.operations)
+      if (operation.kind == "write" && operation.from == path && operation.prior)
+        base = operation.prior->object;
+    for (const auto &operation : right.impl_->current.operations)
+      if (operation.kind == "write" && operation.from == path && operation.prior)
+        base = operation.prior->object;
+    if (!base)
+      continue;
+    auto value = repository_detail::three_way_entry_conflict(path, *base, left_entry.object,
+                                                             right_entry->second.object);
+    if (!value)
+      continue;
+    left.impl_->current.conflict_values.push_back(*value);
+    right.impl_->current.conflict_values.push_back(*value);
+    auto winner = (*left_document)->entry_at(path);
+    if (!winner)
+      co_return std::unexpected(winner.error());
+    if (*winner) {
+      auto ref = parse_digest((*winner)->ref);
+      if (!ref)
+        co_return std::unexpected(ref.error());
+      left.impl_->current.root.entries[path].object = *ref;
+      right.impl_->current.root.entries[path].object = *ref;
+    }
+  }
+  co_return result<void>{};
 }
 
 void repository_detail::testing::reset_directory_loads(repository &value) {
