@@ -13,6 +13,8 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
   test_version.cpp
   test_vfs.cpp
+  vfs/test_materialise.cpp
+  vfs/test_mount.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
 target_include_directories(liquid-tests PRIVATE
@@ -38,6 +40,13 @@ if(LIQUID_BUILD_CLI)
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_GC_CLI_STORE})
   set_tests_properties(gc-cli-clean PROPERTIES FIXTURES_CLEANUP gc_cli)
 endif()
+
+add_executable(liquid-vfs-queue-tests
+  vfs/test_request_queue.cpp
+  ${PROJECT_SOURCE_DIR}/src/vfs/request_queue.cpp)
+target_include_directories(liquid-vfs-queue-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-vfs-queue-tests PRIVATE liquid::liquid GTest::gtest_main)
+gtest_discover_tests(liquid-vfs-queue-tests)
 
 add_executable(liquid-store-large-tests test_store_large.cpp)
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)

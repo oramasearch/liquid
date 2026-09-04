@@ -1,7 +1,7 @@
 #pragma once
 
-#include <chrono>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -28,6 +28,7 @@ enum class node_kind : std::uint8_t {
 struct LIQUID_EXPORT blob {
     std::vector<digest> chunks;
     std::uint64_t size;
+    std::vector<std::uint64_t> chunk_sizes;
 };
 
 struct LIQUID_EXPORT tree_entry {
@@ -70,4 +71,4 @@ struct LIQUID_EXPORT change {
     std::vector<std::byte> sig;
 };
 
-}  // namespace liquid
+} // namespace liquid

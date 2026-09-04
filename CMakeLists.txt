@@ -75,6 +75,40 @@ set(BOOST_COROSIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BOOST_COROSIO_BUILD_PERF     OFF CACHE BOOL "" FORCE)
 add_subdirectory(modules/corosio EXCLUDE_FROM_ALL)
 
+set(LIQUID_FUSE_TARGET "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIQUID_FUSE3 REQUIRED IMPORTED_TARGET fuse3)
+  set(LIQUID_FUSE_TARGET PkgConfig::LIQUID_FUSE3)
+  set(LIQUID_FUSE_DEFINITION LIQUID_HAS_FUSE3=1)
+elseif(APPLE)
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(LIQUID_FUSE3 QUIET IMPORTED_TARGET fuse3)
+    pkg_check_modules(LIQUID_MACFUSE QUIET IMPORTED_TARGET fuse)
+  endif()
+  if(LIQUID_FUSE3_FOUND)
+    set(LIQUID_FUSE_TARGET PkgConfig::LIQUID_FUSE3)
+    set(LIQUID_FUSE_DEFINITION LIQUID_HAS_FUSE3=1)
+  elseif(LIQUID_MACFUSE_FOUND)
+    set(LIQUID_FUSE_TARGET PkgConfig::LIQUID_MACFUSE)
+    set(LIQUID_FUSE_DEFINITION LIQUID_HAS_FUSE2=1 _FILE_OFFSET_BITS=64)
+  else()
+    find_path(LIQUID_MACFUSE_INCLUDE_DIR fuse.h
+      PATHS /usr/local/include/fuse /opt/homebrew/include/fuse)
+    find_library(LIQUID_MACFUSE_LIBRARY fuse
+      PATHS /usr/local/lib /opt/homebrew/lib)
+    if(LIQUID_MACFUSE_INCLUDE_DIR AND LIQUID_MACFUSE_LIBRARY)
+      add_library(liquid_macfuse UNKNOWN IMPORTED)
+      set_target_properties(liquid_macfuse PROPERTIES
+        IMPORTED_LOCATION "${LIQUID_MACFUSE_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LIQUID_MACFUSE_INCLUDE_DIR}")
+      set(LIQUID_FUSE_TARGET liquid_macfuse)
+      set(LIQUID_FUSE_DEFINITION LIQUID_HAS_FUSE2=1 _FILE_OFFSET_BITS=64)
+    endif()
+  endif()
+endif()
+
 FetchContent_Declare(blake3_source
   GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
   GIT_TAG        1.8.7
@@ -202,6 +236,10 @@ add_library(libliquid
   src/store/store_impl.cpp
   src/version.cpp
   src/vfs.cpp
+  src/vfs/fuse_fs.cpp
+  src/vfs/hydration.cpp
+  src/vfs/materialise.cpp
+  src/vfs/request_queue.cpp
 )
 target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 add_library(liquid::liquid ALIAS libliquid)
@@ -224,6 +262,10 @@ target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio libzstd_static
           $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
+if(LIQUID_FUSE_TARGET)
+  target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
+  target_link_libraries(libliquid PRIVATE ${LIQUID_FUSE_TARGET})
+endif()
 if(BUILD_SHARED_LIBS)
   target_link_libraries(libliquid PRIVATE liquid_blake3 liquid_monocypher)
 else()

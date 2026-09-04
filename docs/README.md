@@ -17,4 +17,5 @@ notes so that each claim has a clear role.
 | [`library/gc.md`](library/gc.md) | Leased roots, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
 | [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, key custody, on-disk envelopes, and failure behavior. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
+| [`library/vfs.md`](library/vfs.md) | Lazy chunk hydration, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |
