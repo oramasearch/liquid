@@ -334,6 +334,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/capture.cpp
     src/cli/compose.cpp
     src/cli/gc.cpp
+    src/cli/git.cpp
     src/cli/history.cpp
     src/cli/identity.cpp
     src/cli/locks.cpp

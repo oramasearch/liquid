@@ -20,8 +20,8 @@ trust-domain encrypted objects, liquid #53's versioned data-key rotation, revoca
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
 deterministic crash simulator, liquid #116's bounded-memory file and repository streaming, liquid
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
-verified
-redaction, and liquid #52's JSON/`.env` leaf encryption with structural key diff are implemented;
+verified redaction, liquid #52's JSON/`.env` leaf encryption with structural key diff, and liquid
+#43's local Git import/export with identity mapping are implemented;
 liquid #10 provides local sandboxed action execution through `liquid::build` on Linux, and liquid
 #11 provides its signed, manifest-validated persistent disk cache with read-only publication by
 default. Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and
@@ -35,7 +35,8 @@ disk-tier hit rates, miss reasons, and output-byte statistics. The repository ob
 CRDT metadata document, canonical CBOR codec and drip journal are implemented. Full materialisation
 works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
-store, VFS, and identity calls plus the Phase 2 build wrapper. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store)
+store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
+GoogleTest. Phase 1 (the store)
 is built inside
 libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
 option is enabled.

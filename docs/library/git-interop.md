@@ -34,4 +34,5 @@ The public-header fixture compiles `liquid/git.hpp` independently.
 
 `liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid
 repository when needed. `liquid export git <path> [ref]` exports the repository rooted at the
-current directory. The client prints import counts and every reported export degradation.
+current directory. The client uses the normal command table and prints import counts and every
+reported export degradation.

@@ -973,7 +973,7 @@ struct repository::impl {
              std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())});
     }
     runtime::task<digest> snapshot(working_entry& entry) {
-        tree value{};
+        ::liquid::tree value{};
         for (auto& [name, child] : entry.entries) {
             digest reference = child.object;
             node_kind kind = node_kind::blob;
@@ -1000,7 +1000,7 @@ struct repository::impl {
         entry.object = *stored;
         co_return *stored;
     }
-    runtime::task<tree> root_tree() {
+    runtime::task<::liquid::tree> root_tree() {
         auto snapshot_id = co_await snapshot(current.root);
         if (!snapshot_id)
             co_return std::unexpected(snapshot_id.error());
@@ -1243,7 +1243,8 @@ struct repository::impl {
             return same_path_or_descendant(path, pattern);
         });
     }
-    runtime::task<void> record_blob(std::string path, blob record, std::uint32_t mode = 0100644) {
+    runtime::task<void>
+    record_blob(std::string path, ::liquid::blob record, std::uint32_t mode = 0100644) {
         if (locked(path))
             co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
         auto parts = split_path(path);
@@ -1400,7 +1401,7 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
         co_return std::unexpected(checkpointed.error());
     co_return output;
 }
-runtime::task<tree> repository::root() {
+runtime::task<::liquid::tree> repository::root() {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return co_await impl_->root_tree();
@@ -2171,7 +2172,7 @@ runtime::task<readability_report> repository::readability(std::optional<change_i
                 co_return std::unexpected(value.error());
             value->id = *next;
             next = value->parents.empty() ? std::optional<change_id>{}
-                                          : std::optional<change_id>{value->parents.front()};
+                                          : std::optional<change_id>{value->parents.front().id};
             revisions.push_back(std::move(*value));
         }
     }
