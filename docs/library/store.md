@@ -53,24 +53,25 @@ The index is liquid-owned. Its portable records are exactly 48 bytes, serialized
 (32), pack id (u32), offset (u64), and compressed length (u32). The digest comes first, so records
 sort lexicographically by digest bytes.
 
-An algorithm owns its own sorted `std::map` memtable and immutable run set. The default memtable
-limit is 1,048,576 entries; inserts and lookups are logarithmic and the table is flushed at that
-limit or when its pack seals. The run header carries the algorithm, record count, a 256-way
-first-byte fanout table, a 10-bit-per-key bloom filter, and a checksum. `open` reads only this
-header and bloom filter, never run records. Its memory cost per run is therefore bounded by the
-header plus 10 bits per key.
+An algorithm owns an `std::unordered_map` memtable and immutable run set. The default memtable
+limit is 1,048,576 entries; inserts and memtable lookups are O(1), and the table is flushed at
+that limit or when its pack seals. The run header carries the algorithm, record count, a
+two-byte (65,536-bucket) fanout table of u32 cumulative counts, a 10-bit-per-key bloom filter,
+and a checksum.
 
-`MANIFEST` lists live runs with their algorithm and the highest indexed pack id. Lookups check the
-algorithm's memtable, then runs newest first. A bloom hit selects the fanout slice; slices below
-64 KiB are read with one Corosio positional read and binary searched in memory, while larger slices
-are binary searched with individual 48-byte positional reads. A run file is opened lazily for its
-lookup and released before a short-lived public caller executor ends.
+`MANIFEST` lists live runs with their algorithm and the highest indexed pack id. `open` maps each
+immutable run read-only through the private cross-platform mapping helper; it does not read record
+bytes. Lookups check the algorithm's memtable, then mapped runs newest first. A bloom hit selects
+the two-byte fanout slice, and `std::lower_bound` searches the mapped 48-byte records directly.
+The index therefore issues no file I/O on its lookup path. Mapping keeps per-run process memory
+bounded by the 256 KiB fanout header plus the bloom filter; mapped record pages remain managed by
+the operating system.
 
 Runs are size-tiered by record count. When more than four runs share a tier, compaction performs a
-streaming k-way merge through fixed 1 MiB pread windows and incrementally writes the replacement.
-It does not load input runs into memory. The replacement is synchronized and recorded in the
-manifest before the old runs are removed. The manifest itself is written to a temporary file,
-synchronized, and atomically renamed.
+streaming k-way merge by iterating mapped input records and incrementally writing the replacement
+with Corosio. It does not load input runs into memory. The replacement is synchronized and
+recorded in the manifest before the old runs are unmapped and removed. The manifest itself is
+written to a temporary file, synchronized, and atomically renamed.
 
 If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
 tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
@@ -82,7 +83,7 @@ runs and are not given that mutation lock. Cross-process access is outside this 
 
 `store_options::pack_size` controls pack rollover. The index options default to 1,048,576 memtable
 entries, 10 bloom bits per key, and a four-run compaction threshold. Change these only with tests
-for header-only reopen, rebuild, read integrity, and compaction.
+for mapped reopen, rebuild, read integrity, and compaction.
 
 ```sh
 cmake -S . -B build -G Ninja && cmake --build build

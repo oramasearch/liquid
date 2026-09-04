@@ -40,4 +40,4 @@ set_target_properties(chunk-index-lmdb PROPERTIES
 add_executable(chunk-index-bench chunk_index_bench.cpp)
 target_compile_features(chunk-index-bench PRIVATE cxx_std_23)
 target_include_directories(chunk-index-bench PRIVATE ${PROJECT_SOURCE_DIR}/src/store)
-target_link_libraries(chunk-index-bench PRIVATE liquid::liquid rocksdb chunk-index-lmdb)
+target_link_libraries(chunk-index-bench PRIVATE liquid::liquid rocksdb chunk-index-lmdb Boost::corosio)

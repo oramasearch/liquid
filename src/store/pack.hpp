@@ -43,6 +43,8 @@ struct pack_contents {
 void reset_file_read_counter() noexcept;
 [[nodiscard]] std::uint64_t file_read_counter() noexcept;
 void note_file_read(std::size_t bytes) noexcept;
+void reset_file_write_counter() noexcept;
+[[nodiscard]] std::uint64_t file_write_counter() noexcept;
 [[nodiscard]] runtime::task<pack_contents> read_pack(std::filesystem::path path,
                                                       std::uint32_t id);
 [[nodiscard]] runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,

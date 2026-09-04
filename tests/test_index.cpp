@@ -43,20 +43,30 @@ digest make_digest(std::uint64_t value, algorithm alg = algorithm::blake3) {
 
 task<void> insert_all(chunk_index& index, const std::vector<index_entry>& entries) {
     for (const auto& entry : entries) {
-        auto inserted = co_await index.insert(entry);
+        auto inserted = index.insert(entry);
         if (!inserted) co_return std::unexpected(inserted.error());
+        if (index.needs_flush(entry.id.alg)) {
+            auto flushed = co_await index.flush();
+            if (!flushed) co_return std::unexpected(flushed.error());
+        }
     }
     co_return liquid::result<void>{};
 }
 
 task<void> check_all(chunk_index& index, const std::vector<index_entry>& entries) {
     for (const auto& entry : entries) {
-        auto found = co_await index.find(entry.id);
+        auto found = index.find(entry.id);
         if (!found) co_return std::unexpected(found.error());
         if (!*found || (**found).pack_id != entry.location.pack_id)
             co_return std::unexpected(liquid::error{liquid::errc::corrupt, "index lookup mismatch", {}});
     }
     co_return liquid::result<void>{};
+}
+
+liquid::result<bool> find_present(chunk_index& index, digest id) {
+    auto found = index.find(id);
+    if (!found) return std::unexpected(found.error());
+    return found->has_value();
 }
 
 TEST(ChunkIndex, ReopenReadsHeadersAndBloomOnly) {
@@ -75,7 +85,7 @@ TEST(ChunkIndex, ReopenReadsHeadersAndBloomOnly) {
     chunk_index reopened(directory.path());
     ASSERT_TRUE(block_on(reopened.open()).has_value());
     EXPECT_LT(file_read_counter(), 2U * 1024U * 1024U);
-    ASSERT_TRUE(block_on(reopened.find(entries.back().id)).has_value());
+    ASSERT_TRUE(find_present(reopened, entries.back().id).has_value());
     ASSERT_TRUE(block_on(reopened.close()).has_value());
 }
 
@@ -92,12 +102,12 @@ TEST(ChunkIndex, CompactionPreservesRandomKeysAndMisses) {
     ASSERT_TRUE(block_on(insert_all(index, entries)).has_value());
     ASSERT_TRUE(block_on(index.flush()).has_value());
     ASSERT_TRUE(block_on(check_all(index, entries)).has_value());
-    auto missing = block_on(index.find(make_digest(0xfeedbeefULL)));
+    auto missing = find_present(index, make_digest(0xfeedbeefULL));
     ASSERT_TRUE(missing.has_value());
     EXPECT_FALSE(*missing);
     auto sha = make_digest(44, algorithm::sha256);
-    ASSERT_TRUE(block_on(index.insert({sha, {9, 10, 11}})).has_value());
-    auto sha_found = block_on(index.find(sha));
+    ASSERT_TRUE(index.insert({sha, {9, 10, 11}}).has_value());
+    auto sha_found = find_present(index, sha);
     ASSERT_TRUE(sha_found.has_value());
     EXPECT_TRUE(*sha_found);
     ASSERT_TRUE(block_on(index.close()).has_value());

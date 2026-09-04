@@ -4,28 +4,27 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <memory>
 #include <map>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "liquid/hash.hpp"
 #include "liquid/runtime.hpp"
+#include "mapped_file.hpp"
 #include "pack.hpp"
-#include "../runtime/net.hpp"
 
 namespace liquid::store_detail {
 
-// This is serialized explicitly, rather than written as a C++ struct: its
-// portable record representation is exactly 48 bytes.
 struct index_record {
     std::array<std::byte, 32> bytes{};
     std::uint32_t pack_id{};
     std::uint64_t offset{};
     std::uint32_t length{};
 };
-static_assert(sizeof(index_record::bytes) + sizeof(std::uint32_t) + sizeof(std::uint64_t) +
-                  sizeof(std::uint32_t) == 48);
+static_assert(sizeof(index_record::bytes) + sizeof(std::uint32_t) +
+                  sizeof(std::uint64_t) + sizeof(std::uint32_t) ==
+              48);
 
 struct index_entry {
     digest id{};
@@ -39,52 +38,56 @@ struct chunk_index_options {
 
 class chunk_index {
 public:
-    explicit chunk_index(std::filesystem::path root, chunk_index_options options = {});
+    explicit chunk_index(std::filesystem::path root,
+                         chunk_index_options options = {});
 
     [[nodiscard]] runtime::task<void> open();
-    [[nodiscard]] runtime::task<void> insert(index_entry entry);
+    [[nodiscard]] result<void> insert(index_entry entry);
+    [[nodiscard]] bool needs_flush(algorithm algorithm_value) const noexcept;
     [[nodiscard]] runtime::task<void> flush();
-    [[nodiscard]] runtime::task<std::optional<chunk_location>> find(digest id);
+    [[nodiscard]] result<std::optional<chunk_location>> find(digest id) const;
     [[nodiscard]] runtime::task<void> rebuild(std::vector<index_entry> entries);
     [[nodiscard]] runtime::task<void> close();
 
-    [[nodiscard]] std::uint32_t highest_pack_id() const noexcept { return highest_pack_id_; }
-    void set_highest_pack_id(std::uint32_t value) noexcept { highest_pack_id_ = value; }
+    [[nodiscard]] std::uint32_t highest_pack_id() const noexcept {
+        return highest_pack_id_;
+    }
+    void set_highest_pack_id(std::uint32_t value) noexcept {
+        highest_pack_id_ = value;
+    }
 
 private:
+    struct digest_hash {
+        std::size_t operator()(const std::array<std::byte, 32>& value) const noexcept;
+    };
     struct run {
         std::uint64_t sequence{};
         algorithm algorithm_value{};
         std::filesystem::path path;
         std::uint64_t record_count{};
-        std::array<std::uint64_t, 257> fanout{};
-        std::vector<std::byte> bloom;
-        std::unique_ptr<boost::corosio::random_access_file> file;
-
-        run() = default;
-        run(run&&) noexcept = default;
-        run& operator=(run&&) noexcept = default;
-        run(const run&) = delete;
-        run& operator=(const run&) = delete;
+        std::uint64_t records_offset{};
+        std::span<const std::uint32_t> fanout;
+        std::span<const std::byte> bloom;
+        mapped_file mapping;
     };
     struct algorithm_state {
-        std::map<std::array<std::byte, 32>, chunk_location> memtable;
+        std::unordered_map<std::array<std::byte, 32>, chunk_location, digest_hash>
+            memtable;
         std::vector<run> runs;
     };
+
     std::filesystem::path root_;
     std::map<algorithm, algorithm_state> states_;
     std::uint64_t next_sequence_{1};
     std::uint32_t highest_pack_id_{};
     chunk_index_options options_;
 
-    [[nodiscard]] runtime::task<void> write_manifest();
-    [[nodiscard]] runtime::task<void> compact(algorithm algorithm_value);
+    [[nodiscard]] result<run> map_run(std::uint64_t sequence,
+                                      algorithm algorithm_value,
+                                      std::uint64_t expected_count) const;
     [[nodiscard]] runtime::task<void> flush(algorithm algorithm_value);
-    [[nodiscard]] runtime::task<std::vector<std::byte>> read_run_range(run& source,
-                                                                         std::uint64_t offset,
-                                                                         std::size_t size);
-    [[nodiscard]] runtime::task<std::optional<chunk_location>> find_in_run(run& source,
-                                                                             digest id);
+    [[nodiscard]] runtime::task<void> compact(algorithm algorithm_value);
+    [[nodiscard]] runtime::task<void> write_manifest();
 };
 
 }  // namespace liquid::store_detail

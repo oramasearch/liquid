@@ -25,6 +25,7 @@ gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large)
 add_executable(liquid-index-tests
   test_index.cpp
   ${PROJECT_SOURCE_DIR}/src/store/index.cpp
+  ${PROJECT_SOURCE_DIR}/src/store/mapped_file.cpp
   ${PROJECT_SOURCE_DIR}/src/store/pack.cpp)
 target_include_directories(liquid-index-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/store)
 target_link_libraries(liquid-index-tests PRIVATE liquid::liquid GTest::gtest_main Boost::corosio libzstd_static)

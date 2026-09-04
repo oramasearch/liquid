@@ -162,20 +162,26 @@ runtime::task<void> store_backend::index_packs(bool rebuild) {
         co_return co_await index_.rebuild(std::move(all));
     }
     for (auto& entry : all) {
-        auto inserted = co_await index_.insert(std::move(entry));
+        auto inserted = index_.insert(std::move(entry));
         if (!inserted) co_return std::unexpected(inserted.error());
+        if (index_.needs_flush(entry.id.alg)) {
+            auto flushed = co_await index_.flush();
+            if (!flushed) co_return std::unexpected(flushed.error());
+        }
     }
     index_.set_highest_pack_id(highest);
     co_return co_await index_.flush();
 }
 
 runtime::task<pack_entry> store_backend::store_chunk(digest id, std::vector<std::byte> raw) {
-    auto present = co_await index_.find(id);
+    auto present = index_.find(id);
     if (!present) co_return std::unexpected(present.error());
     if (*present) co_return pack_entry{id, **present, static_cast<std::uint32_t>(raw.size())};
     auto& active = packs_.at(current_pack_);
     const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
     if (!active.entries.empty() && active.data_end + raw.size() > limit) {
+        auto flushed = co_await index_.flush();
+        if (!flushed) co_return std::unexpected(flushed.error());
         ++current_pack_;
         packs_.emplace(current_pack_, pack_contents{current_pack_, {}, 16});
     }
@@ -185,13 +191,17 @@ runtime::task<pack_entry> store_backend::store_chunk(digest id, std::vector<std:
     if (!written) co_return std::unexpected(written.error());
     destination.entries.push_back(*written);
     destination.data_end += 49 + written->location.length;
-    auto inserted = co_await index_.insert({id, written->location});
+    auto inserted = index_.insert({id, written->location});
     if (!inserted) co_return std::unexpected(inserted.error());
+    if (index_.needs_flush(id.alg)) {
+        auto flushed = co_await index_.flush();
+        if (!flushed) co_return std::unexpected(flushed.error());
+    }
     co_return *written;
 }
 
 runtime::task<std::vector<std::byte>> store_backend::load_chunk(digest id) {
-    auto found = co_await index_.find(id);
+    auto found = index_.find(id);
     if (!found) co_return std::unexpected(found.error());
     if (!*found) co_return std::unexpected(store_error(errc::not_found, "chunk is not present", to_string(id)));
     co_return co_await read_pack_entry(root_ / "packs" / ("pack-" + std::to_string((*found)->pack_id) + ".pack"), **found, id);
@@ -295,9 +305,10 @@ runtime::task<std::uint64_t> store_backend::read(digest id, std::uint64_t offset
 
 runtime::task<bool> store_backend::contains(digest id) {
     if (objects_.contains(to_string(id))) co_return true;
-    auto found = co_await index_.find(id);
+    auto found = index_.find(id);
     if (!found) co_return std::unexpected(found.error());
     co_return found->has_value();
 }
+
 
 }  // namespace liquid::store_detail

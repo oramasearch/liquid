@@ -15,8 +15,9 @@ same ordered phases against every engine, including `--engine liquid`:
    batch.
 2. Run 1,000,000 point lookups, alternating between a random existing key and an independently
    generated random key. Any unexpected presence result fails the run.
-3. Run 10,000 cursor scans of 64 entries starting at a random existing key. A scan that reaches the
-   final key continues at the first key so every measured operation visits exactly 64 entries.
+3. Run 10,000 groups of 64 reads starting from a random existing key. RocksDB and LMDB use cursors;
+   liquid uses 64 mapped-index lookups because its private index has no cursor API. Every measured
+   operation visits exactly 64 entries.
 4. Flush, close, attempt an unprivileged OS-cache eviction, reopen, and run the first 100,000 point
    lookups again.
 5. Close and report final directory bytes, bytes written, write amplification, and process peak RSS.
@@ -97,18 +98,20 @@ warm-OS-cache measurement rather than a true cold-disk measurement.
 
 ## liquid results
 
-The liquid engine uses the store index's 48-byte, digest-first record layout and BLAKE3 run set.
-It retains one bulk memtable for this single-client benchmark, writes a sorted immutable run on
-flush, and applies the same 10-bit bloom and four-run compaction configuration as the store.
+`--engine liquid` drives `liquid::store_detail::chunk_index`, not a benchmark-only engine. It
+uses the production 48-byte digest-first records, a 1,048,576-entry hash memtable, 10-bit bloom
+filters, 65,536-bucket fanout, and four-run size-tiered compaction. The insert phase includes
+threshold-triggered flushes and compactions. The reopen phase closes the index, maps runs again,
+and performs the point lookups.
 
 | N | Bulk insert ops/s | Point lookup ops/s | Range scan (64) ops/s | Reopen point lookup ops/s | On-disk bytes | Peak RSS bytes |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1,000,000 | 192,454,179.55 | 2,557,310.67 | 1,353,240.95 | 2,257,548.64 | 48,000,000 | 126,779,392 |
-| 10,000,000 | 195,454,380.03 | 874,440.92 | 924,399.47 | 1,122,894.74 | 480,000,000 | 846,807,040 |
+| 1,000,000 | 5,063,082.85 | 4,234,055.77 | 23,154.97 | 2,712,391.59 | 49,512,236 | 294,912,000 |
+| 10,000,000 | 1,228,096.36 | 1,410,667.29 | 16,960.87 | 1,153,008.56 | 494,073,296 | 1,043,857,408 |
 
 Both runs used the recorded Apple M3 Max machine and reported
-`cache_drop=unavailable_without_root_on_macos`. At 10M, liquid exceeds the required 1.16M inserts/s
-and 438k point lookups/s while remaining below the 589 MB disk limit.
+`cache_drop=unavailable_without_root_on_macos`. At 10M, liquid meets the required 1.16M inserts/s
+(1.228M), 438k point lookups/s (1.411M), and 589 MB disk limit (494.1 MB).
 
 ## Results at N = 10,000,000
 
@@ -130,10 +133,10 @@ and 438k point lookups/s while remaining below the 589 MB disk limit.
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | point lookup | 1,040,100.51 | 0.958 | 1.375 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | range scan (64) | 512,377.11 | 1.916 | 2.958 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | reopen point lookup | 762,016.76 | 1.167 | 2.166 |
-| liquid | 48-byte run, 10-bit bloom | bulk insert | 195,454,380.03 | 0.005 | 0.007 |
-| liquid | 48-byte run, 10-bit bloom | point lookup | 874,440.92 | 1.042 | 2.208 |
-| liquid | 48-byte run, 10-bit bloom | range scan (64) | 924,399.47 | 1.083 | 1.625 |
-| liquid | 48-byte run, 10-bit bloom | reopen point lookup | 1,122,894.74 | 0.875 | 1.500 |
+| liquid | mapped run, 10-bit bloom | bulk insert | 1,228,096.36 | 0.482 | 0.923 |
+| liquid | mapped run, 10-bit bloom | point lookup | 1,410,667.29 | 0.666 | 1.500 |
+| liquid | mapped run, 10-bit bloom | range scan (64) | 16,960.87 | 58.250 | 73.667 |
+| liquid | mapped run, 10-bit bloom | reopen point lookup | 1,153,008.56 | 0.625 | 2.958 |
 
 | Engine | Configuration | On-disk bytes | Bytes written | Write amplification | Peak RSS bytes |
 |---|---|---:|---:|---:|---:|
@@ -141,7 +144,7 @@ and 438k point lookups/s while remaining below the 589 MB disk limit.
 | RocksDB | bloom + 512-MiB cache | 589,291,963 | 510,012,000 | 1.062525 | 1,485,291,520 |
 | LMDB | map 2,697 MiB, sync | 1,173,626,880 | 1,173,626,880 | 2.445056 | 1,703,051,264 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | 1,173,626,880 | 1,173,626,880 | 2.445056 | 1,702,051,840 |
-| liquid | 48-byte run, 10-bit bloom | 480,000,000 | 480,000,000 | 1.000000 | 846,807,040 |
+| liquid | mapped run, 10-bit bloom | 494,073,296 | 760,414,048 | 1.584196 | 1,043,857,408 |
 
 ## Run N = 100,000,000 on Linux
 

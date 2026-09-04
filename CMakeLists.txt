@@ -134,6 +134,7 @@ add_library(libliquid
   src/store.cpp
   src/store/chunker.cpp
   src/store/index.cpp
+  src/store/mapped_file.cpp
   src/store/pack.cpp
   src/store/store_impl.cpp
   src/version.cpp

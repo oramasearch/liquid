@@ -483,86 +483,6 @@ private:
   MDB_txn *read_transaction_ = nullptr;
 };
 
-// The liquid engine uses the same 32-byte-key / 16-byte-location records as
-// src/store/index.cpp. It keeps a bulk memtable for this single-client workload,
-// sorts it on flush, and writes one immutable run. That is the index's normal
-// first-run path without pack I/O influencing an index-only comparison.
-class liquid_engine final : public engine {
-public:
-  explicit liquid_engine(fs::path directory) : directory_(std::move(directory)) {}
-
-  void open(bool create) override {
-    if (create) {
-      entries_.clear();
-      entries_.reserve(expected_entries_);
-    }
-  }
-
-  void put_batch(const std::vector<key_type> &keys, std::uint64_t first,
-                 std::uint64_t count) override {
-    if (expected_entries_ == 0) {
-      expected_entries_ = keys.size();
-      entries_.reserve(expected_entries_);
-    }
-    for (std::uint64_t i = first; i < first + count; ++i)
-      entries_.push_back({keys[static_cast<std::size_t>(i)], make_value(i)});
-    sorted_ = false;
-  }
-
-  void begin_reads() override { sort_memtable(); }
-  bool get(const key_type &key) override {
-    const auto found = std::lower_bound(entries_.begin(), entries_.end(), key,
-      [](const record &entry, const key_type &value) { return entry.key < value; });
-    return found != entries_.end() && found->key == key;
-  }
-  std::size_t scan(const key_type &key, std::size_t count) override {
-    auto at = std::lower_bound(entries_.begin(), entries_.end(), key,
-      [](const record &entry, const key_type &value) { return entry.key < value; });
-    std::size_t visited = 0;
-    while (visited < count && !entries_.empty()) {
-      if (at == entries_.end()) at = entries_.begin();
-      ++visited;
-      ++at;
-    }
-    return visited;
-  }
-  void end_reads() override {}
-
-  void flush() override {
-    sort_memtable();
-    std::ofstream run(directory_ / "run-1.idx", std::ios::binary | std::ios::trunc);
-    if (!run) fail("liquid run open failed");
-    for (const auto &entry : entries_) {
-      run.write(entry.key.data(), static_cast<std::streamsize>(entry.key.size()));
-      run.write(entry.value.data(), static_cast<std::streamsize>(entry.value.size()));
-    }
-    if (!run) fail("liquid run write failed");
-    written_ = static_cast<std::uint64_t>(entries_.size()) * 48;
-  }
-  void close() override {}
-  std::uint64_t bytes_written() const override { return written_; }
-  std::string details() const override {
-    return "record_bytes=48 run_algorithm=blake3 bloom_bits_per_key=10 compaction_k=4";
-  }
-
-private:
-  struct record { key_type key; value_type value; };
-  static_assert(sizeof(record) == 48);
-  static_assert(sizeof(liquid::store_detail::index_record::bytes) + 4 + 8 + 4 == 48);
-  fs::path directory_;
-  std::vector<record> entries_;
-  std::uint64_t expected_entries_{};
-  std::uint64_t written_{};
-  bool sorted_{};
-
-  void sort_memtable() {
-    if (sorted_) return;
-    std::sort(entries_.begin(), entries_.end(),
-              [](const record &left, const record &right) { return left.key < right.key; });
-    sorted_ = true;
-  }
-};
-
 std::uint64_t directory_size(const fs::path &directory) {
   std::uint64_t total = 0;
   for (const auto &entry : fs::recursive_directory_iterator(directory)) {
@@ -733,6 +653,119 @@ phase_result run_ranges(engine &database, const std::vector<key_type> &keys) {
                       latencies);
 }
 
+void print_phase(const phase_result &phase);
+
+liquid::digest liquid_digest(const key_type &key) {
+  liquid::digest output{liquid::algorithm::blake3, {}};
+  for (std::size_t i = 0; i < key.size(); ++i)
+    output.bytes[i] = std::byte{static_cast<unsigned char>(key[i])};
+  return output;
+}
+
+liquid::runtime::task<phase_result>
+run_liquid_inserts(liquid::store_detail::chunk_index &index,
+                   const std::vector<key_type> &keys) {
+  std::vector<std::uint64_t> latencies;
+  latencies.reserve((keys.size() + batch_size - 1) / batch_size);
+  const auto phase_started = clock_type::now();
+  for (std::uint64_t first = 0; first < keys.size(); first += batch_size) {
+    const auto batch_started = clock_type::now();
+    const auto count = std::min<std::uint64_t>(batch_size, keys.size() - first);
+    for (std::uint64_t i = first; i < first + count; ++i) {
+      liquid::store_detail::chunk_location location{};
+      location.pack_id = static_cast<std::uint32_t>(i / 512);
+      location.offset = (i % 512) * 64U * 1024U;
+      location.length = 64U * 1024U;
+      const auto id = liquid_digest(keys[static_cast<std::size_t>(i)]);
+      auto inserted = index.insert({id, location});
+      if (!inserted) co_return std::unexpected(inserted.error());
+      if (index.needs_flush(id.alg)) {
+        auto flushed = co_await index.flush();
+        if (!flushed) co_return std::unexpected(flushed.error());
+      }
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(clock_type::now() - batch_started);
+    latencies.push_back(static_cast<std::uint64_t>(elapsed.count()) / count);
+  }
+  co_return finish_phase("bulk_insert", keys.size(), phase_started, latencies);
+}
+
+liquid::runtime::task<phase_result>
+run_liquid_points(liquid::store_detail::chunk_index &index,
+                  const std::vector<query> &queries, std::size_t count,
+                  std::string name) {
+  std::vector<std::uint64_t> latencies;
+  latencies.reserve(count);
+  const auto phase_started = clock_type::now();
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto started = clock_type::now();
+    auto found = index.find(liquid_digest(queries[i].key));
+    if (!found) co_return std::unexpected(found.error());
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(clock_type::now() - started);
+    latencies.push_back(static_cast<std::uint64_t>(elapsed.count()));
+    if (found->has_value() != queries[i].expect_hit)
+      co_return std::unexpected(liquid::error{liquid::errc::corrupt, "liquid lookup returned wrong presence", {}});
+  }
+  co_return finish_phase(std::move(name), count, phase_started, latencies);
+}
+
+liquid::runtime::task<phase_result>
+run_liquid_ranges(liquid::store_detail::chunk_index &index,
+                  const std::vector<key_type> &keys) {
+  std::vector<std::uint64_t> latencies;
+  latencies.reserve(range_scan_count);
+  std::mt19937_64 random(3);
+  const auto phase_started = clock_type::now();
+  for (std::size_t i = 0; i < range_scan_count; ++i) {
+    const auto started = clock_type::now();
+    for (std::size_t n = 0; n < range_scan_width; ++n) {
+      const auto &key = keys[static_cast<std::size_t>((random() + n) % keys.size())];
+      auto found = index.find(liquid_digest(key));
+      if (!found) co_return std::unexpected(found.error());
+      if (!*found) co_return std::unexpected(liquid::error{liquid::errc::corrupt, "liquid range lookup missed", {}});
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(clock_type::now() - started);
+    latencies.push_back(static_cast<std::uint64_t>(elapsed.count()));
+  }
+  co_return finish_phase("range_scan_64", range_scan_count, phase_started, latencies);
+}
+
+template <class T> T checked(liquid::result<T> value, std::string_view operation) {
+  if (!value) fail(std::format("liquid {} failed: {}", operation, value.error().message));
+  return std::move(*value);
+}
+
+void checked(liquid::result<void> value, std::string_view operation) {
+  if (!value) fail(std::format("liquid {} failed: {}", operation, value.error().message));
+}
+
+int run_liquid(const config &settings, const std::vector<key_type> &keys,
+               const std::vector<query> &queries) {
+  std::cout << std::format("config engine=liquid n={} seed={} batch_size={} point_lookups={} range_scans={} range_width={} cold_lookups={} tuning={} record_bytes=48 memtable_entries=1048576 bloom_bits_per_key=10 compaction_k=4\n",
+                           settings.n, seed, batch_size, point_lookup_count, range_scan_count,
+                           range_scan_width, cold_lookup_count, settings.tuning);
+  liquid::store_detail::chunk_index index(settings.directory);
+  checked(liquid::runtime::block_on(index.open()), "open");
+  liquid::store_detail::reset_file_write_counter();
+  print_phase(checked(liquid::runtime::block_on(run_liquid_inserts(index, keys)), "insert"));
+  print_phase(checked(liquid::runtime::block_on(run_liquid_points(index, queries, point_lookup_count, "point_lookup")), "point lookup"));
+  print_phase(checked(liquid::runtime::block_on(run_liquid_ranges(index, keys)), "range scan"));
+  checked(liquid::runtime::block_on(index.flush()), "flush");
+  checked(liquid::runtime::block_on(index.close()), "close");
+  const auto cache_status = drop_page_cache(settings.directory);
+  liquid::store_detail::chunk_index cold(settings.directory);
+  checked(liquid::runtime::block_on(cold.open()), "cold open");
+  print_phase(checked(liquid::runtime::block_on(run_liquid_points(cold, queries, cold_lookup_count, "cold_point_lookup")), "cold point lookup"));
+  checked(liquid::runtime::block_on(cold.close()), "cold close");
+  const auto on_disk = directory_size(settings.directory);
+  const auto written = liquid::store_detail::file_write_counter();
+  const long double logical_bytes = static_cast<long double>(settings.n) * 48.0L;
+  std::cout << std::format("storage on_disk_bytes={} bytes_written={} write_amplification={:.6Lf} peak_rss_bytes={} cache_drop={}\n",
+                           on_disk, written, static_cast<long double>(written) / logical_bytes,
+                           peak_rss_bytes(), cache_status);
+  return 0;
+}
+
 void print_phase(const phase_result &phase) {
   std::cout << std::format("phase={} operations={} seconds={:.6f} "
                            "ops_per_sec={:.2f} p50_us={:.3f} p99_us={:.3f}\n",
@@ -746,6 +779,8 @@ int run(const config &settings) {
   const auto keys = generate_keys(settings.n);
   const auto queries = generate_queries(keys, point_lookup_count);
 
+  if (settings.engine == "liquid") return run_liquid(settings, keys, queries);
+
   std::unique_ptr<engine> database;
   if (settings.engine == "rocksdb") {
     database = std::make_unique<rocks_engine>(settings.directory,
@@ -754,8 +789,6 @@ int run(const config &settings) {
     database = std::make_unique<lmdb_engine>(settings.directory,
                                              lmdb_map_size(settings),
                                              settings.tuning == "nosync");
-  } else {
-    database = std::make_unique<liquid_engine>(settings.directory);
   }
 
   std::cout << std::format("config engine={} n={} seed={} batch_size={} "

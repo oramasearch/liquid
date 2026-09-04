@@ -17,6 +17,7 @@ namespace liquid::store_detail {
 namespace {
 
 std::atomic<std::uint64_t> file_read_bytes{};
+std::atomic<std::uint64_t> file_written_bytes{};
 
 constexpr std::array<std::byte, 8> pack_magic{std::byte{'L'}, std::byte{'Q'}, std::byte{'P'},
                                                std::byte{'A'}, std::byte{'C'}, std::byte{'K'},
@@ -81,6 +82,7 @@ runtime::task<void> write_at(std::filesystem::path path, std::uint64_t offset,
                 offset + written, boost::capy::const_buffer(bytes.data() + written, bytes.size() - written));
             if (ec || count == 0) co_return std::unexpected(io_error(ec ? ec.message() : "short file write", path.string()));
             written += count;
+            file_written_bytes.fetch_add(count, std::memory_order_relaxed);
         }
         if (sync) file.sync_data();
         file.close();
@@ -205,6 +207,8 @@ std::uint64_t file_read_counter() noexcept { return file_read_bytes.load(std::me
 void note_file_read(std::size_t bytes) noexcept {
     file_read_bytes.fetch_add(bytes, std::memory_order_relaxed);
 }
+void reset_file_write_counter() noexcept { file_written_bytes.store(0, std::memory_order_relaxed); }
+std::uint64_t file_write_counter() noexcept { return file_written_bytes.load(std::memory_order_relaxed); }
 
 runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t id) {
     auto file = co_await read_file(path);
