@@ -414,6 +414,8 @@ auto milliseconds_value(const cbor::value& value) -> result<std::chrono::millise
     if (!count || *count > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
         return std::unexpected(corrupt("invalid action timing"));
     return std::chrono::milliseconds{static_cast<std::int64_t>(*count)};
+}
+
 auto encode_change_ref(const change_ref& value) -> cbor::value {
     return map({{"repo", encode_node_id(value.repo_id)}, {"id", encode_change_id(value.id)}});
 }
@@ -428,6 +430,22 @@ auto decode_change_ref(const cbor::value& value) -> result<change_ref> {
     if (!decoded_repository || !decoded_id)
         return std::unexpected(corrupt("invalid change reference"));
     return change_ref{*decoded_repository, *decoded_id};
+}
+
+auto encode_repo_ref(const repo_ref& value) -> cbor::value {
+    return map({{"repo", encode_node_id(value.repo_id)}, {"id", encode_change_id(value.id)}});
+}
+
+auto decode_repo_ref(const cbor::value& value) -> result<repo_ref> {
+    const auto* repository = find(value, "repo");
+    const auto* id = find(value, "id");
+    if (!repository || !id)
+        return std::unexpected(corrupt("repository reference is missing fields"));
+    auto decoded_repository = decode_node_id(*repository);
+    auto decoded_id = decode_change_id(*id);
+    if (!decoded_repository || !decoded_id)
+        return std::unexpected(corrupt("invalid repository reference"));
+    return repo_ref{*decoded_repository, *decoded_id};
 }
 
 } // namespace
@@ -464,12 +482,16 @@ auto encode(const tree& value) -> result<std::vector<std::byte>> {
         return std::unexpected(error{errc::invalid_argument, "duplicate tree entry", "tree"});
     auto output = cbor::value::array{};
     for (const auto& entry : entries) {
-        output.push_back(map({{"name", cbor::value{entry.name}},
-                              {"mode", cbor::value{std::uint64_t{entry.mode}}},
-                              {"kind", cbor::value{static_cast<std::uint64_t>(entry.kind)}},
-                              {"id", encode_digest(entry.id)},
-                              {"node", encode_node_id(entry.node)},
-                              {"ref", encode_digest(entry.ref)}}));
+        auto fields =
+            cbor::value::map{{"name", cbor::value{entry.name}},
+                             {"mode", cbor::value{std::uint64_t{entry.mode}}},
+                             {"kind", cbor::value{static_cast<std::uint64_t>(entry.kind)}},
+                             {"id", encode_digest(entry.id)},
+                             {"node", encode_node_id(entry.node)},
+                             {"ref", encode_digest(entry.ref)}};
+        if (entry.nested)
+            fields.emplace_back("nested", encode_repo_ref(*entry.nested));
+        output.push_back(cbor::value{std::move(fields)});
     }
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "tree"},
@@ -786,12 +808,20 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
                              : result<digest>{std::unexpected(corrupt("tree ref missing"))};
         if (!object || !identity || !reference)
             return std::unexpected(corrupt("invalid tree entry references"));
+        auto nested = std::optional<repo_ref>{};
+        if (const auto* value = find(item, "nested")) {
+            auto decoded = decode_repo_ref(*value);
+            if (!decoded)
+                return std::unexpected(decoded.error());
+            nested = *decoded;
+        }
         output.entries.push_back({*text,
                                   static_cast<std::uint32_t>(*bits),
                                   static_cast<node_kind>(*type),
                                   *object,
                                   *identity,
-                                  *reference});
+                                  *reference,
+                                  nested});
     }
     if (!std::ranges::is_sorted(output.entries, {}, &tree_entry::name))
         return std::unexpected(corrupt("tree entries are not sorted"));

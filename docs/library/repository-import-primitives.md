@@ -34,7 +34,12 @@ linear traversal for callers that need it.
 its complete bytes. Together with `at(change_id)`, these operations let an exporter walk a
 historical snapshot without assuming that the working copy is at that change.
 
+## Modes and nested repositories
+
+`write_options::mode` preserves executable (`0100755`) and symbolic-link (`0120000`) entries;
+symbolic-link content is the link target. `nest_ref(path, repo_ref)` records a Git submodule as a
+nested-repository placeholder without requiring its source repository to be present.
+
 ## Status
 
-`record(change_input)`, repository metadata, full-DAG history traversal, and historical-object
-readers are implemented. The remaining importer primitives are documented here as they land.
+All importer primitives in the Phase 1 API map are implemented.

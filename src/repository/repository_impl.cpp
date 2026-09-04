@@ -36,6 +36,7 @@ struct working_entry {
     std::uint32_t mode{0100644};
     digest object{};
     std::map<std::string, working_entry> entries;
+    std::optional<repo_ref> nested;
 };
 struct stored_operation {
     op_id id{};
@@ -986,7 +987,8 @@ struct repository::impl {
             }
             if (child.kind == entry_kind::nested_repository)
                 kind = node_kind::repo;
-            value.entries.push_back({name, child.mode, kind, reference, child.node, reference});
+            value.entries.push_back(
+                {name, child.mode, kind, reference, child.node, reference, child.nested});
         }
         auto encoded = objects::encode(value);
         if (!encoded)
@@ -1241,7 +1243,7 @@ struct repository::impl {
             return same_path_or_descendant(path, pattern);
         });
     }
-    runtime::task<void> record_blob(std::string path, blob record) {
+    runtime::task<void> record_blob(std::string path, blob record, std::uint32_t mode = 0100644) {
         if (locked(path))
             co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
         auto parts = split_path(path);
@@ -1269,18 +1271,19 @@ struct repository::impl {
         const auto existing_id = found == (*parent)->entries.end() ? node_id{} : found->second.node;
         auto recorded =
             (*directory_document)
-                ->put_entry(parts->back(), {"blob", existing_id, 0100644, to_string(*reference)});
+                ->put_entry(parts->back(), {"blob", existing_id, mode, to_string(*reference)});
         if (!recorded)
             co_return std::unexpected(recorded.error());
         if (found != (*parent)->entries.end()) {
             prior = found->second;
             found->second.object = *reference;
+            found->second.mode = mode;
         } else {
             found =
                 (*parent)
                     ->entries
                     .emplace(parts->back(),
-                             working_entry{entry_kind::file, random_id(), 0100644, *reference, {}})
+                             working_entry{entry_kind::file, random_id(), mode, *reference, {}, {}})
                     .first;
         }
         std::erase_if(current.conflict_values,
@@ -1473,8 +1476,14 @@ runtime::task<std::vector<std::byte>> repository::read_decrypted(std::string pat
         failure(errc::unsupported, "leaf encryption supports JSON and .env", path));
 }
 runtime::task<void> repository::write(std::string path, std::vector<std::byte> contents) {
+    co_return co_await write(std::move(path), std::move(contents), {});
+}
+runtime::task<void>
+repository::write(std::string path, std::vector<std::byte> contents, write_options options) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U)
+        co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
     if (impl_->locked(path))
         co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
     auto parts = split_path(path);
@@ -1502,7 +1511,7 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
     auto record = impl_->objects.blob_for(*content);
     if (!record)
         co_return std::unexpected(record.error());
-    co_return co_await impl_->record_blob(std::move(path), std::move(*record));
+    co_return co_await impl_->record_blob(std::move(path), std::move(*record), options.mode);
 }
 runtime::task<void> repository::write_file(std::string path, std::filesystem::path source) {
     if (!impl_)
@@ -2241,6 +2250,8 @@ runtime::task<void> repository::nest(repository source, std::string path) {
         co_return std::unexpected(failure(errc::already_exists, "nest destination exists", path));
     auto nested = source.impl_->current.root;
     nested.kind = entry_kind::nested_repository;
+    if (source.impl_->current.head)
+        nested.nested = repo_ref{source.impl_->current.repository, *source.impl_->current.head};
     (*parent)->entries.emplace(parts->back(), std::move(nested));
     ++impl_->current.pending_drips;
     auto saved = co_await impl_->checkpoint_or_journal();
@@ -2269,6 +2280,7 @@ runtime::task<repository> repository::split(std::string path, std::filesystem::p
         co_return std::unexpected(child_change.error());
     entry->kind = entry_kind::nested_repository;
     entry->object = child_change->value;
+    entry->nested = repo_ref{destination->impl_->current.repository, *child_change};
     ++impl_->current.pending_drips;
     auto saved = co_await impl_->checkpoint_or_journal();
     if (!saved)
@@ -2294,8 +2306,33 @@ runtime::task<void> repository::combine(repository other, std::optional<std::str
     } else {
         auto copy = other.impl_->current.root;
         copy.kind = entry_kind::nested_repository;
+        if (other.impl_->current.head)
+            copy.nested = repo_ref{other.impl_->current.repository, *other.impl_->current.head};
         (*parent)->entries.emplace(parts->back(), std::move(copy));
     }
+    ++impl_->current.pending_drips;
+    auto saved = co_await impl_->checkpoint_or_journal();
+    if (!saved)
+        co_return std::unexpected(saved.error());
+    co_return result<void>{};
+}
+runtime::task<void> repository::nest_ref(std::string path, repo_ref reference) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto parts = split_path(path);
+    if (!parts)
+        co_return std::unexpected(parts.error());
+    auto parent = parent_for(impl_->current.root, *parts, true, impl_->hash_algorithm);
+    if (!parent)
+        co_return std::unexpected(parent.error());
+    if ((*parent)->entries.contains(parts->back()))
+        co_return std::unexpected(failure(errc::already_exists, "nest destination exists", path));
+    const auto stored = co_await impl_->objects.put(std::vector<std::byte>{});
+    if (!stored)
+        co_return std::unexpected(stored.error());
+    (*parent)->entries.emplace(
+        parts->back(),
+        working_entry{entry_kind::nested_repository, random_id(), 0160000, *stored, {}, reference});
     ++impl_->current.pending_drips;
     auto saved = co_await impl_->checkpoint_or_journal();
     if (!saved)

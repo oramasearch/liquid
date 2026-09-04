@@ -33,6 +33,15 @@ struct LIQUID_EXPORT blob {
     std::vector<std::uint64_t> chunk_sizes;
 };
 
+struct LIQUID_EXPORT change_id {
+    digest value;
+};
+
+struct LIQUID_EXPORT repo_ref {
+    node_id repo_id{};
+    change_id id{};
+};
+
 struct LIQUID_EXPORT tree_entry {
     std::string name;
     std::uint32_t mode;
@@ -40,22 +49,14 @@ struct LIQUID_EXPORT tree_entry {
     digest id;
     node_id node{};
     digest ref{};
+    std::optional<repo_ref> nested;
 };
 
 struct LIQUID_EXPORT tree {
     std::vector<tree_entry> entries;
 };
 
-struct LIQUID_EXPORT change_id {
-    digest value;
-};
-
 struct LIQUID_EXPORT change_ref {
-    node_id repo_id{};
-    change_id id{};
-};
-
-struct LIQUID_EXPORT repo_ref {
     node_id repo_id{};
     change_id id{};
 };

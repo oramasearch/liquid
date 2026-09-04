@@ -140,6 +140,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>> read_decrypted(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
     [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
+    [[nodiscard]] runtime::task<void>
+    write(std::string path, std::vector<std::byte> contents, write_options options);
     [[nodiscard]] runtime::task<void> redact(std::string path,
                                              std::optional<change_id> change = std::nullopt);
     [[nodiscard]] runtime::task<void> redact(std::string path,
@@ -164,6 +166,7 @@ public:
     [[nodiscard]] runtime::task<readability_report>
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
+    [[nodiscard]] runtime::task<void> nest_ref(std::string path, repo_ref reference);
     [[nodiscard]] runtime::task<repository> split(std::string path, std::filesystem::path into);
     [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);
     [[nodiscard]] runtime::task<std::vector<conflict>> conflicts();

@@ -361,6 +361,32 @@ TEST(Repository, tree_and_blob_read_historical_records) {
     EXPECT_EQ(text(*contents), "contents");
 }
 
+TEST(Repository, write_modes_and_nested_references_are_preserved) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("script", content("#!/bin/sh\n"), {.mode = 0100755})));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("link", content("target"), {.mode = 0120000})));
+    liquid::repo_ref nested{};
+    nested.repo_id.front() = std::byte{1};
+    nested.id.value.alg = liquid::algorithm::blake3;
+    nested.id.value.bytes.front() = std::byte{2};
+    ASSERT_TRUE(liquid::runtime::block_on(repository.nest_ref("module", nested)));
+
+    const auto root = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(root) << root.error().message;
+    ASSERT_EQ(root->entries.size(), 3U);
+    EXPECT_EQ(root->entries.at(0).mode, 0120000U);
+    EXPECT_EQ(root->entries.at(1).kind, liquid::node_kind::repo);
+    EXPECT_EQ(root->entries.at(1).mode, 0160000U);
+    ASSERT_TRUE(root->entries.at(1).nested);
+    EXPECT_EQ(root->entries.at(1).nested->repo_id, nested.repo_id);
+    EXPECT_EQ(root->entries.at(2).mode, 0100755U);
+}
+
 TEST(Repository, write_undo_and_locks_are_recorded) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
