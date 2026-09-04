@@ -306,7 +306,7 @@ the second run as well:
 | BuildBarn `20260609T094425Z-10acc76` | 100% | 100% | pass |
 
 The privileged Linux read-guard case refuses `/etc/hostname` before remote dispatch. For the server
-direction, stock Bazel 8.3.1 writes a genrule's CAS objects and ActionResult to `liquid serve reapi`;
+direction, stock Bazel 7.4.1 writes a genrule's CAS objects and ActionResult to `liquid serve reapi`;
 a clean second output base reports `1 remote cache hit`. The upstream `remote-apis` repository does
 not provide a server conformance runner and BuildBarn does not publish a black-box conformance
 binary, so this stock Bazel cache read/write case is the applicable upstream-client compatibility

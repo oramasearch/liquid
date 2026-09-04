@@ -102,7 +102,7 @@ fi
 cp -R "$repo_root/tools/reapi-peers/bazel-fixture" "$temporary/bazel-write"
 if ! write_output=$(docker run --rm "${bazel_network[@]}" \
   -v "$temporary/bazel-write:/workspace" -w /workspace \
-  gcr.io/bazel-public/bazel:8.3.1 \
+  gcr.io/bazel-public/bazel:7.4.1 \
   --batch build //:copy --enable_bzlmod=false --enable_workspace=true \
   --remote_cache="grpc://$server_host:50161" \
   --remote_max_connections=1 \
@@ -116,7 +116,7 @@ echo "$write_output"
 cp -R "$repo_root/tools/reapi-peers/bazel-fixture" "$temporary/bazel-read"
 if ! read_output=$(docker run --rm "${bazel_network[@]}" \
   -v "$temporary/bazel-read:/workspace" -w /workspace \
-  gcr.io/bazel-public/bazel:8.3.1 \
+  gcr.io/bazel-public/bazel:7.4.1 \
   --batch build //:copy --enable_bzlmod=false --enable_workspace=true \
   --remote_cache="grpc://$server_host:50161" \
   --remote_max_connections=1 \

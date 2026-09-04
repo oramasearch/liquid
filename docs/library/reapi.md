@@ -108,7 +108,7 @@ Phase 2 Make wrap fixture with a remote-only second lookup. Both peers produce t
 100% second-run hit rate. The Linux read-guard fixture confirms `/etc/hostname` is refused before
 remote dispatch.
 
-The same script starts `liquid serve reapi` and runs the stock Bazel 8.3.1 client twice from clean
+The same script starts `liquid serve reapi` and runs the stock Bazel 7.4.1 client twice from clean
 output bases. The first run writes CAS and ActionCache data; the second reports one remote cache hit.
 The upstream `remote-apis` repository contains protocol definitions and test vectors but no server
 conformance runner, and BuildBarn does not publish a separate black-box conformance binary. The

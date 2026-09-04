@@ -76,7 +76,7 @@ and `grpc-status: 0`. The script starts liquid's private server with the same ce
 prints a skip diagnostic when Docker is unavailable.
 
 `tools/reapi-peers/run-reapi-interop.sh` extends that proof through the complete #16 client and
-server. NativeLink and BuildBarn exercise the client; stock Bazel 8.3.1 exercises strict server
+server. NativeLink and BuildBarn exercise the client; stock Bazel 7.4.1 exercises strict server
 preface ordering, client-streamed ByteStream writes, CAS, and ActionCache. The client recognizes a
 trailers-only gRPC response, including an ActionCache miss, without waiting for a DATA frame that
 will never arrive. Zero-length DATA frames consume no flow-control credit and do not produce an
