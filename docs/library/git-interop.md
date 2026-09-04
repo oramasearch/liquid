@@ -84,6 +84,10 @@ history more tightly than liquid's current chunk representation. Storage tuning 
 [liquid issue #133](https://github.com/oramasearch/liquid/issues/133), outside this interoperability
 work.
 
+`git rev-list --all --count` reported 5,497 commits, while `git rev-list develop --count` reported
+5,054. The difference is reachable only from other remote refs, not unreachable packed objects.
+Export writes every imported ref, so those commits are retained in the exported repository too.
+
 `liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid
 repository when needed. `liquid export git <path> [ref]` exports the repository rooted at the
 current directory. The client uses the normal command table and prints import counts and every

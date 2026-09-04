@@ -116,11 +116,17 @@ export_git(repository& source, std::filesystem::path target, std::string ref) {
     const auto head = write_text(target / "HEAD", "ref: refs/heads/" + ref + "\n");
     if (!head)
         co_return std::unexpected(head.error());
-    const auto history = co_await source.log({.from = selected->id});
-    if (!history)
-        co_return std::unexpected(history.error());
-    auto ordered = *history;
-    std::ranges::reverse(ordered);
+    auto ordered = std::vector<change>{};
+    auto seen = std::set<std::string>{};
+    for (const auto& source_ref : *refs) {
+        const auto history = co_await source.log({.from = source_ref.id});
+        if (!history)
+            co_return std::unexpected(history.error());
+        for (auto entry = history->rbegin(); entry != history->rend(); ++entry) {
+            if (seen.emplace(to_string(entry->id.value)).second)
+                ordered.push_back(*entry);
+        }
+    }
     std::map<std::string, git_detail::sha1> ids;
     std::set<std::string> degradations;
     for (const auto& change : ordered) {
@@ -161,13 +167,20 @@ export_git(repository& source, std::filesystem::path target, std::string ref) {
         if (!change.sig.empty())
             degradations.insert("liquid signatures are not representable in Git");
     }
-    const auto final = ids.find(to_string(selected->id.value));
-    if (final == ids.end())
-        co_return std::unexpected(error{errc::internal, "exported ref is missing", ref});
-    const auto saved =
-        write_text(target / "refs" / "heads" / ref, git_detail::sha1_hex(final->second) + "\n");
-    if (!saved)
-        co_return std::unexpected(saved.error());
+    for (const auto& source_ref : *refs) {
+        const auto found = ids.find(to_string(source_ref.id.value));
+        if (found == ids.end())
+            co_return std::unexpected(
+                error{errc::internal, "exported ref is missing", source_ref.name});
+        auto name = source_ref.name;
+        if (name.starts_with("tags/"))
+            name = "refs/tags/" + name.substr(5);
+        else if (!name.starts_with("refs/"))
+            name = "refs/heads/" + name;
+        const auto saved = write_text(target / name, git_detail::sha1_hex(found->second) + "\n");
+        if (!saved)
+            co_return std::unexpected(saved.error());
+    }
     report.degradations.assign(degradations.begin(), degradations.end());
     co_return report;
 }
