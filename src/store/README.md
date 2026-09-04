@@ -31,3 +31,5 @@ opens; build-input policy still loads and verifies every indexed record before c
 Remote blob registrations are persisted separately in `packs/remotes.meta`. The store reports
 whole-content availability as absent, remote, or local and fetches only missing logical chunks
 through the configured source before verifying and writing them through the ordinary pack path.
+Once a chunk is local, reads load that verified chunk directly; this also handles one-chunk blobs
+whose content and chunk digests are identical without resolving the remote registration again.

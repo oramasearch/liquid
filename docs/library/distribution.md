@@ -57,7 +57,8 @@ action that consumes them runs on the backend with the inputs already in its CAS
 
 Materialisation (`materialise`) of a tree containing remote blobs fetches them then; `liquid
 status` shows how many bytes of the current tree are still remote. A chunk stops contributing as
-soon as its verified bytes enter the local store.
+soon as its verified bytes enter the local store. Subsequent reads use those verified chunk bytes
+directly, including a one-chunk blob whose content digest is also its chunk digest.
 
 **Hermeticity at the read.** `action_input::remote_eligible` defaults to false until the cost model
 in #18 sets it. On Linux, an eligible action runs under the sandbox read guard. The guard inspects

@@ -1265,7 +1265,7 @@ store_backend::hydrate_remote_chunk(const blob& value, std::size_t index, std::u
         co_return std::unexpected(local.error());
     }
     if (*local) {
-        co_return co_await get(value.chunks[index]);
+        co_return co_await load_chunk(value.chunks[index]);
     }
     const auto source = options_.remote_sources.find(value.remote->source);
     if (source == options_.remote_sources.end() || !source->second) {
