@@ -61,6 +61,10 @@ class document {
     std::unique_ptr<impl> impl_;
 };
 
+// A directory document has the same transaction and sync boundary as a document,
+// but repository code uses this distinct name to make the per-directory cache explicit.
+using directory_document = document;
+
 [[nodiscard]] auto derive_actor_id(std::string_view taap_id, std::string_view device_id)
     -> result<actor_id>;
 

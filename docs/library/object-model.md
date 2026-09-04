@@ -17,9 +17,11 @@ operation content, its default actor id is zero, it has no commit metadata, no i
 no patches for remote changes, no rollback, no sync wire format, and no history compaction.
 Everything below that says "liquid's own" is there because of one of those.
 
-**Status: implemented for liquid #3.** The private automerge-cpp wrapper, repository document
-schema, canonical CBOR codec, versioned sync framing and drip journal are implemented. Repository
-operations that consume this layer remain liquid #2.
+**Status: implemented for liquid #2 and #3.** The private automerge-cpp wrapper, canonical CBOR
+codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
+working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
+composition, conflict values, operation inversion, advisory locks, and the repository status are
+implemented over the local store.
 
 ## The two layers, precisely
 
@@ -181,6 +183,20 @@ directories so the cost is visible, and a later sharding of a single huge direct
 possible because entries are addressed by `node_id`, not by position. Reproduce a row after a
 Release configure with `cmake --build build-measure --target liquid-crdt-measure &&
 ./build-measure/tests/liquid-crdt-measure 100000 1000`.
+
+## Implementation notes
+
+`LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
+written to a sibling temporary file and atomically renamed. The checkpoint holds refs, locks, the
+operation log, the working-tree values, and the `dirs` indirection. Each loaded directory is a
+private CRDT document cached by its `node_id`; saving a checkpoint writes the document bytes to
+the store and refreshes its `dirs` entry. The implementation checkpoints after every mutation,
+which is the configured interval used by the local repository implementation.
+
+File content is represented by a canonical `blob` record whose chunk list currently contains the
+content-store object written by `store::put`. Trees and changes are canonical records as well;
+the change digest is the digest of its canonical bytes and is never an automerge hash. The
+fixture in `tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree encoding.
 
 ## How to verify
 

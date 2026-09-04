@@ -17,14 +17,16 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 chunk store and its deterministic crash simulator are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 chunk store, deterministic crash simulator, and first working repository are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error and digest APIs
 > are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put, get,
 > range read, contains, and trust-domain encrypted objects with passphrase or raw-key-file custody;
-> leases and collection remain unsupported. Repository, capture, identity, VFS and remote operations
-> remain `unsupported` until their owning issues land. The internal CRDT
+> leases and collection remain unsupported. Capture, identity, VFS and remote operations
+> remain `unsupported` until their owning issues land. Repository creation, working-tree reads and
+> writes, recorded moves and removals, change cuts, references, snapshots, composition, conflict
+> values, undo, advisory locks, and status are implemented. The internal CRDT
 > metadata document, canonical CBOR codec and drip journal are implemented behind libliquid.
 > `liquid version` and `liquid hello` remain unchanged, and `find_package(liquid)` works from an
 > install.

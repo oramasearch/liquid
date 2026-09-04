@@ -57,8 +57,8 @@ owning issue in `error::context`.
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/store.hpp` | #1, #7, #8 | implemented (#1, #7); declared (#8) | `store`: content in, digests out; encrypted trust domains; leases and collection |
-| `liquid/object.hpp` | #2 | declared | node kinds and their records; `blob`, `tree`, `change`, and the reserved shapes |
-| `liquid/repository.hpp` | #2, #40, #41, #42 | declared | `repository`: open, read, write, history, nest/split/combine, conflicts, undo, locks |
+| `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
+| `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51 | implemented (#7); declared (#4, #51) | TAAP `actor`, `signer`, `verify`, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | declared | `mount`: the virtual filesystem over a repository |

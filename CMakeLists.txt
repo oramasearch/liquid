@@ -182,6 +182,7 @@ add_library(libliquid
   src/identity.cpp
   src/crypto/crypto.cpp
   src/object.cpp
+  src/objects/records.cpp
   src/remote.cpp
   src/repository.cpp
   src/runtime/runtime.cpp
