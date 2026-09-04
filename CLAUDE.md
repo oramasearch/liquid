@@ -124,6 +124,11 @@ ls docs/research/*/sources.md | wc -l   # with sources
 ls docs/features/*.md | grep -v README | wc -l
 ```
 
+### Formatting
+
+`clang-format` with the repository's `.clang-format` (LLVM base, 100 columns, 4-space indents) before
+every commit; one statement per line. A function collapsed onto one line is sent back unread.
+
 ### Before finishing — run all five
 
 The first two are commands and got run every time; the last two are prose and got

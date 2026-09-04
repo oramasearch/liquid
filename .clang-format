@@ -1,0 +1,16 @@
+# liquid's C++ style: LLVM as the base, 100 columns, 4-space indents (the org's C++ convention).
+# Run clang-format before every commit; CI does not reformat for you.
+BasedOnStyle: LLVM
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+BinPackArguments: false
+BinPackParameters: false
+PointerAlignment: Left
+DerivePointerAlignment: false
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
