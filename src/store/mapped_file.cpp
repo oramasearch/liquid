@@ -1,6 +1,7 @@
 #include "mapped_file.hpp"
 
 #include <system_error>
+#include <utility>
 
 #if defined(_WIN32)
 #include <windows.h>

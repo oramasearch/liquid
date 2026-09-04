@@ -17,4 +17,5 @@ file writes, and key diffs.
 Repository tests cover persisted operation records and their public newest-first view; private index
 and cryptography tests stay in their existing targets. They also verify that repository collection
 retains checkpointed content while reclaiming an orphan. CLI scenario and command-documentation
-tests live in `cli/`.
+tests live in `cli/`. `test_runtime.cpp` repeats immediate blocking-pool completions to verify that
+each continuation returns to the caller executor without losing a wake during suspension.

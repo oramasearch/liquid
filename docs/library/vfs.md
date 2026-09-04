@@ -66,6 +66,13 @@ record's completion condition. One runtime coroutine drains the queue and is the
 touches repository state. Blocking cache and mount-loop work goes through `runtime::offload`, so
 callback waits do not occupy the repository executor.
 
+On libfuse3, `-f` and the mountpoint are consumed by `fuse_parse_cmdline` before the remaining
+filesystem options reach `fuse_new`. The request loop receives an allocated `fuse_loop_config`.
+Explicit unmount first records the stop and calls `fuse_exit`, then schedules one root attribute
+lookup through `runtime::offload`. That request gives the worker blocked in `/dev/fuse` its next
+opportunity to observe the exit flag without blocking a coroutine executor. Cleanup then unmounts
+and destroys the session; an unexpected loop result remains a mount error.
+
 The local queue measurement on macOS 14.6.1 arm64 was:
 
 ```text
@@ -96,7 +103,8 @@ source and asserts that less than the file was hydrated. `VfsMount` uses a 64 Mi
 at 40 MiB, reads the full file, captures a write and stable node identity, records one move, checks
 locked-path `EACCES`, and verifies reuse after unmount and remount. It reports a skip with the FUSE
 diagnosis when the backend or device is unavailable. Run `liquid-vfs-queue-tests` directly to print
-the request-queue measurement.
+the request-queue measurement. On Linux, the command in [`docs/build/ci.md`](../build/ci.md#local-linux-verification)
+runs the mount scenario alone and must report one passed test rather than a skip.
 
 ## How to change
 

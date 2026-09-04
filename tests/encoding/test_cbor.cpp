@@ -62,9 +62,9 @@ TEST(Cbor, rfc_8949_supported_vectors) {
                 cbor::value{cbor::value::map{{cbor::value{"a"}, cbor::value{std::uint64_t{1}}},
                                              {cbor::value{"b"}, cbor::value{std::uint64_t{2}}}}};
         else if (notation.front() == '-')
-            input = cbor::value{std::stoll(notation)};
+            input = cbor::value{static_cast<std::int64_t>(std::stoll(notation))};
         else
-            input = cbor::value{std::stoull(notation)};
+            input = cbor::value{static_cast<std::uint64_t>(std::stoull(notation))};
 
         EXPECT_EQ(encode_checked(input), expected) << notation;
         auto decoded = cbor::decode(expected);

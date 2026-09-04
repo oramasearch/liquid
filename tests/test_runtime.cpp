@@ -38,13 +38,19 @@ struct offload_observation {
 
 liquid::runtime::task<offload_observation> observe_offload() {
     const auto before_executor = co_await boost::capy::this_coro::executor;
-    const auto before_thread = std::this_thread::get_id();
-    auto offloaded = co_await liquid::runtime::offload(
-        [before_thread] { return std::this_thread::get_id() != before_thread; });
-    if (!offloaded)
-        co_return std::unexpected(offloaded.error());
-    const auto after_executor = co_await boost::capy::this_coro::executor;
-    co_return offload_observation{*offloaded, before_executor == after_executor};
+    auto observation = offload_observation{true, true};
+    for (auto attempt = 0; attempt < 256; ++attempt) {
+        const auto before_thread = std::this_thread::get_id();
+        auto offloaded = co_await liquid::runtime::offload(
+            [before_thread] { return std::this_thread::get_id() != before_thread; });
+        if (!offloaded)
+            co_return std::unexpected(offloaded.error());
+        const auto after_executor = co_await boost::capy::this_coro::executor;
+        observation.ran_elsewhere = observation.ran_elsewhere && *offloaded;
+        observation.resumed_on_executor =
+            observation.resumed_on_executor && before_executor == after_executor;
+    }
+    co_return observation;
 }
 
 liquid::runtime::task<int> combined_task() {

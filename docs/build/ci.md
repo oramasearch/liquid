@@ -41,3 +41,62 @@ when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device,
 that FUSE is unavailable and is skipped rather than silently substituting the materialisation
 path. The private submodule token remains an earlier gate: without `ORAMA_SUBMODULES_TOKEN`, CI
 stops at checkout before any FUSE proof can run.
+
+## Local Linux verification
+
+Hosted CI cannot build while the org submodule token is missing, and macOS builds hide two
+classes of Linux difference: libc++ supplies some standard headers transitively where libstdc++
+does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
+`std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same
+toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3). Build it once
+and run the whole suite against a worktree; `--privileged` with `/dev/fuse` lets the mount and
+sandbox tests run for real:
+
+```sh
+docker build -t liquid-linux-ci tools/linux-ci
+docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-linux-ci \
+  bash -c 'cmake -S . -B build-linux -G Ninja && cmake --build build-linux -- -k 0 \
+           && ctest --test-dir build-linux --output-on-failure --timeout 600 \
+                    -LE "large|sim-long|realworld"'
+```
+
+`-k 0` keeps building past the first failure so one run lists every portability error. Run the
+Linux mount scenario by itself, without allowing a missing FUSE device to hide it, with:
+
+```sh
+docker run --rm --memory 2g --privileged --device /dev/fuse \
+  -v "$PWD":/src -w /src liquid-linux-ci \
+  build-linux/tests/liquid-tests \
+  --gtest_filter=VfsMount.hydrates_captures_and_reuses_cache
+```
+
+The mount originally passed `-f` directly to `fuse_new`, which rejects command-line-only options,
+and later asked `fuse_exit` to stop a loop whose worker remained blocked in `/dev/fuse`. The Linux
+path now passes `-f` and the mountpoint through `fuse_parse_cmdline`, gives `fuse_loop_mt` an
+allocated loop configuration, and issues one offloaded root lookup after `fuse_exit` during an
+explicit unmount. That lookup wakes the blocked libfuse worker without blocking the runtime
+executor. A successful named run reports one passed test and no skipped tests.
+
+Run the Linux restart scenario by itself with:
+
+```sh
+docker run --rm --memory 2g -v "$PWD":/src -w /src liquid-linux-ci \
+  ctest --test-dir build-linux --output-on-failure --timeout 600 \
+  -R '^Drip.restart_replays_the_persisted_journal$'
+```
+
+The apparent restart growth was not journal replay, reconciliation, stat metadata, or inotify
+record parsing. A debugger caught `capture::open` suspended at its first `runtime::offload`, with
+the blocking pool idle and no wake queued on the caller. The pool could finish before the caller
+registered its `async_event` wait; Capy events are executor-affine and unsafe for concurrent shared
+access, so the set/wait race could lose the wake. `offload` now registers the caller continuation
+before dispatch and has the pool use `run_async` to schedule a caller-executor coroutine which
+queues that continuation. A successful named run reports one passed test.
+
+As of this change `main` compiles on Linux, and both the mount and drip restart scenarios pass
+there. To change the toolchain, edit the Dockerfile and the workflow together; they must agree on
+the compiler version.
+
+The CLI documentation check extracts the backticked command cell from each Markdown table row.
+It must not split table rows into CMake lists: CMake policy CMP0007 differs on whether the leading
+empty field before a Markdown row's first `|` is retained.
