@@ -146,6 +146,8 @@ class store {                          // the chunk store: chunks, packs, liquid
  public:
   static runtime::task<store> open(std::filesystem::path, store_options = {});
   runtime::task<digest> put(std::vector<std::byte>);              // chunked, deduplicated, indexed
+  runtime::task<digest> put_file(std::filesystem::path);          // streams from disk; a 40 GB file never sits in memory
+  runtime::task<void> get_to_file(digest, std::filesystem::path); // streams to disk
   runtime::task<std::vector<std::byte>> get(digest);              // verified on read
   runtime::task<std::uint64_t> read(digest, std::uint64_t offset, std::span<std::byte> into);
   runtime::task<bool> contains(digest);
@@ -198,6 +200,7 @@ class repository {
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
+  runtime::task<void> write_file(std::string path, std::filesystem::path source);   // streams a large file in; one drip
   runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
   runtime::task<void> remove(std::string path);
   runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
