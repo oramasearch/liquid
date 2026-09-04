@@ -218,8 +218,10 @@ class capture {                        // the journal, as a subscription
   runtime::task<void> pause();  runtime::task<void> resume();  result<capture_status> status();
 };
 struct actor { std::string taap_id; };                   // TAAP/1 subject
-class signer { public: runtime::task<std::vector<std::byte>> sign(std::vector<std::byte>); };   // custody may be remote
-result<bool> verify(const actor&, std::span<const std::byte> payload, std::span<const std::byte> signature);
+class signer { public: runtime::task<signature> sign(std::string artifact_type, std::vector<std::byte> canonical_body); };  // TAAP/1 §6.6; custody may be remote
+result<bool> verify(const actor&, std::string_view artifact_type, std::span<const std::byte> canonical_body, const signature&);
+struct signature { std::string algorithm; std::string signing_key_identifier; std::string signing_key_label;
+                   std::string signature_purpose; std::string signed_at; std::vector<std::byte> bytes; };   // TAAP/1 §6.7
 struct argon2_parameters { std::uint32_t memory_kib; std::uint32_t iterations; std::uint32_t lanes; };
 class key_provider { protected: virtual result<std::array<std::byte, 32>> derive_kek(span, argon2_parameters) const = 0; };
 class passphrase_provider final : public key_provider { public: result<std::array<std::byte, 32>> derive(span, argon2_parameters = {}) const; };
@@ -229,6 +231,16 @@ class keyring { public: result<void> add(std::string, std::shared_ptr<key_provid
 
 Object subjects (attestations *about* a drip or artifact) wait on the TAAP spec change
 (liquid-bridge #1); the `actor` type is written so an object-subject form can be added beside it.
+
+liquid's readings of the TAAP/1 draft where it is silent (each also filed as protocol feedback on
+liquid-bridge #8): the signed bytes are the artifact body **without** its `signatures` field, domain-separated by
+the artifact type (§6.6); the signature object's own fields are not signed, and `signature_purpose` must equal
+the artifact type or verification fails; identity documents are self-signed as `artifact_type =
+"identity_document"` in canonical CBOR with a `signatures` array of §6.7 objects; `previous_document_hash_base64`
+is SHA-512/256 over the canonical bytes of the previous document as stored, signatures included. Delegation
+chains (§22.5) are not used by drips: a drip is signed by its actor directly. Signing is on by default; a
+repository whose `config.signing` is `optional` accepts unsigned drips and marks them, and `status` says so;
+verification distinguishes *unsigned* from *invalid*.
 `passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
 objects. Recipient, KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains
 liquid #4 work.
