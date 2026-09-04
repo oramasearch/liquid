@@ -16,11 +16,12 @@ Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
 error and digest APIs plus liquid #1's local chunk store, liquid #4's TAAP/1 actor identities,
 liquid #111's key rotation and chain verification, and signed drips and changes, liquid #7's trust-domain
-encrypted objects, liquid #8's leased-root garbage collection, and liquid #55's deterministic crash simulator
-are implemented, while operations owned by later issues return `errc::unsupported`. The repository object model,
-internal CRDT metadata document, canonical CBOR codec and drip journal are implemented. Full materialisation works
-on every platform; lazy VFS mounts use libfuse3 on Linux and optional macFUSE on macOS. Clang 17+, CMake + Ninja,
-GoogleTest. Phase 1 (the store) is built inside
+encrypted objects, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
+deterministic crash simulator are implemented, while operations owned by later issues return
+`errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
+and drip journal are implemented. Full materialisation works on every platform; lazy VFS mounts use
+libfuse3 on Linux and optional macFUSE on macOS. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store)
+is built inside
 libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
 option is enabled.
 

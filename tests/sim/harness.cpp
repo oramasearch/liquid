@@ -137,7 +137,18 @@ result<store> open_store(const std::filesystem::path& path) {
     return runtime::block_on(store::open(path, options));
 }
 
-enum class operation_kind { put, put_orphan, get_known, get_unknown, read, reopen, collect, renew };
+enum class operation_kind {
+    put,
+    put_orphan,
+    get_known,
+    get_unknown,
+    read,
+    reopen,
+    collect,
+    collect_without_compaction,
+    compact,
+    renew,
+};
 
 struct operation {
     operation_kind kind{};
@@ -202,8 +213,17 @@ std::optional<simulation_failure> run_schedule(store& subject,
             roots.insert_or_assign(to_string(*put), std::move(*root));
             continue;
         }
-        if (item.kind == operation_kind::collect) {
-            auto collected = runtime::block_on(subject.collect());
+        if (item.kind == operation_kind::collect ||
+            item.kind == operation_kind::collect_without_compaction ||
+            item.kind == operation_kind::compact) {
+            collection_options options;
+            if (item.kind == operation_kind::collect_without_compaction) {
+                options.compact_below = 0.0;
+            }
+            if (item.kind == operation_kind::compact) {
+                options.compact_only = true;
+            }
+            auto collected = runtime::block_on(subject.collect(options));
             if (crash && crash->fired())
                 return std::nullopt;
             if (!collected)
@@ -268,9 +288,16 @@ std::vector<operation> make_schedule(std::mt19937_64& random,
     std::vector<operation> schedule;
     std::vector<std::vector<std::byte>> reusable{initial};
     schedule.reserve(12);
-    for (unsigned position = 0; position != 12; ++position) {
+    schedule.push_back({operation_kind::put, initial, random()});
+    for (unsigned index = 0; index != 3; ++index) {
+        schedule.push_back({operation_kind::put_orphan, make_bytes(4096, random()), random()});
+    }
+    schedule.push_back({operation_kind::put, make_bytes(4096, random()), random()});
+    schedule.push_back({operation_kind::collect_without_compaction, {}, random()});
+    schedule.push_back({operation_kind::compact, {}, random()});
+    for (unsigned position = 0; position != 5; ++position) {
         const auto choice = random();
-        if (position == 0 || choice % 3 == 0) {
+        if (choice % 3 == 0) {
             std::vector<std::byte> bytes;
             if (reusable.size() > 1 && choice % 4 == 0) {
                 bytes = reusable[choice % reusable.size()];
@@ -402,6 +429,13 @@ simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem
                         fault_step,
                         "reopen failed after " + crash.description() + ": " +
                             reopened.error().message)};
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(actual.path() / "gc")) {
+        if (entry.path().filename().string().starts_with("compact-")) {
+            return {fault_step,
+                    0,
+                    failure(seed, fault_step, "compaction recovery left a pending operation")};
+        }
     }
     for (const auto& [unused, expected] : acknowledged) {
         auto got = runtime::block_on(reopened->get(expected.id));

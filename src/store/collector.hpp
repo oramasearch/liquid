@@ -22,6 +22,8 @@ struct collection_manifest {
 
 [[nodiscard]] runtime::task<collection_manifest>
 load_collection_manifest(std::filesystem::path root);
+[[nodiscard]] runtime::task<void> save_collection_manifest(const std::filesystem::path& root,
+                                                           const collection_manifest& manifest);
 
 class collector {
 public:

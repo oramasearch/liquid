@@ -146,8 +146,11 @@ so deduplication works without exposing a convergent-encryption oracle. See
 
 - ~~RocksDB vs LMDB~~ **Resolved: neither.** liquid's own index, built from scratch
   (`CLAUDE.md` *Decisions* 8); the benchmark (`../library/chunk-index-benchmark.md`) is the bar.
-- **Pack compaction policy.** Packs accumulate dead chunks as history is collected;
-  compaction is a write-amplification/space tradeoff not yet decided.
+- ~~Pack compaction policy~~ **Resolved:** collection rewrites a partially dead pack when its live
+  frame-byte fraction is below the configurable `0.5` default; `0` disables it. The new pack
+  copies physical frames byte-for-byte, and the collection manifest rename commits the location
+  switch. `liquid gc --compact` performs the deferred compaction-only pass. The implementation and
+  crash and reader rules are in [`store.md`](../library/store.md#pack-compaction).
 - **Chunk size tuning per content type.** 64 KiB is a reasonable default; source
   code may want smaller, media larger. Whether to vary this by detected type, and
   whether varying it hurts cross-type dedup, is unresolved.

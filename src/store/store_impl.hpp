@@ -16,6 +16,8 @@
 
 namespace liquid::store_detail {
 
+struct collection_manifest;
+
 struct stored_object {
     digest id{};
     std::uint64_t size{};
@@ -46,6 +48,8 @@ private:
     [[nodiscard]] runtime::task<void> save_objects();
     [[nodiscard]] runtime::task<void> stage_objects();
     [[nodiscard]] runtime::task<void> publish_staged_objects();
+    [[nodiscard]] runtime::task<void>
+    recover_pending_compactions(const collection_manifest& manifest);
     [[nodiscard]] runtime::task<void> index_packs(bool rebuild);
     [[nodiscard]] runtime::task<pack_entry>
     store_chunk(digest id,
@@ -59,6 +63,7 @@ private:
     [[nodiscard]] runtime::task<void> add_object(stored_object object);
 
     friend class collector;
+    friend class compactor;
 
     std::filesystem::path root_;
     store_options options_;

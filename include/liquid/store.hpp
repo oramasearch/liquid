@@ -28,6 +28,8 @@ struct LIQUID_EXPORT collection_options {
     bool dry_run{};
     std::chrono::seconds min_lease_age{};
     bool explain{};
+    double compact_below{0.5};
+    bool compact_only{};
 };
 
 struct LIQUID_EXPORT retained_chunk {
@@ -52,6 +54,9 @@ struct LIQUID_EXPORT collection_report {
     std::vector<std::string> unknown_kinds;
     std::vector<partial_pack> partially_dead_packs;
     std::vector<retained_chunk> retained_chunks;
+    std::uint64_t packs_compacted{};
+    std::uint64_t bytes_reclaimed_by_compaction{};
+    std::uint64_t bytes_written_by_compaction{};
 };
 
 class LIQUID_EXPORT lease {
