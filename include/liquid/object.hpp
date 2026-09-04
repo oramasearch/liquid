@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -11,6 +12,8 @@
 #include "liquid/identity.hpp"
 
 namespace liquid {
+
+using node_id = std::array<std::byte, 16>;
 
 enum class node_kind : std::uint8_t {
     blob,
@@ -32,6 +35,8 @@ struct LIQUID_EXPORT tree_entry {
     std::uint32_t mode;
     node_kind kind;
     digest id;
+    node_id node{};
+    digest ref{};
 };
 
 struct LIQUID_EXPORT tree {
@@ -42,8 +47,14 @@ struct LIQUID_EXPORT change_id {
     digest value;
 };
 
+struct LIQUID_EXPORT repo_ref {
+    node_id repo_id{};
+    change_id id{};
+};
+
 struct LIQUID_EXPORT conflict {
     std::string path;
+    std::vector<digest> refs;
 };
 
 struct LIQUID_EXPORT change {
@@ -54,6 +65,9 @@ struct LIQUID_EXPORT change {
     std::chrono::sys_seconds at;
     digest root;
     std::optional<liquid::conflict> conflict;
+    std::vector<liquid::conflict> conflicts;
+    std::optional<digest> symbols;
+    std::vector<std::byte> sig;
 };
 
 }  // namespace liquid

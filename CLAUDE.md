@@ -16,7 +16,7 @@ Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
 error and digest APIs plus liquid #1's local chunk store, liquid #7's trust-domain encrypted objects,
 and liquid #55's deterministic crash simulator are implemented, while operations owned by later issues return
-`errc::unsupported`. The internal CRDT metadata document, canonical CBOR codec and drip journal
+`errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec and drip journal
 are implemented. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store) is built inside
 libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
 option is enabled.

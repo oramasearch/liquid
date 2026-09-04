@@ -17,9 +17,11 @@ operation content, its default actor id is zero, it has no commit metadata, no i
 no patches for remote changes, no rollback, no sync wire format, and no history compaction.
 Everything below that says "liquid's own" is there because of one of those.
 
-**Status: implemented for liquid #3.** The private automerge-cpp wrapper, repository document
-schema, canonical CBOR codec, versioned sync framing and drip journal are implemented. Repository
-operations that consume this layer remain liquid #2.
+**Status: implemented for liquid #2 and #3.** The private automerge-cpp wrapper, canonical CBOR
+codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
+working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
+composition, conflict values, operation inversion, advisory locks, and the repository status are
+implemented over the local store.
 
 ## The two layers, precisely
 
@@ -182,16 +184,39 @@ possible because entries are addressed by `node_id`, not by position. Reproduce 
 Release configure with `cmake --build build-measure --target liquid-crdt-measure &&
 ./build-measure/tests/liquid-crdt-measure 100000 1000`.
 
+## Implementation notes
+
+`LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
+written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
+is a private CRDT document cached by its `node_id`; saving a checkpoint writes the document bytes
+to the store and refreshes its `dirs` entry. A checkpoint occurs at `cut` and after the configured
+drip interval (64 by default); an uncut write is recovered from the repository journal.
+
+File content is represented by a canonical `blob` record whose chunk list currently contains the
+content-store object written by `store::put`. Trees and changes are canonical records as well;
+the change digest is the digest of its canonical bytes and is never an automerge hash. The
+fixture in `tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree encoding.
+
 ## How to verify
 
 - Canonical encoding: supported RFC 8949 Appendix A values and bytewise map-key ordering are
   checked against `tests/fixtures/cbor/rfc8949-supported.txt`.
 - Identity: create, move, move back; the entry's `node_id` never changes; the log shows two
   moves and no delete/create pairs.
+- Recovery: a cross-directory move survives a process restart before the next cut; replayed
+  journal data restores the destination before the next snapshot is cut.
+- Lazy loading: a three-level tree reloads only the directory containing an updated entry;
+  the directory-cache load counter is asserted by the repository test.
+- Undo: undoing a recorded move restores the old path without minting a new `node_id`.
 - Composition: `split` then `nest` the result back; `root()` is byte-identical to before;
   `log` of the nested repository shows the pre-split history.
-- Conflict: two replicas write the same path; after sync the change carries one conflict value
-  and both `ref`s are recoverable from it.
+- Conflict: create a repository, write and cut `a.txt`, clone it twice, write different values in
+  each clone, and exchange directory-document sync frames both ways. Each working copy keeps its
+  CRDT-selected entry and reports one `a.txt` conflict value containing the base, left and right
+  references. The next cut carries that value; an ordinary resolution write clears it.
+
+The Phase 1 merge helper preserves both differing object references in a `conflict` value. The
+entry remains readable from the local directory document while callers resolve that value.
 
 ## How to change
 

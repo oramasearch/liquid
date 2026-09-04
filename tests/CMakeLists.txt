@@ -12,6 +12,7 @@ add_executable(liquid-tests
   test_vfs.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid GTest::gtest_main)
+target_include_directories(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
 
@@ -96,3 +97,16 @@ target_sources(liquid-crdt-measure PRIVATE $<TARGET_OBJECTS:liquid_metadata_obje
 target_include_directories(liquid-crdt-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-crdt-measure PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp)
+
+add_executable(liquid-record-tests
+  objects/test_records.cpp
+  ${PROJECT_SOURCE_DIR}/src/objects/records.cpp
+  ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp)
+target_include_directories(liquid-record-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(liquid-record-tests PRIVATE
+  LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(liquid-record-tests PRIVATE liquid::liquid GTest::gtest_main)
+gtest_discover_tests(liquid-record-tests)
+
+add_executable(liquid-repository-scenario repository/scenario.cpp)
+target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)
