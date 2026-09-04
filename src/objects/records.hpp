@@ -48,6 +48,11 @@ struct action_index_root {
     std::vector<digest> traces;
 };
 
+struct sbom_record {
+    std::string format;
+    std::vector<std::byte> document;
+};
+
 [[nodiscard]] auto encode(const blob& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const tree& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const change& value) -> result<std::vector<std::byte>>;
@@ -59,7 +64,8 @@ struct action_index_root {
 [[nodiscard]] auto encode_result_body(const action_result& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const sandbox_record& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const action_index_root& value) -> result<std::vector<std::byte>>;
-[[nodiscard]] auto encode(const build_trace& value) -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto encode(const build_trace& value) -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto encode(const sbom_record& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body(const attestation& value)
     -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body_unchecked(const attestation& value)
@@ -76,7 +82,8 @@ struct action_index_root {
 [[nodiscard]] auto decode_result(std::span<const std::byte> bytes) -> result<action_result>;
 [[nodiscard]] auto decode_action_index_root(std::span<const std::byte> bytes)
     -> result<action_index_root>;
-[[nodiscard]] auto decode_build_trace(std::span<const std::byte> bytes) -> result<build_trace>;
+    [[nodiscard]] auto decode_build_trace(std::span<const std::byte> bytes) -> result<build_trace>;
+    [[nodiscard]] auto decode_sbom(std::span<const std::byte> bytes) -> result<sbom_record>;
 [[nodiscard]] auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes)
     -> result<digest>;
 

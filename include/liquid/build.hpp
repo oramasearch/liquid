@@ -208,6 +208,7 @@ struct LIQUID_EXPORT action_result {
     std::optional<std::chrono::sys_seconds> finished_at;
     std::optional<digest> provenance;
     std::uint64_t record_version{2};
+    std::vector<digest> sboms;
 };
 
 struct LIQUID_EXPORT provenance_report {
@@ -217,6 +218,38 @@ struct LIQUID_EXPORT provenance_report {
     action_result value;
     bool verified{};
     std::string reason;
+};
+
+enum class sbom_format : std::uint8_t { spdx, cyclonedx };
+
+struct LIQUID_EXPORT sbom_component {
+    std::string id;
+    std::string name;
+    std::string kind;
+    std::optional<digest> content;
+    std::optional<std::string> repository_id;
+    std::optional<digest> pinned_change;
+    bool inferred{};
+};
+
+struct LIQUID_EXPORT sbom_relationship {
+    std::string from;
+    std::string to;
+    std::string kind;
+};
+
+struct LIQUID_EXPORT sbom_report {
+    digest subject;
+    digest record;
+    digest attestation;
+    liquid::attestation statement;
+    std::string document;
+    bool derived{};
+    bool inferred{};
+    bool verified{};
+    std::string reason;
+    std::vector<sbom_component> components;
+    std::vector<sbom_relationship> relationships;
 };
 
 struct LIQUID_EXPORT wrap_options {
@@ -357,6 +390,14 @@ verify_provenance(repository& source, std::string output_path);
 verify_wrapped_provenance(std::filesystem::path working_tree, std::filesystem::path output_path);
 [[nodiscard]] LIQUID_EXPORT liquid::result<std::string>
 provenance_json(const provenance_report& report, bool dsse = false);
+[[nodiscard]] LIQUID_EXPORT runtime::task<sbom_report>
+generate_sbom(repository& source, result_id id, std::string output_path, sbom_format format);
+[[nodiscard]] LIQUID_EXPORT runtime::task<sbom_report>
+generate_sbom(repository& source, std::string output_path, sbom_format format);
+[[nodiscard]] LIQUID_EXPORT runtime::task<sbom_report> generate_wrapped_sbom(
+    std::filesystem::path working_tree, std::filesystem::path output_path, sbom_format format);
+[[nodiscard]] LIQUID_EXPORT runtime::task<sbom_report> infer_sbom(std::filesystem::path artifact,
+                                                                  sbom_format format);
 [[nodiscard]] LIQUID_EXPORT runtime::task<wrap_report> wrap(std::filesystem::path working_tree,
                                                             std::vector<std::string> command,
                                                             wrap_options options = {});

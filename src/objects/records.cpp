@@ -679,6 +679,10 @@ auto encode_result_value(const action_result& value, bool include_signature)
         manifest.push_back(
             map({{"path", cbor::value{input.path}}, {"digest", encode_digest(input.content)}}));
     }
+    auto sboms = cbor::value::array{};
+    for (const auto& sbom : value.sboms) {
+        sboms.push_back(encode_digest(sbom));
+    }
     const auto exit_value = value.exit < 0 ? cbor::value{static_cast<std::int64_t>(value.exit)}
                                            : cbor::value{static_cast<std::uint64_t>(value.exit)};
     if (value.record_version != 1 && value.record_version != 2) {
@@ -726,6 +730,9 @@ auto encode_result_value(const action_result& value, bool include_signature)
     }
     if (value.provenance) {
         fields.emplace_back("provenance", encode_digest(*value.provenance));
+    }
+    if (!value.sboms.empty()) {
+        fields.emplace_back("sboms", cbor::value{std::move(sboms)});
     }
     if (include_signature) {
         fields.emplace_back("sig", byte_string(value.sig));
@@ -818,6 +825,13 @@ auto encode(const build_trace& value) -> result<std::vector<std::byte>> {
                    {"bytes_served", cbor::value{value.cache.bytes_served}},
                    {"bytes_rebuilt", cbor::value{value.cache.bytes_rebuilt}},
                    {"bytes_avoided", cbor::value{value.cache.disk.bytes_avoided}}})}}));
+}
+
+auto encode(const sbom_record& value) -> result<std::vector<std::byte>> {
+    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+                             {"kind", "sbom"},
+                             {"format", cbor::value{value.format}},
+                             {"document", byte_string(value.document)}}));
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
@@ -1241,6 +1255,7 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* started_value = find(*source, "started_at");
     const auto* finished_value = find(*source, "finished_at");
     const auto* provenance_value = find(*source, "provenance");
+    const auto* sboms_value = find(*source, "sboms");
     const auto* outputs =
         output_values ? std::get_if<cbor::value::array>(&output_values->data) : nullptr;
     const auto* manifest =
@@ -1303,6 +1318,19 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
             return std::unexpected(corrupt("invalid result provenance reference"));
         }
         output.provenance = *provenance;
+    }
+    if (sboms_value) {
+        const auto* sboms = std::get_if<cbor::value::array>(&sboms_value->data);
+        if (!sboms) {
+            return std::unexpected(corrupt("invalid result SBOM references"));
+        }
+        for (const auto& item : *sboms) {
+            auto sbom = decode_digest(item);
+            if (!sbom) {
+                return std::unexpected(corrupt("invalid result SBOM reference"));
+            }
+            output.sboms.push_back(*sbom);
+        }
     }
     for (const auto& item : *outputs) {
         const auto* path_value = find(item, "path");
@@ -1516,6 +1544,22 @@ auto decode_build_trace(std::span<const std::byte> bytes) -> result<build_trace>
     output.cache.disk.available = true;
     output.cache.disk.bytes_avoided = *bytes_avoided;
     return output;
+}
+
+auto decode_sbom(std::span<const std::byte> bytes) -> result<sbom_record> {
+    auto source = decode(bytes, "sbom");
+    if (!source) {
+        return std::unexpected(source.error());
+    }
+    const auto* format_value = find(*source, "format");
+    const auto* document_value = find(*source, "document");
+    const auto* format = format_value ? std::get_if<std::string>(&format_value->data) : nullptr;
+    const auto* document =
+        document_value ? std::get_if<cbor::value::bytes>(&document_value->data) : nullptr;
+    if (!format || !document) {
+        return std::unexpected(corrupt("invalid SBOM record"));
+    }
+    return sbom_record{*format, *document};
 }
 
 } // namespace liquid::objects

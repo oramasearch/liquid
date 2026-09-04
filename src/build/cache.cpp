@@ -249,6 +249,22 @@ auto cache_pack_bytes(const std::filesystem::path& directory) -> result<std::uin
     return total;
 }
 
+auto sboms_are_valid(repository& source, result_id id, const action_result& value)
+    -> runtime::task<bool> {
+    if (value.sboms.size() != value.outputs.size() * 2) {
+        co_return false;
+    }
+    for (const auto& output : value.outputs) {
+        for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
+            auto report = co_await build::generate_sbom(source, id, output.path, format);
+            if (!report || !report->verified) {
+                co_return false;
+            }
+        }
+    }
+    co_return true;
+}
+
 } // namespace
 
 action_index::action_index(std::filesystem::path directory) : directory_(std::move(directory)) {}
@@ -554,6 +570,10 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         if (!provenance || !provenance->verified) {
             continue;
         }
+        auto sboms = co_await sboms_are_valid(source_, result_id{id}, *value);
+        if (!sboms || !*sboms) {
+            continue;
+        }
         auto action_bytes = co_await repository_detail::build_access::get(source_, value->action);
         if (!action_bytes) {
             continue;
@@ -569,6 +589,7 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         auto references_present = true;
         auto references = std::vector<digest>{value->stdout_output, value->stderr_output};
         references.push_back(*value->provenance);
+        references.insert(references.end(), value->sboms.begin(), value->sboms.end());
         for (const auto& action_output : value->outputs) {
             references.push_back(action_output.blob);
         }
@@ -672,6 +693,14 @@ disk_cache::publish(digest candidate, result_id id, const action_result& value) 
     if (!provenance->verified) {
         co_return std::unexpected(
             error{errc::unauthorized, "cache result provenance is invalid", provenance->reason});
+    }
+    auto sboms = co_await sboms_are_valid(source_, id, value);
+    if (!sboms) {
+        co_return std::unexpected(sboms.error());
+    }
+    if (!*sboms) {
+        co_return std::unexpected(
+            error{errc::unauthorized, "cache result SBOM is invalid", to_string(id.value)});
     }
     auto inserted = index_.insert(candidate, id.value);
     if (!inserted) {

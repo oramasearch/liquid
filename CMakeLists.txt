@@ -228,6 +228,7 @@ add_library(libliquid
   src/build/trace.cpp
   src/build/why.cpp
   src/build/policy.cpp
+  src/build/sbom.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
@@ -345,6 +346,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/locks.cpp
     src/cli/policy.cpp
     src/cli/provenance.cpp
+    src/cli/sbom.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp

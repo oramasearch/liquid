@@ -8,6 +8,7 @@
 #include "build/cache.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "build/sbom.hpp"
 #include "build/wrap.hpp"
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
@@ -222,6 +223,10 @@ runtime::task<result_id> store_result_with_provenance(repository& source, action
     auto action = objects::decode_action(*action_bytes);
     if (!action) {
         co_return std::unexpected(action.error());
+    }
+    auto sboms = co_await build_detail::store_derived_sboms(source, *action, value);
+    if (!sboms) {
+        co_return std::unexpected(sboms.error());
     }
     auto subject = subject_digest(value);
     if (!subject) {

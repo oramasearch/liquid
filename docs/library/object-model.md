@@ -49,7 +49,10 @@ repo        { v, kind:"repo", repo_id, name, created:time, root_change:change_re
 attestation { v, kind:"attestation", subject:digest, profile, subject_kind?, attributes?,
               attribute_disclosure_commitments?, detectors:[text...], findings:uint, at:time,
               issuer:actor, allowances:[scan allowance...], sig:bytes }
-action, result   # kinds reserved now; records defined in Phase 2 (features/10, /04)
+action      { v, kind:"action", inputs:digest(tree), command:[text...], cwd, env, outputs,
+              platform, toolchain:digest(tree), sandbox:digest, timeout_s? }
+result      { v, kind:"result", action:digest, outputs, manifest, producer, provenance?, sboms?, sig }
+sbom        { v, kind:"sbom", format:text, document:bytes }
 ```
 
 - **`node_id`** is 16 random bytes minted when a path is created. It is stored in the tree entry
@@ -72,6 +75,9 @@ action, result   # kinds reserved now; records defined in Phase 2 (features/10, 
   referenced by each scanned drip and records detector ids, finding count, and configured
   exceptions, never matched content. See [`attestations.md`](attestations.md) and
   [`secret-scanning.md`](secret-scanning.md).
+- Each result's `sboms` array reaches signed `sbom/1` attestations. Their `document` attribute
+  reaches a canonical `sbom` record containing the base SPDX or CycloneDX JSON. See
+  [`sbom.md`](sbom.md).
 - A `repo` record identifies a repository independently of where it lives; `repo_id` is 16 random
   bytes minted at `create`.
 

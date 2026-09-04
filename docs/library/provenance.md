@@ -16,9 +16,11 @@ The result record has optional `started_at`, `finished_at`, and `provenance` fie
 written before this format still decode and keep their original signing bytes. Every new result
 sets all three. Result creation proceeds in this order:
 
-1. Load the canonical `action` record and set the result producer to the device identity.
-2. Derive the SLSA predicate and the interim object subject from only the action and result.
-3. Sign the canonical CBOR attestation body with TAAP's `attestation` signature purpose and store
+1. Load the canonical `action` record, set the result producer to the device identity, and attach
+   the output SBOM attestations described in [sbom.md](sbom.md).
+2. Derive the SLSA predicate and the interim object subject from only the action and result,
+   including those immutable SBOM references.
+3. Sign the canonical CBOR provenance body with TAAP's `attestation` signature purpose and store
    the complete attestation.
 4. Put the attestation digest in `result.provenance`, sign the result with TAAP's `result`
    signature purpose, and store the result.

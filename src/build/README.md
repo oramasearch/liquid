@@ -5,12 +5,12 @@ signed result creation. `cache.cpp` owns candidate-key derivation, current-tree 
 signature and referenced-object checks, the sorted disk action index, and its store-backed recovery
 root. It also computes the median execution cost, synchronizes cost-weighted result leases, and
 ranks size-cap eviction by execution cost per result-graph byte. Divergence and the signed
-verification reference are durable index fields, and lookup never
-serves a divergent row. `materialise.cpp` reconstructs toolchain and replay trees from store
+verification reference are durable index fields, and lookup never serves a divergent row.
+`materialise.cpp` reconstructs toolchain and replay trees from store
 records. `verify.cpp` owns sampling, fresh-sandbox replay, digest comparison, attestations, alerts,
 and background scheduling. `provenance.cpp` derives the SLSA predicate from each action/result pair,
 signs and stores its TAAP attestation, binds it to the signed result, verifies that graph, and writes
-native or DSSE/in-toto JSON. `cache.cpp` also verifies result provenance and owns output-path lookup.
+native or DSSE/in-toto JSON.
 `policy.cpp` validates and digests repository policy, walks source and toolchain input trees, verifies
 subject-indexed attestations, counts distinct approved issuers, and produces refusal or warning
 reports before cache lookup and execution.
@@ -20,7 +20,11 @@ and reports the first unsatisfied refuse rule as a typed policy cause.
 
 `facts.cpp` owns canonical configure-probe forms, exact toolchain/sysroot/target keys,
 content-addressed fact records, index rebuild, Autotools and CMake cache-variable discovery, and
-`fact-bundle/1` export. It has no remote-service dependency.
+`fact-bundle/1` export. It has no remote-service dependency. `cache.cpp` also verifies result
+provenance and SBOMs and owns output-path lookup.
+`sbom.cpp` walks producing results to manifest leaves, adds toolchain and nested-repository
+components, writes SPDX 2.3 and CycloneDX 1.5 from one model, stores signed `sbom/1` claims, and
+performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts.
 
 `wrap.cpp` snapshots an existing working tree, uses the persistent project cache and toolchain pin,
 validates saved actions, launches one writable observed mount, derives child actions from process
@@ -34,9 +38,9 @@ exports Chrome trace-event JSON. The wrap hook records monotonic process entry a
 digests in the canonical action-index root.
 
 The private `repository_access.hpp` adapter is the only route from these components to repository
-storage, signing, cache and verification configuration, leases, counters, and critical alerts. Public
-build values and operations stay
-in `include/liquid/build.hpp`.
+storage, signing, cache and verification configuration, leases, counters, and critical alerts. Its
+export annotation gives static and shared builds the same internal test surface. Public build values
+and operations stay in `include/liquid/build.hpp`.
 
 `why.cpp` resolves output paths, action digests, and result digests through the persistent lookup
 journal and action index. It classifies differences strictly from action/result records, manifests,

@@ -27,7 +27,7 @@ the public encoder.
 | `authorship/1` | drip | `author:text` | none | none |
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
-| `sbom/1` | artifact | `format:text`, `components:text_list*` | `supplier:text*` | none |
+| `sbom/1` | artifact | `format:text`, `document:text`, `derived:boolean`, `inferred:boolean`, `components:text_list*` | `supplier:text*` | none |
 | `model_provenance/1` | model | `training_dataset:text*`, `training_code:text*` | `base_model:text*` | none |
 | `abi_compatibility/1` | library | `compatible_with:text`, `compatibility:text` | `notes:text` | none |
 | `scan_result/1` | drip | fixed record fields `detectors:text_list`, `findings:unsigned_integer`, `allowances:text_list` | none | maximum attestation age: 24 hours |
@@ -47,6 +47,9 @@ cached and re-executed digest, including `missing` where one execution produced 
 The `slsa_provenance/1` predicate is derived from action and result records, not supplied as
 generic attributes. Its exact field mapping, interim artifact subject, and verification path are
 in [provenance.md](provenance.md).
+`sbom/1` names the canonical SBOM record by digest and makes the graph-derived versus
+binary-inferred distinction an explicit signed claim. Its record chain and SPDX/CycloneDX mappings
+are in [sbom.md](sbom.md).
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's

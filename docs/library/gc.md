@@ -35,11 +35,14 @@ kind to a byte extractor returning referenced digests. The built-in `chunk-list`
 an object's chunks coupled to the object; the built-in tree extractor retains each entry's object
 and reference digest; the change extractor retains its root, parents, conflict references, and
 optional symbols. Unknown kinds are safe leaves and are listed in `collection_report::unknown_kinds`.
-The build cache adds three registered kinds. An `action-index-root` retains its verification
-attestations, a `result` reaches its action plus output/stdout/stderr blob records and provenance,
-and an `action` reaches its input tree, toolchain tree, and sandbox definition. The index root uses
-a persisted repository lease, while each result is a separate retention root. This keeps every
-usable result graph coupled without allowing the index itself to defeat result expiry or eviction.
+The build cache adds the action and evidence record kinds. An `action-index-root` retains its
+verification attestations and reaches each indexed result; a `result` reaches its action,
+output/stdout/stderr blobs, provenance, and SBOM attestations; an `sbom/1` attestation reaches its
+canonical `sbom` record; and an `action` reaches its input tree, toolchain tree, and sandbox
+definition. The index root uses a persisted repository lease, while each result is a separate
+retention root. This keeps every usable result graph coupled without allowing the index itself to
+defeat result expiry or eviction. Expiry or explicit release makes the complete cached result graph
+collectible together.
 
 Each pack gets a bitmap indexed by physical frame position for the epoch. A set bit is live. This
 bitmap is working state only: it is never consulted by recovery or index reconstruction. Any frame

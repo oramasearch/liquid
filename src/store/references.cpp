@@ -124,9 +124,26 @@ std::vector<digest> extract_result(std::span<const std::byte> bytes) {
     auto output = std::vector<digest>{result->action, result->stdout_output, result->stderr_output};
     if (result->provenance)
         append_once(output, *result->provenance);
+    for (const auto& sbom : result->sboms)
+        append_once(output, sbom);
     for (const auto& action_output : result->outputs)
         append_once(output, action_output.blob);
     return output;
+}
+
+std::vector<digest> extract_attestation(std::span<const std::byte> bytes) {
+    const auto value = objects::decode_attestation(bytes);
+    if (!value || value->profile != "sbom/1")
+        return {};
+    const auto document =
+        std::ranges::find(value->attributes, "document", &attestation_attribute::name);
+    if (document == value->attributes.end())
+        return {};
+    const auto* text = std::get_if<std::string>(&document->value);
+    if (!text)
+        return {};
+    auto id = parse_digest(*text);
+    return id ? std::vector<digest>{*id} : std::vector<digest>{};
 }
 
 std::vector<digest> extract_action_index_root(std::span<const std::byte> bytes) {
@@ -170,7 +187,8 @@ reference_registry::reference_registry() {
     register_kind("result", extract_result);
     register_kind("action-index-root", extract_action_index_root);
     register_kind("build_trace", extract_build_trace);
-    register_kind("attestation", [](std::span<const std::byte>) { return std::vector<digest>{}; });
+    register_kind("attestation", extract_attestation);
+    register_kind("sbom", [](std::span<const std::byte>) { return std::vector<digest>{}; });
 }
 
 void reference_registry::register_kind(std::string kind, reference_extractor extractor) {
@@ -229,6 +247,8 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "action-index-root";
     if (objects::decode_build_trace(bytes))
         return "build_trace";
+    if (objects::decode_sbom(bytes))
+        return "sbom";
     return "unknown";
 }
 

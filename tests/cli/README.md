@@ -12,3 +12,6 @@ cache.
 
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.
+
+The SBOM command tests exercise SPDX and CycloneDX output for the wrapped CMake fixture and
+check each format's identifying field.

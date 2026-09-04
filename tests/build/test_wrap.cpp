@@ -13,9 +13,12 @@
 #endif
 
 #include "formats/json.hpp"
+#include "build/cache.hpp"
+#include "build/repository_access.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+#include "objects/records.hpp"
 
 namespace {
 
@@ -124,6 +127,34 @@ auto shell_quote(std::string_view value) -> std::string {
     return output;
 }
 
+auto tree_blobs(liquid::repository& repository, liquid::digest root)
+    -> liquid::result<std::vector<liquid::digest>> {
+    auto bytes =
+        liquid::runtime::block_on(liquid::repository_detail::build_access::get(repository, root));
+    if (!bytes) {
+        return std::unexpected(bytes.error());
+    }
+    auto tree = liquid::objects::decode_tree(*bytes);
+    if (!tree) {
+        return std::unexpected(tree.error());
+    }
+    auto output = std::vector<liquid::digest>{};
+    for (const auto& entry : tree->entries) {
+        if (entry.kind == liquid::node_kind::blob) {
+            output.push_back(entry.ref);
+            continue;
+        }
+        if (entry.kind == liquid::node_kind::tree) {
+            auto nested = tree_blobs(repository, entry.ref);
+            if (!nested) {
+                return std::unexpected(nested.error());
+            }
+            output.insert(output.end(), nested->begin(), nested->end());
+        }
+    }
+    return output;
+}
+
 #if LIQUID_BUILD_HAS_FUSE && defined(__linux__)
 
 class scoped_environment {
@@ -172,6 +203,45 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     ASSERT_EQ(first->exit, 0);
     EXPECT_GE(first->processes_started, 3U);
     EXPECT_TRUE(std::filesystem::is_regular_file(fixture.project() / "build/wrapped"));
+
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(repository) << repository.error().message;
+    auto cache = liquid::build_detail::disk_cache{*repository};
+    auto cache_opened = liquid::runtime::block_on(cache.open());
+    ASSERT_TRUE(cache_opened) << cache_opened.error().message;
+    auto producing = liquid::runtime::block_on(cache.find_output("build/wrapped"));
+    ASSERT_TRUE(producing) << producing.error().message;
+    ASSERT_TRUE(*producing);
+    auto result_bytes = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(*repository, (**producing).value));
+    ASSERT_TRUE(result_bytes) << result_bytes.error().message;
+    auto result = liquid::objects::decode_result(*result_bytes);
+    ASSERT_TRUE(result) << result.error().message;
+    auto action_bytes = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(*repository, result->action));
+    ASSERT_TRUE(action_bytes) << action_bytes.error().message;
+    auto action = liquid::objects::decode_action(*action_bytes);
+    ASSERT_TRUE(action) << action.error().message;
+    auto sbom = liquid::runtime::block_on(liquid::build::generate_sbom(
+        *repository, **producing, "build/wrapped", liquid::sbom_format::spdx));
+    ASSERT_TRUE(sbom) << sbom.error().message;
+    ASSERT_TRUE(sbom->verified) << sbom->reason;
+    for (const auto& input : result->manifest) {
+        EXPECT_TRUE(std::ranges::any_of(sbom->components, [&](const auto& component) {
+            return component.content &&
+                   liquid::to_string(*component.content) == liquid::to_string(input.content);
+        })) << input.path;
+    }
+    auto tools = tree_blobs(*repository, action->input.toolchain);
+    ASSERT_TRUE(tools) << tools.error().message;
+    ASSERT_FALSE(tools->empty());
+    for (const auto& tool : *tools) {
+        EXPECT_TRUE(std::ranges::any_of(sbom->components, [&](const auto& component) {
+            return component.kind == "tool" && component.content &&
+                   liquid::to_string(*component.content) == liquid::to_string(tool);
+        })) << liquid::to_string(tool);
+    }
 
     auto second =
         run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, false, 3);

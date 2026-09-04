@@ -36,6 +36,8 @@ cannot be served, read-only publication is refused, and producer signatures veri
 Portable provenance cases prove the SLSA field mapping, exact manifest dependencies, tamper
 rejection, and the DSSE/in-toto projection's canonical attestation digest round-trip. The real
 cache-hit case also proves that the existing provenance attestation is reused without re-signing.
+Portable SBOM cases prove the SPDX/CycloneDX required structure, exact input and toolchain digests,
+nested-repository pins, signatures, and universal inference markers; CLI cases invoke both formats.
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
 `compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,

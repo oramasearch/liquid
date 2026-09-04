@@ -55,7 +55,7 @@ owning issue in `error::context`.
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
-| `liquid/attestation.hpp` | #14, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, attestation encoding, and profile-keyed verification |
+| `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #46, #53, #58, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, rule counts, and pack compaction |
@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #57, #60, #56 | implemented local executor, wrapper, disk cache, verification, provenance, diagnostics, observability, input policy, and configure facts | action execution and results, typed cache explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification, provenance verification, JSON/DSSE projection, tier and byte reports; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61 | implemented local executor, wrapper, disk cache, verification, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility and provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -428,6 +428,7 @@ struct action_result {
   cache_status cache; std::optional<cache_miss> why;
   std::optional<std::chrono::sys_seconds> started_at, finished_at;
   std::optional<digest> provenance; std::uint64_t record_version;
+  std::vector<digest> sboms;
 };
 struct build_trace_action { result_id result; digest action; std::vector<std::string> outputs;
   action_timing timing; cache_status cache; std::chrono::milliseconds start_offset; };
@@ -447,6 +448,17 @@ struct fact_answer {
 };
 struct configure_fact { digest id; std::string probe; fact_key key; fact_answer answer; };
 struct fact_bundle { digest id; std::vector<configure_fact> facts; };
+enum class sbom_format : std::uint8_t { spdx, cyclonedx };
+struct sbom_component {
+  std::string id, name, kind; std::optional<digest> content;
+  std::optional<std::string> repository_id; std::optional<digest> pinned_change; bool inferred;
+};
+struct sbom_relationship { std::string from, to, kind; };
+struct sbom_report {
+  digest subject, record, attestation; liquid::attestation statement; std::string document;
+  bool derived, inferred, verified; std::string reason;
+  std::vector<sbom_component> components; std::vector<sbom_relationship> relationships;
+};
 enum class verify_selection : std::uint8_t { sample, all, changed, action };
 struct verify_options {
   verify_selection selection; std::optional<digest> action; bool explain;
@@ -484,19 +496,26 @@ runtime::task<policy_report> explain_policy(std::filesystem::path);
 runtime::task<std::vector<configure_fact>> facts_list(std::optional<std::filesystem::path> = {});
 runtime::task<configure_fact> facts_show(digest, std::optional<std::filesystem::path> = {});
 runtime::task<std::string> facts_export(std::optional<std::filesystem::path> = {});
+runtime::task<sbom_report> generate_sbom(repository&, result_id, std::string, sbom_format);
+runtime::task<sbom_report> generate_sbom(repository&, std::string output_path, sbom_format);
+runtime::task<sbom_report> generate_wrapped_sbom(std::filesystem::path, std::filesystem::path,
+                                                 sbom_format);
+runtime::task<sbom_report> infer_sbom(std::filesystem::path artifact, sbom_format);
 }
 ```
 
 The candidate key covers command, cwd, environment, toolchain, sandbox definition, platform, and
 the canonical policy digest.
 `execute` returns an indexed result only after the result's signed action derives that same key,
-all observed paths match the current input tree, and all referenced blobs exist. Producer and `sig`
-are immutable record fields; cache status and miss detail describe the current request.
-`verify` re-executes selected cache entries with their recorded sandbox definition, compares exit
-status and output digests, and returns the signed attestation digest plus any differences. A divergent
-index entry is permanently excluded from lookup. See
-[`build-engine.md`](build-engine.md#reproducibility-verification) and [provenance.md](provenance.md)
-for the SLSA mapping and interim object subject.
+all observed paths match the current input tree, all referenced blobs exist, and the referenced
+provenance and SBOMs verify. Producer, `sig`, timestamps, `provenance`, and `sboms` are immutable
+record fields; cache status and miss detail describe the current request. `verify` re-executes
+selected cache entries with their recorded sandbox definition, compares exit status and output
+digests, and returns the signed attestation digest plus any differences. A divergent index entry is
+permanently excluded from lookup. See
+[build-engine.md](build-engine.md#reproducibility-verification) and
+[provenance.md](provenance.md) for the SLSA mapping and interim object subject, and
+[sbom.md](sbom.md) for the shared component model, signed record chain, and inference markers.
 `why` accepts an output path, action digest, or result digest and returns the selected lookup plus
 current/prior identifiers and a typed cause. It re-evaluates current policy before classifying a
 hit or ordinary miss and uses `cache_miss_reason::policy_refused` for an unsatisfied refuse rule.
