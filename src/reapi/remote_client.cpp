@@ -723,20 +723,44 @@ runtime::task<action_result> remote_client::execute_operation(
     }
     auto operation = std::move(operations->back());
     if (!operation.done) {
-        auto waited = co_await streaming<WaitExecutionRequest, Operation>(
-            rpc_, wait_method, WaitExecutionRequest{.name = operation.name});
-        if (!waited) {
-            if (!operation.name.empty()) {
-                static_cast<void>(co_await unary<CancelOperationRequest, Empty>(
-                    rpc_, cancel_method, CancelOperationRequest{.name = operation.name}));
+        if (rpc_.config().backend == remote_backend::liquid_scheduler) {
+            const auto started = std::chrono::steady_clock::now();
+            while (!operation.done) {
+                auto polled = co_await unary<WaitExecutionRequest, Operation>(
+                    rpc_, workers::operation_method, WaitExecutionRequest{.name = operation.name});
+                if (!polled) {
+                    co_return std::unexpected(polled.error());
+                }
+                operation = std::move(*polled);
+                if (operation.done) {
+                    break;
+                }
+                if (std::chrono::steady_clock::now() - started >= rpc_.config().deadline) {
+                    co_return std::unexpected(client_error(
+                        errc::unavailable, "scheduler operation deadline elapsed", operation.name));
+                }
+                auto [delay_error] = co_await runtime::delay(std::chrono::milliseconds{25});
+                if (delay_error) {
+                    co_return std::unexpected(
+                        client_error(errc::unavailable, delay_error.message(), operation.name));
+                }
             }
-            co_return std::unexpected(waited.error());
+        } else {
+            auto waited = co_await streaming<WaitExecutionRequest, Operation>(
+                rpc_, wait_method, WaitExecutionRequest{.name = operation.name});
+            if (!waited) {
+                if (!operation.name.empty()) {
+                    static_cast<void>(co_await unary<CancelOperationRequest, Empty>(
+                        rpc_, cancel_method, CancelOperationRequest{.name = operation.name}));
+                }
+                co_return std::unexpected(waited.error());
+            }
+            if (waited->empty()) {
+                co_return std::unexpected(client_error(
+                    errc::corrupt, "WaitExecution returned no operation", operation.name));
+            }
+            operation = std::move(waited->back());
         }
-        if (waited->empty()) {
-            co_return std::unexpected(
-                client_error(errc::corrupt, "WaitExecution returned no operation", operation.name));
-        }
-        operation = std::move(waited->back());
     }
     auto response = operation_response(operation);
     if (!response) {

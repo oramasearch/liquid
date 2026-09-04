@@ -38,7 +38,7 @@ trap cleanup EXIT
 wait_http() {
   local url=$1
   for _ in $(seq 1 120); do
-    if docker exec "$scheduler" wget -qO- "$url" >/dev/null 2>&1; then
+    if docker exec "$scheduler" wget -T 1 -qO- "$url" >/dev/null 2>&1; then
       return
     fi
     sleep 0.1
@@ -50,28 +50,10 @@ wait_http() {
   return 1
 }
 
-wait_queued() {
-  for _ in $(seq 1 1200); do
-    if docker exec "$scheduler" wget -qO- http://127.0.0.1:8080/metrics |
-      grep -q 'liquid_scheduler_queued 1'; then
-      return
-    fi
-    if [[ $(docker inspect -f '{{.State.Running}}' "$client") != true ]]; then
-      docker logs "$client" >&2
-      return 1
-    fi
-    sleep 0.1
-  done
-  docker logs "$client" >&2
-  docker logs "$scheduler" >&2
-  echo "client action did not enter the scheduler queue" >&2
-  return 1
-}
-
 read_scheduler_metrics() {
   local output
   for _ in $(seq 1 120); do
-    if output=$(docker exec "$scheduler" wget -qO- http://127.0.0.1:8080/metrics) &&
+    if output=$(docker exec "$scheduler" wget -T 1 -qO- http://127.0.0.1:8080/metrics) &&
       grep -q 'liquid_scheduler_' <<<"$output"; then
       echo "$output"
       return
@@ -142,27 +124,23 @@ docker run -d --name "$scheduler" --network host \
   --lease-ms 8000 >/dev/null
 wait_http http://127.0.0.1:8080/healthz
 
-start_client baseline
-wait_queued
 start_workers
+start_client baseline
 wait_client
 docker rm "$client" >/dev/null
 docker rm -f "$worker_one" "$worker_two" >/dev/null
 
-start_client retry
-wait_queued
 start_workers
+start_client retry
 
 killed=
 while [[ $(docker inspect -f '{{.State.Running}}' "$client") == true ]]; do
-  if docker exec "$scheduler" wget -qO- http://127.0.0.1:8081/metrics |
-    grep -q 'liquid_worker_active 1'; then
+  if docker top "$worker_one" -eo pid,args 2>/dev/null | grep -q '/slow-copy'; then
     docker kill "$worker_one" >/dev/null
     killed=$worker_one
     break
   fi
-  if docker exec "$scheduler" wget -qO- http://127.0.0.1:8082/metrics |
-    grep -q 'liquid_worker_active 1'; then
+  if docker top "$worker_two" -eo pid,args 2>/dev/null | grep -q '/slow-copy'; then
     docker kill "$worker_two" >/dev/null
     killed=$worker_two
     break
@@ -171,8 +149,8 @@ while [[ $(docker inspect -f '{{.State.Running}}' "$client") == true ]]; do
 done
 if [[ -z $killed ]]; then
   docker logs "$client" >&2
-  docker exec "$scheduler" wget -qO- http://127.0.0.1:8081/metrics >&2 || true
-  docker exec "$scheduler" wget -qO- http://127.0.0.1:8082/metrics >&2 || true
+  docker top "$worker_one" -eo pid,args >&2 || true
+  docker top "$worker_two" -eo pid,args >&2 || true
   echo "no active worker was observed" >&2
   exit 1
 fi

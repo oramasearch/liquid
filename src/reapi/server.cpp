@@ -1202,6 +1202,22 @@ handle_scheduler_status(http2::connection& connection, std::uint32_t stream, ser
     co_return co_await send_worker_message(connection, stream, state.executions->status());
 }
 
+runtime::task<void> handle_scheduler_operation(http2::connection& connection,
+                                               std::uint32_t stream,
+                                               server_state& state,
+                                               std::span<const std::byte> bytes) {
+    if (!state.executions) {
+        co_return co_await send_status(connection, stream, 12, "worker scheduling is disabled");
+    }
+    auto request = reapi::decode_message<reapi::WaitExecutionRequest>(bytes);
+    auto operation = request ? state.executions->operation(request->name)
+                             : result<reapi::Operation>{std::unexpected(request.error())};
+    if (!operation) {
+        co_return co_await send_failure(connection, stream, operation.error());
+    }
+    co_return co_await send_message(connection, stream, *operation);
+}
+
 runtime::task<void> dispatch(http2::connection& connection,
                              std::uint32_t stream,
                              server_state& state,
@@ -1260,6 +1276,9 @@ runtime::task<void> dispatch(http2::connection& connection,
     }
     if (method == workers::status_method) {
         co_return co_await handle_scheduler_status(connection, stream, state);
+    }
+    if (method == workers::operation_method) {
+        co_return co_await handle_scheduler_operation(connection, stream, state, bytes);
     }
     co_return co_await send_status(connection, stream, 12, "method is not implemented");
 }

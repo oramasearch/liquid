@@ -17,6 +17,7 @@ inline constexpr auto heartbeat_method = "/liquid.scheduler.v1.Scheduler/Heartbe
 inline constexpr auto complete_method = "/liquid.scheduler.v1.Scheduler/Complete";
 inline constexpr auto read_object_method = "/liquid.scheduler.v1.Scheduler/ReadObject";
 inline constexpr auto status_method = "/liquid.scheduler.v1.Scheduler/Status";
+inline constexpr auto operation_method = "/liquid.scheduler.v1.Scheduler/Operation";
 
 struct submit_request {
     std::string instance;

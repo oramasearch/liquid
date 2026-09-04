@@ -14,10 +14,10 @@ Health and metrics probes run from the scheduler container, so they exercise the
 even when the container runtime does not publish that network into its desktop host.
 The proof uses a two-second worker poll, an eight-second lease, and an explicit client deadline so
 the setup exercises heartbeats without saturating the one-request gRPC transport. It collects local
-timing history before starting the scheduler. Each client action enters the queue before both
-workers start; the loss case restarts the fleet, kills the active worker, and leaves the other to
-claim the single requeue. The loss case uses a snapshot of the seeded client cache so its changed
-input retains the same four-sample placement history without reusing the baseline operation.
+timing history before starting the scheduler. Both workers are ready before each client submits;
+the loss case restarts the fleet, kills the active worker, and leaves the other to claim the single
+requeue. The loss case uses a snapshot of the seeded client cache so its changed input retains the
+same four-sample placement history without reusing the baseline operation.
 
 `fixture/slow_copy.c` is both the deterministic toolchain input and the long action. It sleeps
 before copying its declared input to its declared output, making worker loss observable. The wrap

@@ -11,7 +11,9 @@ The client prepares a normal REAPI `Action` and `Command`, uploads their Merkle 
 CAS, and submits the action digest. A liquid submission also carries the exact
 `execution_schedule` selected by the cost model. The scheduler keys its operation table by action
 digest. A repeated submission returns the existing operation name; it does not create another
-queue entry.
+queue entry. Liquid clients poll that operation with bounded unary requests, so worker loss and
+lease expiry do not depend on one transport request remaining open. Stock clients retain REAPI
+`WaitExecution`.
 
 A worker polls `Lease` with its platform, maximum size class, and TAAP identifier. Placement
 requires an exact OS and architecture match. A worker may accept its own size class or a smaller
