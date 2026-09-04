@@ -38,6 +38,9 @@ public:
     [[nodiscard]] runtime::task<digest> put_file(std::filesystem::path source);
     [[nodiscard]] runtime::task<void> get_to_file(digest id, std::filesystem::path destination);
     [[nodiscard]] result<blob> blob_for(digest id) const;
+    [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
+                                                      std::string key_id);
     [[nodiscard]] runtime::task<std::vector<std::byte>> get(digest id);
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
@@ -67,6 +70,8 @@ private:
     load_snapshot_object(const stored_object& object,
                          const std::map<std::string, chunk_location>& locations);
     [[nodiscard]] runtime::task<void> add_object(stored_object object);
+    [[nodiscard]] runtime::task<digest> put_selected(std::vector<std::byte> input,
+                                                     std::optional<std::string> key_id);
 
     friend class collector;
     friend class compactor;

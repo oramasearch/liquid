@@ -1,10 +1,11 @@
 # Encrypted store objects
 
 **Status: implemented for liquid #7's store-level scope and #53's data-key rotation and
-readability reporting.** The local store encrypts whole objects inside a trust domain, versions
-the domain data key, retains held versions for historical reads, and reports the versions used by
-repository revisions. Per-subtree policy, structured leaf-value encryption, and recipient-based
-custody remain outside this implementation.
+readability reporting, and liquid #52's JSON/`.env` leaf scope.** The local store encrypts whole
+objects inside a trust domain, versions the domain data key, retains held versions for historical
+reads, and reports the versions used by repository revisions. Repository path rules and structured
+leaf-value encryption are described in [leaf-encryption.md](leaf-encryption.md). Recipient-based
+custody and the `liquid rotate` command remain outside this implementation.
 
 ## What and why
 

@@ -75,6 +75,20 @@ result<blob> store::blob_for(digest id) const {
     return impl_->value->blob_for(id);
 }
 
+runtime::task<digest> store::put_plain(std::vector<std::byte> input) {
+    if (!impl_) {
+        co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});
+    }
+    co_return co_await impl_->value->put_plain(std::move(input));
+}
+
+runtime::task<digest> store::put_encrypted(std::vector<std::byte> input, std::string key_id) {
+    if (!impl_) {
+        co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});
+    }
+    co_return co_await impl_->value->put_encrypted(std::move(input), std::move(key_id));
+}
+
 runtime::task<std::vector<std::byte>> store::get(digest id) {
     if (!impl_)
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});

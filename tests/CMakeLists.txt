@@ -143,6 +143,30 @@ target_link_libraries(liquid-cbor-tests PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp GTest::gtest_main)
 gtest_discover_tests(liquid-cbor-tests)
 
+add_executable(liquid-format-tests
+  formats/test_dotenv.cpp
+  formats/test_json.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
+target_include_directories(liquid-format-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_main)
+gtest_discover_tests(liquid-format-tests)
+
+add_executable(liquid-encryption-tests
+  encryption/test_leaf.cpp
+  encryption/test_repository_leaf.cpp
+  ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp
+  ${PROJECT_SOURCE_DIR}/src/encryption/leaf.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
+target_include_directories(liquid-encryption-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/src
+  ${blake3_source_SOURCE_DIR}/c
+  ${monocypher_source_SOURCE_DIR}/src)
+target_link_libraries(liquid-encryption-tests PRIVATE
+  liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main)
+gtest_discover_tests(liquid-encryption-tests)
+
 add_executable(liquid-crdt-tests crdt/test_document.cpp crdt/test_journal.cpp)
 target_sources(liquid-crdt-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 target_include_directories(liquid-crdt-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)

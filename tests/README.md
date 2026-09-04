@@ -10,3 +10,9 @@ exact readability report for revisions written before and after rotation and its
 statements.
 
 Secret detector, inline capture, attestation, and redaction cases live in `scan/`.
+The `formats/` cases cover
+the strict JSON and `.env` codecs used by structured configuration encryption; `encryption/`
+covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
+file writes, and key diffs.
+
+Secret detector, inline capture, attestation, and redaction cases live in `scan/`.
