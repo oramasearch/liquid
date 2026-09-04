@@ -31,6 +31,11 @@ The CRDT actor identifier is a fixed BLAKE3 derivation of the TAAP identifier an
 device identifier. It is not a store digest or object reference, so selecting a
 store algorithm does not alter CRDT actor identity.
 
+The store's metadata-only reference extractor can decode a change without an
+algorithm because it reads embedded references and discards the reconstructed
+change ID. Repository operations always provide their configured algorithm when
+they decode a change ID.
+
 ## Signature identifiers
 
 TAAP/1 signatures use the `signature_algorithm` field in their canonical CBOR
