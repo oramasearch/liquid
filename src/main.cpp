@@ -33,6 +33,7 @@ auto garbage_collect(int argc, char** argv) -> int;
 auto retain(int argc, char** argv) -> int;
 auto attestation(int argc, char** argv) -> int;
 auto verify(int argc, char** argv) -> int;
+auto replay(int argc, char** argv) -> int;
 auto provenance(int argc, char** argv) -> int;
 auto policy(int argc, char** argv) -> int;
 auto sbom(int argc, char** argv) -> int;
@@ -144,6 +145,11 @@ constexpr auto commands = std::to_array<command>({
      "re-execute and compare cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::verify},
+    {"replay",
+     "replay <action|result> [--json] [--record]",
+     "reproduce and compare a recorded action",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::replay},
     {"provenance",
      "provenance [--dsse] <result|path>",
      "print and verify build provenance",

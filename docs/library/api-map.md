@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #17, #57, #60, #56, #58, #61 | implemented local executor, remote-result recording, wrapper, disk cache, verification, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility and provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #17, #19, #57, #60, #56, #58, #61 | implemented local executor, remote-result recording, wrapper, disk cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | #17, Phase 6 | implemented source interface; declared service handle | `remote_blob_source`: transport-neutral missing/read/write operations; `remote`: later hosted push and pull |
 
 ### `liquid/error.hpp`
@@ -493,6 +493,13 @@ struct verified_action {
   std::vector<reproducibility_difference> differences;
 };
 struct verify_report { std::uint64_t considered; std::vector<verified_action> actions; };
+struct replay_options {
+  bool record; std::optional<std::filesystem::path> cache_directory;
+};
+struct replay_report {
+  digest action, result; int recorded_exit, reexecuted_exit; bool agreement;
+  std::vector<reproducibility_difference> differences; std::optional<digest> attestation;
+};
 namespace build {
 runtime::task<result_id> execute(repository&, action_input);
 runtime::task<result_id> record_remote_result(repository&, action_input, action_result);
@@ -500,6 +507,8 @@ runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
 runtime::task<verify_report> verify(repository&, verify_options = {});
 runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
+runtime::task<replay_report> replay(repository&, digest target, replay_options = {});
+runtime::task<replay_report> replay(std::filesystem::path, digest target, replay_options = {});
 runtime::task<provenance_report> verify_provenance(repository&, result_id);
 runtime::task<provenance_report> verify_provenance(repository&, std::string output_path);
 runtime::task<provenance_report> verify_wrapped_provenance(std::filesystem::path, std::filesystem::path);
@@ -537,7 +546,14 @@ provenance and SBOMs verify. Producer, `sig`, timestamps, `provenance`, and `sbo
 record fields; cache status and miss detail describe the current request. `verify` re-executes
 selected cache entries with their recorded sandbox definition, compares exit status and output
 digests, and returns the signed attestation digest plus any differences. A divergent index entry is
-permanently excluded from lookup. See
+permanently excluded from lookup.
+`replay` uses the same reconstruction, sandbox launch, and comparison for one action or result.
+It returns both exit values and byte-level differences without an attestation by default. Setting
+`replay_options::record` records the ordinary verification attestation and quarantine decision.
+Remote blobs hydrate through the registered `remote_blob_source` identified by their recorded
+`remote_blob_location`; the store verifies every fetched chunk before local storage. `write`
+completes the transport-neutral CAS interface but replay never calls it or publishes its local
+result. See
 [build-engine.md](build-engine.md#reproducibility-verification) and
 [provenance.md](provenance.md) for the SLSA mapping and interim object subject, and
 [sbom.md](sbom.md) for the shared component model, signed record chain, and inference markers.

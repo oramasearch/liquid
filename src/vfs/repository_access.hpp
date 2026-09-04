@@ -27,7 +27,11 @@ struct vfs_entry {
 struct LIQUID_EXPORT vfs_access {
     [[nodiscard]] static auto entry(repository& source, std::string path)
         -> runtime::task<vfs_entry>;
+    [[nodiscard]] static auto entry(repository& source, digest root, std::string path)
+        -> runtime::task<vfs_entry>;
     [[nodiscard]] static auto children(repository& source, std::string path)
+        -> runtime::task<std::vector<vfs_entry>>;
+    [[nodiscard]] static auto children(repository& source, digest root, std::string path)
         -> runtime::task<std::vector<vfs_entry>>;
     [[nodiscard]] static auto
     read_chunk(repository& source, digest id, std::uint64_t offset, std::span<std::byte> into)

@@ -369,6 +369,21 @@ struct LIQUID_EXPORT verify_report {
     std::vector<verified_action> actions;
 };
 
+struct LIQUID_EXPORT replay_options {
+    bool record{};
+    std::optional<std::filesystem::path> cache_directory;
+};
+
+struct LIQUID_EXPORT replay_report {
+    digest action;
+    digest result;
+    int recorded_exit{};
+    int reexecuted_exit{};
+    bool agreement{};
+    std::vector<reproducibility_difference> differences;
+    std::optional<digest> attestation;
+};
+
 struct LIQUID_EXPORT why_report {
     std::string target;
     cache_status lookup{cache_status::miss};
@@ -409,6 +424,10 @@ generate_sbom(repository& source, std::string output_path, sbom_format format);
                                                                 verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(std::filesystem::path working_tree,
                                                                 verify_options options = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>
+replay(repository& source, digest target, replay_options options = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>
+replay(std::filesystem::path working_tree, digest target, replay_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<why_report>
 why(std::filesystem::path working_tree,
     std::string target,

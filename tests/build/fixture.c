@@ -86,6 +86,30 @@ static int print_random(const char* destination) {
     return 0;
 }
 
+static int fail_recorded(const char* destination) {
+    static const char output_text[] = "recorded failure output\n";
+    static const char stdout_text[] = "recorded failure stdout\n";
+    static const char stderr_text[] = "recorded failure stderr\n";
+    int output = open(destination, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (output < 0) {
+        return 2;
+    }
+    if (write(output, output_text, sizeof(output_text) - 1) != (ssize_t)(sizeof(output_text) - 1)) {
+        close(output);
+        return 3;
+    }
+    close(output);
+    if (write(STDOUT_FILENO, stdout_text, sizeof(stdout_text) - 1) !=
+        (ssize_t)(sizeof(stdout_text) - 1)) {
+        return 4;
+    }
+    if (write(STDERR_FILENO, stderr_text, sizeof(stderr_text) - 1) !=
+        (ssize_t)(sizeof(stderr_text) - 1)) {
+        return 5;
+    }
+    return 37;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         return 64;
@@ -101,6 +125,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "random") == 0 && argc == 3) {
         return print_random(argv[2]);
+    }
+    if (strcmp(argv[1], "fail") == 0 && argc == 3) {
+        return fail_recorded(argv[2]);
     }
     if (strcmp(argv[1], "outside-read") == 0) {
         return open("/etc/hostname", O_RDONLY) < 0 ? 0 : 1;

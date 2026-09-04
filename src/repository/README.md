@@ -19,6 +19,10 @@ For build diagnostics, the same adapter resolves a path's current content to the
 write operation and signed drip. Content, node, actor, and timestamp must all agree; otherwise the
 caller receives no attribution.
 
+Read-only build replay also asks the private VFS adapter to traverse a recorded tree digest
+directly. Entry and child lookup decode that immutable tree graph without changing or consulting
+the repository's current working tree, including each remote blob's content identity and location.
+
 The repository document also persists typed `config.policy` rules. `repository::set_policy`
 validates the complete replacement before checkpointing it, while the build adapter exposes the
 current policy and the store's subject-attestation index to the policy evaluator.

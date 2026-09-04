@@ -87,6 +87,15 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > toolchain trees before dispatch. The REAPI transport and cost-based scheduling remain separate
 > Phase 3 work.
 
+> **Phase 3 now includes explicit local replay.** `liquid replay <action|result>` reconstructs a
+> recorded action from its input tree, toolchain, environment, and sandbox, then compares exit
+> status, stdout, stderr, and declared outputs byte for byte. Matching recorded failures are
+> successful reproductions, and differences report the first unequal byte. Replay does not publish
+> its local result or change quarantine state unless `--record` requests an ordinary verification
+> sample. Registered remote inputs and expected outputs hydrate through their recorded
+> `remote_blob_location` and the repository's configured `remote_blob_source`; tests use its
+> on-disk double while the REAPI transport remains undecided.
+
 ## Where this sits
 
 liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module of
@@ -125,7 +134,7 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
-- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, read-time hermeticity, and the remaining Phase 3 design.
+- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, read-time hermeticity, explicit local replay, and the remaining Phase 3 design.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.

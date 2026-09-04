@@ -4,16 +4,15 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <span>
 #include <string>
 #include <vector>
 
+#include "remote_blob_source.hpp"
+
 #include "liquid/build.hpp"
-#include "liquid/remote.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
 #include "liquid/vfs.hpp"
-#include "repository/store_access.hpp"
 #include "repository/testing.hpp"
 #include "vfs/repository_access.hpp"
 
@@ -42,85 +41,6 @@ private:
     std::filesystem::path path_;
 };
 
-class on_disk_remote_source final : public liquid::remote_blob_source {
-public:
-    explicit on_disk_remote_source(liquid::store contents) : contents_(std::move(contents)) {}
-
-    auto put(std::vector<std::byte> contents) -> liquid::result<liquid::blob> {
-        auto stored = liquid::runtime::block_on(contents_.put(std::move(contents)));
-        if (!stored) {
-            return std::unexpected(stored.error());
-        }
-        return liquid::repository_detail::store_access::blob_for(contents_, *stored);
-    }
-
-    auto reads() const -> std::uint64_t {
-        return reads_;
-    }
-
-    auto bytes_read() const -> std::uint64_t {
-        return bytes_read_;
-    }
-
-    liquid::runtime::task<std::vector<liquid::digest>>
-    find_missing(std::string instance, std::vector<liquid::digest> blobs) override {
-        if (instance != "worker-a") {
-            co_return std::unexpected(liquid::error{
-                liquid::errc::invalid_argument, "unknown remote instance", std::move(instance)});
-        }
-        auto missing = std::vector<liquid::digest>{};
-        for (const auto& blob : blobs) {
-            auto present = co_await contents_.has(blob);
-            if (!present) {
-                co_return std::unexpected(present.error());
-            }
-            if (*present == liquid::blob_availability::absent) {
-                missing.push_back(blob);
-            }
-        }
-        co_return missing;
-    }
-
-    liquid::runtime::task<std::uint64_t> read_range(std::string instance,
-                                                    liquid::digest blob,
-                                                    std::uint64_t offset,
-                                                    std::span<std::byte> output) override {
-        if (instance != "worker-a") {
-            co_return std::unexpected(liquid::error{
-                liquid::errc::invalid_argument, "unknown remote instance", std::move(instance)});
-        }
-        ++reads_;
-        auto read = co_await contents_.read(blob, offset, output);
-        if (!read) {
-            co_return std::unexpected(read.error());
-        }
-        bytes_read_ += *read;
-        co_return *read;
-    }
-
-    liquid::runtime::task<void>
-    write(std::string instance, liquid::digest blob, std::vector<std::byte> contents) override {
-        if (instance != "worker-a") {
-            co_return std::unexpected(liquid::error{
-                liquid::errc::invalid_argument, "unknown remote instance", std::move(instance)});
-        }
-        auto stored = co_await contents_.put(std::move(contents));
-        if (!stored) {
-            co_return std::unexpected(stored.error());
-        }
-        if (stored->alg != blob.alg || stored->bytes != blob.bytes) {
-            co_return std::unexpected(liquid::error{
-                liquid::errc::corrupt, "remote write digest mismatch", liquid::to_string(blob)});
-        }
-        co_return liquid::result<void>{};
-    }
-
-private:
-    liquid::store contents_;
-    std::uint64_t reads_{};
-    std::uint64_t bytes_read_{};
-};
-
 auto make_bytes(std::size_t size) -> std::vector<std::byte> {
     auto output = std::vector<std::byte>(size);
     for (auto index = std::size_t{}; index != size; ++index) {
@@ -147,7 +67,7 @@ auto host_platform() -> liquid::platform {
 
 struct remote_fixture {
     temporary_directory location;
-    std::shared_ptr<on_disk_remote_source> remote;
+    std::shared_ptr<liquid::test_support::on_disk_remote_source> remote;
     liquid::repository repository;
     liquid::blob value;
     liquid::digest record;
@@ -157,7 +77,8 @@ struct remote_fixture {
         auto remote_store =
             liquid::runtime::block_on(liquid::store::open(location.path() / "remote"));
         EXPECT_TRUE(remote_store) << remote_store.error().message;
-        remote = std::make_shared<on_disk_remote_source>(std::move(*remote_store));
+        remote =
+            std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*remote_store));
         auto stored = remote->put(contents);
         EXPECT_TRUE(stored) << stored.error().message;
         value = *stored;
@@ -299,7 +220,8 @@ TEST(RemoteOutputs, sha256_remote_chunks_hydrate_into_default_store) {
     auto remote_store = liquid::runtime::block_on(
         liquid::store::open(location.path() / "sha-remote", std::move(remote_options)));
     ASSERT_TRUE(remote_store) << remote_store.error().message;
-    auto source = std::make_shared<on_disk_remote_source>(std::move(*remote_store));
+    auto source =
+        std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*remote_store));
     const auto expected = make_bytes(512U * 1024U);
     auto value = source->put(expected);
     ASSERT_TRUE(value) << value.error().message;

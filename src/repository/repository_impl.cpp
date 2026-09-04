@@ -3058,6 +3058,107 @@ runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry
     co_return output;
 }
 
+namespace {
+
+runtime::task<std::optional<tree_entry>>
+snapshot_entry(store& objects, digest root, std::string_view path) {
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    for (auto index = std::size_t{}; index < parts->size(); ++index) {
+        const auto& part = (*parts)[index];
+        auto encoded = co_await objects.get(root);
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        auto tree = objects::decode_tree(*encoded);
+        if (!tree) {
+            co_return std::unexpected(tree.error());
+        }
+        const auto found = std::ranges::find(tree->entries, part, &tree_entry::name);
+        if (found == tree->entries.end()) {
+            co_return std::optional<tree_entry>{};
+        }
+        if (index + 1 == parts->size()) {
+            co_return *found;
+        }
+        if (found->kind != node_kind::tree && found->kind != node_kind::repo) {
+            co_return std::optional<tree_entry>{};
+        }
+        root = found->ref;
+    }
+    co_return std::optional<tree_entry>{};
+}
+
+runtime::task<repository_detail::vfs_entry> snapshot_vfs_entry(store& objects,
+                                                               const tree_entry& entry) {
+    auto output = repository_detail::vfs_entry{.name = entry.name,
+                                               .kind = entry.kind,
+                                               .mode = entry.mode,
+                                               .node = entry.node,
+                                               .object = entry.ref};
+    if (entry.kind != node_kind::blob) {
+        co_return output;
+    }
+    auto encoded = co_await objects.get(entry.ref);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto record = objects::decode_blob(*encoded);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    output.size = record->size;
+    output.chunks = std::move(record->chunks);
+    output.chunk_sizes = std::move(record->chunk_sizes);
+    output.content = record->content;
+    output.remote = std::move(record->remote);
+    co_return output;
+}
+
+runtime::task<tree> snapshot_tree(store& objects, digest root, std::string path) {
+    if (!path.empty()) {
+        auto entry = co_await snapshot_entry(objects, root, path);
+        if (!entry) {
+            co_return std::unexpected(entry.error());
+        }
+        if (!*entry) {
+            co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
+        }
+        if ((*entry)->kind != node_kind::tree && (*entry)->kind != node_kind::repo) {
+            co_return std::unexpected(
+                failure(errc::invalid_argument, "path is not a directory", path));
+        }
+        root = (*entry)->ref;
+    }
+    auto encoded = co_await objects.get(root);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return objects::decode_tree(*encoded);
+}
+
+} // namespace
+
+runtime::task<repository_detail::vfs_entry>
+repository_detail::vfs_access::entry(repository& source, digest root, std::string path) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (path.empty()) {
+        co_return vfs_entry{.kind = node_kind::tree, .mode = 0040755, .object = root};
+    }
+    auto found = co_await snapshot_entry(source.impl_->objects, root, path);
+    if (!found) {
+        co_return std::unexpected(found.error());
+    }
+    if (!*found) {
+        co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
+    }
+    co_return co_await snapshot_vfs_entry(source.impl_->objects, **found);
+}
+
 runtime::task<std::vector<repository_detail::vfs_entry>>
 repository_detail::vfs_access::children(repository& source, std::string path) {
     if (!source.impl_)
@@ -3095,6 +3196,27 @@ repository_detail::vfs_access::children(repository& source, std::string path) {
             value.remote = std::move(record->remote);
         }
         output.push_back(std::move(value));
+    }
+    co_return output;
+}
+
+runtime::task<std::vector<repository_detail::vfs_entry>>
+repository_detail::vfs_access::children(repository& source, digest root, std::string path) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto directory = co_await snapshot_tree(source.impl_->objects, root, path);
+    if (!directory) {
+        co_return std::unexpected(directory.error());
+    }
+    auto output = std::vector<vfs_entry>{};
+    output.reserve(directory->entries.size());
+    for (const auto& entry : directory->entries) {
+        auto value = co_await snapshot_vfs_entry(source.impl_->objects, entry);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        output.push_back(std::move(*value));
     }
     co_return output;
 }

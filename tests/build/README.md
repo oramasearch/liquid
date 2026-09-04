@@ -16,9 +16,16 @@ current refusal before treating the previous lookup as a hit or ordinary miss.
 
 `fixture.c` is the hermetic toolchain program materialised into each test repository. Its commands
 copy one input, print the fixed environment, emit random bytes, attempt denied access, or exercise
-timeout cleanup. Verification tests prove a pure agreement, signature-valid agreement and
+timeout cleanup. Its deterministic failure command writes fixed output, stdout, and stderr before
+returning a nonzero exit for replay coverage. Verification tests prove a pure agreement,
+signature-valid agreement and
 disagreement attestations, rate-one sampling, durable divergent quarantine, and critical output
 diagnostics.
+
+Replay cases prove byte-identical reproduction of that recorded failure, action selection after a
+cache hit, opt-in verification recording, byte-zero diagnostics for an altered recorded output,
+and hydration of a missing input through a `remote_blob_source` backed by a second on-disk liquid
+store. The Linux CLI case also requires valid JSON and confirms default replay does not record.
 
 The mixed-cost retention case writes a cheap large result and an expensive small result into the
 real store, persists both index rows, exceeds the configured physical cap, and proves collection
@@ -28,8 +35,9 @@ removes only the lower execution-cost-per-byte result.
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
-compiler entry, parallel compilation-database seeding, and sandbox-only hook variables. The Linux CLI case runs
-`liquid verify --all` and checks that every wrapped action agrees.
+compiler entry, parallel compilation-database seeding, and sandbox-only hook variables. The Linux
+CLI case runs `liquid verify --all`, checks that every wrapped action agrees, then replays one action
+through `liquid replay --json`.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
 and toolchain-tree leaf.
 

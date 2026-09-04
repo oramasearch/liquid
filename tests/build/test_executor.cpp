@@ -5,9 +5,12 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
+
+#include "remote_blob_source.hpp"
 
 #include "build/cache.hpp"
 #include "build/repository_access.hpp"
@@ -79,7 +82,8 @@ struct action_fixture {
 
     explicit action_fixture(bool publish = true,
                             std::uint32_t verification_rate = 20,
-                            bool retain_results = true) {
+                            bool retain_results = true,
+                            std::shared_ptr<liquid::remote_blob_source> remote = {}) {
         auto options = liquid::repository_options{};
         options.cache.publish = publish;
         options.verify.rate = verification_rate;
@@ -87,6 +91,9 @@ struct action_fixture {
             std::erase_if(options.retention.rules, [](const auto& rule) {
                 return std::holds_alternative<liquid::result_retention_rule>(rule);
             });
+        }
+        if (remote) {
+            options.store.remote_sources.emplace("disk", std::move(remote));
         }
         auto opened =
             liquid::runtime::block_on(liquid::repository::create(location.path(), options));
@@ -569,6 +576,167 @@ TEST(BuildVerification, pure_action_gets_a_signed_reproducibility_attestation) {
     auto verified = liquid::verify_attestation(*attestation);
     ASSERT_TRUE(verified) << verified.error().message;
     EXPECT_TRUE(verified->verified) << verified->reason;
+}
+
+TEST(BuildReplay, recorded_failure_reproduces_outputs_and_exit_status) {
+    action_fixture fixture;
+    auto ran = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository, fixture.input({"fixture", "fail", "out/copy.txt"}, {"out/copy.txt"})));
+    ASSERT_TRUE(ran) << ran.error().message;
+    auto recorded = liquid::runtime::block_on(liquid::build::result(fixture.repository, *ran));
+    ASSERT_TRUE(recorded) << recorded.error().message;
+    ASSERT_EQ(recorded->exit, 37);
+    ASSERT_EQ(recorded->outputs.size(), 1U);
+    auto stdout_bytes = blob_contents(fixture.repository, recorded->stdout_output);
+    auto stderr_bytes = blob_contents(fixture.repository, recorded->stderr_output);
+    ASSERT_TRUE(stdout_bytes) << stdout_bytes.error().message;
+    ASSERT_TRUE(stderr_bytes) << stderr_bytes.error().message;
+    EXPECT_EQ(text(*stdout_bytes), "recorded failure stdout\n");
+    EXPECT_EQ(text(*stderr_bytes), "recorded failure stderr\n");
+
+    auto replayed =
+        liquid::runtime::block_on(liquid::build::replay(fixture.repository, ran->value));
+    ASSERT_TRUE(replayed) << replayed.error().message << ": " << replayed.error().context;
+    EXPECT_TRUE(replayed->agreement);
+    EXPECT_EQ(replayed->recorded_exit, 37);
+    EXPECT_EQ(replayed->reexecuted_exit, 37);
+    EXPECT_TRUE(replayed->differences.empty());
+    EXPECT_FALSE(replayed->attestation.has_value());
+}
+
+TEST(BuildReplay, cached_hit_replays_by_action_and_records_only_when_requested) {
+    action_fixture fixture;
+    const auto input =
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(liquid::to_string(first->value), liquid::to_string(second->value));
+    auto recorded = liquid::runtime::block_on(liquid::build::result(fixture.repository, *second));
+    ASSERT_TRUE(recorded) << recorded.error().message;
+    EXPECT_EQ(recorded->cache, liquid::cache_status::hit);
+
+    auto replayed =
+        liquid::runtime::block_on(liquid::build::replay(fixture.repository, recorded->action));
+    ASSERT_TRUE(replayed) << replayed.error().message;
+    EXPECT_TRUE(replayed->agreement);
+    EXPECT_FALSE(replayed->attestation.has_value());
+
+    auto sampled = liquid::runtime::block_on(
+        liquid::build::replay(fixture.repository, recorded->action, {.record = true}));
+    ASSERT_TRUE(sampled) << sampled.error().message;
+    EXPECT_TRUE(sampled->agreement);
+    EXPECT_TRUE(sampled->attestation.has_value());
+}
+
+TEST(BuildReplay, tampered_recorded_output_reports_the_first_differing_byte) {
+    action_fixture fixture;
+    auto ran = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository,
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"})));
+    ASSERT_TRUE(ran) << ran.error().message;
+    auto raw = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(fixture.repository, ran->value));
+    ASSERT_TRUE(raw) << raw.error().message;
+    auto recorded = liquid::objects::decode_result(*raw);
+    ASSERT_TRUE(recorded) << recorded.error().message;
+    const auto tampered_path = fixture.location.path() / "tampered-output";
+    auto tampered_file = std::ofstream{tampered_path, std::ios::binary | std::ios::trunc};
+    tampered_file << "Xnput";
+    tampered_file.close();
+    ASSERT_TRUE(tampered_file);
+    auto tampered_blob = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::put_file(fixture.repository, tampered_path));
+    ASSERT_TRUE(tampered_blob) << tampered_blob.error().message;
+    recorded->outputs.front().blob = *tampered_blob;
+    ASSERT_TRUE(liquid::runtime::block_on(
+        liquid::repository_detail::build_access::sign_result(fixture.repository, *recorded)));
+    auto encoded = liquid::objects::encode(*recorded);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto tampered_result =
+        liquid::runtime::block_on(liquid::repository_detail::build_access::put_record(
+            fixture.repository, std::move(*encoded)));
+    ASSERT_TRUE(tampered_result) << tampered_result.error().message;
+
+    auto replayed =
+        liquid::runtime::block_on(liquid::build::replay(fixture.repository, *tampered_result));
+    ASSERT_TRUE(replayed) << replayed.error().message;
+    ASSERT_FALSE(replayed->agreement);
+    ASSERT_EQ(replayed->differences.size(), 1U);
+    const auto& difference = replayed->differences.front();
+    EXPECT_EQ(difference.output, "out/copy.txt");
+    ASSERT_TRUE(difference.byte_offset.has_value());
+    EXPECT_EQ(*difference.byte_offset, 0U);
+    ASSERT_TRUE(difference.cached_byte.has_value());
+    ASSERT_TRUE(difference.reexecuted_byte.has_value());
+    EXPECT_EQ(*difference.cached_byte, static_cast<std::uint8_t>('X'));
+    EXPECT_EQ(*difference.reexecuted_byte, static_cast<std::uint8_t>('i'));
+    EXPECT_FALSE(replayed->attestation.has_value());
+    auto statistics = liquid::runtime::block_on(fixture.repository.cache_stats());
+    ASSERT_TRUE(statistics) << statistics.error().message;
+    EXPECT_TRUE(statistics->critical_alerts.empty());
+}
+
+TEST(BuildReplay, remote_input_is_fetched_through_the_blob_source) {
+    temporary_repository remote_location;
+    auto remote_store = liquid::runtime::block_on(liquid::store::open(remote_location.path()));
+    ASSERT_TRUE(remote_store) << remote_store.error().message;
+    auto remote =
+        std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*remote_store));
+    action_fixture fixture{true, 20, true, remote};
+
+    auto input = remote->put(bytes("remote-input"));
+    ASSERT_TRUE(input) << input.error().message;
+    input->remote = liquid::remote_blob_location{"disk", "worker-a"};
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.repository.write_remote("other.txt", *input)));
+    fixture.cut("remote replay input");
+
+    auto output = remote->put(bytes("recorded failure output\n"));
+    ASSERT_TRUE(output) << output.error().message;
+    output->remote = liquid::remote_blob_location{"disk", "worker-a"};
+    auto output_record = liquid::runtime::block_on(fixture.repository.store_remote_blob(*output));
+    ASSERT_TRUE(output_record) << output_record.error().message;
+    auto stdout = remote->put(bytes("recorded failure stdout\n"));
+    ASSERT_TRUE(stdout) << stdout.error().message;
+    stdout->remote = liquid::remote_blob_location{"disk", "worker-a"};
+    auto stdout_record = liquid::runtime::block_on(fixture.repository.store_remote_blob(*stdout));
+    ASSERT_TRUE(stdout_record) << stdout_record.error().message;
+    auto stderr = remote->put(bytes("recorded failure stderr\n"));
+    ASSERT_TRUE(stderr) << stderr.error().message;
+    stderr->remote = liquid::remote_blob_location{"disk", "worker-a"};
+    auto stderr_record = liquid::runtime::block_on(fixture.repository.store_remote_blob(*stderr));
+    ASSERT_TRUE(stderr_record) << stderr_record.error().message;
+
+    const auto action = fixture.input({"fixture", "fail", "out/copy.txt"}, {"out/copy.txt"});
+    const auto expected =
+        liquid::action_result{.exit = 37,
+                              .outputs = {{"out/copy.txt", 0100644, *output_record}},
+                              .stdout_output = *stdout_record,
+                              .stderr_output = *stderr_record};
+    auto recorded = liquid::runtime::block_on(
+        liquid::build::record_remote_result(fixture.repository, action, expected));
+    ASSERT_TRUE(recorded) << recorded.error().message << ": " << recorded.error().context;
+    auto status = fixture.repository.status();
+    ASSERT_TRUE(status) << status.error().message;
+    EXPECT_EQ(status->remote_bytes, input->size);
+    EXPECT_EQ(remote->reads(), 0U);
+
+    auto replayed =
+        liquid::runtime::block_on(liquid::build::replay(fixture.repository, recorded->value));
+    ASSERT_TRUE(replayed) << replayed.error().message << ": " << replayed.error().context;
+    ASSERT_TRUE(replayed->agreement)
+        << (replayed->differences.empty() ? "no reported difference"
+                                          : replayed->differences.front().output)
+        << " recorded=" << replayed->recorded_exit << " reexecuted=" << replayed->reexecuted_exit;
+    EXPECT_GT(remote->reads(), 0U);
+    EXPECT_TRUE(std::ranges::any_of(remote->read_blobs(), [&input](const liquid::digest& value) {
+        return liquid::to_string(value) == liquid::to_string(input->content);
+    }));
+    auto hydrated = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::contains(fixture.repository, input->content));
+    ASSERT_TRUE(hydrated) << hydrated.error().message;
+    EXPECT_TRUE(*hydrated);
 }
 
 TEST(BuildVerification, nondeterminism_is_alerted_and_the_divergent_result_is_never_served) {
