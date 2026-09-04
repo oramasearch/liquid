@@ -1,6 +1,6 @@
-# Chunk-index benchmark: RocksDB and LMDB
+# Chunk-index benchmark: RocksDB, LMDB, and liquid
 
-This benchmark measures two candidates for liquid's chunk index: the map from a 32-byte chunk
+This benchmark measures the candidate engines and liquid's own index format: the map from a 32-byte chunk
 digest to a 16-byte `(pack id, offset, length)` location. It produces measurements for the
 maintainer's later decision; it does not choose an engine and does not add either engine to
 libliquid.
@@ -8,15 +8,16 @@ libliquid.
 ## Reproducible workload
 
 The executable is `bench/chunk-index/chunk_index_bench.cpp`. It has one client thread and runs the
-same ordered phases against both engines:
+same ordered phases against every engine, including `--engine liquid`:
 
 1. Generate `N` 32-byte keys from the standard `std::mt19937_64` stream seeded with `1`, then insert
    them in batches of 10,000. RocksDB uses one `WriteBatch`; LMDB uses one write transaction per
    batch.
 2. Run 1,000,000 point lookups, alternating between a random existing key and an independently
    generated random key. Any unexpected presence result fails the run.
-3. Run 10,000 cursor scans of 64 entries starting at a random existing key. A scan that reaches the
-   final key continues at the first key so every measured operation visits exactly 64 entries.
+3. Run 10,000 groups of 64 reads starting from a random existing key. RocksDB and LMDB use cursors;
+   liquid uses 64 mapped-index lookups because its private index has no cursor API. Every measured
+   operation visits exactly 64 entries.
 4. Flush, close, attempt an unprivileged OS-cache eviction, reopen, and run the first 100,000 point
    lookups again.
 5. Close and report final directory bytes, bytes written, write amplification, and process peak RSS.
@@ -95,6 +96,23 @@ macOS does not offer an unprivileged system page-cache eviction command. Every r
 `cache_drop=unavailable_without_root_on_macos`, so the close/reopen phase below is a reopened,
 warm-OS-cache measurement rather than a true cold-disk measurement.
 
+## liquid results
+
+`--engine liquid` drives `liquid::store_detail::chunk_index`, not a benchmark-only engine. It
+uses the production 48-byte digest-first records, a 1,048,576-entry hash memtable, 10-bit bloom
+filters, 65,536-bucket fanout, and four-run size-tiered compaction. The insert phase includes
+threshold-triggered flushes and compactions. The reopen phase closes the index, maps runs again,
+and performs the point lookups.
+
+| N | Bulk insert ops/s | Point lookup ops/s | Range scan (64) ops/s | Reopen point lookup ops/s | On-disk bytes | Peak RSS bytes |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1,000,000 | 5,253,317.13 | 2,855,164.29 | 20,774.91 | 3,790,583.02 | 49,512,236 | 316,669,952 |
+| 10,000,000 | 2,099,543.19 | 1,070,078.74 | 14,877.68 | 892,647.60 | 494,073,296 | 1,137,377,280 |
+
+Both runs used the recorded Apple M3 Max machine and reported
+`cache_drop=unavailable_without_root_on_macos`. At 10M, liquid meets the required 1.16M inserts/s
+(2.100M), 438k point lookups/s (1.070M), and 589 MB disk limit (494.1 MB).
+
 ## Results at N = 10,000,000
 
 | Engine | Configuration | Phase | ops/s | p50 (us) | p99 (us) |
@@ -115,6 +133,10 @@ warm-OS-cache measurement rather than a true cold-disk measurement.
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | point lookup | 1,040,100.51 | 0.958 | 1.375 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | range scan (64) | 512,377.11 | 1.916 | 2.958 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | reopen point lookup | 762,016.76 | 1.167 | 2.166 |
+| liquid | mapped run, 10-bit bloom | bulk insert | 2,099,543.19 | 0.155 | 0.373 |
+| liquid | mapped run, 10-bit bloom | point lookup | 1,070,078.74 | 0.750 | 5.542 |
+| liquid | mapped run, 10-bit bloom | range scan (64) | 14,877.68 | 62.750 | 123.500 |
+| liquid | mapped run, 10-bit bloom | reopen point lookup | 892,647.60 | 0.792 | 4.166 |
 
 | Engine | Configuration | On-disk bytes | Bytes written | Write amplification | Peak RSS bytes |
 |---|---|---:|---:|---:|---:|
@@ -122,6 +144,7 @@ warm-OS-cache measurement rather than a true cold-disk measurement.
 | RocksDB | bloom + 512-MiB cache | 589,291,963 | 510,012,000 | 1.062525 | 1,485,291,520 |
 | LMDB | map 2,697 MiB, sync | 1,173,626,880 | 1,173,626,880 | 2.445056 | 1,703,051,264 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | 1,173,626,880 | 1,173,626,880 | 2.445056 | 1,702,051,840 |
+| liquid | mapped run, 10-bit bloom | 494,073,296 | 760,414,048 | 1.584196 | 1,137,377,280 |
 
 ## Run N = 100,000,000 on Linux
 

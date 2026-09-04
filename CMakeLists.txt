@@ -81,6 +81,19 @@ FetchContent_Declare(blake3_source
   SOURCE_SUBDIR  c/liquid-no-upstream-cmake)
 FetchContent_MakeAvailable(blake3_source)
 
+# Compression is a private codec dependency of the pack format.  Do not expose
+# its headers or targets through libliquid's public interface.
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zstd_source
+  GIT_REPOSITORY https://github.com/facebook/zstd.git
+  GIT_TAG        v1.5.7
+  GIT_SHALLOW    TRUE
+  SOURCE_SUBDIR  build/cmake)
+FetchContent_MakeAvailable(zstd_source)
+
 add_library(liquid_blake3_objects OBJECT
   ${blake3_source_SOURCE_DIR}/c/blake3.c
   ${blake3_source_SOURCE_DIR}/c/blake3_dispatch.c
@@ -119,6 +132,11 @@ add_library(libliquid
   src/repository.cpp
   src/runtime/runtime.cpp
   src/store.cpp
+  src/store/chunker.cpp
+  src/store/index.cpp
+  src/store/mapped_file.cpp
+  src/store/pack.cpp
+  src/store/store_impl.cpp
   src/version.cpp
   src/vfs.cpp
 )
@@ -137,7 +155,7 @@ target_include_directories(libliquid PUBLIC
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_link_libraries(libliquid
   PUBLIC Boost::capy
-  PRIVATE Boost::corosio)
+  PRIVATE Boost::corosio libzstd_static)
 if(BUILD_SHARED_LIBS)
   target_link_libraries(libliquid PRIVATE liquid_blake3)
 else()

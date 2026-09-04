@@ -17,12 +17,13 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 library surface is declared.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 chunk store is implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error and digest APIs
 > are implemented, including BLAKE3 and SHA-256. The public waiting operations are lazy
-> Boost.Capy tasks, backed by a private Corosio runtime. Store, repository, capture, identity, VFS and
-> remote operations remain `unsupported` until their owning issues land. `liquid version` and
+> Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put, get,
+> range read, and contains; leases and collection remain unsupported. Repository, capture, identity,
+> VFS and remote operations remain `unsupported` until their owning issues land. `liquid version` and
 > `liquid hello` remain unchanged, and `find_package(liquid)` works from an install.
 
 ## Where this sits
@@ -50,6 +51,7 @@ and Zetta's.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
+- [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 | | |
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |

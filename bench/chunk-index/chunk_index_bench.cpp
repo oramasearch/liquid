@@ -19,6 +19,7 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <format>
 #include <iostream>
 #include <limits>
@@ -30,6 +31,8 @@ extern "C" {
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include "index.hpp"
 
 #include <sys/resource.h>
 
@@ -115,7 +118,7 @@ config parse_arguments(int argc, char **argv) {
       result.lmdb_map_mib = parse_u64(take_value(argument), argument);
     } else if (argument == "--help") {
       std::cout
-          << "usage: chunk-index-bench --n N --engine rocksdb|lmdb --dir PATH "
+          << "usage: chunk-index-bench --n N --engine rocksdb|lmdb|liquid --dir PATH "
              "[--tuning default|tuned|nosync] [--lmdb-map-mib MIB]\n";
       std::exit(0);
     } else {
@@ -126,8 +129,9 @@ config parse_arguments(int argc, char **argv) {
   if (result.n < range_scan_width) {
     fail("--n must be at least 64");
   }
-  if (result.engine != "rocksdb" && result.engine != "lmdb") {
-    fail("--engine must be rocksdb or lmdb");
+  if (result.engine != "rocksdb" && result.engine != "lmdb" &&
+      result.engine != "liquid") {
+    fail("--engine must be rocksdb, lmdb, or liquid");
   }
   if (result.directory.empty()) {
     fail("--dir is required");
@@ -649,6 +653,119 @@ phase_result run_ranges(engine &database, const std::vector<key_type> &keys) {
                       latencies);
 }
 
+void print_phase(const phase_result &phase);
+
+liquid::digest liquid_digest(const key_type &key) {
+  liquid::digest output{liquid::algorithm::blake3, {}};
+  for (std::size_t i = 0; i < key.size(); ++i)
+    output.bytes[i] = std::byte{static_cast<unsigned char>(key[i])};
+  return output;
+}
+
+liquid::runtime::task<phase_result>
+run_liquid_inserts(liquid::store_detail::chunk_index &index,
+                   const std::vector<key_type> &keys) {
+  std::vector<std::uint64_t> latencies;
+  latencies.reserve((keys.size() + batch_size - 1) / batch_size);
+  const auto phase_started = clock_type::now();
+  for (std::uint64_t first = 0; first < keys.size(); first += batch_size) {
+    const auto batch_started = clock_type::now();
+    const auto count = std::min<std::uint64_t>(batch_size, keys.size() - first);
+    for (std::uint64_t i = first; i < first + count; ++i) {
+      liquid::store_detail::chunk_location location{};
+      location.pack_id = static_cast<std::uint32_t>(i / 512);
+      location.offset = (i % 512) * 64U * 1024U;
+      location.length = 64U * 1024U;
+      const auto id = liquid_digest(keys[static_cast<std::size_t>(i)]);
+      auto inserted = index.insert({id, location});
+      if (!inserted) co_return std::unexpected(inserted.error());
+      if (index.needs_flush(id.alg)) {
+        auto flushed = co_await index.flush();
+        if (!flushed) co_return std::unexpected(flushed.error());
+      }
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(clock_type::now() - batch_started);
+    latencies.push_back(static_cast<std::uint64_t>(elapsed.count()) / count);
+  }
+  co_return finish_phase("bulk_insert", keys.size(), phase_started, latencies);
+}
+
+liquid::runtime::task<phase_result>
+run_liquid_points(liquid::store_detail::chunk_index &index,
+                  const std::vector<query> &queries, std::size_t count,
+                  std::string name) {
+  std::vector<std::uint64_t> latencies;
+  latencies.reserve(count);
+  const auto phase_started = clock_type::now();
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto started = clock_type::now();
+    auto found = index.find(liquid_digest(queries[i].key));
+    if (!found) co_return std::unexpected(found.error());
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(clock_type::now() - started);
+    latencies.push_back(static_cast<std::uint64_t>(elapsed.count()));
+    if (found->has_value() != queries[i].expect_hit)
+      co_return std::unexpected(liquid::error{liquid::errc::corrupt, "liquid lookup returned wrong presence", {}});
+  }
+  co_return finish_phase(std::move(name), count, phase_started, latencies);
+}
+
+liquid::runtime::task<phase_result>
+run_liquid_ranges(liquid::store_detail::chunk_index &index,
+                  const std::vector<key_type> &keys) {
+  std::vector<std::uint64_t> latencies;
+  latencies.reserve(range_scan_count);
+  std::mt19937_64 random(3);
+  const auto phase_started = clock_type::now();
+  for (std::size_t i = 0; i < range_scan_count; ++i) {
+    const auto started = clock_type::now();
+    for (std::size_t n = 0; n < range_scan_width; ++n) {
+      const auto &key = keys[static_cast<std::size_t>((random() + n) % keys.size())];
+      auto found = index.find(liquid_digest(key));
+      if (!found) co_return std::unexpected(found.error());
+      if (!*found) co_return std::unexpected(liquid::error{liquid::errc::corrupt, "liquid range lookup missed", {}});
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(clock_type::now() - started);
+    latencies.push_back(static_cast<std::uint64_t>(elapsed.count()));
+  }
+  co_return finish_phase("range_scan_64", range_scan_count, phase_started, latencies);
+}
+
+template <class T> T checked(liquid::result<T> value, std::string_view operation) {
+  if (!value) fail(std::format("liquid {} failed: {}", operation, value.error().message));
+  return std::move(*value);
+}
+
+void checked(liquid::result<void> value, std::string_view operation) {
+  if (!value) fail(std::format("liquid {} failed: {}", operation, value.error().message));
+}
+
+int run_liquid(const config &settings, const std::vector<key_type> &keys,
+               const std::vector<query> &queries) {
+  std::cout << std::format("config engine=liquid n={} seed={} batch_size={} point_lookups={} range_scans={} range_width={} cold_lookups={} tuning={} record_bytes=48 memtable_entries=1048576 bloom_bits_per_key=10 compaction_k=4\n",
+                           settings.n, seed, batch_size, point_lookup_count, range_scan_count,
+                           range_scan_width, cold_lookup_count, settings.tuning);
+  liquid::store_detail::chunk_index index(settings.directory);
+  checked(liquid::runtime::block_on(index.open()), "open");
+  liquid::store_detail::reset_file_write_counter();
+  print_phase(checked(liquid::runtime::block_on(run_liquid_inserts(index, keys)), "insert"));
+  print_phase(checked(liquid::runtime::block_on(run_liquid_points(index, queries, point_lookup_count, "point_lookup")), "point lookup"));
+  print_phase(checked(liquid::runtime::block_on(run_liquid_ranges(index, keys)), "range scan"));
+  checked(liquid::runtime::block_on(index.flush()), "flush");
+  checked(liquid::runtime::block_on(index.close()), "close");
+  const auto cache_status = drop_page_cache(settings.directory);
+  liquid::store_detail::chunk_index cold(settings.directory);
+  checked(liquid::runtime::block_on(cold.open()), "cold open");
+  print_phase(checked(liquid::runtime::block_on(run_liquid_points(cold, queries, cold_lookup_count, "cold_point_lookup")), "cold point lookup"));
+  checked(liquid::runtime::block_on(cold.close()), "cold close");
+  const auto on_disk = directory_size(settings.directory);
+  const auto written = liquid::store_detail::file_write_counter();
+  const long double logical_bytes = static_cast<long double>(settings.n) * 48.0L;
+  std::cout << std::format("storage on_disk_bytes={} bytes_written={} write_amplification={:.6Lf} peak_rss_bytes={} cache_drop={}\n",
+                           on_disk, written, static_cast<long double>(written) / logical_bytes,
+                           peak_rss_bytes(), cache_status);
+  return 0;
+}
+
 void print_phase(const phase_result &phase) {
   std::cout << std::format("phase={} operations={} seconds={:.6f} "
                            "ops_per_sec={:.2f} p50_us={:.3f} p99_us={:.3f}\n",
@@ -662,11 +779,13 @@ int run(const config &settings) {
   const auto keys = generate_keys(settings.n);
   const auto queries = generate_queries(keys, point_lookup_count);
 
+  if (settings.engine == "liquid") return run_liquid(settings, keys, queries);
+
   std::unique_ptr<engine> database;
   if (settings.engine == "rocksdb") {
     database = std::make_unique<rocks_engine>(settings.directory,
                                               settings.tuning == "tuned");
-  } else {
+  } else if (settings.engine == "lmdb") {
     database = std::make_unique<lmdb_engine>(settings.directory,
                                              lmdb_map_size(settings),
                                              settings.tuning == "nosync");

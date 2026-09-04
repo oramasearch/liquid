@@ -55,7 +55,7 @@ owning issue in `error::context`.
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, text round trip |
-| `liquid/store.hpp` | #1, #8 | declared | `store`: content in, digests out; leases and collection |
+| `liquid/store.hpp` | #1, #8 | implemented (#1); declared (#8) | `store`: content in, digests out; leases and collection |
 | `liquid/object.hpp` | #2 | declared | node kinds and their records; `blob`, `tree`, `change`, and the reserved shapes |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | declared | `repository`: open, read, write, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared | `drip`, `capture`: the journal as a subscription, pause and resume |
@@ -202,7 +202,7 @@ Object subjects (attestations *about* a drip or artifact) wait on the TAAP spec 
 
 ## Deliberately internal
 
-`src/store/` (chunker, packs, the RocksDB index, GC), `src/crdt/` (automerge-cpp and the
+`src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/crdt/` (automerge-cpp and the
 metadata documents), `src/capture/` (the journal, OS watchers, coalescing), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
