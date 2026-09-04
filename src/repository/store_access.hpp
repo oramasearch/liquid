@@ -9,6 +9,10 @@
 namespace liquid::repository_detail {
 
 struct store_access {
+    [[nodiscard]] static auto blob_for(const store& source, digest id) -> result<blob> {
+        return source.blob_for(id);
+    }
+
     [[nodiscard]] static runtime::task<digest> put_plain(store& destination,
                                                          std::vector<std::byte> input) {
         return destination.put_plain(std::move(input));

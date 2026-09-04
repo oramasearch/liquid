@@ -18,6 +18,7 @@
 namespace liquid {
 
 namespace repository_detail {
+struct build_access;
 struct testing;
 struct vfs_access;
 } // namespace repository_detail
@@ -43,7 +44,7 @@ struct LIQUID_EXPORT repository_options {
     encryption_config encrypt{};
 };
 
-struct LIQUID_EXPORT log_options {};
+struct LIQUID_EXPORT log_options{};
 
 struct LIQUID_EXPORT ref {
     std::string name;
@@ -136,13 +137,13 @@ public:
     [[nodiscard]] runtime::task<void> undo(op_id operation);
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
-    [[nodiscard]] runtime::task<collection_report>
-    collect(collection_options options = {});
+    [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
 
 private:
     [[nodiscard]] runtime::task<void>
     redact_impl(std::string path, std::vector<std::byte> replacement, digest target);
 
+    friend struct repository_detail::build_access;
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     struct impl;

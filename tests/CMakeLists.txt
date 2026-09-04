@@ -21,6 +21,7 @@ add_executable(liquid-tests
   test_vfs.cpp
   vfs/test_materialise.cpp
   vfs/test_mount.cpp
+  build/test_executor.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
 target_include_directories(liquid-tests PRIVATE
@@ -29,6 +30,15 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
+
+add_executable(liquid-build-fixture build/fixture.c)
+if(UNIX AND NOT APPLE)
+  target_link_options(liquid-build-fixture PRIVATE -static)
+endif()
+add_dependencies(liquid-tests liquid-build-fixture)
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+  LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
 
 if(LIQUID_BUILD_CLI)
   add_executable(liquid-gc-cli-fixture store/gc_cli_fixture.cpp)
@@ -133,6 +143,7 @@ gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 
 add_executable(liquid-header-tests
   headers/attestation.cpp
+  headers/build.cpp
   headers/drip.cpp
   headers/error.cpp
   headers/export.cpp
