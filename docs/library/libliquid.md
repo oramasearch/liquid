@@ -41,4 +41,5 @@ consumer: install to a prefix, then a two-line CMake project with `find_package(
 builds and runs.
 
 **Change.** New public headers go under `include/liquid/` and into `liquid.hpp`; new sources into
-the `libliquid` target; the API surface design is liquid issue #39.
+the `libliquid` target. The public surface, its rules and the ABI policy are
+[`api-map.md`](api-map.md) (liquid issue #39): a header that is not on that map is not public.
