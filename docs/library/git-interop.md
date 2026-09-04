@@ -16,6 +16,23 @@ modes. Git submodules become nested-repository placeholders. Loose, packed, and 
 resolved before the reachable graph is walked. Pack offset-to-object lookups use a bounded 32 MiB
 index cache; larger indexes are scanned without retaining their entries.
 
+## Import design
+
+Import builds the reachable graph in parent-before-child topological order without replaying
+historical edits through directory documents. A Git blob is written once through the content store,
+then a liquid blob record is retained in an LRU memo keyed by Git SHA-1. Git trees are converted
+bottom-up to liquid tree records and are likewise memoized by Git SHA-1. Both import memos hold at
+most 1,000,000 entries; an evicted tree is rebuilt only when another commit requires it. Each
+change is recorded from its stored root tree with `record_from_tree`, its mapped parents, Git
+author and timestamp, and signed `git_commit` metadata.
+
+After the history and refs are recorded, import applies only the selected Git head tree to the
+working copy and checkpoints it. This keeps history construction independent of directory-document
+transactions while leaving the repository ready for ordinary local edits. The pack reader retains
+at most 32 MiB of resolved delta objects and verifies every object SHA-1 before it is used.
+`import_report::peak_rss_bytes` reads the process high-water mark with `getrusage` on POSIX, so
+the opt-in real-world check can enforce its 1 GiB memory limit.
+
 ## Compatibility
 
 Export flattens nested repositories into ordinary Git trees where their content is available. It
@@ -31,6 +48,12 @@ mapping, full history, snapshots, rename node identity, resumable import, corrup
 and `git fsck` against the export. Delta instructions are size-checked before reconstruction. The private object-reader sources are compiled into that
 fixture too, so this verification also runs with a shared `libliquid`.
 The public-header fixture compiles `liquid/git.hpp` independently.
+
+The real-world check is excluded from ordinary `ctest` runs. Configure with
+`-DLIQUID_REALWORLD_TESTS=ON -DLIQUID_REALWORLD_GIT_DIRECTORY=/path/to/checkout` and run
+`ctest -L realworld --output-on-failure`. It imports the supplied checkout, requires a reported
+peak RSS below 1 GiB, compares the `.liquid` store to three times the `.git` size, exports its
+head ref, and runs `git fsck`.
 
 `liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid
 repository when needed. `liquid export git <path> [ref]` exports the repository rooted at the

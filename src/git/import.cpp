@@ -1,10 +1,18 @@
 #include "liquid/git.hpp"
 
 #include <algorithm>
+#include <fstream>
+#include <list>
 #include <map>
 #include <set>
+#include <unordered_map>
+
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
 
 #include "git/object_store.hpp"
+#include "repository/git_access.hpp"
 
 namespace liquid {
 namespace {
@@ -17,6 +25,145 @@ struct liquid_file {
     digest id;
     std::uint32_t mode{};
 };
+
+constexpr std::size_t memo_limit = 1'000'000;
+
+template <typename value> class lru_map {
+public:
+    auto get(const std::string& key) -> std::optional<value> {
+        const auto found = index_.find(key);
+        if (found == index_.end())
+            return {};
+        entries_.splice(entries_.begin(), entries_, found->second);
+        return found->second->second;
+    }
+
+    auto put(std::string key, value item) -> void {
+        const auto found = index_.find(key);
+        if (found != index_.end()) {
+            found->second->second = std::move(item);
+            entries_.splice(entries_.begin(), entries_, found->second);
+            return;
+        }
+        entries_.emplace_front(std::move(key), std::move(item));
+        index_[entries_.front().first] = entries_.begin();
+        if (entries_.size() > memo_limit) {
+            index_.erase(entries_.back().first);
+            entries_.pop_back();
+        }
+    }
+
+private:
+    std::list<std::pair<std::string, value>> entries_;
+    std::unordered_map<std::string, typename std::list<std::pair<std::string, value>>::iterator>
+        index_;
+};
+
+auto node_for(const git_detail::sha1& id) -> node_id {
+    node_id node{};
+    std::ranges::copy_n(id.begin(), node.size(), node.begin());
+    return node;
+}
+
+auto import_tree(repository& destination,
+                 git_detail::object_store& store,
+                 const git_detail::sha1& id,
+                 lru_map<digest>& blobs,
+                 lru_map<digest>& trees,
+                 import_report& report) -> runtime::task<digest> {
+    const auto key = git_detail::sha1_hex(id);
+    if (const auto cached = trees.get(key))
+        co_return *cached;
+    const auto source = store.read_tree(id);
+    if (!source)
+        co_return std::unexpected(source.error());
+    tree value{};
+    value.entries.reserve(source->size());
+    for (const auto& item : *source) {
+        tree_entry entry{};
+        entry.name = item.name;
+        entry.mode = item.mode;
+        entry.node = node_for(item.id);
+        if (item.mode == 040000) {
+            const auto child =
+                co_await import_tree(destination, store, item.id, blobs, trees, report);
+            if (!child)
+                co_return std::unexpected(child.error());
+            entry.kind = node_kind::tree;
+            entry.id = *child;
+            entry.ref = *child;
+        } else if (item.mode == 0160000) {
+            const auto placeholder = hash(algorithm::blake3, std::span<const std::byte>{item.id});
+            if (!placeholder)
+                co_return std::unexpected(placeholder.error());
+            entry.kind = node_kind::repo;
+            entry.id = *placeholder;
+            entry.ref = *placeholder;
+            entry.nested = repo_ref{{}, change_id{*placeholder}};
+        } else {
+            const auto blob_key = git_detail::sha1_hex(item.id);
+            auto stored = blobs.get(blob_key);
+            if (!stored) {
+                const auto object = store.read(item.id);
+                if (!object)
+                    co_return std::unexpected(object.error());
+                if (object->kind != git_detail::object_kind::blob)
+                    co_return std::unexpected(
+                        error{errc::corrupt, "Git tree entry is not a blob", item.name});
+                const auto written =
+                    co_await repository_detail::git_access::put_blob(destination, object->payload);
+                if (!written)
+                    co_return std::unexpected(written.error());
+                blobs.put(blob_key, *written);
+                stored = *written;
+                ++report.blobs;
+            }
+            entry.kind = node_kind::blob;
+            entry.id = *stored;
+            entry.ref = *stored;
+        }
+        value.entries.push_back(std::move(entry));
+    }
+    const auto stored =
+        co_await repository_detail::git_access::put_tree(destination, std::move(value));
+    if (!stored)
+        co_return std::unexpected(stored.error());
+    trees.put(key, *stored);
+    co_return *stored;
+}
+
+auto liquid_ref_name(std::string name) -> std::string {
+    if (name.starts_with("refs/heads/"))
+        return name.substr(11);
+    if (name.starts_with("refs/tags/"))
+        return "tags/" + name.substr(10);
+    return name;
+}
+
+auto head_ref(const std::filesystem::path& directory) -> std::optional<std::string> {
+    auto input = std::ifstream{directory / "HEAD"};
+    auto value = std::string{};
+    std::getline(input, value);
+    constexpr auto prefix = std::string_view{"ref: "};
+    if (!value.starts_with(prefix))
+        return {};
+    return value.substr(prefix.size());
+}
+
+auto peak_rss_bytes() -> std::uint64_t {
+#if defined(_WIN32)
+    return 0;
+#else
+    auto usage = rusage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0)
+        return 0;
+#if defined(__APPLE__)
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024U;
+#endif
+#endif
+}
 
 auto text_bytes(std::string_view value) -> std::vector<std::byte> {
     return {reinterpret_cast<const std::byte*>(value.data()),
@@ -168,6 +315,25 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
     const auto refs = store.refs();
     if (!refs)
         co_return std::unexpected(refs.error());
+    const auto symbolic_head = head_ref(*directory);
+    auto selected_head = std::optional<git_detail::sha1>{};
+    auto selected_ref = std::optional<std::string>{};
+    if (symbolic_head) {
+        const auto found = refs->find(*symbolic_head);
+        if (found != refs->end()) {
+            selected_head = found->second;
+            selected_ref = liquid_ref_name(*symbolic_head);
+        }
+    }
+    if (!selected_head) {
+        for (const auto& [name, id] : *refs) {
+            if (!name.starts_with("refs/heads/"))
+                continue;
+            selected_head = id;
+            selected_ref = liquid_ref_name(name);
+            break;
+        }
+    }
     std::map<std::string, git_detail::commit> commits;
     std::vector<git_detail::sha1> pending;
     for (const auto& [name, id] : *refs) {
@@ -224,6 +390,8 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
         }
     }
     import_report report{};
+    auto blobs = lru_map<digest>{};
+    auto trees = lru_map<digest>{};
     for (const auto* commit : ordered) {
         const auto name = git_detail::sha1_hex(commit->id);
         const auto existing = co_await destination.metadata("git.commit." + name);
@@ -233,13 +401,10 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
             ++report.skipped_commits;
             continue;
         }
-        std::map<std::string, git_file> files;
-        const auto flattened = git_files(store, commit->tree, {}, files);
-        if (!flattened)
-            co_return std::unexpected(flattened.error());
-        const auto applied = co_await apply_tree(destination, store, files, report.blobs);
-        if (!applied)
-            co_return std::unexpected(applied.error());
+        const auto root =
+            co_await import_tree(destination, store, commit->tree, blobs, trees, report);
+        if (!root)
+            co_return std::unexpected(root.error());
         change_input input{};
         for (const auto& parent : commit->parents) {
             const auto mapped =
@@ -255,7 +420,9 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
         input.at = std::chrono::sys_seconds{std::chrono::seconds{commit->author_time}};
         input.message = commit->message;
         input.metadata.emplace("git_commit", name);
-        const auto recorded = co_await destination.record(std::move(input));
+        if (selected_head && selected_ref && commit->id == *selected_head)
+            input.ref = *selected_ref;
+        const auto recorded = co_await destination.record_from_tree(std::move(input), *root);
         if (!recorded)
             co_return std::unexpected(recorded.error());
         const auto saved = co_await destination.set_metadata(
@@ -276,16 +443,36 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
             co_await mapping(destination, "git.commit." + git_detail::sha1_hex(*peeled));
         if (!mapped || !*mapped)
             continue;
-        auto liquid_name = name;
-        if (liquid_name.starts_with("refs/heads/"))
-            liquid_name.erase(0, 11);
-        if (liquid_name.starts_with("refs/tags/"))
-            liquid_name = "tags/" + liquid_name.substr(10);
+        const auto liquid_name = liquid_ref_name(name);
         const auto saved = co_await destination.set_ref(liquid_name, change_id{**mapped});
         if (!saved)
             co_return std::unexpected(saved.error());
         report.refs.push_back(liquid_name);
     }
+    if (selected_head) {
+        const auto commit = store.read_commit(*selected_head);
+        if (!commit)
+            co_return std::unexpected(commit.error());
+        std::map<std::string, git_file> files;
+        const auto flattened = git_files(store, commit->tree, {}, files);
+        if (!flattened)
+            co_return std::unexpected(flattened.error());
+        const auto applied = co_await apply_tree(destination, store, files, report.blobs);
+        if (!applied)
+            co_return std::unexpected(applied.error());
+        const auto mapped =
+            co_await mapping(destination, "git.commit." + git_detail::sha1_hex(*selected_head));
+        if (!mapped || !*mapped)
+            co_return std::unexpected(mapped ? error{errc::corrupt,
+                                                     "Git head was not imported",
+                                                     git_detail::sha1_hex(*selected_head)}
+                                             : mapped.error());
+        const auto checkpointed =
+            co_await destination.set_ref(selected_ref.value_or("main"), change_id{**mapped});
+        if (!checkpointed)
+            co_return std::unexpected(checkpointed.error());
+    }
+    report.peak_rss_bytes = peak_rss_bytes();
     co_return report;
 }
 
