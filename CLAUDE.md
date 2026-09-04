@@ -235,6 +235,10 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    and oramacore-cpp. Consume `oramasearch/corosio` (private patch carrier), never
    `cppalliance/corosio` directly. stdexec is not used. Requires **Clang 17+**: Homebrew
    LLVM on macOS, `clang++-NN` on Linux; Apple's Clang and Ubuntu's GCC 13 are too old.
+   **libliquid is coroutine-native on Capy in its public API** (Steve, 2026-09-03: "use the
+   coroutine library that we have"): every I/O function returns `runtime::task<T>` and Capy is a
+   public dependency through the one seam header `liquid/runtime.hpp`; Corosio does the I/O
+   (files, sockets, timers) behind the boundary. No synchronous-first phase, no raw threads.
 6. **Licence posture.** liquid and liquify: open source, eventually — licence text not
    yet chosen. lake and the operator: enterprise. Zetta: source-available. k0s: Apache
    2.0 upstream, private copy.
