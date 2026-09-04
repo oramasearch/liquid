@@ -15,6 +15,15 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
+**Implementation status.** Issue #10 implements the local action path: canonical action,
+sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
+mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
+only from the mount's request callback, which carries the FUSE caller pid. It has no tracing,
+preload, or DTrace dependency. macOS carries the generated deprecated `sandbox-exec` profile but
+requires macFUSE before it can run the fixed virtual-root path; Windows remains explicitly
+unsupported until Phase 6. Cache lookup, `wrap`, remote execution, and provenance remain their
+own issues.
+
 ## Records in the store
 
 Two record kinds reserved in the object model become concrete, mirroring REAPI's

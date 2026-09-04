@@ -29,6 +29,7 @@
 
 #include "hydration.hpp"
 #include "request_queue.hpp"
+#include "vfs/observation.hpp"
 #include "vfs/repository_access.hpp"
 
 namespace liquid::vfs_detail {
@@ -108,11 +109,12 @@ public:
     fuse_backend(repository& source,
                  std::filesystem::path mountpoint,
                  std::filesystem::path repository_root,
-                 mount_options options)
+                 mount_options options,
+                 observation_sink sink = {})
         : source_(source), mountpoint_(std::move(mountpoint)),
           repository_root_(std::move(repository_root)), options_(options),
           cache_(repository_root_ / "LIQUID_VFS" / "chunks"),
-          queue_(std::make_shared<request_queue>()) {}
+          queue_(std::make_shared<request_queue>()), sink_(std::move(sink)) {}
 
     void request_unmount() noexcept override {
         auto wake_loop = false;
@@ -295,6 +297,16 @@ public:
         ++writes_captured_;
     }
 
+    void observe(observed_operation operation,
+                 std::string path,
+                 std::int64_t pid,
+                 std::optional<digest> content = {},
+                 bool denied = false) {
+        if (!sink_)
+            return;
+        sink_({operation, std::move(path), pid, std::move(content), denied});
+    }
+
 private:
     static auto make_operations() -> fuse_operations;
 
@@ -331,6 +343,7 @@ private:
     mount_options options_;
     hydration_cache cache_;
     std::shared_ptr<request_queue> queue_;
+    observation_sink sink_;
     std::atomic_uint64_t writes_captured_{};
     mutable std::mutex lifecycle_mutex_;
     std::condition_variable lifecycle_changed_;
@@ -348,8 +361,15 @@ auto current_backend() -> fuse_backend* {
     return context ? static_cast<fuse_backend*>(context->private_data) : nullptr;
 }
 
-runtime::task<int>
-getattr_request(fuse_backend* state, std::string path, std::shared_ptr<struct stat> output) {
+auto current_pid() -> std::int64_t {
+    const auto* context = fuse_get_context();
+    return context ? static_cast<std::int64_t>(context->pid) : 0;
+}
+
+runtime::task<int> getattr_request(fuse_backend* state,
+                                   std::string path,
+                                   std::int64_t pid,
+                                   std::shared_ptr<struct stat> output) {
     auto entry = co_await repository_detail::vfs_access::entry(state->source(), std::move(path));
     if (!entry)
         co_return fuse_error(entry.error());
@@ -359,11 +379,13 @@ getattr_request(fuse_backend* state, std::string path, std::shared_ptr<struct st
     output->st_size = static_cast<off_t>(entry->size);
     output->st_uid = getuid();
     output->st_gid = getgid();
+    state->observe(observed_operation::getattr, std::move(path), pid, entry->object);
     co_return 0;
 }
 
 runtime::task<int> readdir_request(fuse_backend* state,
                                    std::string path,
+                                   std::int64_t pid,
                                    std::shared_ptr<std::vector<std::string>> output) {
     auto entries =
         co_await repository_detail::vfs_access::children(state->source(), std::move(path));
@@ -374,38 +396,48 @@ runtime::task<int> readdir_request(fuse_backend* state,
     output->push_back("..");
     for (const auto& entry : *entries)
         output->push_back(entry.name);
+    state->observe(observed_operation::readdir, std::move(path), pid);
     co_return 0;
 }
 
-runtime::task<int> open_request(fuse_backend* state, std::string path, int flags) {
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), std::move(path));
+runtime::task<int>
+open_request(fuse_backend* state, std::string path, std::int64_t pid, int flags) {
+    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
     if (!entry)
         co_return fuse_error(entry.error());
     if (entry->kind != node_kind::blob)
         co_return -EISDIR;
-    if (state->read_only() && (flags & (O_WRONLY | O_RDWR)) != 0)
+    if (state->read_only() && (flags & (O_WRONLY | O_RDWR)) != 0) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
+    }
+    state->observe(observed_operation::open, std::move(path), pid, entry->object);
     co_return 0;
 }
 
 runtime::task<int> read_request(fuse_backend* state,
                                 std::string path,
+                                std::int64_t pid,
                                 std::uint64_t offset,
                                 std::size_t size,
                                 std::shared_ptr<std::vector<std::byte>> output) {
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), std::move(path));
+    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
     if (!entry)
         co_return fuse_error(entry.error());
     auto bytes = co_await state->cache().read(state->source(), *entry, offset, size);
     if (!bytes)
         co_return fuse_error(bytes.error(), true);
     *output = std::move(*bytes);
+    state->observe(observed_operation::read, std::move(path), pid, entry->object);
     co_return static_cast<int>(output->size());
 }
 
-runtime::task<int> create_request(fuse_backend* state, std::string path, std::uint32_t mode) {
-    if (state->read_only())
+runtime::task<int>
+create_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
+    if (state->read_only()) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
+    }
     auto written = co_await state->source().write(path, {});
     if (!written)
         co_return fuse_error(written.error());
@@ -419,10 +451,13 @@ runtime::task<int> create_request(fuse_backend* state, std::string path, std::ui
 
 runtime::task<int> write_request(fuse_backend* state,
                                  std::string path,
+                                 std::int64_t pid,
                                  std::uint64_t offset,
                                  std::vector<std::byte> input) {
-    if (state->read_only())
+    if (state->read_only()) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
+    }
     auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
     if (!entry)
         co_return fuse_error(entry.error());
@@ -478,9 +513,12 @@ runtime::task<int> rename_request(fuse_backend* state, std::string from, std::st
     co_return 0;
 }
 
-runtime::task<int> mkdir_request(fuse_backend* state, std::string path, std::uint32_t mode) {
-    if (state->read_only())
+runtime::task<int>
+mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
+    if (state->read_only()) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
+    }
     auto created = co_await repository_detail::vfs_access::make_directory(
         state->source(), std::move(path), static_cast<std::uint32_t>(S_IFDIR) | mode);
     if (!created)
@@ -511,8 +549,10 @@ int fuse_getattr(const char* path, struct stat* output) {
     if (!state)
         return -EIO;
     auto value = std::make_shared<struct stat>();
-    const auto result = state->queue()->submit(
-        [state, path = fuse_path(path), value] { return getattr_request(state, path, value); });
+    const auto result =
+        state->queue()->submit([state, path = fuse_path(path), pid = current_pid(), value] {
+            return getattr_request(state, path, pid, value);
+        });
     if (result == 0)
         *output = *value;
     return result;
@@ -533,8 +573,10 @@ int fuse_readdir(
     if (!state)
         return -EIO;
     auto entries = std::make_shared<std::vector<std::string>>();
-    const auto result = state->queue()->submit(
-        [state, path = fuse_path(path), entries] { return readdir_request(state, path, entries); });
+    const auto result =
+        state->queue()->submit([state, path = fuse_path(path), pid = current_pid(), entries] {
+            return readdir_request(state, path, pid, entries);
+        });
     if (result != 0)
         return result;
     for (const auto& entry : *entries) {
@@ -553,9 +595,10 @@ int fuse_open(const char* path, struct fuse_file_info* information) {
     auto* state = current_backend();
     if (!state)
         return -EIO;
-    return state->queue()->submit([state, path = fuse_path(path), flags = information->flags] {
-        return open_request(state, path, flags);
-    });
+    return state->queue()->submit(
+        [state, path = fuse_path(path), pid = current_pid(), flags = information->flags] {
+            return open_request(state, path, pid, flags);
+        });
 }
 
 int fuse_read(const char* path, char* buffer, size_t size, off_t offset, struct fuse_file_info*) {
@@ -563,9 +606,9 @@ int fuse_read(const char* path, char* buffer, size_t size, off_t offset, struct 
     if (!state || offset < 0)
         return -EIO;
     auto output = std::make_shared<std::vector<std::byte>>();
-    const auto result =
-        state->queue()->submit([state, path = fuse_path(path), offset, size, output] {
-            return read_request(state, path, static_cast<std::uint64_t>(offset), size, output);
+    const auto result = state->queue()->submit(
+        [state, path = fuse_path(path), pid = current_pid(), offset, size, output] {
+            return read_request(state, path, pid, static_cast<std::uint64_t>(offset), size, output);
         });
     if (result > 0)
         std::memcpy(buffer, output->data(), static_cast<std::size_t>(result));
@@ -576,8 +619,8 @@ int fuse_create(const char* path, mode_t mode, struct fuse_file_info*) {
     auto* state = current_backend();
     if (!state)
         return -EIO;
-    return state->queue()->submit([state, path = fuse_path(path), mode] {
-        return create_request(state, path, static_cast<std::uint32_t>(mode));
+    return state->queue()->submit([state, path = fuse_path(path), pid = current_pid(), mode] {
+        return create_request(state, path, pid, static_cast<std::uint32_t>(mode));
     });
 }
 
@@ -588,10 +631,14 @@ int fuse_write(
         return -EIO;
     auto input = std::vector<std::byte>(reinterpret_cast<const std::byte*>(buffer),
                                         reinterpret_cast<const std::byte*>(buffer + size));
-    return state->queue()->submit(
-        [state, path = fuse_path(path), offset, input = std::move(input)]() mutable {
-            return write_request(state, path, static_cast<std::uint64_t>(offset), std::move(input));
-        });
+    return state->queue()->submit([state,
+                                   path = fuse_path(path),
+                                   pid = current_pid(),
+                                   offset,
+                                   input = std::move(input)]() mutable {
+        return write_request(
+            state, path, pid, static_cast<std::uint64_t>(offset), std::move(input));
+    });
 }
 
 int fuse_unlink(const char* path) {
@@ -621,8 +668,8 @@ int fuse_mkdir(const char* path, mode_t mode) {
     auto* state = current_backend();
     if (!state)
         return -EIO;
-    return state->queue()->submit([state, path = fuse_path(path), mode] {
-        return mkdir_request(state, path, static_cast<std::uint32_t>(mode));
+    return state->queue()->submit([state, path = fuse_path(path), pid = current_pid(), mode] {
+        return mkdir_request(state, path, pid, static_cast<std::uint32_t>(mode));
     });
 }
 
@@ -683,6 +730,40 @@ start_fuse(repository& source, std::filesystem::path mountpoint, mount_options o
         co_return std::unexpected(prepared->error());
     auto state =
         std::make_shared<fuse_backend>(source, std::move(mountpoint), std::move(*root), options);
+    auto initialised = co_await state->initialise_cache();
+    if (!initialised)
+        co_return std::unexpected(initialised.error());
+    runtime::spawn(run_fuse(state), [state](result<void> outcome) {
+        if (!outcome)
+            state->request_unmount();
+    });
+    auto ready = co_await runtime::offload([state] { return state->wait_ready(); });
+    if (!ready)
+        co_return std::unexpected(ready.error());
+    if (!*ready)
+        co_return std::unexpected(ready->error());
+    co_return std::static_pointer_cast<backend>(std::move(state));
+}
+
+runtime::task<std::shared_ptr<backend>> start_observed_fuse(repository& source,
+                                                            digest,
+                                                            std::filesystem::path mountpoint,
+                                                            std::vector<std::string>,
+                                                            observation_sink sink) {
+    auto root = repository_detail::vfs_access::root_path(source);
+    if (!root)
+        co_return std::unexpected(root.error());
+    auto prepared =
+        co_await runtime::offload([mountpoint] { return prepare_mountpoint(mountpoint); });
+    if (!prepared)
+        co_return std::unexpected(prepared.error());
+    if (!*prepared)
+        co_return std::unexpected(prepared->error());
+    auto state = std::make_shared<fuse_backend>(source,
+                                                std::move(mountpoint),
+                                                std::move(*root),
+                                                mount_options{.read_only = true},
+                                                std::move(sink));
     auto initialised = co_await state->initialise_cache();
     if (!initialised)
         co_return std::unexpected(initialised.error());

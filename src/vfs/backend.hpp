@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "liquid/vfs.hpp"
+#include "vfs/observation.hpp"
 
 namespace liquid::vfs_detail {
 
@@ -17,6 +18,12 @@ public:
 [[nodiscard]] auto start_fuse(repository& source,
                               std::filesystem::path mountpoint,
                               mount_options options) -> runtime::task<std::shared_ptr<backend>>;
+[[nodiscard]] auto start_observed_fuse(repository& source,
+                                       digest tree,
+                                       std::filesystem::path mountpoint,
+                                       std::vector<std::string> outputs,
+                                       observation_sink sink)
+    -> runtime::task<std::shared_ptr<backend>>;
 
 struct mount_factory {
     [[nodiscard]] static auto make(std::shared_ptr<backend> implementation) -> ::liquid::mount;

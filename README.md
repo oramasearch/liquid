@@ -38,6 +38,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install.
 
+> **Phase 2 begins with local sandboxed action execution.** `liquid::build` stores action and
+> result records, materialises a toolchain, observes reads through the VFS mount, and executes the
+> action in Linux namespaces with a fixed environment. Cache lookup and `wrap` remain separate
+> Phase 2 work; macOS needs macFUSE to execute the fixed virtual-root path and Windows returns its
+> documented unsupported result.
+
 ## Where this sits
 
 liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module of

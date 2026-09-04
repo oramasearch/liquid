@@ -212,6 +212,8 @@ set_target_properties(liquid_metadata_objects PROPERTIES
 
 add_library(libliquid
   src/attestation/registry.cpp
+  src/build/executor.cpp
+  src/build/materialise.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
@@ -231,6 +233,7 @@ add_library(libliquid
   src/remote.cpp
   src/repository/repository_impl.cpp
   src/runtime/runtime.cpp
+  src/sandbox/environment.cpp
   src/scan/detectors.cpp
   src/store.cpp
   src/store/chunker.cpp
@@ -248,15 +251,16 @@ add_library(libliquid
   src/vfs/fuse_fs.cpp
   src/vfs/hydration.cpp
   src/vfs/materialise.cpp
+  src/vfs/observation.cpp
   src/vfs/request_queue.cpp
 )
 if(APPLE)
-  target_sources(libliquid PRIVATE src/capture/macos_watcher.cpp)
+  target_sources(libliquid PRIVATE src/capture/macos_watcher.cpp src/sandbox/macos.cpp)
   target_link_libraries(libliquid PRIVATE "-framework CoreServices")
 elseif(UNIX)
-  target_sources(libliquid PRIVATE src/capture/linux_watcher.cpp)
+  target_sources(libliquid PRIVATE src/capture/linux_watcher.cpp src/sandbox/linux.cpp)
 elseif(WIN32)
-  target_sources(libliquid PRIVATE src/capture/windows_watcher.cpp)
+  target_sources(libliquid PRIVATE src/capture/windows_watcher.cpp src/sandbox/windows.cpp)
 endif()
 target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 add_library(liquid::liquid ALIAS libliquid)
