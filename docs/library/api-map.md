@@ -282,9 +282,10 @@ the sorted key-version set used by its blobs. `readability_report` contains thos
 the three required rotation, revocation, and metadata-disclosure statements.
 
 `operation_record` is `{ op_id id, std::string kind, std::string from, std::string to, actor by,
-std::chrono::sys_seconds at }`. `operations()` returns the repository document's recorded
-operations newest first. Existing repository documents without operation metadata remain readable;
-their records return an empty actor and epoch timestamp.
+std::chrono::sys_seconds at }`. Each operation ID is unique, so it selects one operation for
+`undo`. `operations()` returns the repository document's recorded operations newest first.
+Existing repository documents without operation metadata remain readable; their records return an
+empty actor and epoch timestamp.
 
 ### `liquid/vfs.hpp`
 

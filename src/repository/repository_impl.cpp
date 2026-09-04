@@ -419,6 +419,14 @@ auto random_id() -> node_id {
     std::ranges::generate(result, [&] { return std::byte{static_cast<unsigned char>(random())}; });
     return result;
 }
+auto random_operation_id(algorithm hash_algorithm) -> result<op_id> {
+    auto value = random_id();
+    auto hashed = hash(hash_algorithm, std::span<const std::byte>{value});
+    if (!hashed) {
+        return std::unexpected(hashed.error());
+    }
+    return op_id{*hashed};
+}
 auto split_path(std::string_view path) -> result<std::vector<std::string>> {
     if (path.empty() || path.front() == '/' || path.back() == '/')
         return std::unexpected(failure(
@@ -1090,11 +1098,10 @@ struct repository::impl {
         }
         std::erase_if(current.conflict_values,
                       [&](const conflict& value) { return value.path == path; });
-        auto operation_hash = hash(hash_algorithm, std::span<const std::byte>{reference->bytes});
-        if (!operation_hash)
-            co_return std::unexpected(operation_hash.error());
-        record_operation(
-            op_id{*operation_hash}, "write", path, {}, found->second.node, std::move(prior));
+        auto operation = random_operation_id(hash_algorithm);
+        if (!operation)
+            co_return std::unexpected(operation.error());
+        record_operation(*operation, "write", path, {}, found->second.node, std::move(prior));
         auto signed_drip = co_await append_drip("write", found->second.node);
         if (!signed_drip)
             co_return std::unexpected(signed_drip.error());
@@ -1629,11 +1636,10 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     const auto moved_node = moved.node;
     (*source_parent)->entries.erase(found);
     (*destination_parent)->entries.emplace(destination->back(), std::move(moved));
-    auto hash_value =
-        hash(impl_->hash_algorithm, std::span<const std::byte>{impl_->current.root.node});
-    if (!hash_value)
-        co_return std::unexpected(hash_value.error());
-    impl_->record_operation(op_id{*hash_value}, "move", from, to, moved_node, std::nullopt);
+    auto operation = random_operation_id(impl_->hash_algorithm);
+    if (!operation)
+        co_return std::unexpected(operation.error());
+    impl_->record_operation(*operation, "move", from, to, moved_node, std::nullopt);
     auto signed_drip = co_await impl_->append_drip("move", moved_node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
@@ -1665,10 +1671,10 @@ runtime::task<void> repository::remove(std::string path) {
         co_return std::unexpected(recorded.error());
     auto prior = found->second;
     (*parent)->entries.erase(found);
-    auto hash_value = hash(impl_->hash_algorithm, std::span<const std::byte>{prior.node});
-    if (!hash_value)
-        co_return std::unexpected(hash_value.error());
-    impl_->record_operation(op_id{*hash_value}, "remove", path, {}, prior.node, std::move(prior));
+    auto operation = random_operation_id(impl_->hash_algorithm);
+    if (!operation)
+        co_return std::unexpected(operation.error());
+    impl_->record_operation(*operation, "remove", path, {}, prior.node, std::move(prior));
     auto signed_drip = co_await impl_->append_drip("remove", prior.node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
@@ -2161,11 +2167,10 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
         co_return std::unexpected(recorded.error());
     (*parent)->entries.emplace(parts->back(),
                                working_entry{entry_kind::directory, identity, mode, reference, {}});
-    auto operation_hash = hash(source.impl_->hash_algorithm, std::span<const std::byte>{identity});
-    if (!operation_hash)
-        co_return std::unexpected(operation_hash.error());
-    source.impl_->record_operation(
-        op_id{*operation_hash}, "mkdir", path, {}, identity, std::nullopt);
+    auto operation = random_operation_id(source.impl_->hash_algorithm);
+    if (!operation)
+        co_return std::unexpected(operation.error());
+    source.impl_->record_operation(*operation, "mkdir", path, {}, identity, std::nullopt);
     auto signed_drip = co_await source.impl_->append_drip("mkdir", identity);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());

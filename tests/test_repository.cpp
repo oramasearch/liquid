@@ -225,12 +225,8 @@ TEST(Repository, write_undo_and_locks_are_recorded) {
     ASSERT_TRUE(created);
     auto repository = std::move(*created);
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("value"))));
-    auto root = liquid::runtime::block_on(repository.root());
-    ASSERT_TRUE(root);
-    auto operation_digest =
-        liquid::hash(liquid::algorithm::blake3, root->entries.front().ref.bytes);
-    ASSERT_TRUE(operation_digest);
-    ASSERT_TRUE(liquid::runtime::block_on(repository.undo({*operation_digest})));
+    auto operation = liquid::repository_detail::testing::last_operation(repository);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.undo(operation)));
     auto missing = liquid::runtime::block_on(repository.read("file"));
     EXPECT_FALSE(missing);
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("value"))));
@@ -568,6 +564,7 @@ TEST(Repository, operations_are_newest_first_with_their_metadata) {
     auto operations = liquid::runtime::block_on(reopened->operations());
     ASSERT_TRUE(operations);
     ASSERT_EQ(operations->size(), 2U);
+    EXPECT_NE((*operations)[0].id.value.bytes, (*operations)[1].id.value.bytes);
     EXPECT_EQ(operations->front().kind, "move");
     EXPECT_EQ(operations->front().from, "before");
     EXPECT_EQ(operations->front().to, "after");
