@@ -202,6 +202,43 @@ auto parse_subject_kind(std::string_view value) -> result<attestation_subject_ki
     return std::unexpected(corrupt("invalid attestation subject kind"));
 }
 
+auto encode_platform(const platform& value) -> cbor::value {
+    return map({{"os", cbor::value{value.os}}, {"arch", cbor::value{value.arch}}});
+}
+
+auto decode_platform(const cbor::value& value) -> result<platform> {
+    const auto* os_value = find(value, "os");
+    const auto* arch_value = find(value, "arch");
+    const auto* os = os_value ? std::get_if<std::string>(&os_value->data) : nullptr;
+    const auto* arch = arch_value ? std::get_if<std::string>(&arch_value->data) : nullptr;
+    if (!os || !arch)
+        return std::unexpected(corrupt("invalid action platform"));
+    return platform{*os, *arch};
+}
+
+auto decode_text_array(const cbor::value* value, std::string_view field)
+    -> result<std::vector<std::string>> {
+    const auto* items = value ? std::get_if<cbor::value::array>(&value->data) : nullptr;
+    if (!items)
+        return std::unexpected(corrupt("invalid " + std::string{field}));
+    auto output = std::vector<std::string>{};
+    output.reserve(items->size());
+    for (const auto& item : *items) {
+        const auto* text = std::get_if<std::string>(&item.data);
+        if (!text)
+            return std::unexpected(corrupt("invalid " + std::string{field}));
+        output.push_back(*text);
+    }
+    return output;
+}
+
+auto milliseconds_value(const cbor::value& value) -> result<std::chrono::milliseconds> {
+    const auto* count = std::get_if<std::uint64_t>(&value.data);
+    if (!count || *count > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        return std::unexpected(corrupt("invalid action timing"));
+    return std::chrono::milliseconds{static_cast<std::int64_t>(*count)};
+}
+
 } // namespace
 
 auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes) -> result<digest> {
@@ -354,6 +391,86 @@ auto encode_attestation_body_unchecked(const attestation& value) -> result<std::
 
 auto encode(const attestation& value) -> result<std::vector<std::byte>> {
     return encode_attestation_value(value, true, true);
+}
+
+auto encode(const action_record& value) -> result<std::vector<std::byte>> {
+    auto command = cbor::value::array{};
+    for (const auto& argument : value.input.command)
+        command.emplace_back(argument);
+    auto environment = cbor::value::map{};
+    for (const auto& [name, setting] : value.input.env)
+        environment.emplace_back(cbor::value{name}, cbor::value{setting});
+    auto outputs = cbor::value::array{};
+    for (const auto& path : value.input.outputs)
+        outputs.emplace_back(path);
+    auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{1}}},
+                                   {"kind", "action"},
+                                   {"inputs", encode_digest(value.input.inputs)},
+                                   {"command", cbor::value{std::move(command)}},
+                                   {"cwd", cbor::value{value.input.cwd}},
+                                   {"env", cbor::value{std::move(environment)}},
+                                   {"outputs", cbor::value{std::move(outputs)}},
+                                   {"platform", encode_platform(value.input.platform)},
+                                   {"toolchain", encode_digest(value.input.toolchain)},
+                                   {"sandbox", encode_digest(value.sandbox)}};
+    if (value.input.timeout) {
+        if (value.input.timeout->count() < 0)
+            return std::unexpected(
+                error{errc::invalid_argument, "action timeout cannot be negative", "action"});
+        fields.emplace_back("timeout_s",
+                            cbor::value{static_cast<std::uint64_t>(value.input.timeout->count())});
+    }
+    return cbor::encode(cbor::value{std::move(fields)});
+}
+
+auto encode(const action_result& value) -> result<std::vector<std::byte>> {
+    auto outputs = cbor::value::array{};
+    for (const auto& output : value.outputs) {
+        outputs.push_back(map({{"path", cbor::value{output.path}},
+                               {"mode", cbor::value{static_cast<std::uint64_t>(output.mode)}},
+                               {"blob", encode_digest(output.blob)}}));
+    }
+    auto manifest = cbor::value::array{};
+    for (const auto& input : value.manifest) {
+        manifest.push_back(
+            map({{"path", cbor::value{input.path}}, {"digest", encode_digest(input.content)}}));
+    }
+    const auto exit_value = value.exit < 0 ? cbor::value{static_cast<std::int64_t>(value.exit)}
+                                           : cbor::value{static_cast<std::uint64_t>(value.exit)};
+    return cbor::encode(map(
+        {{"v", cbor::value{std::uint64_t{1}}},
+         {"kind", "result"},
+         {"action", encode_digest(value.action)},
+         {"exit", exit_value},
+         {"outputs", cbor::value{std::move(outputs)}},
+         {"stdout", encode_digest(value.stdout_output)},
+         {"stderr", encode_digest(value.stderr_output)},
+         {"manifest", cbor::value{std::move(manifest)}},
+         {"timing",
+          map({{"queued_ms", cbor::value{static_cast<std::uint64_t>(value.timing.queued.count())}},
+               {"sandbox_ms",
+                cbor::value{static_cast<std::uint64_t>(value.timing.sandbox.count())}},
+               {"exec_ms", cbor::value{static_cast<std::uint64_t>(value.timing.exec.count())}},
+               {"upload_ms",
+                cbor::value{static_cast<std::uint64_t>(value.timing.upload.count())}}})},
+         {"worker", cbor::value{value.worker}},
+         {"observed_at",
+          cbor::value{static_cast<std::int64_t>(value.observed_at.time_since_epoch().count())}}}));
+}
+
+auto encode(const sandbox_record& value) -> result<std::vector<std::byte>> {
+    auto environment = cbor::value::array{};
+    for (const auto& name : value.fixed_environment)
+        environment.emplace_back(name);
+    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+                             {"kind", "sandbox"},
+                             {"mechanism", cbor::value{value.mechanism}},
+                             {"work_root", cbor::value{value.work_root}},
+                             {"toolchain_root", cbor::value{value.toolchain_root}},
+                             {"home_root", cbor::value{value.home_root}},
+                             {"temporary_root", cbor::value{value.temporary_root}},
+                             {"fixed_environment", cbor::value{std::move(environment)}},
+                             {"network", cbor::value{value.network}}}));
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
@@ -644,6 +761,167 @@ auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>
         }
         output.allowances.push_back({*path, *detector, *line, *reason});
     }
+    return output;
+}
+
+auto decode_action(std::span<const std::byte> bytes) -> result<action_record> {
+    auto source = decode(bytes, "action");
+    if (!source)
+        return std::unexpected(source.error());
+    auto command = decode_text_array(find(*source, "command"), "action command");
+    auto outputs = decode_text_array(find(*source, "outputs"), "action outputs");
+    const auto* cwd_value = find(*source, "cwd");
+    const auto* environment_value = find(*source, "env");
+    const auto* platform_value = find(*source, "platform");
+    const auto* cwd = cwd_value ? std::get_if<std::string>(&cwd_value->data) : nullptr;
+    const auto* environment =
+        environment_value ? std::get_if<cbor::value::map>(&environment_value->data) : nullptr;
+    auto platform_result =
+        platform_value ? decode_platform(*platform_value)
+                       : result<platform>{std::unexpected(corrupt("action platform is missing"))};
+    const auto* inputs_value = find(*source, "inputs");
+    const auto* toolchain_value = find(*source, "toolchain");
+    const auto* sandbox_value = find(*source, "sandbox");
+    auto inputs = inputs_value ? decode_digest(*inputs_value)
+                               : result<digest>{std::unexpected(corrupt("action inputs missing"))};
+    auto toolchain = toolchain_value
+                         ? decode_digest(*toolchain_value)
+                         : result<digest>{std::unexpected(corrupt("action toolchain missing"))};
+    auto sandbox = sandbox_value
+                       ? decode_digest(*sandbox_value)
+                       : result<digest>{std::unexpected(corrupt("action sandbox missing"))};
+    if (!command || !outputs || !cwd || !environment || !platform_result || !inputs || !toolchain ||
+        !sandbox)
+        return std::unexpected(corrupt("invalid action record"));
+    auto env = std::map<std::string, std::string>{};
+    for (const auto& [name_value, setting_value] : *environment) {
+        const auto* name = std::get_if<std::string>(&name_value.data);
+        const auto* setting = std::get_if<std::string>(&setting_value.data);
+        if (!name || !setting || !env.emplace(*name, *setting).second)
+            return std::unexpected(corrupt("invalid action environment"));
+    }
+    auto timeout = std::optional<std::chrono::seconds>{};
+    if (const auto* timeout_value = find(*source, "timeout_s")) {
+        const auto* count = std::get_if<std::uint64_t>(&timeout_value->data);
+        if (!count || *count > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+            return std::unexpected(corrupt("invalid action timeout"));
+        timeout = std::chrono::seconds{static_cast<std::int64_t>(*count)};
+    }
+    return action_record{action_input{std::move(*command),
+                                      *cwd,
+                                      std::move(env),
+                                      std::move(*outputs),
+                                      *inputs,
+                                      *toolchain,
+                                      std::move(*platform_result),
+                                      timeout},
+                         *sandbox};
+}
+
+auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
+    auto source = decode(bytes, "result");
+    if (!source)
+        return std::unexpected(source.error());
+    const auto* action_value = find(*source, "action");
+    const auto* stdout_value = find(*source, "stdout");
+    const auto* stderr_value = find(*source, "stderr");
+    auto action = action_value ? decode_digest(*action_value)
+                               : result<digest>{std::unexpected(corrupt("result action missing"))};
+    auto stdout_output = stdout_value
+                             ? decode_digest(*stdout_value)
+                             : result<digest>{std::unexpected(corrupt("result stdout missing"))};
+    auto stderr_output = stderr_value
+                             ? decode_digest(*stderr_value)
+                             : result<digest>{std::unexpected(corrupt("result stderr missing"))};
+    const auto* exit_value = find(*source, "exit");
+    auto exit = std::optional<int>{};
+    if (const auto* signed_exit =
+            exit_value ? std::get_if<std::int64_t>(&exit_value->data) : nullptr;
+        signed_exit && *signed_exit >= std::numeric_limits<int>::min() &&
+        *signed_exit <= std::numeric_limits<int>::max()) {
+        exit = static_cast<int>(*signed_exit);
+    } else if (const auto* unsigned_exit =
+                   exit_value ? std::get_if<std::uint64_t>(&exit_value->data) : nullptr;
+               unsigned_exit &&
+               *unsigned_exit <= static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+        exit = static_cast<int>(*unsigned_exit);
+    }
+    const auto* output_values = find(*source, "outputs");
+    const auto* manifest_values = find(*source, "manifest");
+    const auto* timing_value = find(*source, "timing");
+    const auto* worker_value = find(*source, "worker");
+    const auto* observed_value = find(*source, "observed_at");
+    const auto* outputs =
+        output_values ? std::get_if<cbor::value::array>(&output_values->data) : nullptr;
+    const auto* manifest =
+        manifest_values ? std::get_if<cbor::value::array>(&manifest_values->data) : nullptr;
+    const auto* worker = worker_value ? std::get_if<std::string>(&worker_value->data) : nullptr;
+    auto observed = std::optional<std::int64_t>{};
+    if (const auto* signed_observed =
+            observed_value ? std::get_if<std::int64_t>(&observed_value->data) : nullptr) {
+        observed = *signed_observed;
+    } else if (const auto* unsigned_observed =
+                   observed_value ? std::get_if<std::uint64_t>(&observed_value->data) : nullptr;
+               unsigned_observed &&
+               *unsigned_observed <=
+                   static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        observed = static_cast<std::int64_t>(*unsigned_observed);
+    }
+    if (!action || !stdout_output || !stderr_output || !exit || !outputs || !manifest ||
+        !timing_value || !worker || !observed)
+        return std::unexpected(corrupt("invalid result record"));
+    action_result output{.action = *action,
+                         .exit = *exit,
+                         .stdout_output = *stdout_output,
+                         .stderr_output = *stderr_output,
+                         .worker = *worker,
+                         .observed_at = std::chrono::sys_seconds{std::chrono::seconds{*observed}}};
+    for (const auto& item : *outputs) {
+        const auto* path_value = find(item, "path");
+        const auto* mode_value = find(item, "mode");
+        const auto* blob_value = find(item, "blob");
+        const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+        const auto* mode = mode_value ? std::get_if<std::uint64_t>(&mode_value->data) : nullptr;
+        auto blob = blob_value ? decode_digest(*blob_value)
+                               : result<digest>{std::unexpected(corrupt("output blob missing"))};
+        if (!path || !mode || *mode > std::numeric_limits<std::uint32_t>::max() || !blob)
+            return std::unexpected(corrupt("invalid result output"));
+        output.outputs.push_back({*path, static_cast<std::uint32_t>(*mode), *blob});
+    }
+    for (const auto& item : *manifest) {
+        const auto* path_value = find(item, "path");
+        const auto* digest_value = find(item, "digest");
+        const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+        auto content = digest_value
+                           ? decode_digest(*digest_value)
+                           : result<digest>{std::unexpected(corrupt("manifest digest missing"))};
+        if (!path || !content)
+            return std::unexpected(corrupt("invalid result manifest"));
+        output.manifest.push_back({*path, *content});
+    }
+    const auto* queued_value = find(*timing_value, "queued_ms");
+    const auto* sandbox_timing_value = find(*timing_value, "sandbox_ms");
+    const auto* exec_value = find(*timing_value, "exec_ms");
+    const auto* upload_value = find(*timing_value, "upload_ms");
+    auto queued =
+        queued_value
+            ? milliseconds_value(*queued_value)
+            : result<std::chrono::milliseconds>{std::unexpected(corrupt("queued timing missing"))};
+    auto sandbox_timing =
+        sandbox_timing_value
+            ? milliseconds_value(*sandbox_timing_value)
+            : result<std::chrono::milliseconds>{std::unexpected(corrupt("sandbox timing missing"))};
+    auto exec =
+        exec_value
+            ? milliseconds_value(*exec_value)
+            : result<std::chrono::milliseconds>{std::unexpected(corrupt("exec timing missing"))};
+    auto upload =
+        upload_value
+            ? milliseconds_value(*upload_value)
+            : result<std::chrono::milliseconds>{std::unexpected(corrupt("upload timing missing"))};
+    if (!queued || !sandbox_timing || !exec || !upload)
+        return std::unexpected(corrupt("invalid result timing"));
+    output.timing = {*queued, *sandbox_timing, *exec, *upload};
     return output;
 }
 

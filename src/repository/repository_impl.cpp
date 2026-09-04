@@ -12,6 +12,7 @@
 #include <string_view>
 #include <utility>
 
+#include "build/repository_access.hpp"
 #include "crdt/document.hpp"
 #include "encoding/cbor.hpp"
 #include "encryption/leaf.hpp"
@@ -2369,6 +2370,71 @@ repository_detail::vfs_access::set_mode(repository& source, std::string path, st
 }
 
 result<std::filesystem::path> repository_detail::vfs_access::root_path(repository& source) {
+    if (!source.impl_)
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    return source.impl_->root_path;
+}
+
+runtime::task<std::vector<std::byte>> repository_detail::build_access::get(repository& source,
+                                                                           digest id) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return co_await source.impl_->objects.get(id);
+}
+
+runtime::task<digest> repository_detail::build_access::put_record(repository& source,
+                                                                  std::vector<std::byte> bytes) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return co_await repository_detail::store_access::put_plain(source.impl_->objects,
+                                                                  std::move(bytes));
+}
+
+runtime::task<digest> repository_detail::build_access::put_file(repository& source,
+                                                                std::filesystem::path path) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto content = co_await source.impl_->objects.put_file(std::move(path));
+    if (!content)
+        co_return std::unexpected(content.error());
+    auto blob = repository_detail::store_access::blob_for(source.impl_->objects, *content);
+    if (!blob)
+        co_return std::unexpected(blob.error());
+    auto encoded = objects::encode(*blob);
+    if (!encoded)
+        co_return std::unexpected(encoded.error());
+    co_return co_await repository_detail::store_access::put_plain(source.impl_->objects,
+                                                                  std::move(*encoded));
+}
+
+runtime::task<std::uint64_t> repository_detail::build_access::read(repository& source,
+                                                                   digest id,
+                                                                   std::uint64_t offset,
+                                                                   std::span<std::byte> output) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return co_await source.impl_->objects.read(id, offset, output);
+}
+
+runtime::task<std::chrono::sys_seconds>
+repository_detail::build_access::change_time(repository& source, digest tree) {
+    if (!source.impl_ || !source.impl_->current.head)
+        co_return std::unexpected(
+            failure(errc::not_found, "repository has no change for action inputs"));
+    auto bytes = co_await source.impl_->objects.get(source.impl_->current.head->value);
+    if (!bytes)
+        co_return std::unexpected(bytes.error());
+    auto change = objects::decode_change(*bytes);
+    if (!change)
+        co_return std::unexpected(change.error());
+    if (to_string(change->root) != to_string(tree))
+        co_return std::unexpected(failure(errc::invalid_argument,
+                                          "action inputs are not the current change tree",
+                                          to_string(tree)));
+    co_return change->at;
+}
+
+result<std::filesystem::path> repository_detail::build_access::root_path(repository& source) {
     if (!source.impl_)
         return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     return source.impl_->root_path;

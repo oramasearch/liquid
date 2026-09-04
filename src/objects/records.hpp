@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/object.hpp"
 
@@ -19,12 +20,30 @@ struct repo_record {
     std::optional<repo_ref> root_change;
 };
 
+struct action_record {
+    action_input input;
+    digest sandbox;
+};
+
+struct sandbox_record {
+    std::string mechanism;
+    std::string work_root;
+    std::string toolchain_root;
+    std::string home_root;
+    std::string temporary_root;
+    std::vector<std::string> fixed_environment;
+    bool network{};
+};
+
 [[nodiscard]] auto encode(const blob& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const tree& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const change& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_change_body(const change& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const repo_record& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const attestation& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const action_record& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const action_result& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const sandbox_record& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body(const attestation& value)
     -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body_unchecked(const attestation& value)
@@ -37,6 +56,8 @@ struct repo_record {
     -> result<change>;
 [[nodiscard]] auto decode_repo(std::span<const std::byte> bytes) -> result<repo_record>;
 [[nodiscard]] auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>;
+[[nodiscard]] auto decode_action(std::span<const std::byte> bytes) -> result<action_record>;
+[[nodiscard]] auto decode_result(std::span<const std::byte> bytes) -> result<action_result>;
 [[nodiscard]] auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes)
     -> result<digest>;
 
