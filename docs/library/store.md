@@ -1,6 +1,7 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process local stores (liquid #1, #7, #8, #46, #116).**
+**Status: implemented for single-process stores with local chunks and registered remote blobs
+(liquid #1, #7, #8, #17, #46, #116).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -19,6 +20,7 @@ share chunks without a file-per-object bottleneck.
 <root>/LIQUID_STORE       format marker: `liquid-store 1\n`
 <root>/packs/pack-<id>.pack
 <root>/packs/objects.meta ordered input digest → chunk-list descriptors
+<root>/packs/remotes.meta remote whole-content digest → size, chunks, source, instance
 <root>/index/MANIFEST
 <root>/index/run-<seq>.idx
 <root>/leases/lease-<id>-<generation>.lease
@@ -87,6 +89,19 @@ scheme tags.
 Pack file reads and writes use Corosio `random_access_file`; synchronous directory creation and
 atomic manifest rename are limited to filesystem metadata operations. Corosio open failures are
 converted to `errc::io` at the private boundary.
+
+## Remote blob availability
+
+`store::register_remote` records a blob's whole-content digest, size, chunk digests, chunk sizes,
+source id, and instance in `remotes.meta`. `store::has` distinguishes `absent`, `remote`, and
+`local`; a registered blob becomes local only when every named chunk is present. The configured
+`store_options::remote_sources` map resolves source ids to `remote_blob_source` handles.
+
+`get` fetches all missing chunks and verifies the whole-content digest. `read` fetches only complete
+chunks intersecting its requested range. Every returned range is length-checked, each chunk is
+hashed before `put_plain`, and the assembled object is hashed before `get` succeeds. Remote bytes
+therefore enter packs through the same verified, deduplicated path as local writes. The separate
+metadata file is atomically replaced and survives reopen; it carries locations, not content.
 
 `put` acknowledges a chunk after its complete frame has been written. `store_options::durable`
 defaults to `false`; setting it to `true` calls `sync_data` on the pack before acknowledgement.

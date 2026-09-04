@@ -74,12 +74,21 @@ materialise_directory(repository& source, digest root, std::filesystem::path des
         if (!blob)
             co_return std::unexpected(blob.error());
         auto contents = std::vector<std::byte>{};
-        contents.reserve(static_cast<std::size_t>(blob->size));
-        for (const auto& chunk : blob->chunks) {
-            auto chunk_bytes = co_await repository_detail::build_access::get(source, chunk);
-            if (!chunk_bytes)
-                co_return std::unexpected(chunk_bytes.error());
-            contents.insert(contents.end(), chunk_bytes->begin(), chunk_bytes->end());
+        if (blob->content.alg == algorithm::blake3 || blob->content.alg == algorithm::sha256 ||
+            blob->content.alg == algorithm::blake3_keyed) {
+            auto complete = co_await repository_detail::build_access::get(source, blob->content);
+            if (!complete) {
+                co_return std::unexpected(complete.error());
+            }
+            contents = std::move(*complete);
+        } else {
+            contents.reserve(static_cast<std::size_t>(blob->size));
+            for (const auto& chunk : blob->chunks) {
+                auto chunk_bytes = co_await repository_detail::build_access::get(source, chunk);
+                if (!chunk_bytes)
+                    co_return std::unexpected(chunk_bytes.error());
+                contents.insert(contents.end(), chunk_bytes->begin(), chunk_bytes->end());
+            }
         }
         if (contents.size() != blob->size)
             co_return std::unexpected(

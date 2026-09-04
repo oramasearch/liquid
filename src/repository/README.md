@@ -29,3 +29,7 @@ Retention rules are canonical repository-document configuration. Repository coll
 first, applies ref and result policy, releases results selected by the physical size cap, and only
 then delegates byte reclamation to the store collector. `repository::retain_explain` uses a dry
 collector pass so the CLI does not inspect repository internals.
+
+Remote file entries use the same working tree and canonical blob reference as local files.
+`store_remote_blob` registers metadata without reading content, `write_remote` records the entry,
+and repository status recursively sums chunk bytes that are not yet local.

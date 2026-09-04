@@ -27,3 +27,7 @@ Collector explanations carry object-level reasons and count live policy roots by
 `subject_index.cpp` maps an attestation's signed subject digest to its canonical attestation record
 digest. The map updates when records are stored and rebuilds from attestation objects when the store
 opens; build-input policy still loads and verifies every indexed record before counting it.
+
+Remote blob registrations are persisted separately in `packs/remotes.meta`. The store reports
+whole-content availability as absent, remote, or local and fetches only missing logical chunks
+through the configured source before verifying and writing them through the ordinary pack path.

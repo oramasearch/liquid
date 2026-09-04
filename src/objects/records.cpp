@@ -100,6 +100,25 @@ auto decode(std::span<const std::byte> bytes, std::string_view kind) -> result<c
     return decoded;
 }
 
+auto decode_versioned(std::span<const std::byte> bytes,
+                      std::string_view kind,
+                      std::uint64_t maximum_version) -> result<cbor::value> {
+    auto decoded = cbor::decode(bytes);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto* version_value = find(*decoded, "v");
+    const auto* kind_value = find(*decoded, "kind");
+    const auto* version =
+        version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
+    const auto* record_kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
+    if (!version || *version == 0 || *version > maximum_version || !record_kind ||
+        *record_kind != kind) {
+        return std::unexpected(corrupt("unsupported record kind or version"));
+    }
+    return decoded;
+}
+
 auto encode_change_id(const change_id& value) -> cbor::value {
     return encode_digest(value.value);
 }
@@ -488,11 +507,32 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
     auto chunk_sizes = cbor::value::array{};
     for (const auto size : sizes)
         chunk_sizes.push_back(cbor::value{size});
-    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
-                             {"kind", "blob"},
-                             {"size", cbor::value{value.size}},
-                             {"chunks", std::move(chunks)},
-                             {"chunk_sizes", std::move(chunk_sizes)}}));
+    const auto has_content = value.content.alg == algorithm::blake3 ||
+                             value.content.alg == algorithm::sha256 ||
+                             value.content.alg == algorithm::blake3_keyed;
+    if (value.remote && (!has_content || value.remote->source.empty())) {
+        return std::unexpected(
+            error{errc::invalid_argument, "remote blob requires a digest and source", "blob"});
+    }
+    if (!has_content && !value.remote) {
+        return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+                                 {"kind", "blob"},
+                                 {"size", cbor::value{value.size}},
+                                 {"chunks", std::move(chunks)},
+                                 {"chunk_sizes", std::move(chunk_sizes)}}));
+    }
+    auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{2}}},
+                                   {"kind", "blob"},
+                                   {"digest", encode_digest(value.content)},
+                                   {"size", cbor::value{value.size}},
+                                   {"chunks", std::move(chunks)},
+                                   {"chunk_sizes", std::move(chunk_sizes)}};
+    if (value.remote) {
+        fields.emplace_back("remote",
+                            map({{"source", cbor::value{value.remote->source}},
+                                 {"instance", cbor::value{value.remote->instance}}}));
+    }
+    return cbor::encode(cbor::value{std::move(fields)});
 }
 
 auto encode(const tree& value) -> result<std::vector<std::byte>> {
@@ -835,9 +875,11 @@ auto encode(const sbom_record& value) -> result<std::vector<std::byte>> {
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
-    auto source = decode(bytes, "blob");
+    auto source = decode_versioned(bytes, "blob", 2);
     if (!source)
         return std::unexpected(source.error());
+    const auto* version_value = find(*source, "v");
+    const auto* version = std::get_if<std::uint64_t>(&version_value->data);
     const auto* size = find(*source, "size");
     const auto* chunks = find(*source, "chunks");
     const auto* chunk_sizes = find(*source, "chunk_sizes");
@@ -869,6 +911,30 @@ auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
         std::accumulate(output.chunk_sizes.begin(), output.chunk_sizes.end(), std::uint64_t{});
     if (output.chunk_sizes.size() != output.chunks.size() || total != *n)
         return std::unexpected(corrupt("blob chunk sizes do not match content size"));
+    const auto* digest_value = find(*source, "digest");
+    const auto* remote_value = find(*source, "remote");
+    if ((*version == 1 && (digest_value || remote_value)) || (*version == 2 && !digest_value)) {
+        return std::unexpected(corrupt("invalid blob fields for record version"));
+    }
+    if (digest_value) {
+        auto content = decode_digest(*digest_value);
+        if (!content) {
+            return std::unexpected(corrupt("invalid blob content digest"));
+        }
+        output.content = *content;
+    }
+    if (remote_value) {
+        const auto* source_value = find(*remote_value, "source");
+        const auto* instance_value = find(*remote_value, "instance");
+        const auto* source_id =
+            source_value ? std::get_if<std::string>(&source_value->data) : nullptr;
+        const auto* instance =
+            instance_value ? std::get_if<std::string>(&instance_value->data) : nullptr;
+        if (!source_id || source_id->empty() || !instance || output.content.alg == algorithm{}) {
+            return std::unexpected(corrupt("invalid remote blob location"));
+        }
+        output.remote = remote_blob_location{*source_id, *instance};
+    }
     return output;
 }
 

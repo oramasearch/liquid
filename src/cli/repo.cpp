@@ -152,23 +152,26 @@ auto repo_status(int argc, char** argv) -> int {
     }
     const auto head = current->head ? liquid::to_string(current->head->value) : std::string{};
     if (json) {
-        std::println("{{\"pending_drips\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
-                     "directories\":{},\"head\":{},\"capture\":{{\"state\":{},\"pending_drips\":"
-                     "{},\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}}}}",
-                     current->pending_drips,
-                     current->paused ? "true" : "false",
-                     current->conflicts.size(),
-                     current->oversized_directories.size(),
-                     current->head ? json_string(head) : "null",
-                     json_string(capture_current->state == liquid::capture_status::state::paused
-                                     ? "paused"
-                                     : "running"),
-                     capture_current->pending_drips,
-                     capture_current->overflow_count,
-                     capture_current->recrawl_count,
-                     json_string(capture_current->last_cursor.token));
+        std::println(
+            "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
+            "directories\":{},\"head\":{},\"capture\":{{\"state\":{},\"pending_drips\":"
+            "{},\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}}}}",
+            current->pending_drips,
+            current->remote_bytes,
+            current->paused ? "true" : "false",
+            current->conflicts.size(),
+            current->oversized_directories.size(),
+            current->head ? json_string(head) : "null",
+            json_string(capture_current->state == liquid::capture_status::state::paused
+                            ? "paused"
+                            : "running"),
+            capture_current->pending_drips,
+            capture_current->overflow_count,
+            capture_current->recrawl_count,
+            json_string(capture_current->last_cursor.token));
     } else {
         std::println("pending_drips={}", current->pending_drips);
+        std::println("remote_bytes={}", current->remote_bytes);
         std::println("paused={}", current->paused);
         std::println("conflicts={}", current->conflicts.size());
         std::println("oversized_directories={}", current->oversized_directories.size());

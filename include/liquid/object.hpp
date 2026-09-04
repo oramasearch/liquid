@@ -12,6 +12,7 @@
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
+#include "liquid/remote.hpp"
 
 namespace liquid {
 
@@ -31,6 +32,8 @@ struct LIQUID_EXPORT blob {
     std::vector<digest> chunks;
     std::uint64_t size;
     std::vector<std::uint64_t> chunk_sizes;
+    digest content{};
+    std::optional<remote_blob_location> remote;
 };
 
 struct LIQUID_EXPORT change_id {

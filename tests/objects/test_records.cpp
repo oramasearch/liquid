@@ -58,6 +58,25 @@ TEST(Records, blob_records_carry_range_addressable_chunk_sizes) {
     EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
 }
 
+TEST(Records, remote_blob_records_carry_content_and_location) {
+    const auto chunk = example_digest(0x42);
+    const auto original =
+        liquid::blob{.chunks = {chunk},
+                     .size = 42,
+                     .chunk_sizes = {42},
+                     .content = example_digest(0x24),
+                     .remote = liquid::remote_blob_location{"worker", "instance"}};
+    auto encoded = liquid::objects::encode(original);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_blob(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(liquid::to_string(decoded->content), liquid::to_string(original.content));
+    EXPECT_EQ(decoded->remote, original.remote);
+    auto reencoded = liquid::objects::encode(*decoded);
+    ASSERT_TRUE(reencoded) << reencoded.error().message;
+    EXPECT_EQ(*reencoded, *encoded);
+}
+
 TEST(Records, action_records_are_canonical_and_round_trip) {
     const auto record = liquid::objects::action_record{
         .input = {.command = {"clang", "-c", "hello.c", "-o", "out/hello.o"},

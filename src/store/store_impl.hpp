@@ -49,6 +49,9 @@ public:
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<bool> contains(digest id);
+    [[nodiscard]] runtime::task<blob_availability> has(digest id);
+    [[nodiscard]] runtime::task<void> register_remote(blob value);
+    [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] std::vector<digest> attestations(digest subject) const;
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>> lease_root(digest id,
@@ -59,6 +62,9 @@ public:
 private:
     explicit store_backend(std::filesystem::path root, store_options options);
     [[nodiscard]] runtime::task<void> load_objects();
+    [[nodiscard]] runtime::task<void> load_remotes();
+    [[nodiscard]] runtime::task<void> save_remotes();
+    [[nodiscard]] runtime::task<void> rebuild_remote_record_index();
     [[nodiscard]] runtime::task<void> rebuild_subject_index();
     [[nodiscard]] runtime::task<void> save_objects();
     [[nodiscard]] runtime::task<void> stage_objects();
@@ -75,6 +81,11 @@ private:
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     load_snapshot_object(const stored_object& object,
                          const std::map<std::string, chunk_location>& locations);
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    hydrate_remote_chunk(const blob& value, std::size_t index, std::uint64_t offset);
+    [[nodiscard]] runtime::task<std::vector<std::byte>> get_remote(const blob& value);
+    [[nodiscard]] runtime::task<std::uint64_t>
+    read_remote(const blob& value, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<void> add_object(stored_object object);
     [[nodiscard]] runtime::task<digest> put_selected(std::vector<std::byte> input,
                                                      std::optional<std::string> key_id);
@@ -87,6 +98,8 @@ private:
     chunk_index index_;
     std::map<std::uint32_t, pack_contents> packs_;
     std::map<std::string, stored_object> objects_;
+    std::map<std::string, blob> remotes_;
+    std::map<std::string, digest> remote_records_;
     std::map<std::string, std::string> chunk_keys_;
     subject_index subjects_;
     std::uint32_t current_pack_{};

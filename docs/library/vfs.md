@@ -22,8 +22,8 @@ of this implementation. A macOS build without macFUSE succeeds; attempting to mo
 `errc::unsupported` with an installation instruction. Windows returns `errc::unsupported` and
 directs callers to `materialise`.
 
-Remote hydration from lake is also Phase 6. Phase 1 proves that opening a local repository writes
-no working-tree bytes and that range reads touch only covering local-store chunks.
+Remote hydration through `remote_blob_source` is implemented independently of any hosted service.
+Phase 6 may provide a source implementation, but the VFS and record format do not depend on it.
 
 ## Public API
 
@@ -50,6 +50,13 @@ reader locate a 4 KiB request at 40 MiB without fetching earlier chunks. A file 
 states: no chunks used, some chunks used, and every chunk used. The cache stores verified plaintext
 chunks under `LIQUID_VFS/chunks/` in the repository. It is shared across mounts and capped at 1 GiB;
 least-recently-used files are removed when a new chunk crosses the cap.
+
+A version 2 blob may also carry its whole-content digest and remote source/instance. A cache miss
+then asks the store for the whole logical chunk at its file offset. The store calls
+`remote_blob_source::read_range`, verifies the chunk digest, and stores it as an ordinary local
+chunk before the hydration cache publishes it. Concurrent mount requests still pass through the
+existing serialized hydration queue. `materialise` reads the whole content digest and therefore
+fetches any chunks that remain remote.
 
 Plain BLAKE3 and SHA-256 cache entries are rehashed before use. Keyed-digest chunks are decrypted
 and authenticated by the store for each read but are not persisted in the plaintext cache, because
@@ -104,7 +111,8 @@ cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON
 cmake --build build-shared && ctest --test-dir build-shared --output-on-failure
 ```
 
-`VfsMaterialise` compares full and prefix checkouts. `VfsHydration` checks a range read against the
+`VfsMaterialise` compares full and prefix checkouts. `RemoteOutputs` proves exact remote chunk
+reads, persistent cache reuse, and on-demand full materialisation. `VfsHydration` checks a range read against the
 source and asserts that less than the file was hydrated. `VfsMount` uses a 64 MiB file, reads 4 KiB
 at 40 MiB, reads the full file, captures a write and stable node identity, records one move, checks
 locked-path `EACCES`, and verifies reuse after unmount and remount. It reports a skip with the FUSE

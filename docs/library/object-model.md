@@ -41,7 +41,9 @@ shortest integers) so the same value always has the same digest on every platfor
 starts with a `kind` and a `v` (format version).
 
 ```
-blob        { v, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…] }
+blob/1      { v:1, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…] }
+blob/2      { v:2, kind:"blob", digest, size, chunks:[digest…], chunk_sizes:[uint…],
+              remote?:{source,instance} }
 tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo, id:node_id, ref:digest | repo_ref } … ] }   # sorted by name, bytewise
 change      { v, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), heads:[bytes…], conflicts?:[conflict…], symbols?:digest, sig:bytes }
@@ -50,7 +52,7 @@ attestation { v, kind:"attestation", subject:digest, profile, subject_kind?, att
               attribute_disclosure_commitments?, detectors:[text...], findings:uint, at:time,
               issuer:actor, allowances:[scan allowance...], sig:bytes }
 action      { v, kind:"action", inputs:digest(tree), command:[text...], cwd, env, outputs,
-              platform, toolchain:digest(tree), sandbox:digest, timeout_s? }
+              platform, toolchain:digest(tree), sandbox:digest, timeout_s?, remote_eligible? }
 result      { v, kind:"result", action:digest, outputs, manifest, producer, provenance?, sboms?, sig }
 sbom        { v, kind:"sbom", format:text, document:bytes }
 ```
@@ -83,6 +85,11 @@ sbom        { v, kind:"sbom", format:text, document:bytes }
 
 Trees and blobs are values: two repositories with the same content share every record and every
 chunk, because the store is one.
+
+Local writes retain `blob/1` identity. A remote output uses `blob/2`: `digest` identifies the
+complete byte stream while the parallel chunk arrays define independently verifiable range
+fetches. The optional location is routing metadata, not part of the content digest. An action is
+version 2 only when `remote_eligible` is true, so default-off actions retain their version 1 bytes.
 
 ## The metadata document
 
@@ -274,8 +281,9 @@ UTF-8 byte offsets are not valid automerge text indices.
 
 File content is represented by a canonical `blob` record whose parallel chunk digest and size
 lists describe FastCDC logical chunks. The size list lets VFS range reads locate an offset without
-loading earlier chunks. The decoder remains compatible with the earlier single-chunk record by
-deriving its one size from the blob total. Trees and changes are canonical records as well; the
+loading earlier chunks. A version 2 remote blob also records the whole-content digest and source
+location so a chunk range can be fetched and independently checked. The decoder remains compatible
+with the earlier single-chunk record by deriving its one size from the blob total. Trees and changes are canonical records as well; the
 change digest is the digest of its canonical bytes and is never an automerge hash. The fixture in
 `tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree encoding.
 

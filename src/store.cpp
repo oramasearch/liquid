@@ -75,6 +75,14 @@ result<blob> store::blob_for(digest id) const {
     return impl_->value->blob_for(id);
 }
 
+result<std::uint64_t> store::remote_bytes(digest blob_record) const {
+    if (!impl_) {
+        return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::remote_bytes"});
+    }
+    return impl_->value->remote_bytes(blob_record);
+}
+
 runtime::task<digest> store::put_plain(std::vector<std::byte> input) {
     if (!impl_) {
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});
@@ -132,6 +140,21 @@ runtime::task<bool> store::contains(digest id) {
         co_return std::unexpected(
             error{errc::invalid_argument, "store is not open", "store::contains"});
     co_return co_await impl_->value->contains(id);
+}
+
+runtime::task<blob_availability> store::has(digest id) {
+    if (!impl_) {
+        co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::has"});
+    }
+    co_return co_await impl_->value->has(id);
+}
+
+runtime::task<void> store::register_remote(blob value) {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::register_remote"});
+    }
+    co_return co_await impl_->value->register_remote(std::move(value));
 }
 
 runtime::task<std::optional<object_key_version>> store::key_version(digest id) {

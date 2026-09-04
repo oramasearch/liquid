@@ -30,8 +30,11 @@ private:
         std::vector<bool> hydrated;
     };
 
-    [[nodiscard]] auto load_chunk(repository& source, digest id, std::uint64_t size)
-        -> runtime::task<std::vector<std::byte>>;
+    [[nodiscard]] auto load_chunk(repository& source,
+                                  digest content,
+                                  digest id,
+                                  std::uint64_t offset,
+                                  std::uint64_t size) -> runtime::task<std::vector<std::byte>>;
     [[nodiscard]] auto chunk_path(const digest& id) const -> std::filesystem::path;
 
     static constexpr std::uint64_t capacity = 1024ULL * 1024ULL * 1024ULL;

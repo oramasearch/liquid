@@ -20,6 +20,8 @@ struct vfs_entry {
     std::uint64_t size{};
     std::vector<digest> chunks;
     std::vector<std::uint64_t> chunk_sizes;
+    digest content{};
+    std::optional<remote_blob_location> remote;
 };
 
 struct LIQUID_EXPORT vfs_access {

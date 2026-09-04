@@ -356,6 +356,17 @@ runtime::task<std::vector<std::byte>> blob_contents(repository& source, digest i
     auto blob = objects::decode_blob(*raw);
     if (!blob)
         co_return std::unexpected(blob.error());
+    if (blob->content.alg == algorithm::blake3 || blob->content.alg == algorithm::sha256 ||
+        blob->content.alg == algorithm::blake3_keyed) {
+        auto contents = co_await repository_detail::build_access::get(source, blob->content);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        if (contents->size() != blob->size) {
+            co_return std::unexpected(wrap_error(errc::corrupt, "cached output size is invalid"));
+        }
+        co_return contents;
+    }
     auto output = std::vector<std::byte>{};
     output.reserve(static_cast<std::size_t>(blob->size));
     for (const auto& chunk : blob->chunks) {
