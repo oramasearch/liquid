@@ -36,9 +36,6 @@
 #include "vfs/backend.hpp"
 #include "vfs/repository_access.hpp"
 
-#ifndef LIQUID_WRAP_HOOK_PATH
-#define LIQUID_WRAP_HOOK_PATH ""
-#endif
 #ifndef LIQUID_WRAP_HOOK_FILENAME
 #define LIQUID_WRAP_HOOK_FILENAME "libliquid-wrap-hook.so"
 #endif
@@ -254,20 +251,25 @@ auto wrap_hook_path() -> liquid::result<std::filesystem::path> {
     auto candidates = std::vector<std::filesystem::path>{};
     if (const auto* configured = std::getenv("LIQUID_WRAP_HOOK"))
         candidates.emplace_back(configured);
-    candidates.emplace_back(LIQUID_WRAP_HOOK_PATH);
 #if defined(__linux__)
     auto code = std::error_code{};
     const auto executable = std::filesystem::read_symlink("/proc/self/exe", code);
-    if (!code)
+    if (!code) {
+        candidates.push_back(executable.parent_path() / LIQUID_WRAP_HOOK_FILENAME);
+        candidates.push_back(executable.parent_path() / ".." / LIQUID_WRAP_HOOK_FILENAME);
         candidates.push_back(executable.parent_path() / "../libexec/liquid" /
                              LIQUID_WRAP_HOOK_FILENAME);
+    }
 #elif defined(__APPLE__)
     auto size = std::uint32_t{};
     static_cast<void>(_NSGetExecutablePath(nullptr, &size));
     auto executable = std::string(size, '\0');
     if (_NSGetExecutablePath(executable.data(), &size) == 0) {
         executable.resize(std::strlen(executable.c_str()));
-        candidates.push_back(std::filesystem::path{executable}.parent_path() / "../libexec/liquid" /
+        const auto executable_directory = std::filesystem::path{executable}.parent_path();
+        candidates.push_back(executable_directory / LIQUID_WRAP_HOOK_FILENAME);
+        candidates.push_back(executable_directory / ".." / LIQUID_WRAP_HOOK_FILENAME);
+        candidates.push_back(executable_directory / "../libexec/liquid" /
                              LIQUID_WRAP_HOOK_FILENAME);
     }
 #endif

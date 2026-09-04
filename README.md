@@ -126,6 +126,7 @@ and Zetta's.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, read-time hermeticity, and the remaining Phase 3 design.
+- [`docs/library/self-host.md`](docs/library/self-host.md) — how liquid configures with CMake, builds itself under `liquid wrap`, and compares bootstrap outputs.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
@@ -230,7 +231,8 @@ liquid wrap --target aarch64-unknown-linux-gnu ./configure
 
 The second command reuses valid compile and link results before their tools start. Linux requires
 libfuse3; macOS requires macFUSE. See [`docs/cli/README.md`](docs/cli/README.md) for options and
-platform availability.
+platform availability. Build-tree binaries locate the private exec-time hook relative to the
+binary, so an absolute checkout path is not embedded in libliquid or the CLI.
 
 `LIQUID_BUILD_BENCH=ON` adds the optional `bench/chunk-index/chunk-index-bench` target and
 fetches its RocksDB and LMDB dependencies. It defaults to OFF, so the default configure does not

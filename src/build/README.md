@@ -30,7 +30,10 @@ performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts.
 validates saved actions, launches one writable observed mount, derives child actions from process
 reads and writes, publishes the driver's outer action, and materialises hits back into the checkout.
 Action boundaries are output-producing leaf processes from the discovered toolchain, not executable
-names. Completed output snapshots make each recorded action independently replayable.
+names. Completed output snapshots make each recorded action independently replayable. The exec-time
+hook is found relative to the running binary in a build tree or the installed `libexec/liquid`
+directory; its checkout-specific build path is never compiled into libliquid.
+
 `trace.cpp` derives dependency edges when a result manifest reads another action's output, stores a
 `build_trace` record for every wrap, computes longest paths, loads the latest retained trace, and
 exports Chrome trace-event JSON. The wrap hook records monotonic process entry and exit values;

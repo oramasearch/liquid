@@ -307,7 +307,6 @@ target_include_directories(libliquid PUBLIC
           ${monocypher_source_SOURCE_DIR}/src/optional)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_compile_definitions(libliquid PRIVATE
-  LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
   LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
 add_dependencies(libliquid liquid-wrap-hook)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

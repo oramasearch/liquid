@@ -1,0 +1,43 @@
+# liquid builds liquid
+
+**What.** liquid's bootstrap remains CMake and Ninja, but the compile and link step also runs under
+`liquid wrap`. Configuration stays outside the sandbox because FetchContent resolves BLAKE3,
+Monocypher, zstd, and GoogleTest over the network. The wrapped build runs with networking denied.
+
+**Why.** Building liquid itself exercises a large C and C++ action graph, private submodules,
+generated headers, static archives, a shared helper, and the final CLI in one repeatable scenario.
+It is the forcing function for path-independent actions and byte-identical local cache results.
+
+## Fixed paths
+
+Wrapped CMake builds are configured through the fixed `/liquid/work` source root on Linux. CMake
+writes source and binary directory names into Ninja commands, so configuring at an arbitrary
+checkout path would make the action command differ between workers and would point inside the
+sandbox at a path that does not exist. Local Linux verification bind-mounts the checkout at
+`/liquid/work` before configuring; the CI job uses the same layout.
+
+The exec-time hook is different from a build input path. Before self-hosting, CMake compiled the
+full `$<TARGET_FILE:liquid-wrap-hook>` value into libliquid. The defect was found directly in both
+bootstrap artifacts:
+
+```text
+build/libliquid.a
+/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-59/build/libliquid-wrap-hook.dylib
+build/liquid
+/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-59/build/libliquid-wrap-hook.dylib
+```
+
+libliquid now receives only the hook filename. A build-tree CLI finds the hook beside itself, a
+test executable finds it in its parent build directory, and an installed CLI finds it under
+`libexec/liquid`. `LIQUID_WRAP_HOOK` remains the explicit override.
+
+## Verification record
+
+The Linux two-run action counts, hit rates, critical path, largest rebuilt outputs, and bootstrap
+comparisons are recorded here after the privileged mount-backed proof. macOS builds static and
+shared libliquid normally; a wrapped macOS build requires macFUSE.
+
+## Open questions
+
+- Cross-worker cache transport belongs to the remote-cache phase; this issue proves that the local
+  action identity is independent of the checkout path.
