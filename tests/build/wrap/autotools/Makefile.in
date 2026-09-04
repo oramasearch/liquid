@@ -1,0 +1,10 @@
+CC = @CC@
+CFLAGS = @CFLAGS@
+
+all: wrapped
+
+wrapped: main.c
+	$(CC) $(CFLAGS) main.c -o wrapped
+
+clean:
+	rm -f wrapped

@@ -7,4 +7,6 @@ remain in `include/liquid/vfs.hpp`; contributor guidance and verification live i
 
 The libfuse3 backend parses process-level options before constructing its session, runs the
 configured request loop through the runtime blocking adapter, and interrupts that loop only for a
-recorded explicit stop.
+recorded explicit stop. Writable observed mounts support build output creation, replacement,
+renaming, truncation, permissions, and synthetic source/output modification times. Explicit
+shutdown probes a fresh path so kernel attribute caching cannot leave the request loop asleep.

@@ -1,0 +1,14 @@
+[
+  {
+    "directory": ".",
+    "arguments": ["cc", "-O0", "-Iinclude", "-c", "left.c", "-o", "build/left.o"],
+    "file": "left.c",
+    "output": "build/left.o"
+  },
+  {
+    "directory": ".",
+    "arguments": ["cc", "-O0", "-Iinclude", "-c", "right.c", "-o", "build/right.o"],
+    "file": "right.c",
+    "output": "build/right.o"
+  }
+]

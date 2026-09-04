@@ -4,7 +4,7 @@
 namespace liquid::vfs_detail {
 
 runtime::task<std::shared_ptr<backend>> start_observed_fuse(
-    repository&, digest, std::filesystem::path, std::vector<std::string>, observation_sink) {
+    repository&, digest, std::filesystem::path, std::vector<std::string>, observation_sink, bool) {
 #if defined(_WIN32)
     co_return std::unexpected(
         error{errc::unsupported,

@@ -34,6 +34,17 @@ struct launch_result {
     bool timed_out{};
 };
 
+struct wrap_launch_request {
+    std::filesystem::path sandbox_root;
+    std::filesystem::path input_mount;
+    std::filesystem::path hook;
+    std::filesystem::path trace;
+    std::filesystem::path plan;
+    std::vector<std::string> command;
+    std::map<std::string, std::string> environment;
+};
+
 [[nodiscard]] auto launch(const launch_request& request) -> result<launch_result>;
+[[nodiscard]] auto launch_wrap(const wrap_launch_request& request) -> result<launch_result>;
 
 } // namespace liquid::sandbox_detail

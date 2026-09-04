@@ -178,6 +178,12 @@ set_target_properties(liquid_monocypher PROPERTIES
   C_VISIBILITY_PRESET hidden
   POSITION_INDEPENDENT_CODE ON)
 
+add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c)
+set_target_properties(liquid-wrap-hook PROPERTIES
+  OUTPUT_NAME liquid-wrap-hook
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+
 # automerge-cpp is the private CRDT engine. Keep it static even when libliquid is shared;
 # no dependency header or target is part of liquid's installed interface.
 set(LIQUID_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
@@ -215,6 +221,7 @@ add_library(libliquid
   src/build/cache.cpp
   src/build/executor.cpp
   src/build/materialise.cpp
+  src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
@@ -280,6 +287,10 @@ target_include_directories(libliquid PUBLIC
           ${monocypher_source_SOURCE_DIR}/src
           ${monocypher_source_SOURCE_DIR}/src/optional)
 target_compile_features(libliquid PUBLIC cxx_std_26)
+target_compile_definitions(libliquid PRIVATE
+  LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
+  LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
+add_dependencies(libliquid liquid-wrap-hook)
 target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio libzstd_static
@@ -320,7 +331,8 @@ if(LIQUID_BUILD_CLI)
     src/cli/locks.cpp
     src/cli/repo.cpp
     src/cli/tree.cpp
-    src/cli/vfs.cpp)
+    src/cli/vfs.cpp
+    src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE liquid::liquid)
 endif()
@@ -334,6 +346,9 @@ install(TARGETS libliquid EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS liquid-wrap-hook
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid
+  RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)
 install(TARGETS boost_capy EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

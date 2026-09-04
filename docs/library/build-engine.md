@@ -15,7 +15,8 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10 and #11 implement the local action path and disk cache:
+**Implementation status.** Issues #10, #11, and #12 implement the local action path, disk cache,
+and `liquid wrap`:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -23,8 +24,10 @@ only from the mount's request callback, which carries the FUSE caller pid. It ha
 preload, or DTrace dependency. macOS carries the generated deprecated `sandbox-exec` profile but
 requires macFUSE before it can run the fixed virtual-root path; Windows remains explicitly
 unsupported until Phase 6. The disk cache validates observed manifests before a hit, verifies every
-result's TAAP signature, persists its action index, and defaults to read-only publication.
-`wrap`, memory caching, remote caching and execution, and provenance remain their own issues.
+result's TAAP signature and persists its action index. `wrap` discovers a project's invoked tools,
+pins their content tree in `config.wrap.toolchain`, splits the mount stream at output-producing leaf
+processes, publishes the inner and outer actions, and serves valid results through the sandbox-only
+exec hook. Memory caching, remote caching and execution, and provenance remain their own issues.
 
 ## Records in the store
 
@@ -163,7 +166,7 @@ has no shared tier, keeping unsigned data out when the remote tier arrives.
 
 ```
 liquid wrap cmake --build build
-liquid wrap ./configure && make
+liquid wrap /bin/sh -c './configure && make'
 ```
 
 `wrap` runs the whole command inside one sandbox mount. Every process the build spawns
@@ -183,6 +186,20 @@ outer action whose manifest explains a full re-run.
 from it and can run compiles in parallel across the runtime's workers instead of waiting for
 the driver to spawn them.
 
+The exec-time hook is the implemented choice. It is a preload library mounted or allowed only in
+the sandbox: Linux uses `LD_PRELOAD`, macOS uses `DYLD_INSERT_LIBRARIES`, and the parent process
+environment is never changed. Before launch, the wrapper validates saved action manifests and
+writes a per-run plan keyed by executable, fixed-root working directory, and argv. A planned hit
+exits from the tool process constructor after the wrapper has materialised its outputs. This also
+handles drivers that invoke an absolute compiler path, which a `PATH` wrapper would miss.
+
+The first fixture set exposed two details now encoded in the implementation. Build drivers such as
+Ninja write bookkeeping files, so a writer is an inner action only when no output-writing descendant
+belongs below it; this leaves compiler, linker, and configure probes as the boundaries while the
+driver remains the outer action. FUSE shutdown must wake the request loop through a fresh lookup,
+because an attribute lookup of the mount root can be answered from the kernel cache without waking
+the blocked worker.
+
 The configure fact base (#56) is the same mechanism applied to `AC_CHECK_*` probes: a probe is
 an action keyed by (toolchain, sysroot, target), and its result is a cached fact.
 
@@ -194,8 +211,8 @@ coarse end of the spectrum features/04 describes; the fine end arrives when the 
 
 ## How to verify
 
-- The Phase 2 exit: an unmodified CMake or Autotools project builds under `liquid wrap` with
-  correct caching across two machines, and every artifact carries a verifiable attestation.
+- An unmodified CMake, Autotools, or Make project builds under `liquid wrap`; a second checkout at a
+  different host path reuses every unchanged compile through the fixed virtual root.
 - Under-hashing is caught by construction: a test edits a header that was read but not
   declared and asserts a miss naming that header.
 - Sampled re-execution (#13) detects an injected non-determinism.
@@ -211,5 +228,3 @@ key.
 
 - Sandbox cost on macOS (`sandbox-exec` is deprecated but present; FSKit-based enforcement is
   the successor) and the Windows path (Phase 6).
-- Whether the exec-time hook or a `PATH` shim is the more robust way to serve cached compiles
-  under drivers that hard-code compiler paths; decide with #12's first real project.
