@@ -14,4 +14,5 @@ covers leaf envelopes, repository enforcement, explicit decryption, mixed-versio
 file writes, and key diffs.
 
 Repository tests cover persisted operation records and their public newest-first view; private index
-and cryptography tests stay in their existing targets.
+and cryptography tests stay in their existing targets. CLI scenario and command-documentation tests
+live in `cli/`.

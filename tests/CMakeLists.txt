@@ -49,6 +49,20 @@ if(LIQUID_BUILD_CLI)
   add_test(NAME gc-cli-clean
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_GC_CLI_STORE})
   set_tests_properties(gc-cli-clean PROPERTIES FIXTURES_CLEANUP gc_cli)
+  add_test(NAME cli-scenario
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CLI_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-scenario
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/scenario.cmake)
+  add_test(NAME cli-help-docs
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-public-includes
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI_SOURCE=${PROJECT_SOURCE_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/public-includes.cmake)
 endif()
 
 add_executable(liquid-vfs-queue-tests

@@ -1,0 +1,93 @@
+if(NOT DEFINED LIQUID_CLI)
+  message(FATAL_ERROR "LIQUID_CLI is required")
+endif()
+if(NOT DEFINED LIQUID_CLI_ROOT)
+  message(FATAL_ERROR "LIQUID_CLI_ROOT is required")
+endif()
+
+function(run_liquid output error result directory)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "LIQUID_HOME=${LIQUID_CLI_ROOT}/identity" "${LIQUID_CLI}" ${ARGN}
+    WORKING_DIRECTORY "${directory}"
+    RESULT_VARIABLE command_result
+    OUTPUT_VARIABLE command_output
+    ERROR_VARIABLE command_error)
+  set("${output}" "${command_output}" PARENT_SCOPE)
+  set("${error}" "${command_error}" PARENT_SCOPE)
+  set("${result}" "${command_result}" PARENT_SCOPE)
+endfunction()
+
+function(require_success result output error)
+  if(NOT ${result} EQUAL 0)
+    message(FATAL_ERROR "liquid failed with ${${result}}:\n${${output}}${${error}}")
+  endif()
+  message(STATUS "${${output}}")
+endfunction()
+
+file(REMOVE_RECURSE "${LIQUID_CLI_ROOT}")
+file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/workspace/notes")
+file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/other")
+file(WRITE "${LIQUID_CLI_ROOT}/workspace/notes/first.txt" "first\n")
+file(WRITE "${LIQUID_CLI_ROOT}/workspace/notes/second.txt" "second\n")
+file(WRITE "${LIQUID_CLI_ROOT}/other/child.txt" "child\n")
+
+set(workspace "${LIQUID_CLI_ROOT}/workspace")
+set(other "${LIQUID_CLI_ROOT}/other")
+set(split "${LIQUID_CLI_ROOT}/split")
+
+run_liquid(init_output init_error init_result "${workspace}" init .)
+require_success(init_result init_output init_error)
+
+run_liquid(status_output status_error status_result "${workspace}" status --json)
+require_success(status_result status_output status_error)
+string(REGEX MATCH "\"pending_drips\":2" imported_files "${status_output}")
+if(NOT imported_files)
+  message(FATAL_ERROR "status did not report both imported files: ${status_output}")
+endif()
+
+run_liquid(cut_output cut_error cut_result "${workspace}" cut imported)
+require_success(cut_result cut_output cut_error)
+run_liquid(move_output move_error move_result "${workspace}" move notes/first.txt notes/moved.txt)
+require_success(move_result move_output move_error)
+run_liquid(moved_cut_output moved_cut_error moved_cut_result "${workspace}" cut moved)
+require_success(moved_cut_result moved_cut_output moved_cut_error)
+
+run_liquid(other_init_output other_init_error other_init_result "${other}" init .)
+require_success(other_init_result other_init_output other_init_error)
+run_liquid(other_cut_output other_cut_error other_cut_result "${other}" cut child)
+require_success(other_cut_result other_cut_output other_cut_error)
+
+run_liquid(nest_output nest_error nest_result "${workspace}" nest "${other}" nested)
+require_success(nest_result nest_output nest_error)
+run_liquid(split_output split_error split_result "${workspace}" split notes "${split}")
+require_success(split_result split_output split_error)
+run_liquid(combine_output combine_error combine_result "${workspace}" combine "${split}" --at combined)
+require_success(combine_result combine_output combine_error)
+run_liquid(combined_cut_output combined_cut_error combined_cut_result "${workspace}" cut combined)
+require_success(combined_cut_result combined_cut_output combined_cut_error)
+run_liquid(final_move_output final_move_error final_move_result "${workspace}" move nested nested-moved)
+require_success(final_move_result final_move_output final_move_error)
+
+run_liquid(log_output log_error log_result "${workspace}" log --json)
+require_success(log_result log_output log_error)
+string(REGEX MATCH "\"message\":\"combined\"" combined_log "${log_output}")
+if(NOT combined_log)
+  message(FATAL_ERROR "log JSON omitted the combined change: ${log_output}")
+endif()
+
+run_liquid(undo_output undo_error undo_result "${workspace}" undo)
+require_success(undo_result undo_output undo_error)
+run_liquid(lock_output lock_error lock_result "${workspace}" lock nested)
+require_success(lock_result lock_output lock_error)
+run_liquid(locked_output locked_error locked_result "${workspace}" rm nested)
+if(locked_result EQUAL 0)
+  message(FATAL_ERROR "locked mutation unexpectedly succeeded")
+endif()
+string(REGEX MATCH "error: locked:" locked_error_code "${locked_error}")
+if(NOT locked_error_code)
+  message(FATAL_ERROR "locked mutation omitted the error code: ${locked_error}")
+endif()
+
+run_liquid(gc_output gc_error gc_result "${workspace}" gc --dry-run .liquid-store)
+require_success(gc_result gc_output gc_error)
+message(STATUS "scenario output:\n${init_output}${status_output}${cut_output}${move_output}${moved_cut_output}${nest_output}${split_output}${combine_output}${combined_cut_output}${final_move_output}${log_output}${undo_output}${lock_output}${locked_error}${gc_output}")
