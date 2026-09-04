@@ -31,6 +31,9 @@ directly.
 `delta.cpp` implements create, digest-checked apply, and fetch through the public delta API. A
 fetch can hydrate a patch or target registered with the store's configured remote sources.
 
+`sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
+optional `LIQUID_TOKEN` to the endpoint and prints stable metadata, object, byte, and cursor counts.
+
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 

@@ -27,8 +27,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
-> structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented; hosted
-> remote service operations remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
+> structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
+> push and pull, signed metadata exchange, missing-object negotiation, and the HTTP/1.1 sync client are implemented;
+> hosting the server remains lake work. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
@@ -138,6 +139,7 @@ and Zetta's.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
+- [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 - [`docs/library/gc.md`](docs/library/gc.md) — leased roots, retention rules, cost-aware result eviction, epoch marking, reference extraction, and crash-safe sweep ordering.

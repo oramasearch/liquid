@@ -73,12 +73,34 @@ if(NOT TARGET Boost::capy)
   add_subdirectory(modules/capy EXCLUDE_FROM_ALL)
 endif()
 
+if(APPLE)
+  list(APPEND CMAKE_PREFIX_PATH /opt/homebrew/opt/openssl@3)
+endif()
+find_package(OpenSSL REQUIRED)
 if(NOT TARGET Boost::corosio)
   set(BOOST_COROSIO_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
   set(BOOST_COROSIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(BOOST_COROSIO_BUILD_PERF     OFF CACHE BOOL "" FORCE)
   add_subdirectory(modules/corosio EXCLUDE_FROM_ALL)
 endif()
+
+# Boost.HTTP expects its Boost component targets to exist before it is added.
+# Match lake's data-plane dependency set and pin so both sides compile the same
+# protocol implementation.
+set(BOOST_INCLUDE_LIBRARIES
+  json url assert config core mp11 system throw_exception type_traits winapi)
+set(BOOST_ENABLE_CMAKE ON)
+FetchContent_Declare(boost_core_libs
+  URL https://github.com/boostorg/boost/releases/download/boost-1.91.0-1/boost-1.91.0-1-cmake.tar.xz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(boost_core_libs)
+set(BOOST_HTTP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BOOST_HTTP_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(modules/http EXCLUDE_FROM_ALL)
+set_target_properties(boost_http PROPERTIES
+  INTERFACE_INCLUDE_DIRECTORIES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/modules/http/include>;$<INSTALL_INTERFACE:include>")
 
 set(LIQUID_FUSE_TARGET "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -293,6 +315,9 @@ add_library(libliquid
   src/store/references.cpp
   src/store/store_impl.cpp
   src/store/subject_index.cpp
+  src/sync/codec.cpp
+  src/sync/endpoint.cpp
+  src/sync/session.cpp
   src/version.cpp
   src/vfs.cpp
   src/vfs/fuse_fs.cpp
@@ -338,7 +363,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
-  PRIVATE Boost::corosio libzstd_static ZLIB::ZLIB
+  PRIVATE Boost::corosio Boost::corosio_openssl Boost::http libzstd_static ZLIB::ZLIB
           $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
 if(LIQUID_FUSE_TARGET)
   target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
@@ -380,6 +405,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/sbom.cpp
+    src/cli/sync.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
@@ -416,10 +442,33 @@ install(TARGETS boost_corosio EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS boost_corosio_openssl boost_http EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS
+  boost_align boost_assert boost_compat boost_config boost_container
+  boost_container_hash boost_core boost_describe boost_endian boost_json
+  boost_intrusive boost_move boost_mp11 boost_optional boost_predef boost_system
+  boost_throw_exception boost_type_traits boost_url boost_variant2 boost_winapi
+  EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ ${CMAKE_CURRENT_BINARY_DIR}/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY modules/capy/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY modules/http/include/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+foreach(LIQUID_BOOST_LIBRARY
+    align assert compat config container container_hash core describe endian json
+    intrusive move mp11 optional predef static_assert system throw_exception type_traits url
+    variant2 winapi)
+  install(DIRECTORY
+    ${boost_core_libs_SOURCE_DIR}/libs/${LIQUID_BOOST_LIBRARY}/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endforeach()
 if(LIQUID_BUILD_CLI)
   install(TARGETS liquid-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

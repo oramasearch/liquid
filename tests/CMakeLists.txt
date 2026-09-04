@@ -47,6 +47,12 @@ add_executable(liquid-tests
   build/test_wrap.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
+if(UNIX)
+  target_sources(liquid-tests PRIVATE
+    test_sync.cpp
+    ${PROJECT_SOURCE_DIR}/src/sync/codec.cpp)
+  target_link_libraries(liquid-tests PRIVATE libzstd_static)
+endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid
   liquid_monocypher
@@ -245,6 +251,7 @@ add_executable(liquid-header-tests
   headers/repository.cpp
   headers/runtime.cpp
   headers/store.cpp
+  headers/sync.cpp
   headers/version.cpp
   headers/vfs.cpp)
 target_link_libraries(liquid-header-tests PRIVATE liquid::liquid)

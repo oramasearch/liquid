@@ -13,5 +13,6 @@
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "liquid/sync.hpp"
 #include "liquid/version.hpp"
 #include "liquid/vfs.hpp"

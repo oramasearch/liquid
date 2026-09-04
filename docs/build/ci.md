@@ -1,19 +1,20 @@
 # Continuous integration
 
 GitHub Actions runs [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) for every push
-and pull request. Checkout recursively initializes the public Capy plus the private Corosio and
-automerge-cpp submodules using `ORAMA_SUBMODULES_TOKEN`. The repository secret must exist and
-grant read access to `oramasearch/corosio` and `oramasearch/automerge-cpp`; checkout fails before
-the build when it is absent. Local clones should use `git clone --recurse-submodules`. Each job
+and pull request. Checkout recursively initializes the public Capy plus the private Corosio,
+automerge-cpp, and HTTP submodules using `ORAMA_SUBMODULES_TOKEN`. The repository secret must exist
+and grant read access to `oramasearch/corosio`, `oramasearch/automerge-cpp`, and
+`oramasearch/http`; checkout fails before the build when it is absent. Local clones should use
+`git clone --recurse-submodules`. Each job
 then builds without a dependency cache, runs CTest with failure output, and runs `liquid version`
 on each desktop platform.
 
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
-| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, libfuse3, Autoconf, Automake, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount scenario, `liquid version` |
-| macOS | `macos-15` | Homebrew LLVM, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
-| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, current Chocolatey CMake and Ninja | Configure, build, CTest, `liquid version` |
-| Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
+| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, Autoconf, Automake, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount scenario, `liquid version` |
+| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
+| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
+| Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 
 Every static or shared CTest run includes `consumer-project-build`. It configures a separate CMake
 project that defines Capy, Corosio, and nlohmann/json before adding liquid, then builds and runs its

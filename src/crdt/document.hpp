@@ -46,6 +46,8 @@ public:
     static auto create(const repo_id& repository,
                        std::string_view taap_id,
                        std::string_view device_id) -> result<document>;
+    static auto create_sync_receiver(std::string_view taap_id, std::string_view device_id)
+        -> result<document>;
     static auto load(std::span<const std::byte> bytes,
                      std::string_view taap_id,
                      std::string_view device_id) -> result<document>;
@@ -87,9 +89,14 @@ public:
     static auto create(const repo_id& repository,
                        std::string_view taap_id,
                        std::string_view device_id) -> result<directory_document>;
+    static auto create_sync_receiver(std::string_view taap_id, std::string_view device_id)
+        -> result<directory_document>;
     static auto load(std::span<const std::byte> bytes,
                      std::string_view taap_id,
                      std::string_view device_id) -> result<directory_document>;
+    static auto load_sync(std::span<const std::byte> bytes,
+                          std::string_view taap_id,
+                          std::string_view device_id) -> result<directory_document>;
 
     struct named_entry {
         std::string name;
@@ -104,6 +111,7 @@ public:
     [[nodiscard]] auto rename_entry(std::string from, std::string to, commit_options options = {})
         -> result<void>;
     [[nodiscard]] auto save() const -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto save_sync() const -> result<std::vector<std::byte>>;
     [[nodiscard]] auto heads() -> result<head_set>;
     [[nodiscard]] auto generate_sync_message(sync_state& state) const
         -> result<std::optional<std::vector<std::byte>>>;

@@ -64,7 +64,9 @@ plus Capy's public headers under `include/boost/`. The liquid export owns
 Capy's `liquid::capy` library target and recreates its `Boost::capy` alias. It carries its
 internal Corosio archive to satisfy static linking, while `libliquid` links Corosio privately.
 Consumers receive Capy's headers, compile options, and link library transitively without
-installing Capy's test support archives.
+installing Capy's test support archives. The package also carries the private Boost.HTTP and Boost
+component targets required by the sync client; its config resolves the OpenSSL, zlib, and installed
+zstd targets used by static consumers.
 
 **Verify.** Static: `cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build`.
 Shared: `cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON` then

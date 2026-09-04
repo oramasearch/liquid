@@ -33,6 +33,18 @@ Boost.Corosio
   Licence: Boost Software License 1.0
   The source is vendored as modules/corosio and linked privately by libliquid.
 
+oramasearch/http
+  Project: https://github.com/oramasearch/http
+  Revision: af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4
+  Licence: Boost Software License 1.0
+  The source is vendored as modules/http and linked privately by libliquid.
+
+Boost core libraries
+  Project: https://github.com/boostorg/boost
+  Version: 1.91.0-1
+  Licence: Boost Software License 1.0
+  The CMake release supplies the private Boost.HTTP component dependencies.
+
 automerge-cpp
   Project: https://github.com/oramasearch/automerge-cpp
   Revision: 4dd795513510ae2c58bacd384c3d8fd98f523123 (v0.6.0)

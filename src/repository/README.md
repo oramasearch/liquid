@@ -37,3 +37,8 @@ collector pass so the CLI does not inspect repository internals.
 Remote file entries use the same working tree and canonical blob reference as local files.
 `store_remote_blob` registers metadata without reading content, `write_remote` records the entry,
 and repository status recursively sums chunk bytes that are not yet local.
+
+Sync export pages signed drips, changes, per-directory upstream messages, refs, and content roots.
+Import works on repository and directory candidates, verifies TAAP signatures and checked CRDT
+receives, and publishes one checkpoint only after the complete batch passes. An empty repository
+may adopt the incoming repository identity; a non-empty unrelated repository is rejected.
