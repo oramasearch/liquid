@@ -425,6 +425,7 @@ runtime::task<void> disk_cache::save_root_pointer(digest root) {
 }
 
 runtime::task<void> disk_cache::open() {
+    traces_.clear();
     auto root = co_await load_root_pointer();
     if (!root) {
         co_return std::unexpected(root.error());
@@ -432,9 +433,6 @@ runtime::task<void> disk_cache::open() {
     auto opened = co_await index_.open();
     const auto root_matches = opened && ((!*root && index_.entries().empty()) ||
                                          (*root && same_digest(index_.root(), **root)));
-    if (root_matches) {
-        co_return result<void>{};
-    }
     if (!*root) {
         if (!opened) {
             co_return std::unexpected(opened.error());
@@ -443,11 +441,18 @@ runtime::task<void> disk_cache::open() {
     }
     auto bytes = co_await repository_detail::build_access::get(source_, **root);
     if (!bytes) {
+        if (root_matches && bytes.error().code == errc::not_found) {
+            co_return result<void>{};
+        }
         co_return std::unexpected(bytes.error());
     }
     auto decoded = objects::decode_action_index_root(*bytes);
     if (!decoded) {
         co_return std::unexpected(decoded.error());
+    }
+    traces_ = decoded->traces;
+    if (root_matches) {
+        co_return result<void>{};
     }
     co_return co_await index_.rebuild(std::move(decoded->entries), **root);
 }
@@ -665,14 +670,27 @@ const std::vector<objects::action_index_entry>& disk_cache::entries() const noex
     return index_.entries();
 }
 
+const std::vector<digest>& disk_cache::traces() const noexcept {
+    return traces_;
+}
+
 bool disk_cache::divergent(digest result) const noexcept {
     return std::ranges::any_of(index_.entries(), [&](const auto& entry) {
         return same_digest(entry.result, result) && entry.divergent;
     });
 }
 
+runtime::task<void> disk_cache::record_trace(digest trace) {
+    const auto exists = std::ranges::any_of(
+        traces_, [&](const digest& candidate) { return same_digest(candidate, trace); });
+    if (!exists) {
+        traces_.push_back(trace);
+    }
+    co_return co_await persist_root();
+}
+
 runtime::task<void> disk_cache::persist_root() {
-    auto encoded_root = objects::encode(objects::action_index_root{index_.entries()});
+    auto encoded_root = objects::encode(objects::action_index_root{index_.entries(), traces_});
     if (!encoded_root) {
         co_return std::unexpected(encoded_root.error());
     }

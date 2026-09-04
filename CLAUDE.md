@@ -31,10 +31,12 @@ permanent divergent-result quarantine, and result-bound `slsa_provenance/1` atte
 verify on cache lookup and publication and export as in-toto/DSSE; operations owned by later issues
 return
 `errc::unsupported`. Liquid #15 provides record-derived `liquid why`, per-wrap explanations,
-disk-tier hit rates, miss reasons, and output-byte statistics. The repository object model, internal
-CRDT metadata document, canonical CBOR codec and drip journal are implemented. Directory documents
-use compact shallow checkpoints, upstream sync framing, checked external application, and
-patch-based remote observation. Full materialisation works on every platform; lazy VFS mounts use
+disk-tier hit rates, miss reasons, and output-byte statistics. Liquid #57 provides versioned action
+phase timings, retained build traces, dependency-aware critical paths, Chrome trace export, and
+`liquid why-slow`. The repository object model, internal CRDT metadata document, canonical CBOR
+codec and drip journal are implemented. Directory documents use compact shallow checkpoints,
+upstream sync framing, checked external application, and patch-based remote observation. Full
+materialisation works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
 GoogleTest. Phase 1 (the store)

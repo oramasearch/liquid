@@ -2,7 +2,9 @@
 
 Each source file maps one command group to public libliquid calls. `wrap.cpp` parses build-wrapper
 options, calls `liquid::build::wrap`, prints action and cache counts, per-tier action and byte
-counts, and record-derived miss details for `--explain`. `why.cpp` implements `liquid why` and
+counts, phase attribution and the critical path, and record-derived miss details for `--explain`.
+`trace.cpp` implements profiled build invocation, Chrome trace export, and `why-slow` entirely
+through the public observability API. `why.cpp` implements `liquid why` and
 `liquid cache stats` through the public build API, including their JSON forms. The commands never
 read the private action cache directly.
 `verify.cpp` parses action, all, and changed selectors, calls the public verification API, prints

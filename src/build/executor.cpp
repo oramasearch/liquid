@@ -234,6 +234,9 @@ runtime::task<action_result> run_action(repository& source,
                                         digest action,
                                         digest sandbox,
                                         std::chrono::sys_seconds observed_at) {
+    const auto sandbox_started = std::chrono::steady_clock::now();
+    const auto wall_started =
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     auto valid = validate(input);
     if (!valid) {
         co_return std::unexpected(valid.error());
@@ -295,7 +298,6 @@ runtime::task<action_result> run_action(repository& source,
     }
     const auto virtual_cwd =
         environment->work_root + (input.cwd.empty() ? std::string{} : "/" + input.cwd);
-    const auto sandbox_started = std::chrono::steady_clock::now();
     sandbox_detail::launch_request launch_request{.sandbox_root = paths.root,
                                                   .input_mount = paths.mount,
                                                   .toolchain = paths.toolchain,
@@ -313,11 +315,11 @@ runtime::task<action_result> run_action(repository& source,
                                                   .outputs = input.outputs,
                                                   .timeout = input.timeout};
     build_detail::testing::record_sandbox_spawn();
-    const auto wall_started =
-        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    const auto execution_started = std::chrono::steady_clock::now();
     auto launched = co_await runtime::offload(
         [launch_request] { return sandbox_detail::launch(launch_request); });
     const auto execution_finished = std::chrono::steady_clock::now();
+    const auto hash_started = execution_finished;
     auto unmounted = co_await (*mounted)->unmount();
     if (!unmounted) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
@@ -340,11 +342,12 @@ runtime::task<action_result> run_action(repository& source,
         co_return std::unexpected(
             failure(errc::unauthorized, "action wrote outside declared outputs", *violation));
     }
-    const auto upload_started = std::chrono::steady_clock::now();
+    auto read_manifest = manifest(observed);
+    const auto hash_finished = std::chrono::steady_clock::now();
+    const auto store_started = hash_finished;
     auto stdout_id = co_await repository_detail::build_access::put_file(source, paths.stdout_path);
     auto stderr_id = co_await repository_detail::build_access::put_file(source, paths.stderr_path);
     auto outputs = co_await collect_outputs(source, input, paths);
-    auto read_manifest = manifest(observed);
     if (!stdout_id || !stderr_id || !outputs || !read_manifest) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
         if (!stdout_id) {
@@ -358,7 +361,7 @@ runtime::task<action_result> run_action(repository& source,
         }
         co_return std::unexpected(read_manifest.error());
     }
-    const auto upload_finished = std::chrono::steady_clock::now();
+    const auto store_finished = std::chrono::steady_clock::now();
     const auto wall_finished =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     action_result output{
@@ -369,11 +372,13 @@ runtime::task<action_result> run_action(repository& source,
         .stderr_output = *stderr_id,
         .manifest = std::move(*read_manifest),
         .timing = {.sandbox = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       execution_finished - sandbox_started),
+                       execution_started - sandbox_started),
                    .exec = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       execution_finished - sandbox_started),
-                   .upload = std::chrono::duration_cast<std::chrono::milliseconds>(upload_finished -
-                                                                                   upload_started)},
+                       execution_finished - execution_started),
+                   .hash = std::chrono::duration_cast<std::chrono::milliseconds>(hash_finished -
+                                                                                 hash_started),
+                   .store = std::chrono::duration_cast<std::chrono::milliseconds>(store_finished -
+                                                                                  store_started)},
         .worker = input.platform.os + "/" + input.platform.arch,
         .observed_at = observed_at};
     output.started_at = wall_started;

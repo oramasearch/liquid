@@ -24,6 +24,7 @@
 #include "build/materialise.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "build/trace.hpp"
 #include "build/verify.hpp"
 #include "build/why.hpp"
 #include "build/wrap.hpp"
@@ -57,6 +58,8 @@ struct traced_process {
     std::string executable;
     std::string cwd;
     std::vector<std::string> command;
+    std::uint64_t started_ns{};
+    std::uint64_t finished_ns{};
 };
 
 struct command_plan {
@@ -97,6 +100,7 @@ struct observed_run {
     sandbox_detail::launch_result launch;
     std::chrono::sys_seconds started_at;
     std::chrono::sys_seconds finished_at;
+    std::uint64_t trace_origin_ns{};
 };
 
 auto host_platform() -> platform;
@@ -472,7 +476,18 @@ auto parse_trace(const std::filesystem::path& path) -> liquid::result<std::vecto
     auto line = std::string{};
     while (std::getline(input, line)) {
         const auto fields = split_tabs(line);
-        if (fields.size() != 6)
+        if (fields.size() == 3 && fields[0] == "X") {
+            auto pid = std::int64_t{};
+            auto finished = std::uint64_t{};
+            auto numbers =
+                std::istringstream{std::string{fields[1]} + " " + std::string{fields[2]}};
+            numbers >> pid >> finished;
+            if (numbers && by_pid.contains(pid)) {
+                by_pid.at(pid).finished_ns = finished;
+            }
+            continue;
+        }
+        if (fields.size() != 6 && fields.size() != 7)
             continue;
         auto process = traced_process{};
         auto numbers = std::istringstream{std::string{fields[0]} + " " + std::string{fields[1]}};
@@ -484,6 +499,13 @@ auto parse_trace(const std::filesystem::path& path) -> liquid::result<std::vecto
         auto arguments = unhex(fields[5]);
         if (!numbers || !key || !executable || !cwd || !arguments)
             continue;
+        if (fields.size() == 7) {
+            auto started = std::istringstream{std::string{fields[6]}};
+            started >> process.started_ns;
+            if (!started) {
+                continue;
+            }
+        }
         process.executable = std::move(*executable);
         process.cwd = std::move(*cwd);
         auto offset = std::size_t{};
@@ -703,6 +725,7 @@ runtime::task<saved_action> publish_action(repository& source,
                                            std::chrono::sys_seconds started_at,
                                            std::chrono::sys_seconds finished_at,
                                            bool publish) {
+    const auto hash_started = std::chrono::steady_clock::now();
     auto output_paths = co_await collect_action_outputs(source, writes);
     if (!output_paths)
         co_return std::unexpected(output_paths.error());
@@ -720,10 +743,15 @@ runtime::task<saved_action> publish_action(repository& source,
     auto action_bytes = objects::encode(objects::action_record{input, sandbox});
     if (!action_bytes)
         co_return std::unexpected(action_bytes.error());
+    const auto hash_finished = std::chrono::steady_clock::now();
     auto action =
         co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
     if (!action)
         co_return std::unexpected(action.error());
+    const auto store_finished = std::chrono::steady_clock::now();
+    const auto execution = process.finished_ns >= process.started_ns
+                               ? std::chrono::nanoseconds{process.finished_ns - process.started_ns}
+                               : std::chrono::nanoseconds{};
     auto value = action_result{
         .action = *action,
         .exit = exit,
@@ -731,6 +759,11 @@ runtime::task<saved_action> publish_action(repository& source,
         .stdout_output = empty_blob,
         .stderr_output = empty_blob,
         .manifest = std::move(*manifest),
+        .timing = {.exec = std::chrono::duration_cast<std::chrono::milliseconds>(execution),
+                   .hash = std::chrono::duration_cast<std::chrono::milliseconds>(hash_finished -
+                                                                                 hash_started),
+                   .store = std::chrono::duration_cast<std::chrono::milliseconds>(store_finished -
+                                                                                  hash_finished)},
         .worker = input.platform.os + "/" + input.platform.arch,
         .observed_at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())};
     value.started_at = started_at;
@@ -914,18 +947,18 @@ void add_miss(wrap_report& report, cache_miss miss) {
     report.why.push_back(std::move(miss));
 }
 
-void add_timing(wrap_report& report, const action_result& value) {
-    const auto duration =
-        value.timing.queued + value.timing.sandbox + value.timing.exec + value.timing.upload;
-    if (duration.count() == 0) {
-        return;
-    }
+void add_timing(wrap_report& report,
+                result_id result,
+                const action_result& value,
+                cache_status status,
+                std::chrono::milliseconds start_offset = {}) {
     auto outputs = std::vector<std::string>{};
     outputs.reserve(value.outputs.size());
     for (const auto& output : value.outputs) {
         outputs.push_back(output.path);
     }
-    report.critical_path.push_back({value.action, duration, std::move(outputs)});
+    report.trace_actions.push_back(
+        {result, value.action, std::move(outputs), value.timing, status, start_offset});
 }
 
 runtime::task<std::optional<result_id>>
@@ -956,7 +989,8 @@ runtime::task<void> record_rebuilt_action(repository& source,
                                           std::optional<result_id> previous,
                                           cache_plan& plan,
                                           bool reason_recorded,
-                                          wrap_report& report) {
+                                          wrap_report& report,
+                                          std::chrono::milliseconds start_offset = {}) {
     auto value = co_await load_result(source, saved.result);
     if (!value) {
         co_return std::unexpected(value.error());
@@ -966,7 +1000,7 @@ runtime::task<void> record_rebuilt_action(repository& source,
         co_return std::unexpected(bytes.error());
     }
     report.cache.bytes_rebuilt += *bytes;
-    add_timing(report, *value);
+    add_timing(report, result_id{saved.result}, *value, cache_status::miss, start_offset);
     if (!reason_recorded) {
         auto action = co_await load_action(source, value->action);
         if (!action) {
@@ -983,18 +1017,23 @@ runtime::task<void> record_rebuilt_action(repository& source,
     co_return liquid::result<void>{};
 }
 
-auto complete_report(const std::filesystem::path& cache_directory, wrap_report& report)
-    -> liquid::result<void> {
+runtime::task<void> complete_report(const std::filesystem::path& cache_directory,
+                                    repository& source,
+                                    build_detail::disk_cache& cache,
+                                    std::chrono::steady_clock::time_point started,
+                                    wrap_report& report) {
+    report.wall_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
     report.cache.hits = report.hits;
     report.cache.misses = report.misses;
     report.cache.disk.hits = report.hits;
     report.cache.disk.misses = report.misses;
     report.cache.disk.bytes_transferred = report.cache.bytes_served;
-    std::ranges::sort(report.critical_path, std::greater{}, &critical_action::duration);
-    if (report.critical_path.size() > 5) {
-        report.critical_path.resize(5);
+    auto traced = co_await build_detail::record_trace(source, cache, report);
+    if (!traced) {
+        co_return std::unexpected(traced.error());
     }
-    return build_detail::update_cache_stats(cache_directory, report);
+    co_return build_detail::update_cache_stats(cache_directory, report);
 }
 
 runtime::task<cache_plan> prepare_cache_plan(repository& source,
@@ -1040,7 +1079,7 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
                     {cache_status::hit, *lookup->hit, result_id{saved.result}});
                 auto value = co_await load_result(source, lookup->hit->value);
                 if (value) {
-                    add_timing(report, *value);
+                    add_timing(report, *lookup->hit, *value, cache_status::hit);
                     auto materialised = co_await materialise_result(source, *value);
                     if (!materialised)
                         co_return std::unexpected(materialised.error());
@@ -1111,7 +1150,6 @@ runtime::task<bool> serve_outer_action(repository& source,
     report.hits = report.actions;
     report.cache.bytes_served += lookup->bytes_served;
     report.cache.disk.bytes_avoided += lookup->bytes_avoided;
-    add_timing(report, *value);
     auto recorded = cache.record_lookup(
         cache_status::hit,
         *lookup->hit,
@@ -1125,11 +1163,21 @@ runtime::task<bool> serve_outer_action(repository& source,
         if (!child) {
             continue;
         }
+        const auto already_traced =
+            std::ranges::any_of(report.trace_actions, [&](const auto& item) {
+                return same_digest(item.result.value, saved_action.result);
+            });
+        if (!already_traced) {
+            add_timing(report, result_id{saved_action.result}, *child, cache_status::hit);
+        }
         auto child_recorded = cache.record_lookup(
             cache_status::hit, result_id{saved_action.result}, result_id{saved_action.result});
         if (!child_recorded) {
             co_return std::unexpected(child_recorded.error());
         }
+    }
+    if (report.trace_actions.empty()) {
+        add_timing(report, *lookup->hit, *value, cache_status::hit);
     }
     auto saved = write_state(state_path, state);
     if (!saved)
@@ -1256,8 +1304,19 @@ execute_observed_run(repository& source,
     }
     const auto finished_at =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    co_return observed_run{
-        run, std::move(observations), std::move(*processes), launch, started_at, finished_at};
+    auto trace_origin = std::uint64_t{};
+    for (const auto& process : *processes) {
+        if (process.started_ns != 0 && (trace_origin == 0 || process.started_ns < trace_origin)) {
+            trace_origin = process.started_ns;
+        }
+    }
+    co_return observed_run{run,
+                           std::move(observations),
+                           std::move(*processes),
+                           launch,
+                           started_at,
+                           finished_at,
+                           trace_origin};
 }
 
 runtime::task<void> publish_observed_run(repository& source,
@@ -1355,12 +1414,17 @@ runtime::task<void> publish_observed_run(repository& source,
             co_return std::unexpected(published.error());
         }
         plan.next_actions.push_back(*published);
-        auto recorded = co_await record_rebuilt_action(source,
-                                                       *published,
-                                                       *previous,
-                                                       plan,
-                                                       plan.reasoned_actions.contains(process.key),
-                                                       report);
+        auto recorded = co_await record_rebuilt_action(
+            source,
+            *published,
+            *previous,
+            plan,
+            plan.reasoned_actions.contains(process.key),
+            report,
+            process.started_ns >= run.trace_origin_ns
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::nanoseconds{process.started_ns - run.trace_origin_ns})
+                : std::chrono::milliseconds{});
         if (!recorded) {
             static_cast<void>(remove_run(run.directory));
             co_return std::unexpected(recorded.error());
@@ -1402,7 +1466,9 @@ runtime::task<void> publish_observed_run(repository& source,
         co_return std::unexpected(outer_bytes.error());
     }
     report.cache.bytes_rebuilt += *outer_bytes;
-    add_timing(report, *outer_value);
+    if (report.trace_actions.empty()) {
+        add_timing(report, result_id{outer_saved->result}, *outer_value, cache_status::miss);
+    }
     if (!outer_miss_recorded) {
         ++report.misses;
         auto outer_action = co_await load_action(source, outer_value->action);
@@ -1621,6 +1687,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     co_return std::unexpected(
         wrap_error(errc::unsupported, "liquid wrap is unavailable on Windows", "liquid Phase 6"));
 #else
+    const auto wrap_started = std::chrono::steady_clock::now();
     if (command.empty() || command.front().empty())
         co_return std::unexpected(wrap_error(errc::invalid_argument, "wrap command is empty"));
     auto code = std::error_code{};
@@ -1732,13 +1799,14 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
         if (!served)
             co_return std::unexpected(served.error());
         if (*served) {
+            auto completed =
+                co_await complete_report(*cache_directory, *source, cache, wrap_started, report);
+            if (!completed) {
+                co_return std::unexpected(completed.error());
+            }
             if (options.verify) {
                 build_detail::schedule_verification(std::move(*source));
                 report.verification_scheduled = true;
-            }
-            auto completed = complete_report(*cache_directory, report);
-            if (!completed) {
-                co_return std::unexpected(completed.error());
             }
             co_return report;
         }
@@ -1773,11 +1841,8 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    report);
     if (!published)
         co_return std::unexpected(published.error());
-    if (options.verify) {
-        build_detail::schedule_verification(std::move(*source));
-        report.verification_scheduled = true;
-    }
-    auto completed = complete_report(*cache_directory, report);
+    auto completed =
+        co_await complete_report(*cache_directory, *source, cache, wrap_started, report);
     if (!completed) {
         co_return std::unexpected(completed.error());
     }

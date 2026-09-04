@@ -448,6 +448,26 @@ auto decode_repo_ref(const cbor::value& value) -> result<repo_ref> {
     return repo_ref{*decoded_repository, *decoded_id};
 }
 
+auto decode_action_timing(const cbor::value& value) -> result<action_timing> {
+    const auto* queued_value = find(value, "queued_ms");
+    const auto* sandbox_value = find(value, "sandbox_ms");
+    const auto* exec_value = find(value, "exec_ms");
+    const auto* hash_value = find(value, "hash_ms");
+    const auto* store_value = find(value, "store_ms");
+    if (!queued_value || !sandbox_value || !exec_value || !hash_value || !store_value) {
+        return std::unexpected(corrupt("incomplete action timing"));
+    }
+    auto queued = milliseconds_value(*queued_value);
+    auto sandbox = milliseconds_value(*sandbox_value);
+    auto exec = milliseconds_value(*exec_value);
+    auto hash = milliseconds_value(*hash_value);
+    auto store = milliseconds_value(*store_value);
+    if (!queued || !sandbox || !exec || !hash || !store) {
+        return std::unexpected(corrupt("invalid action timing"));
+    }
+    return action_timing{*queued, *sandbox, *exec, *hash, *store};
+}
+
 } // namespace
 
 auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes) -> result<digest> {
@@ -661,8 +681,26 @@ auto encode_result_value(const action_result& value, bool include_signature)
     }
     const auto exit_value = value.exit < 0 ? cbor::value{static_cast<std::int64_t>(value.exit)}
                                            : cbor::value{static_cast<std::uint64_t>(value.exit)};
+    if (value.record_version != 1 && value.record_version != 2) {
+        return std::unexpected(corrupt("unsupported result record version"));
+    }
+    auto timing = cbor::value{};
+    if (value.record_version == 1) {
+        timing = map(
+            {{"queued_ms", cbor::value{static_cast<std::uint64_t>(value.timing.queued.count())}},
+             {"sandbox_ms", cbor::value{static_cast<std::uint64_t>(value.timing.sandbox.count())}},
+             {"exec_ms", cbor::value{static_cast<std::uint64_t>(value.timing.exec.count())}},
+             {"upload_ms", cbor::value{static_cast<std::uint64_t>(value.timing.store.count())}}});
+    } else {
+        timing = map(
+            {{"queued_ms", cbor::value{static_cast<std::uint64_t>(value.timing.queued.count())}},
+             {"sandbox_ms", cbor::value{static_cast<std::uint64_t>(value.timing.sandbox.count())}},
+             {"exec_ms", cbor::value{static_cast<std::uint64_t>(value.timing.exec.count())}},
+             {"hash_ms", cbor::value{static_cast<std::uint64_t>(value.timing.hash.count())}},
+             {"store_ms", cbor::value{static_cast<std::uint64_t>(value.timing.store.count())}}});
+    }
     auto fields = cbor::value::map{
-        {"v", cbor::value{std::uint64_t{1}}},
+        {"v", cbor::value{value.record_version}},
         {"kind", "result"},
         {"action", encode_digest(value.action)},
         {"exit", exit_value},
@@ -670,12 +708,7 @@ auto encode_result_value(const action_result& value, bool include_signature)
         {"stdout", encode_digest(value.stdout_output)},
         {"stderr", encode_digest(value.stderr_output)},
         {"manifest", cbor::value{std::move(manifest)}},
-        {"timing",
-         map({{"queued_ms", cbor::value{static_cast<std::uint64_t>(value.timing.queued.count())}},
-              {"sandbox_ms", cbor::value{static_cast<std::uint64_t>(value.timing.sandbox.count())}},
-              {"exec_ms", cbor::value{static_cast<std::uint64_t>(value.timing.exec.count())}},
-              {"upload_ms",
-               cbor::value{static_cast<std::uint64_t>(value.timing.upload.count())}}})},
+        {"timing", std::move(timing)},
         {"worker", cbor::value{value.worker}},
         {"observed_at",
          cbor::value{static_cast<std::int64_t>(value.observed_at.time_since_epoch().count())}},
@@ -735,9 +768,56 @@ auto encode(const action_index_root& value) -> result<std::vector<std::byte>> {
         }
         entries.push_back(cbor::value{std::move(fields)});
     }
+    auto traces = cbor::value::array{};
+    for (const auto& trace : value.traces) {
+        traces.push_back(encode_digest(trace));
+    }
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "action-index-root"},
-                             {"entries", cbor::value{std::move(entries)}}}));
+                             {"entries", cbor::value{std::move(entries)}},
+                             {"traces", cbor::value{std::move(traces)}}}));
+}
+
+auto encode(const build_trace& value) -> result<std::vector<std::byte>> {
+    auto actions = cbor::value::array{};
+    for (const auto& action : value.actions) {
+        auto outputs = cbor::value::array{};
+        for (const auto& output : action.outputs) {
+            outputs.emplace_back(output);
+        }
+        actions.push_back(map(
+            {{"result", encode_digest(action.result.value)},
+             {"action", encode_digest(action.action)},
+             {"outputs", cbor::value{std::move(outputs)}},
+             {"cache", cbor::value{static_cast<std::uint64_t>(action.cache)}},
+             {"start_ms", cbor::value{static_cast<std::uint64_t>(action.start_offset.count())}},
+             {"timing",
+              map({{"queued_ms",
+                    cbor::value{static_cast<std::uint64_t>(action.timing.queued.count())}},
+                   {"sandbox_ms",
+                    cbor::value{static_cast<std::uint64_t>(action.timing.sandbox.count())}},
+                   {"exec_ms", cbor::value{static_cast<std::uint64_t>(action.timing.exec.count())}},
+                   {"hash_ms", cbor::value{static_cast<std::uint64_t>(action.timing.hash.count())}},
+                   {"store_ms",
+                    cbor::value{static_cast<std::uint64_t>(action.timing.store.count())}}})}}));
+    }
+    auto edges = cbor::value::array{};
+    for (const auto& edge : value.edges) {
+        edges.push_back(map({{"dependency", encode_digest(edge.dependency)},
+                             {"dependent", encode_digest(edge.dependent)}}));
+    }
+    return cbor::encode(
+        map({{"v", cbor::value{std::uint64_t{1}}},
+             {"kind", "build_trace"},
+             {"wall_ms", cbor::value{static_cast<std::uint64_t>(value.wall_time.count())}},
+             {"actions", cbor::value{std::move(actions)}},
+             {"edges", cbor::value{std::move(edges)}},
+             {"cache",
+              map({{"hits", cbor::value{value.cache.hits}},
+                   {"misses", cbor::value{value.cache.misses}},
+                   {"bytes_served", cbor::value{value.cache.bytes_served}},
+                   {"bytes_rebuilt", cbor::value{value.cache.bytes_rebuilt}},
+                   {"bytes_avoided", cbor::value{value.cache.disk.bytes_avoided}}})}}));
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
@@ -1115,9 +1195,18 @@ auto decode_action(std::span<const std::byte> bytes) -> result<action_record> {
 }
 
 auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
-    auto source = decode(bytes, "result");
-    if (!source)
+    auto source = cbor::decode(bytes);
+    if (!source) {
         return std::unexpected(source.error());
+    }
+    const auto* version_value = find(*source, "v");
+    const auto* kind_value = find(*source, "kind");
+    const auto* version =
+        version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
+    const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
+    if (!version || (*version != 1 && *version != 2) || !kind || *kind != "result") {
+        return std::unexpected(corrupt("unsupported result record version"));
+    }
     const auto* action_value = find(*source, "action");
     const auto* stdout_value = find(*source, "stdout");
     const auto* stderr_value = find(*source, "stderr");
@@ -1241,6 +1330,8 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* queued_value = find(*timing_value, "queued_ms");
     const auto* sandbox_timing_value = find(*timing_value, "sandbox_ms");
     const auto* exec_value = find(*timing_value, "exec_ms");
+    const auto* hash_value = find(*timing_value, "hash_ms");
+    const auto* store_value = find(*timing_value, "store_ms");
     const auto* upload_value = find(*timing_value, "upload_ms");
     auto queued =
         queued_value
@@ -1254,13 +1345,21 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
         exec_value
             ? milliseconds_value(*exec_value)
             : result<std::chrono::milliseconds>{std::unexpected(corrupt("exec timing missing"))};
-    auto upload =
-        upload_value
+    auto hash = hash_value ? milliseconds_value(*hash_value)
+                           : result<std::chrono::milliseconds>{std::chrono::milliseconds{}};
+    auto store =
+        store_value ? milliseconds_value(*store_value)
+        : upload_value
             ? milliseconds_value(*upload_value)
-            : result<std::chrono::milliseconds>{std::unexpected(corrupt("upload timing missing"))};
-    if (!queued || !sandbox_timing || !exec || !upload)
+            : result<std::chrono::milliseconds>{std::unexpected(corrupt("store timing missing"))};
+    if (!queued || !sandbox_timing || !exec || !hash || !store) {
         return std::unexpected(corrupt("invalid result timing"));
-    output.timing = {*queued, *sandbox_timing, *exec, *upload};
+    }
+    if (*version == 2 && (!hash_value || !store_value)) {
+        return std::unexpected(corrupt("version 2 result timing is incomplete"));
+    }
+    output.timing = {*queued, *sandbox_timing, *exec, *hash, *store};
+    output.record_version = *version;
     return output;
 }
 
@@ -1309,6 +1408,113 @@ auto decode_action_index_root(std::span<const std::byte> bytes) -> result<action
         output.entries.push_back(
             {*candidate, *result_id, *sequence, divergent ? *divergent : false, verification});
     }
+    if (const auto* traces_value = find(*source, "traces")) {
+        const auto* traces = std::get_if<cbor::value::array>(&traces_value->data);
+        if (!traces) {
+            return std::unexpected(corrupt("invalid action index trace list"));
+        }
+        output.traces.reserve(traces->size());
+        for (const auto& item : *traces) {
+            auto trace = decode_digest(item);
+            if (!trace) {
+                return std::unexpected(trace.error());
+            }
+            output.traces.push_back(*trace);
+        }
+    }
+    return output;
+}
+
+auto decode_build_trace(std::span<const std::byte> bytes) -> result<build_trace> {
+    auto source = decode(bytes, "build_trace");
+    if (!source) {
+        return std::unexpected(source.error());
+    }
+    const auto* wall_value = find(*source, "wall_ms");
+    const auto* actions_value = find(*source, "actions");
+    const auto* edges_value = find(*source, "edges");
+    const auto* cache_value = find(*source, "cache");
+    auto wall = wall_value ? milliseconds_value(*wall_value)
+                           : result<std::chrono::milliseconds>{
+                                 std::unexpected(corrupt("build trace wall time missing"))};
+    const auto* actions =
+        actions_value ? std::get_if<cbor::value::array>(&actions_value->data) : nullptr;
+    const auto* edges = edges_value ? std::get_if<cbor::value::array>(&edges_value->data) : nullptr;
+    if (!wall || !actions || !edges || !cache_value) {
+        return std::unexpected(corrupt("invalid build trace"));
+    }
+    auto output = build_trace{.wall_time = *wall};
+    output.actions.reserve(actions->size());
+    for (const auto& item : *actions) {
+        const auto* result_value = find(item, "result");
+        const auto* action_value = find(item, "action");
+        const auto* outputs_value = find(item, "outputs");
+        const auto* timing_value = find(item, "timing");
+        const auto* cache_status_value = find(item, "cache");
+        const auto* start_value = find(item, "start_ms");
+        auto result_digest = result_value
+                                 ? decode_digest(*result_value)
+                                 : result<digest>{std::unexpected(corrupt("trace result missing"))};
+        auto action = action_value
+                          ? decode_digest(*action_value)
+                          : result<digest>{std::unexpected(corrupt("trace action missing"))};
+        auto outputs = decode_text_array(outputs_value, "trace outputs");
+        auto timing = timing_value
+                          ? decode_action_timing(*timing_value)
+                          : result<action_timing>{std::unexpected(corrupt("trace timing missing"))};
+        const auto* status =
+            cache_status_value ? std::get_if<std::uint64_t>(&cache_status_value->data) : nullptr;
+        auto start = start_value ? milliseconds_value(*start_value)
+                                 : result<std::chrono::milliseconds>{
+                                       std::unexpected(corrupt("trace start missing"))};
+        if (!result_digest || !action || !outputs || !timing || !status ||
+            *status > static_cast<std::uint64_t>(cache_status::divergent) || !start) {
+            return std::unexpected(corrupt("invalid build trace action"));
+        }
+        output.actions.push_back({result_id{*result_digest},
+                                  *action,
+                                  std::move(*outputs),
+                                  *timing,
+                                  static_cast<cache_status>(*status),
+                                  *start});
+    }
+    output.edges.reserve(edges->size());
+    for (const auto& item : *edges) {
+        const auto* dependency_value = find(item, "dependency");
+        const auto* dependent_value = find(item, "dependent");
+        auto dependency =
+            dependency_value ? decode_digest(*dependency_value)
+                             : result<digest>{std::unexpected(corrupt("trace dependency missing"))};
+        auto dependent = dependent_value
+                             ? decode_digest(*dependent_value)
+                             : result<digest>{std::unexpected(corrupt("trace dependent missing"))};
+        if (!dependency || !dependent) {
+            return std::unexpected(corrupt("invalid build trace edge"));
+        }
+        output.edges.push_back({*dependency, *dependent});
+    }
+    const auto read_count = [&](std::string_view name) -> result<std::uint64_t> {
+        const auto* value = find(*cache_value, name);
+        const auto* count = value ? std::get_if<std::uint64_t>(&value->data) : nullptr;
+        if (!count) {
+            return std::unexpected(corrupt("build trace cache field missing"));
+        }
+        return *count;
+    };
+    auto hits = read_count("hits");
+    auto misses = read_count("misses");
+    auto bytes_served = read_count("bytes_served");
+    auto bytes_rebuilt = read_count("bytes_rebuilt");
+    auto bytes_avoided = read_count("bytes_avoided");
+    if (!hits || !misses || !bytes_served || !bytes_rebuilt || !bytes_avoided) {
+        return std::unexpected(corrupt("invalid build trace cache outcome"));
+    }
+    output.cache.hits = *hits;
+    output.cache.misses = *misses;
+    output.cache.bytes_served = *bytes_served;
+    output.cache.bytes_rebuilt = *bytes_rebuilt;
+    output.cache.disk.available = true;
+    output.cache.disk.bytes_avoided = *bytes_avoided;
     return output;
 }
 

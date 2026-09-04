@@ -142,6 +142,22 @@ std::vector<digest> extract_action_index_root(std::span<const std::byte> bytes) 
             append_once(output, *entry.verification);
         }
     }
+    for (const auto& trace : root->traces) {
+        append_once(output, trace);
+    }
+    return output;
+}
+
+std::vector<digest> extract_build_trace(std::span<const std::byte> bytes) {
+    const auto trace = objects::decode_build_trace(bytes);
+    if (!trace) {
+        return {};
+    }
+    auto output = std::vector<digest>{};
+    output.reserve(trace->actions.size());
+    for (const auto& action : trace->actions) {
+        append_once(output, action.result.value);
+    }
     return output;
 }
 
@@ -155,6 +171,7 @@ reference_registry::reference_registry() {
     register_kind("action", extract_action);
     register_kind("result", extract_result);
     register_kind("action-index-root", extract_action_index_root);
+    register_kind("build_trace", extract_build_trace);
     register_kind("attestation", [](std::span<const std::byte>) { return std::vector<digest>{}; });
 }
 
@@ -212,6 +229,8 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "result";
     if (objects::decode_action_index_root(bytes))
         return "action-index-root";
+    if (objects::decode_build_trace(bytes))
+        return "build_trace";
     return "unknown";
 }
 

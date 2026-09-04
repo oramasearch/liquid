@@ -8,7 +8,42 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
+
+static int liquid_wrap_traced;
+
+static uint64_t monotonic_nanoseconds(void) {
+    struct timespec value;
+    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
+        return 0;
+    }
+    return (uint64_t)value.tv_sec * UINT64_C(1000000000) + (uint64_t)value.tv_nsec;
+}
+
+static void append_finished(void) {
+    if (!liquid_wrap_traced) {
+        return;
+    }
+    char line[128];
+    const int size = snprintf(line,
+                              sizeof(line),
+                              "X\t%ld\t%llu\n",
+                              (long)getpid(),
+                              (unsigned long long)monotonic_nanoseconds());
+    const char* trace_path = getenv("LIQUID_WRAP_TRACE");
+    const int trace =
+        open(trace_path == NULL ? "/liquid/trace" : trace_path, O_WRONLY | O_APPEND | O_CLOEXEC);
+    if (trace >= 0) {
+        (void)write(trace, line, (size_t)size);
+        close(trace);
+    }
+    liquid_wrap_traced = 0;
+}
+
+__attribute__((destructor)) static void liquid_wrap_leave(void) {
+    append_finished();
+}
 
 static uint64_t fnv_update(uint64_t value, const void* data, size_t size) {
     const unsigned char* bytes = data;
@@ -119,18 +154,27 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
         append_hex(line, &offset, directory, directory_size);
         line[offset++] = '\t';
         append_hex(line, &offset, arguments, (size_t)argument_size);
-        line[offset++] = '\n';
+        const int suffix = snprintf(line + offset,
+                                    sizeof(line) - offset,
+                                    "\t%llu\n",
+                                    (unsigned long long)monotonic_nanoseconds());
+        if (suffix <= 0 || (size_t)suffix >= sizeof(line) - offset) {
+            return;
+        }
+        offset += (size_t)suffix;
         const char* trace_path = getenv("LIQUID_WRAP_TRACE");
         const int trace = open(trace_path == NULL ? "/liquid/trace" : trace_path,
                                O_WRONLY | O_APPEND | O_CLOEXEC);
         if (trace >= 0) {
             (void)write(trace, line, offset);
             close(trace);
+            liquid_wrap_traced = 1;
         }
     }
 
     const int status = planned_hit(key);
     if (status >= 0) {
+        append_finished();
         _exit(status);
     }
 }
@@ -144,7 +188,43 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
+
+static int liquid_wrap_traced;
+
+static uint64_t monotonic_nanoseconds(void) {
+    struct timespec value;
+    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
+        return 0;
+    }
+    return (uint64_t)value.tv_sec * UINT64_C(1000000000) + (uint64_t)value.tv_nsec;
+}
+
+static void append_finished(void) {
+    if (!liquid_wrap_traced) {
+        return;
+    }
+    char line[128];
+    const int size = snprintf(line,
+                              sizeof(line),
+                              "X\t%ld\t%llu\n",
+                              (long)getpid(),
+                              (unsigned long long)monotonic_nanoseconds());
+    const char* trace_path = getenv("LIQUID_WRAP_TRACE");
+    if (trace_path != NULL) {
+        const int trace = open(trace_path, O_WRONLY | O_APPEND | O_CLOEXEC);
+        if (trace >= 0) {
+            (void)write(trace, line, (size_t)size);
+            close(trace);
+        }
+    }
+    liquid_wrap_traced = 0;
+}
+
+__attribute__((destructor)) static void liquid_wrap_leave(void) {
+    append_finished();
+}
 
 static uint64_t fnv_update(uint64_t value, const void* data, size_t size) {
     const unsigned char* bytes = data;
@@ -238,18 +318,27 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
         append_hex(line, &offset, directory, directory_size);
         line[offset++] = '\t';
         append_hex(line, &offset, arguments, argument_size);
-        line[offset++] = '\n';
+        const int suffix = snprintf(line + offset,
+                                    sizeof(line) - offset,
+                                    "\t%llu\n",
+                                    (unsigned long long)monotonic_nanoseconds());
+        if (suffix <= 0 || (size_t)suffix >= sizeof(line) - offset) {
+            return;
+        }
+        offset += (size_t)suffix;
         const char* trace_path = getenv("LIQUID_WRAP_TRACE");
         if (trace_path != NULL) {
             const int trace = open(trace_path, O_WRONLY | O_APPEND | O_CLOEXEC);
             if (trace >= 0) {
                 (void)write(trace, line, offset);
                 close(trace);
+                liquid_wrap_traced = 1;
             }
         }
     }
     const int status = planned_hit(key);
     if (status >= 0) {
+        append_finished();
         _exit(status);
     }
 }

@@ -90,7 +90,8 @@ auto make_attestation(const objects::action_record& action,
     byproducts.push_back(resource(value.stderr_output, "blob", "stderr"));
     const auto started = value.started_at.value_or(value.observed_at);
     const auto fallback_duration = std::chrono::duration_cast<std::chrono::seconds>(
-        value.timing.sandbox + value.timing.exec + value.timing.upload);
+        value.timing.queued + value.timing.sandbox + value.timing.exec + value.timing.hash +
+        value.timing.store);
     const auto finished = value.finished_at.value_or(started + fallback_duration);
     auto predicate = slsa_provenance_v1{
         .build_definition =
