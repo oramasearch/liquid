@@ -165,6 +165,7 @@ add_executable(liquid-header-tests
   headers/drip.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/git.cpp
   headers/hash.cpp
   headers/identity.cpp
   headers/liquid.cpp

@@ -28,6 +28,7 @@ packed deltas using the system Git executable when it is installed. They check t
 mapping, full history, snapshots, rename node identity, resumable import, corrupt-object refusal,
 and `git fsck` against the export. The private object-reader sources are compiled into that
 fixture too, so this verification also runs with a shared `libliquid`.
+The public-header fixture compiles `liquid/git.hpp` independently.
 
 `liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid
 repository when needed. `liquid export git <path> [ref]` exports the repository rooted at the
