@@ -24,6 +24,9 @@ Build tests cover the disk action index's reopen and rebuild paths on every plat
 privileged Linux environment they also prove a second identical execution launches no process,
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.
+Portable provenance cases prove the SLSA field mapping, exact manifest dependencies, tamper
+rejection, and the DSSE/in-toto projection's canonical attestation digest round-trip. The real
+cache-hit case also proves that the existing provenance attestation is reused without re-signing.
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
 `compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,

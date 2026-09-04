@@ -37,9 +37,20 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.subject_kind = liquid::attestation_subject_kind::change;
         value.attributes = {{"reviewer", "taap:1:ed25519:reviewer"}, {"approved", true}};
     } else if (profile == "slsa_provenance/1") {
-        value.attributes = {{"build_type", "https://liquid.dev/build"},
-                            {"invocation", "liquid build"},
-                            {"materials", std::vector<std::string>{"blake3:input"}}};
+        const auto dependency = liquid::slsa_resource_descriptor{
+            "liquid:blob:blake3:input", {{"blake3", "input"}}, std::nullopt};
+        value.slsa_provenance = liquid::slsa_provenance_v1{
+            .build_definition = {.build_type = "https://liquid.dev/build",
+                                 .external_parameters = {{"liquid", "build"}, "", {}},
+                                 .internal_parameters = {.toolchain = dependency,
+                                                         .sandbox = dependency,
+                                                         .platform = {{"os", "linux"},
+                                                                      {"arch", "x86_64"}}},
+                                 .resolved_dependencies = {dependency}},
+            .run_details = {
+                .builder = {"taap:1:ed25519:builder"},
+                .metadata = {"invocation", "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"},
+                .byproducts = {dependency}}};
     } else if (profile == "sbom/1") {
         value.attributes = {{"format", "SPDX-2.3"},
                             {"components", std::vector<std::string>{"pkg:cpp/liquid"}}};
@@ -98,6 +109,8 @@ TEST(AttestationRegistry, all_profiles_accept_examples_and_reject_missing_requir
         auto missing = example(profile.name);
         if (profile.name == "scan_result/1") {
             missing.detectors.clear();
+        } else if (profile.name == "slsa_provenance/1") {
+            missing.slsa_provenance.reset();
         } else {
             const auto required = std::ranges::find_if(
                 profile.schema, [](const auto& field) { return field.required; });
@@ -139,30 +152,25 @@ TEST(AttestationRegistry, applies_maximum_age_freshness) {
 }
 
 TEST(AttestationRegistry, verifies_selective_disclosure_commitments) {
-    const auto invocation = liquid::attestation_attribute{"invocation", "liquid build"};
-    const auto materials =
-        liquid::attestation_attribute{"materials", std::vector<std::string>{"blake3:source"}};
-    const auto invocation_salt = std::vector<std::byte>{std::byte{1}, std::byte{2}};
-    const auto materials_salt = std::vector<std::byte>{std::byte{3}, std::byte{4}};
-    auto invocation_commitment = liquid::attribute_commitment(invocation, invocation_salt);
-    auto materials_commitment = liquid::attribute_commitment(materials, materials_salt);
-    ASSERT_TRUE(invocation_commitment) << invocation_commitment.error().message;
-    ASSERT_TRUE(materials_commitment) << materials_commitment.error().message;
+    const auto components =
+        liquid::attestation_attribute{"components", std::vector<std::string>{"pkg:cpp/liquid"}};
+    const auto salt = std::vector<std::byte>{std::byte{1}, std::byte{2}};
+    auto commitment = liquid::attribute_commitment(components, salt);
+    ASSERT_TRUE(commitment) << commitment.error().message;
 
-    auto value = example("slsa_provenance/1");
-    value.attributes = {{"build_type", "https://liquid.dev/build"}, invocation};
-    value.disclosure_commitments = {{"invocation", *invocation_commitment},
-                                    {"materials", *materials_commitment}};
+    auto value = example("sbom/1");
+    value.attributes = {{"format", "SPDX-2.3"}};
+    value.disclosure_commitments = {{"components", *commitment}};
     value = sign(std::move(value));
-    auto verified = liquid::verify_attestation(
-        value, {.now = value.at, .disclosures = {{invocation, invocation_salt}}});
+    auto verified =
+        liquid::verify_attestation(value, {.now = value.at, .disclosures = {{components, salt}}});
     ASSERT_TRUE(verified) << verified.error().message;
     EXPECT_TRUE(verified->verified) << verified->reason;
 
-    auto wrong_salt = invocation_salt;
+    auto wrong_salt = salt;
     wrong_salt.front() = std::byte{9};
     auto refused = liquid::verify_attestation(
-        value, {.now = value.at, .disclosures = {{invocation, wrong_salt}}});
+        value, {.now = value.at, .disclosures = {{components, wrong_salt}}});
     ASSERT_TRUE(refused) << refused.error().message;
     EXPECT_FALSE(refused->verified);
     EXPECT_EQ(refused->reason, "attribute commitment mismatch");

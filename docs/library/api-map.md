@@ -55,7 +55,7 @@ owning issue in `error::context`.
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
-| `liquid/attestation.hpp` | #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, attestation encoding, and profile-keyed verification |
+| `liquid/attestation.hpp` | #14, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2, #50, #62 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
@@ -63,7 +63,7 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13 | implemented local executor, wrapper, disk cache, and verification | `build::execute`, `build::result`, `build::wrap`, and `build::verify`; action/result values, cache diagnostics, critical alerts, and signed reproducibility outcomes; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14 | implemented local executor, wrapper, disk cache, verification, and provenance | action execution and results, cache diagnostics, critical alerts, reproducibility verification, provenance verification, and JSON/DSSE projection; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -193,7 +193,11 @@ enum class attestation_status_kind : std::uint8_t { none, max_age, revocable };
 using attestation_value = std::variant<std::string, std::uint64_t, bool, std::vector<std::string>>;
 struct attestation_attribute { std::string name; attestation_value value; };
 struct attribute_disclosure_commitment { std::string name; std::vector<std::byte> value; };
-struct attestation { digest subject; std::string profile; /* legacy scan fields and generic attributes */ };
+struct slsa_provenance_v1 { slsa_build_definition build_definition; slsa_run_details run_details; };
+struct attestation {
+  digest subject; std::string profile; /* legacy scan fields and generic attributes */
+  std::optional<slsa_provenance_v1> slsa_provenance;
+};
 class attestation_profile_registry { public: static const attestation_profile_registry& global();
   const std::vector<attestation_profile>& profiles() const; const attestation_profile* find(std::string_view) const;
   result<void> validate(const attestation&) const; };
@@ -369,6 +373,12 @@ struct action_result {
   std::vector<observed_input> manifest; action_timing timing; std::string worker;
   std::chrono::sys_seconds observed_at; actor producer; std::vector<std::byte> sig;
   cache_status cache; std::optional<cache_miss> why;
+  std::optional<std::chrono::sys_seconds> started_at, finished_at;
+  std::optional<digest> provenance;
+};
+struct provenance_report {
+  result_id result; digest attestation; liquid::attestation statement; action_result value;
+  bool verified; std::string reason;
 };
 enum class verify_selection : std::uint8_t { sample, all, changed, action };
 struct verify_options {
@@ -386,6 +396,13 @@ runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
 runtime::task<verify_report> verify(repository&, verify_options = {});
 runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
+runtime::task<provenance_report> verify_provenance(repository&, result_id);
+runtime::task<provenance_report> verify_provenance(repository&, std::string output_path);
+runtime::task<provenance_report> verify_wrapped_provenance(std::filesystem::path, std::filesystem::path);
+result<std::string> provenance_json(const provenance_report&, bool dsse = false);
+runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
+runtime::task<verify_report> verify(repository&, verify_options = {});
+runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
 }
 ```
 
@@ -397,6 +414,13 @@ are immutable record fields; cache status and miss detail describe the current r
 status and output digests, and returns the signed attestation digest plus any differences. A
 divergent index entry is permanently excluded from lookup. See
 [`build-engine.md`](build-engine.md#reproducibility-verification).
+all observed paths match the current input tree, all referenced blobs exist, and the referenced
+provenance verifies. Producer, `sig`, timestamps, and `provenance` are immutable record fields;
+cache status and miss detail describe the current request. `verify` re-executes selected cache
+entries with their recorded sandbox definition, compares exit status and output digests, and returns
+the signed attestation digest plus any differences. A divergent index entry is permanently excluded
+from lookup. See [build-engine.md](build-engine.md#reproducibility-verification) and
+[provenance.md](provenance.md) for the SLSA mapping and interim object subject.
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 
@@ -460,8 +484,9 @@ class keyring {
 complete account of workspace state. The `drip_filter` insertion point between coalescing and
 journal append is intentionally a no-op until liquid #50 supplies inline secret scanning.
 
-Object subjects (attestations *about* a drip or artifact) wait on the TAAP spec change
-(liquid-bridge #1); the `actor` type is written so an object-subject form can be added beside it.
+TAAP's final object-subject syntax waits on the protocol change (liquid-bridge #1). Build
+provenance uses the documented interim digest subject in [provenance.md](provenance.md), and the
+`actor` type remains ready for a protocol-defined form beside it.
 
 liquid's readings of the TAAP/1 draft where it is silent (each also filed as protocol feedback on
 liquid-bridge #8): the signed bytes are the artifact body **without** its `signatures` field, domain-separated by

@@ -314,6 +314,9 @@ TEST(BuildCache, identical_second_execution_is_a_hit_without_a_spawn) {
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
     auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
     ASSERT_TRUE(first) << first.error().message;
+    auto first_value = liquid::runtime::block_on(liquid::build::result(fixture.repository, *first));
+    ASSERT_TRUE(first_value);
+    ASSERT_TRUE(first_value->provenance);
     liquid::build_detail::testing::reset_sandbox_spawn_count();
     auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
     ASSERT_TRUE(second) << second.error().message;
@@ -321,7 +324,13 @@ TEST(BuildCache, identical_second_execution_is_a_hit_without_a_spawn) {
     EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 0U);
     auto value = liquid::runtime::block_on(liquid::build::result(fixture.repository, *second));
     ASSERT_TRUE(value);
+    ASSERT_TRUE(value->provenance);
+    EXPECT_EQ(liquid::to_string(*value->provenance), liquid::to_string(*first_value->provenance));
     EXPECT_EQ(value->cache, liquid::cache_status::hit);
+    auto provenance =
+        liquid::runtime::block_on(liquid::build::verify_provenance(fixture.repository, *second));
+    ASSERT_TRUE(provenance) << provenance.error().message;
+    EXPECT_TRUE(provenance->verified) << provenance->reason;
     auto statistics = liquid::runtime::block_on(fixture.repository.cache_stats());
     ASSERT_TRUE(statistics);
     EXPECT_EQ(statistics->hits, 1U);

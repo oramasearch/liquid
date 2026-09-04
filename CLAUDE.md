@@ -27,7 +27,9 @@ liquid #10 provides local sandboxed action execution through `liquid::build` on 
 default. Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and
 `compile_commands.json` builds on Linux with FUSE and macOS with macFUSE. Liquid #13 provides
 sampled local re-execution, signed `reproducibility/1` attestations, critical divergence alerts,
-and permanent divergent-result quarantine; operations owned by later issues return
+permanent divergent-result quarantine, and result-bound `slsa_provenance/1` attestations that
+verify on cache lookup and publication and export as in-toto/DSSE; operations owned by later issues
+return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
 and drip journal are implemented. Full materialisation works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
@@ -104,9 +106,10 @@ Three things to know before touching anything that depends on it:
 2. **The copy here is a holding position.** TAAP is transport-agnostic and much wider in
    scope than liquid; it should get its own repository. When it does, record the version
    this copy corresponds to and stop treating the vendored file as authoritative.
-3. **One open question blocks liquid**: TAAP subjects are key-derived, but documents,
-   drips and artifacts are content-addressed. A content-addressed subject form is
-   required, not optional. Do not design around the gap — it needs closing in the spec.
+3. **One open question remains for liquid**: TAAP subjects are key-derived, but documents,
+   drips and artifacts are content-addressed. A protocol content-addressed subject form is
+   required. Build provenance uses the versioned interim result-body digest in
+   [`docs/library/provenance.md`](docs/library/provenance.md) until the spec defines that form.
 
 Do not introduce a second attestation or signing framework. in-toto predicates and SBOM
 formats ride *inside* TAAP as profile bodies; they do not get their own envelope.
@@ -292,8 +295,9 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
 **Still open:**
 
 - **TAAP content-addressed subjects** — the spec needs an object-subject form
-  ([25](docs/features/25-identity-attestation-and-transparency.md)). Blocking for
-  attribution of documents and artifacts; needs the protocol owner.
+  ([25](docs/features/25-identity-attestation-and-transparency.md)). The final protocol form needs
+  the protocol owner; build provenance uses the versioned interim result-body digest documented in
+  [`docs/library/provenance.md`](docs/library/provenance.md).
 - **Which open-source licence** for liquid and liquify.
 
 **Phase 0.5 is met** (every module builds and runs; lake serves on AKS). Phase 1 — the store —

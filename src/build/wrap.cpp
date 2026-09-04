@@ -21,6 +21,7 @@
 
 #include "build/cache.hpp"
 #include "build/materialise.hpp"
+#include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/verify.hpp"
 #include "build/wrap.hpp"
@@ -89,6 +90,8 @@ struct observed_run {
     std::shared_ptr<observation_log> observations;
     std::vector<traced_process> processes;
     sandbox_detail::launch_result launch;
+    std::chrono::sys_seconds started_at;
+    std::chrono::sys_seconds finished_at;
 };
 
 auto host_platform() -> platform;
@@ -227,22 +230,26 @@ auto project_key(const std::filesystem::path& root) -> liquid::result<std::strin
     for (const auto* name :
          {"CMakeLists.txt", "configure.ac", "configure.in", "Makefile", "compile_commands.json"}) {
         const auto path = root / name;
-        if (!std::filesystem::is_regular_file(path))
+        if (!std::filesystem::is_regular_file(path)) {
             continue;
+        }
         auto input = std::ifstream{path, std::ios::binary};
-        if (!input)
+        if (!input) {
             return std::unexpected(wrap_error(errc::io, "cannot identify wrapped project", path));
+        }
         material += name;
         material.push_back('\0');
         material.append(std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{});
         material.push_back('\0');
     }
-    if (material.empty())
+    if (material.empty()) {
         material = root.filename().string();
+    }
     auto value = hash(algorithm::blake3,
                       {reinterpret_cast<const std::byte*>(material.data()), material.size()});
-    if (!value)
+    if (!value) {
         return std::unexpected(value.error());
+    }
     auto text = to_string(*value);
     std::ranges::replace(text, ':', '-');
     return text;
@@ -251,14 +258,18 @@ auto project_key(const std::filesystem::path& root) -> liquid::result<std::strin
 auto default_cache_directory(const std::filesystem::path& root)
     -> liquid::result<std::filesystem::path> {
     auto key = project_key(root);
-    if (!key)
+    if (!key) {
         return std::unexpected(key.error());
-    if (const auto* configured = std::getenv("LIQUID_WRAP_CACHE"))
+    }
+    if (const auto* configured = std::getenv("LIQUID_WRAP_CACHE")) {
         return std::filesystem::path{configured} / *key;
-    if (const auto* configured = std::getenv("XDG_CACHE_HOME"))
+    }
+    if (const auto* configured = std::getenv("XDG_CACHE_HOME")) {
         return std::filesystem::path{configured} / "liquid/wrap" / *key;
-    if (const auto* home = std::getenv("HOME"))
+    }
+    if (const auto* home = std::getenv("HOME")) {
         return std::filesystem::path{home} / ".cache/liquid/wrap" / *key;
+    }
     return root / ".liquid-wrap-cache" / *key;
 }
 
@@ -718,6 +729,8 @@ runtime::task<saved_action> publish_action(repository& source,
                                            const std::set<std::string>& writes,
                                            digest empty_blob,
                                            int exit,
+                                           std::chrono::sys_seconds started_at,
+                                           std::chrono::sys_seconds finished_at,
                                            bool publish) {
     auto output_paths = co_await collect_action_outputs(source, writes);
     if (!output_paths)
@@ -749,25 +762,20 @@ runtime::task<saved_action> publish_action(repository& source,
         .manifest = std::move(*manifest),
         .worker = input.platform.os + "/" + input.platform.arch,
         .observed_at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())};
-    auto signed_value = co_await repository_detail::build_access::sign_result(source, value);
-    if (!signed_value)
-        co_return std::unexpected(signed_value.error());
-    auto result_bytes = objects::encode(value);
-    if (!result_bytes)
-        co_return std::unexpected(result_bytes.error());
-    auto stored_result =
-        co_await repository_detail::build_access::put_record(source, std::move(*result_bytes));
+    value.started_at = started_at;
+    value.finished_at = finished_at;
+    auto stored_result = co_await build_detail::store_result_with_provenance(source, value);
     if (!stored_result)
         co_return std::unexpected(stored_result.error());
     if (publish) {
         auto candidate = cache.candidate_key(input, sandbox);
         if (!candidate)
             co_return std::unexpected(candidate.error());
-        auto published = co_await cache.publish(*candidate, result_id{*stored_result}, value);
+        auto published = co_await cache.publish(*candidate, *stored_result, value);
         if (!published)
             co_return std::unexpected(published.error());
     }
-    co_return saved_action{process.key, *stored_result};
+    co_return saved_action{process.key, stored_result->value};
 }
 
 auto host_platform() -> platform {
@@ -1109,6 +1117,8 @@ execute_observed_run(repository& source,
                                                        .plan = plan_path,
                                                        .command = {},
                                                        .environment = environment};
+    const auto started_at =
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     auto seeded = co_await launch_seed_processes(request, commands->seeds, options.jobs);
     if (!seeded) {
         static_cast<void>(co_await (*mounted)->unmount());
@@ -1146,7 +1156,10 @@ execute_observed_run(repository& source,
         co_return std::unexpected(wrap_error(
             errc::unsupported, "wrapped driver did not load the exec-time hook", command.front()));
     }
-    co_return observed_run{run, std::move(observations), std::move(*processes), launch};
+    const auto finished_at =
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    co_return observed_run{
+        run, std::move(observations), std::move(*processes), launch, started_at, finished_at};
 }
 
 runtime::task<void> publish_observed_run(repository& source,
@@ -1226,6 +1239,8 @@ runtime::task<void> publish_observed_run(repository& source,
                                                  found->second,
                                                  *empty_blob,
                                                  0,
+                                                 run.started_at,
+                                                 run.finished_at,
                                                  options.cache);
         if (!published) {
             static_cast<void>(remove_run(run.directory));
@@ -1251,6 +1266,8 @@ runtime::task<void> publish_observed_run(repository& source,
                                                all_writes,
                                                *empty_blob,
                                                report.exit,
+                                               run.started_at,
+                                               run.finished_at,
                                                options.cache);
     if (!outer_saved) {
         static_cast<void>(remove_run(run.directory));

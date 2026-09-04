@@ -222,6 +222,7 @@ add_library(libliquid
   src/build/executor.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
+  src/build/provenance.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
@@ -330,6 +331,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/history.cpp
     src/cli/identity.cpp
     src/cli/locks.cpp
+    src/cli/provenance.cpp
     src/cli/repo.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp

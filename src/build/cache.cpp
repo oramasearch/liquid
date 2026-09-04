@@ -491,6 +491,13 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         if (!*signature_valid) {
             continue;
         }
+        if (!value->provenance) {
+            continue;
+        }
+        auto provenance = co_await build::verify_provenance(source_, result_id{id});
+        if (!provenance || !provenance->verified) {
+            continue;
+        }
         auto action_bytes = co_await repository_detail::build_access::get(source_, value->action);
         if (!action_bytes) {
             continue;
@@ -505,6 +512,7 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         }
         auto references_present = true;
         auto references = std::vector<digest>{value->stdout_output, value->stderr_output};
+        references.push_back(*value->provenance);
         for (const auto& action_output : value->outputs) {
             references.push_back(action_output.blob);
         }
@@ -550,6 +558,35 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
     co_return output;
 }
 
+runtime::task<std::optional<result_id>> disk_cache::find_output(std::string_view path,
+                                                                std::optional<digest> content) {
+    const objects::action_index_entry* newest = nullptr;
+    for (const auto& entry : index_.entries()) {
+        auto bytes = co_await repository_detail::build_access::get(source_, entry.result);
+        if (!bytes) {
+            if (bytes.error().code == errc::not_found) {
+                continue;
+            }
+            co_return std::unexpected(bytes.error());
+        }
+        auto value = objects::decode_result(*bytes);
+        if (!value || !value->provenance) {
+            continue;
+        }
+        const auto found = std::ranges::find(value->outputs, path, &action_output::path);
+        if (found == value->outputs.end() || (content && !same_digest(found->blob, *content))) {
+            continue;
+        }
+        if (!newest || entry.sequence > newest->sequence) {
+            newest = &entry;
+        }
+    }
+    if (!newest) {
+        co_return std::nullopt;
+    }
+    co_return result_id{newest->result};
+}
+
 runtime::task<void>
 disk_cache::publish(digest candidate, result_id id, const action_result& value) {
     if (!repository_detail::build_access::cache_publish_enabled(source_)) {
@@ -563,6 +600,14 @@ disk_cache::publish(digest candidate, result_id id, const action_result& value) 
     if (!*signature_valid) {
         co_return std::unexpected(
             error{errc::unauthorized, "cache result signature is invalid", to_string(id.value)});
+    }
+    auto provenance = co_await build::verify_provenance(source_, id);
+    if (!provenance) {
+        co_return std::unexpected(provenance.error());
+    }
+    if (!provenance->verified) {
+        co_return std::unexpected(
+            error{errc::unauthorized, "cache result provenance is invalid", provenance->reason});
     }
     auto inserted = index_.insert(candidate, id.value);
     if (!inserted) {
