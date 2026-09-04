@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -93,14 +94,60 @@ auto run_wrap(const std::filesystem::path& project,
               std::vector<std::string> command,
               bool explain = false,
               std::uint32_t jobs = 0) -> liquid::result<liquid::wrap_report> {
-    return liquid::runtime::block_on(liquid::build::wrap(
-        project,
-        std::move(command),
-        liquid::wrap_options{
-            .jobs = jobs, .cache = true, .explain = explain, .cache_directory = cache}));
+    return liquid::runtime::block_on(
+        liquid::build::wrap(project,
+                            std::move(command),
+                            liquid::wrap_options{.jobs = jobs,
+                                                 .cache = true,
+                                                 .explain = explain,
+                                                 .verify = false,
+                                                 .cache_directory = cache}));
+}
+
+auto shell_quote(std::string_view value) -> std::string {
+    auto output = std::string{"'"};
+    for (const auto character : value) {
+        if (character == '\'') {
+            output += "'\\''";
+        } else {
+            output += character;
+        }
+    }
+    output += '\'';
+    return output;
 }
 
 #if LIQUID_BUILD_HAS_FUSE && defined(__linux__)
+
+class scoped_environment {
+public:
+    scoped_environment(std::string name, std::string value) : name_(std::move(name)) {
+        if (const auto* previous = std::getenv(name_.c_str())) {
+            previous_ = previous;
+        }
+        valid_ = ::setenv(name_.c_str(), value.c_str(), 1) == 0;
+    }
+
+    scoped_environment(const scoped_environment&) = delete;
+    auto operator=(const scoped_environment&) -> scoped_environment& = delete;
+
+    ~scoped_environment() {
+        if (previous_) {
+            static_cast<void>(::setenv(name_.c_str(), previous_->c_str(), 1));
+        } else {
+            static_cast<void>(::unsetenv(name_.c_str()));
+        }
+    }
+
+    [[nodiscard]] bool valid() const noexcept {
+        return valid_;
+    }
+
+private:
+    std::string name_;
+    std::optional<std::string> previous_;
+    bool valid_{};
+};
 
 TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkouts) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0)
@@ -166,6 +213,39 @@ TEST(BuildWrap, recursive_make_is_split_into_actions) {
     ASSERT_TRUE(made_again) << made_again.error().message;
     EXPECT_EQ(made_again->outer, liquid::cache_status::hit);
 }
+
+#if defined(LIQUID_CLI)
+
+TEST(BuildWrap, verify_all_reexecutes_every_wrapped_action) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0)
+        GTEST_SKIP() << "FUSE is unavailable";
+    if (!available("make") || !available("clang"))
+        GTEST_SKIP() << "make or clang is absent";
+    wrap_directory fixture{"make"};
+    auto cache_environment = scoped_environment{"LIQUID_WRAP_CACHE", fixture.cache().string()};
+    ASSERT_TRUE(cache_environment.valid());
+    auto made = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(),
+                            {"make", "--silent", "--no-print-directory", "-C", "sub"},
+                            {.jobs = 1, .cache = true, .verify = false}));
+    ASSERT_TRUE(made) << made.error().message << ": " << made.error().context;
+    ASSERT_EQ(made->exit, 0);
+    const auto output = fixture.project().parent_path() / "verify-output";
+    const auto command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                         shell_quote(LIQUID_CLI) + " verify --all >" +
+                         shell_quote(output.string()) + " 2>&1";
+    const auto status = std::system(command.c_str());
+    auto input = std::ifstream{output};
+    const auto text =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    ASSERT_EQ(status, 0) << text;
+    EXPECT_NE(text.find("considered=" + std::to_string(made->actions) +
+                        " verified=" + std::to_string(made->actions) + " divergent=false"),
+              std::string::npos)
+        << text;
+}
+
+#endif
 
 TEST(BuildWrap, compile_database_seeds_actions) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0)

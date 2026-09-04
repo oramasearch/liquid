@@ -45,6 +45,10 @@ public:
     [[nodiscard]] runtime::task<cache_lookup> lookup(const action_input& input, digest sandbox);
     [[nodiscard]] runtime::task<void>
     publish(digest candidate, result_id id, const action_result& value);
+    [[nodiscard]] runtime::task<void>
+    record_verification(digest result, digest attestation, bool divergent);
+    [[nodiscard]] const std::vector<objects::action_index_entry>& entries() const noexcept;
+    [[nodiscard]] bool divergent(digest result) const noexcept;
 
 private:
     repository& source_;
@@ -53,6 +57,7 @@ private:
 
     [[nodiscard]] runtime::task<std::optional<digest>> load_root_pointer();
     [[nodiscard]] runtime::task<void> save_root_pointer(digest root);
+    [[nodiscard]] runtime::task<void> persist_root();
 };
 
 namespace testing {

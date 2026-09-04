@@ -63,6 +63,7 @@ struct repository_document {
     std::vector<persisted_drip> drips;
     std::vector<encryption_path_rule> encryption_rules;
     bool cache_publish{};
+    std::uint32_t verification_rate{20};
     std::uint64_t pending_drips{};
 };
 
@@ -211,8 +212,10 @@ auto encode_repository_document(const repository_document& value)
                  {"mode", cbor::value{rule.mode == encryption_mode::leaf ? "leaf" : "file"}},
                  {"encrypted_regex", cbor::value{rule.encrypted_regex}}}));
     }
-    auto config = map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
-                       {"cache", map({{"publish", cbor::value{value.cache_publish}}})}});
+    auto config =
+        map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
+             {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
+             {"verify", map({{"rate", cbor::value{std::uint64_t{value.verification_rate}}}})}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
@@ -409,6 +412,15 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     failure(errc::corrupt, "invalid cache config", "repository document"));
             }
             output.cache_publish = *enabled;
+        }
+        if (const auto* verify = find(*config, "verify")) {
+            const auto* rate = find(*verify, "rate");
+            const auto* value = rate ? std::get_if<std::uint64_t>(&rate->data) : nullptr;
+            if (!value || *value == 0 || *value > std::numeric_limits<std::uint32_t>::max()) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid verification config", "repository document"));
+            }
+            output.verification_rate = static_cast<std::uint32_t>(*value);
         }
     }
     for (const auto& item : *saved_drips) {
@@ -1276,6 +1288,10 @@ repository::repository(repository&&) noexcept = default;
 auto repository::operator=(repository&&) noexcept -> repository& = default;
 runtime::task<repository> repository::create(std::filesystem::path path,
                                              repository_options options) {
+    if (options.verify.rate == 0) {
+        co_return std::unexpected(failure(
+            errc::invalid_argument, "verification rate must be positive", "config.verify.rate"));
+    }
     auto valid_rules = validate_encryption_rules(options.encrypt.paths);
     if (!valid_rules) {
         co_return std::unexpected(valid_rules.error());
@@ -1298,6 +1314,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.root.object.alg = hash_algorithm;
     document.encryption_rules = std::move(options.encrypt.paths);
     document.cache_publish = options.cache.publish;
+    document.verification_rate = options.verify.rate;
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -2491,6 +2508,35 @@ runtime::task<void> repository_detail::build_access::sign_result(repository& sou
     co_return result<void>{};
 }
 
+runtime::task<void> repository_detail::build_access::sign_attestation(repository& source,
+                                                                      attestation& value) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    value.issuer = source.impl_->signing_key.identity();
+    auto body = objects::encode_attestation_body(value);
+    if (!body) {
+        co_return std::unexpected(body.error());
+    }
+    auto signed_value = co_await source.impl_->signing_key.sign("attestation", std::move(*body));
+    if (!signed_value) {
+        co_return std::unexpected(signed_value.error());
+    }
+    auto signature = identity_detail::canonical_signature(*signed_value);
+    if (!signature) {
+        co_return std::unexpected(signature.error());
+    }
+    value.signature = std::move(*signature);
+    co_return result<void>{};
+}
+
+auto repository_detail::build_access::signer(repository& source) -> result<actor> {
+    if (!source.impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return source.impl_->signing_key.identity();
+}
+
 runtime::task<void> repository_detail::build_access::retain_cache_root(repository& source,
                                                                        digest root) {
     if (!source.impl_) {
@@ -2518,6 +2564,10 @@ bool repository_detail::build_access::cache_publish_enabled(repository& source) 
     return source.impl_ && source.impl_->current.cache_publish;
 }
 
+std::uint32_t repository_detail::build_access::verification_rate(repository& source) noexcept {
+    return source.impl_ ? source.impl_->current.verification_rate : 20;
+}
+
 void repository_detail::build_access::record_cache_lookup(repository& source,
                                                           digest result,
                                                           cache_status status,
@@ -2539,6 +2589,13 @@ void repository_detail::build_access::record_cache_lookup(repository& source,
 void repository_detail::build_access::record_cache_store(repository& source, std::uint64_t bytes) {
     if (source.impl_) {
         source.impl_->cache_statistics.bytes_stored += bytes;
+    }
+}
+
+void repository_detail::build_access::record_critical_alert(repository& source,
+                                                            critical_cache_alert alert) {
+    if (source.impl_) {
+        source.impl_->cache_statistics.critical_alerts.push_back(std::move(alert));
     }
 }
 

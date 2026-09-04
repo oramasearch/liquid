@@ -30,7 +30,7 @@ the public encoder.
 | `model_provenance/1` | model | `training_dataset:text*`, `training_code:text*` | `base_model:text*` | none |
 | `abi_compatibility/1` | library | `compatible_with:text`, `compatibility:text` | `notes:text` | none |
 | `scan_result/1` | drip | fixed record fields `detectors:text_list`, `findings:unsigned_integer`, `allowances:text_list` | none | maximum attestation age: 24 hours |
-| `reproducibility/1` | artifact | `builder_one:text`, `builder_two:text` | `environment:text` | none |
+| `reproducibility/1` | artifact | `verified_by:text`, `sandbox:text`, `agreement:boolean` | `differing_outputs:text_list` | none |
 
 `*` marks a field that may be represented by a salted disclosure commitment rather than its
 plaintext value. A required field is satisfied by its committed value when the profile permits it.
@@ -38,6 +38,11 @@ plaintext value. A required field is satisfied by its committed value when the p
 The `scan_result/1` names describe its established wire fields: detector ids, finding count, and
 allowance records. Its full encoding and privacy limits remain in
 [secret-scanning.md](secret-scanning.md#scan_result1).
+
+`reproducibility/1` uses the cached result digest as its artifact subject. `verified_by` is the
+device TAAP id, `sandbox` is the exact sandbox-definition digest, and `agreement` records whether
+exit status and all output digests matched. A disagreement includes each differing output with its
+cached and re-executed digest, including `missing` where one execution produced no value.
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's
@@ -71,4 +76,4 @@ unregistered-profile fallback.
 - Object subjects remain the TAAP protocol gap described in
   [features/25](../features/25-identity-attestation-and-transparency.md#the-gap-you-need-to-close).
   `subject_kind` records the intended kind while object-subject protocol work is pending.
-- #13, #14, and #60 will emit or consume the registry once their build functionality lands.
+- #14 and #60 will emit or consume the registry once their build functionality lands.

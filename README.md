@@ -25,7 +25,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
-> secret scanning, the TAAP attestation profile registry with `scan_result/1`, and repository redaction are implemented; remote operations remain
+> secret scanning, the TAAP attestation profile registry with `scan_result/1` and
+> `reproducibility/1`, and repository redaction are implemented; remote operations remain
 > `unsupported` until their owning issues land. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
@@ -38,7 +39,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install.
 
-> **Phase 2 now includes `liquid wrap`, local sandboxed action execution, and the persistent disk cache.**
+> **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache, and sampled reproducibility verification.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -46,7 +47,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > output-producing tool processes into cached actions. Before execution it looks up signed results
 > by candidate key, validates every observed manifest path against the current input tree, and
 > reports the first differing input on a miss. The on-disk action index rebuilds from its leased
-> store root. Memory and remote tiers remain separate work; macOS needs macFUSE and Windows returns
+> store root. `liquid verify` re-executes cached actions in fresh sandboxes, compares exit status
+> and every output digest, signs a `reproducibility/1` attestation, and permanently quarantines a
+> divergent result. `wrap` schedules a one-in-20 local sample on the shared runtime by default.
+> Memory and remote tiers remain separate work; macOS needs macFUSE and Windows returns
 > its documented unsupported result.
 
 ## Where this sits

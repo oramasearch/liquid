@@ -12,6 +12,7 @@
 #endif
 
 #include "build/cache.hpp"
+#include "build/executor.hpp"
 #include "build/materialise.hpp"
 #include "build/repository_access.hpp"
 #include "objects/records.hpp"
@@ -227,60 +228,43 @@ collect_outputs(repository& source, const action_input& input, const run_paths& 
 
 } // namespace
 
-runtime::task<result_id> execute(repository& source, action_input input) {
-#if defined(_WIN32)
-    co_return std::unexpected(
-        failure(errc::unsupported,
-                "sandboxed actions are unavailable on Windows until Cloud Files and job objects",
-                "liquid Phase 6"));
-#else
+runtime::task<action_result> run_action(repository& source,
+                                        action_input input,
+                                        digest action,
+                                        digest sandbox,
+                                        std::chrono::sys_seconds observed_at) {
     auto valid = validate(input);
-    if (!valid)
+    if (!valid) {
         co_return std::unexpected(valid.error());
-    auto source_time = co_await repository_detail::build_access::change_time(source, input.inputs);
-    if (!source_time)
-        co_return std::unexpected(source_time.error());
-    auto sandbox = sandbox_detail::definition(input.platform);
-    if (!sandbox)
-        co_return std::unexpected(sandbox.error());
-    auto sandbox_bytes = objects::encode(*sandbox);
-    if (!sandbox_bytes)
-        co_return std::unexpected(sandbox_bytes.error());
-    auto sandbox_id =
-        co_await repository_detail::build_access::put_record(source, std::move(*sandbox_bytes));
-    if (!sandbox_id)
-        co_return std::unexpected(sandbox_id.error());
-    auto action_bytes = objects::encode(objects::action_record{input, *sandbox_id});
-    if (!action_bytes)
-        co_return std::unexpected(action_bytes.error());
-    auto action_id =
-        co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
-    if (!action_id)
-        co_return std::unexpected(action_id.error());
-    auto cache = build_detail::disk_cache{source};
-    auto cache_opened = co_await cache.open();
-    if (!cache_opened)
-        co_return std::unexpected(cache_opened.error());
-    auto candidate = cache.candidate_key(input, *sandbox_id);
-    if (!candidate)
-        co_return std::unexpected(candidate.error());
-    auto cached = co_await cache.lookup(input, *sandbox_id);
-    if (!cached)
-        co_return std::unexpected(cached.error());
-    if (cached->hit) {
-        repository_detail::build_access::record_cache_lookup(
-            source, cached->hit->value, cache_status::hit, {}, cached->bytes_served);
-        co_return *cached->hit;
+    }
+    auto stored_sandbox = co_await repository_detail::build_access::get(source, sandbox);
+    if (!stored_sandbox) {
+        co_return std::unexpected(stored_sandbox.error());
+    }
+    auto current_sandbox = sandbox_detail::definition(input.platform);
+    if (!current_sandbox) {
+        co_return std::unexpected(current_sandbox.error());
+    }
+    auto current_sandbox_bytes = objects::encode(*current_sandbox);
+    if (!current_sandbox_bytes) {
+        co_return std::unexpected(current_sandbox_bytes.error());
+    }
+    if (*stored_sandbox != *current_sandbox_bytes) {
+        co_return std::unexpected(failure(
+            errc::unsupported, "recorded sandbox definition is unavailable", to_string(sandbox)));
     }
     auto root = repository_detail::build_access::root_path(source);
-    if (!root)
+    if (!root) {
         co_return std::unexpected(root.error());
-    auto prepared = co_await runtime::offload(
-        [root = *root, action = *action_id] { return prepare_run(root, action); });
-    if (!prepared)
+    }
+    auto prepared =
+        co_await runtime::offload([root = *root, action] { return prepare_run(root, action); });
+    if (!prepared) {
         co_return std::unexpected(prepared.error());
-    if (!*prepared)
+    }
+    if (!*prepared) {
         co_return std::unexpected(prepared->error());
+    }
     auto paths = std::move(**prepared);
     auto toolchain =
         co_await build_detail::materialise_tree(source, input.toolchain, paths.toolchain);
@@ -302,7 +286,7 @@ runtime::task<result_id> execute(repository& source, action_input input) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
         co_return std::unexpected(mounted.error());
     }
-    auto environment = sandbox_detail::environment(input, *action_id, *source_time);
+    auto environment = sandbox_detail::environment(input, action, observed_at);
     if (!environment) {
         static_cast<void>(co_await (*mounted)->unmount());
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
@@ -360,17 +344,20 @@ runtime::task<result_id> execute(repository& source, action_input input) {
     auto read_manifest = manifest(observed);
     if (!stdout_id || !stderr_id || !outputs || !read_manifest) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
-        if (!stdout_id)
+        if (!stdout_id) {
             co_return std::unexpected(stdout_id.error());
-        if (!stderr_id)
+        }
+        if (!stderr_id) {
             co_return std::unexpected(stderr_id.error());
-        if (!outputs)
+        }
+        if (!outputs) {
             co_return std::unexpected(outputs.error());
+        }
         co_return std::unexpected(read_manifest.error());
     }
     const auto upload_finished = std::chrono::steady_clock::now();
-    action_result action_result_value{
-        .action = *action_id,
+    action_result output{
+        .action = action,
         .exit = (*launched)->exit,
         .outputs = std::move(*outputs),
         .stdout_output = *stdout_id,
@@ -383,32 +370,84 @@ runtime::task<result_id> execute(repository& source, action_input input) {
                    .upload = std::chrono::duration_cast<std::chrono::milliseconds>(upload_finished -
                                                                                    upload_started)},
         .worker = input.platform.os + "/" + input.platform.arch,
-        .observed_at = *source_time};
-    auto signed_result =
-        co_await repository_detail::build_access::sign_result(source, action_result_value);
+        .observed_at = observed_at};
+    auto signed_result = co_await repository_detail::build_access::sign_result(source, output);
     if (!signed_result) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
         co_return std::unexpected(signed_result.error());
     }
-    auto result_bytes = objects::encode(action_result_value);
+    auto removed = co_await runtime::offload([paths] { return remove_run(paths); });
+    if (!removed) {
+        co_return std::unexpected(removed.error());
+    }
+    if (!*removed) {
+        co_return std::unexpected(removed->error());
+    }
+    co_return output;
+}
+
+runtime::task<result_id> execute(repository& source, action_input input) {
+#if defined(_WIN32)
+    co_return std::unexpected(
+        failure(errc::unsupported,
+                "sandboxed actions are unavailable on Windows until Cloud Files and job objects",
+                "liquid Phase 6"));
+#else
+    auto valid = validate(input);
+    if (!valid)
+        co_return std::unexpected(valid.error());
+    auto source_time = co_await repository_detail::build_access::change_time(source, input.inputs);
+    if (!source_time)
+        co_return std::unexpected(source_time.error());
+    auto sandbox = sandbox_detail::definition(input.platform);
+    if (!sandbox)
+        co_return std::unexpected(sandbox.error());
+    auto sandbox_bytes = objects::encode(*sandbox);
+    if (!sandbox_bytes)
+        co_return std::unexpected(sandbox_bytes.error());
+    auto sandbox_id =
+        co_await repository_detail::build_access::put_record(source, std::move(*sandbox_bytes));
+    if (!sandbox_id)
+        co_return std::unexpected(sandbox_id.error());
+    auto action_bytes = objects::encode(objects::action_record{input, *sandbox_id});
+    if (!action_bytes)
+        co_return std::unexpected(action_bytes.error());
+    auto action_id =
+        co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
+    if (!action_id)
+        co_return std::unexpected(action_id.error());
+    auto cache = build_detail::disk_cache{source};
+    auto cache_opened = co_await cache.open();
+    if (!cache_opened)
+        co_return std::unexpected(cache_opened.error());
+    auto candidate = cache.candidate_key(input, *sandbox_id);
+    if (!candidate)
+        co_return std::unexpected(candidate.error());
+    auto cached = co_await cache.lookup(input, *sandbox_id);
+    if (!cached)
+        co_return std::unexpected(cached.error());
+    if (cached->hit) {
+        repository_detail::build_access::record_cache_lookup(
+            source, cached->hit->value, cache_status::hit, {}, cached->bytes_served);
+        co_return *cached->hit;
+    }
+    auto action_result_value =
+        co_await run_action(source, input, *action_id, *sandbox_id, *source_time);
+    if (!action_result_value)
+        co_return std::unexpected(action_result_value.error());
+    auto result_bytes = objects::encode(*action_result_value);
     if (!result_bytes) {
-        static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
         co_return std::unexpected(result_bytes.error());
     }
     auto stored =
         co_await repository_detail::build_access::put_record(source, std::move(*result_bytes));
-    auto removed = co_await runtime::offload([paths] { return remove_run(paths); });
     if (!stored)
         co_return std::unexpected(stored.error());
-    if (!removed)
-        co_return std::unexpected(removed.error());
-    if (!*removed)
-        co_return std::unexpected(removed->error());
     repository_detail::build_access::record_cache_lookup(
         source, *stored, cache_status::miss, cached->why, 0);
     if (repository_detail::build_access::cache_publish_enabled(source)) {
         auto published =
-            co_await cache.publish(*candidate, result_id{*stored}, action_result_value);
+            co_await cache.publish(*candidate, result_id{*stored}, *action_result_value);
         if (!published)
             co_return std::unexpected(published.error());
     }
@@ -424,6 +463,12 @@ runtime::task<action_result> result(repository& source, result_id id) {
     if (!decoded)
         co_return std::unexpected(decoded.error());
     repository_detail::build_access::apply_cache_lookup(source, id.value, *decoded);
+    auto cache = build_detail::disk_cache{source};
+    auto opened = co_await cache.open();
+    if (!opened)
+        co_return std::unexpected(opened.error());
+    if (cache.divergent(id.value))
+        decoded->cache = cache_status::divergent;
     co_return decoded;
 }
 

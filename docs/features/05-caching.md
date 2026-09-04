@@ -91,9 +91,9 @@ poisons everyone.
 - **Read by default.** Developer machines consume; they do not publish.
 - **Writes are authenticated and signed** by the producer.
 - **CI and verified reproducible builds are the trust anchors.**
-- **Sampled re-execution** on a different worker detects divergence. Two workers
-  producing different bytes for one action digest is a critical alert, not a silent
-  overwrite.
+- **Sampled re-execution** locally detects divergence now; Phase 3 moves the replay to a different
+  worker. Different exit status or output bytes for one action digest is a critical alert, not a
+  silent overwrite. The cached result is permanently quarantined.
 
 ## Diagnostics
 

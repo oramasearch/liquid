@@ -63,7 +63,7 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11 | implemented local executor and disk cache records | `build::execute` and `build::result`, action/result values, cache diagnostics and statistics; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13 | implemented local executor, wrapper, disk cache, and verification | `build::execute`, `build::result`, `build::wrap`, and `build::verify`; action/result values, cache diagnostics, critical alerts, and signed reproducibility outcomes; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -226,8 +226,8 @@ covering logical chunks without reading every preceding chunk. The decoder accep
 single-chunk record and derives its one size, preserving repositories written before liquid #6.
 
 Attestation values and every registered profile are exposed by `liquid/attestation.hpp`.
-`action` and
-`result_` remain reserved for Phase 2; `repo` is implemented in Phase 1. Two fields are reserved
+`action` and `result_` are implemented by the Phase 2 build engine; `repo` is implemented in Phase
+1. Two fields are reserved
 from the first commit because they
 cannot be added later: an optional `symbols` reference on built artifacts (liquid #47) and an
 optional `conflict` record on a change (liquid #40).
@@ -271,7 +271,7 @@ class repository {
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
   runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
-  runtime::task<cache_report> cache_stats();               // hits, misses, bytes served/stored
+  runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
   // Import primitives (liquid #43; lake's importers use the same calls)
   runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
   runtime::task<void> set_metadata(std::string key, std::vector<std::byte>);   // repository-document metadata map
@@ -295,8 +295,8 @@ normalization, enforcement, and JSON Pointer key paths.
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
-`repository_options` is a plain record with `checkpoint_interval`, `store`, `encrypt`, and
-`cache`; its `store_options`
+`repository_options` is a plain record with `checkpoint_interval`, `store`, `encrypt`, `cache`, and
+`verify`; its `store_options`
 member selects the object-store hash algorithm and, when configured, its key custody. Pass the
 same options to `create` and `open` so later writes and reads use the intended store settings.
 Repository change IDs are computed with that selected store algorithm, including IDs returned by
@@ -304,8 +304,10 @@ Repository change IDs are computed with that selected store algorithm, including
 
 `cache_config` is `{ bool publish{}; }`. Its read-only default allows lookup but refuses action-index
 publication with `errc::unauthorized`; the value is persisted at repository creation.
-`cache_report` contains `hits`, `misses`, `bytes_served`, and `bytes_stored` for the open repository
-handle. `action_result::cache` is `cache_status::hit` or `cache_status::miss`; on a validation miss,
+`verify_config` is `{ std::uint32_t rate{20}; }`; zero is invalid and the rate is persisted at
+repository creation. `cache_report` contains `hits`, `misses`, `bytes_served`, `bytes_stored`, and
+critical reproducibility alerts for the open repository handle. `action_result::cache` is
+`cache_status::hit`, `cache_status::miss`, or `cache_status::divergent`; on a validation miss,
 `why` contains the first differing path and optional expected/actual digests. These two fields are
 request diagnostics rather than part of the signed immutable result record.
 
@@ -348,18 +350,42 @@ under `src/vfs/`; see [`vfs.md`](vfs.md).
 ### `liquid/build.hpp`
 
 ```cpp
-enum class cache_status : std::uint8_t { miss, hit };
+enum class cache_status : std::uint8_t { miss, hit, divergent };
 struct cache_miss { std::string path; std::optional<digest> expected, actual; };
-struct cache_report { std::uint64_t hits, misses, bytes_served, bytes_stored; };
+struct reproducibility_difference {
+  std::string output; std::optional<digest> cached, reexecuted;
+  std::optional<std::uint64_t> byte_offset;
+  std::optional<std::uint8_t> cached_byte, reexecuted_byte;
+};
+struct critical_cache_alert {
+  digest action, result; std::vector<reproducibility_difference> differences;
+};
+struct cache_report {
+  std::uint64_t hits, misses, bytes_served, bytes_stored;
+  std::vector<critical_cache_alert> critical_alerts;
+};
 struct action_result {
   digest action; int exit; std::vector<action_output> outputs; digest stdout_output, stderr_output;
   std::vector<observed_input> manifest; action_timing timing; std::string worker;
   std::chrono::sys_seconds observed_at; actor producer; std::vector<std::byte> sig;
   cache_status cache; std::optional<cache_miss> why;
 };
+enum class verify_selection : std::uint8_t { sample, all, changed, action };
+struct verify_options {
+  verify_selection selection; std::optional<digest> action; bool explain;
+  std::optional<std::filesystem::path> cache_directory;
+};
+struct verified_action {
+  digest action, result, attestation; bool agreement;
+  std::vector<reproducibility_difference> differences;
+};
+struct verify_report { std::uint64_t considered; std::vector<verified_action> actions; };
 namespace build {
 runtime::task<result_id> execute(repository&, action_input);
 runtime::task<action_result> result(repository&, result_id);
+runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
+runtime::task<verify_report> verify(repository&, verify_options = {});
+runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
 }
 ```
 
@@ -367,6 +393,10 @@ The candidate key covers command, cwd, environment, toolchain, sandbox definitio
 `execute` returns an indexed result only after the result's signed action derives that same key,
 all observed paths match the current input tree, and all referenced blobs exist. Producer and `sig`
 are immutable record fields; cache status and miss detail describe the current request.
+`verify` re-executes selected cache entries with their recorded sandbox definition, compares exit
+status and output digests, and returns the signed attestation digest plus any differences. A
+divergent index entry is permanently excluded from lookup. See
+[`build-engine.md`](build-engine.md#reproducibility-verification).
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 

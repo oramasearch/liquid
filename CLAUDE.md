@@ -25,7 +25,9 @@ redaction, and liquid #52's JSON/`.env` leaf encryption with structural key diff
 liquid #10 provides local sandboxed action execution through `liquid::build` on Linux, and liquid
 #11 provides its signed, manifest-validated persistent disk cache with read-only publication by
 default. Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and
-`compile_commands.json` builds on Linux with FUSE and macOS with macFUSE; operations owned by later issues return
+`compile_commands.json` builds on Linux with FUSE and macOS with macFUSE. Liquid #13 provides
+sampled local re-execution, signed `reproducibility/1` attestations, critical divergence alerts,
+and permanent divergent-result quarantine; operations owned by later issues return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
 and drip journal are implemented. Full materialisation works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,

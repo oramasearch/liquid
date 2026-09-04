@@ -11,6 +11,7 @@
 #include "build/cache.hpp"
 #include "build/repository_access.hpp"
 #include "identity/taap.hpp"
+#include "liquid/attestation.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
 #include "objects/records.hpp"
@@ -74,9 +75,10 @@ struct action_fixture {
     liquid::repository repository;
     liquid::digest root;
 
-    explicit action_fixture(bool publish = true) {
+    explicit action_fixture(bool publish = true, std::uint32_t verification_rate = 20) {
         auto options = liquid::repository_options{};
         options.cache.publish = publish;
+        options.verify.rate = verification_rate;
         auto opened =
             liquid::runtime::block_on(liquid::repository::create(location.path(), options));
         EXPECT_TRUE(opened) << opened.error().message;
@@ -85,6 +87,7 @@ struct action_fixture {
         EXPECT_TRUE(liquid::runtime::block_on(repository.write("other.txt", bytes("other"))));
         EXPECT_TRUE(liquid::runtime::block_on(repository.write("out/copy.txt", {})));
         EXPECT_TRUE(liquid::runtime::block_on(repository.write("out/env.txt", {})));
+        EXPECT_TRUE(liquid::runtime::block_on(repository.write("out/random.bin", {})));
         EXPECT_TRUE(
             liquid::runtime::block_on(repository.write_file("bin/fixture", LIQUID_BUILD_FIXTURE)));
         EXPECT_TRUE(liquid::runtime::block_on(
@@ -415,6 +418,99 @@ TEST(BuildCache, result_signature_verifies_against_the_device_identity) {
     auto verified = liquid::verify(value->producer, "result", *body, *signature);
     ASSERT_TRUE(verified);
     EXPECT_TRUE(*verified);
+}
+
+TEST(BuildVerification, pure_action_gets_a_signed_reproducibility_attestation) {
+    action_fixture fixture;
+    auto ran = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository,
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"})));
+    ASSERT_TRUE(ran) << ran.error().message;
+    auto report = liquid::runtime::block_on(
+        liquid::build::verify(fixture.repository, {.selection = liquid::verify_selection::all}));
+    ASSERT_TRUE(report) << report.error().message;
+    ASSERT_EQ(report->actions.size(), 1U);
+    EXPECT_TRUE(report->actions.front().agreement);
+    auto raw = liquid::runtime::block_on(liquid::repository_detail::build_access::get(
+        fixture.repository, report->actions.front().attestation));
+    ASSERT_TRUE(raw) << raw.error().message;
+    auto attestation = liquid::objects::decode_attestation(*raw);
+    ASSERT_TRUE(attestation) << attestation.error().message;
+    EXPECT_EQ(attestation->profile, "reproducibility/1");
+    auto verified = liquid::verify_attestation(*attestation);
+    ASSERT_TRUE(verified) << verified.error().message;
+    EXPECT_TRUE(verified->verified) << verified->reason;
+}
+
+TEST(BuildVerification, nondeterminism_is_alerted_and_the_divergent_result_is_never_served) {
+    action_fixture fixture;
+    const auto input = fixture.input({"fixture", "random", "out/random.bin"}, {"out/random.bin"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    auto first_value = liquid::runtime::block_on(liquid::build::result(fixture.repository, *first));
+    ASSERT_TRUE(first_value) << first_value.error().message;
+    ASSERT_EQ(first_value->exit, 0);
+    ASSERT_EQ(first_value->outputs.size(), 1U);
+    auto report = liquid::runtime::block_on(liquid::build::verify(
+        fixture.repository, {.selection = liquid::verify_selection::all, .explain = true}));
+    ASSERT_TRUE(report) << report.error().message;
+    ASSERT_EQ(report->actions.size(), 1U);
+    ASSERT_FALSE(report->actions.front().agreement);
+    auto raw = liquid::runtime::block_on(liquid::repository_detail::build_access::get(
+        fixture.repository, report->actions.front().attestation));
+    ASSERT_TRUE(raw) << raw.error().message;
+    auto attestation = liquid::objects::decode_attestation(*raw);
+    ASSERT_TRUE(attestation) << attestation.error().message;
+    auto verified_attestation = liquid::verify_attestation(*attestation);
+    ASSERT_TRUE(verified_attestation) << verified_attestation.error().message;
+    EXPECT_TRUE(verified_attestation->verified) << verified_attestation->reason;
+    const auto difference = std::ranges::find(report->actions.front().differences,
+                                              "out/random.bin",
+                                              &liquid::reproducibility_difference::output);
+    ASSERT_NE(difference, report->actions.front().differences.end())
+        << report->actions.front().differences.front().output;
+    EXPECT_TRUE(difference->byte_offset.has_value());
+    auto value = liquid::runtime::block_on(liquid::build::result(fixture.repository, *first));
+    ASSERT_TRUE(value) << value.error().message;
+    EXPECT_EQ(value->cache, liquid::cache_status::divergent);
+    auto statistics = liquid::runtime::block_on(fixture.repository.cache_stats());
+    ASSERT_TRUE(statistics) << statistics.error().message;
+    ASSERT_EQ(statistics->critical_alerts.size(), 1U);
+    EXPECT_EQ(liquid::to_string(statistics->critical_alerts.front().action),
+              liquid::to_string(value->action));
+    ASSERT_FALSE(statistics->critical_alerts.front().differences.empty());
+    EXPECT_EQ(statistics->critical_alerts.front().differences.front().output, "out/random.bin");
+
+    fixture.repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(fixture.location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    fixture.repository = std::move(*reopened);
+    liquid::build_detail::testing::reset_sandbox_spawn_count();
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_NE(liquid::to_string(second->value), liquid::to_string(first->value));
+    EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 1U);
+}
+
+TEST(BuildVerification, rate_one_samples_every_unverified_action) {
+    action_fixture fixture{true, 1};
+    fixture.repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(fixture.location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    fixture.repository = std::move(*reopened);
+    auto first = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository,
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"})));
+    auto second = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository, fixture.input({"fixture", "env", "out/env.txt"}, {"out/env.txt"})));
+    ASSERT_TRUE(first) << first.error().message;
+    ASSERT_TRUE(second) << second.error().message;
+    auto report = liquid::runtime::block_on(
+        liquid::build::verify(fixture.repository, {.selection = liquid::verify_selection::sample}));
+    ASSERT_TRUE(report) << report.error().message;
+    EXPECT_EQ(report->considered, 2U);
+    ASSERT_EQ(report->actions.size(), 2U);
+    EXPECT_TRUE(std::ranges::all_of(report->actions, &liquid::verified_action::agreement));
 }
 
 TEST(BuildCache, unsigned_newest_candidate_is_never_served) {

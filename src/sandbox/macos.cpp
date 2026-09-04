@@ -54,8 +54,14 @@ auto write_wrap_profile(const wrap_launch_request& request, const std::filesyste
     output << "(allow file-read* (subpath \"/System\") (subpath \"/usr\") "
               "(subpath \"/opt/homebrew\") (subpath \"/Library/Developer\"))\n";
     output << "(allow file-write* (subpath \"" << escaped(request.input_mount.string())
-           << "\") (literal \"" << escaped(request.trace.string())
-           << "\") (subpath \"/tmp\") (subpath \"/private/tmp\"))\n";
+           << "\") (literal \"" << escaped(request.trace.string()) << "\")";
+    if (!request.stdout_path.empty()) {
+        output << " (literal \"" << escaped(request.stdout_path.string()) << "\")";
+    }
+    if (!request.stderr_path.empty()) {
+        output << " (literal \"" << escaped(request.stderr_path.string()) << "\")";
+    }
+    output << " (subpath \"/tmp\") (subpath \"/private/tmp\"))\n";
     output.close();
     if (!output)
         return std::unexpected(error{errc::io, "cannot write wrap sandbox profile", path.string()});
@@ -111,7 +117,42 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
     auto environment_pointers = pointers(environment);
     auto actions = posix_spawn_file_actions_t{};
     posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addchdir_np(&actions, request.input_mount.c_str());
+    auto working_directory = request.input_mount;
+    constexpr auto work_root = std::string_view{"/liquid/work"};
+    if (request.cwd != work_root) {
+        const auto prefix = std::string{work_root} + "/";
+        if (!request.cwd.starts_with(prefix)) {
+            posix_spawn_file_actions_destroy(&actions);
+            return std::unexpected(error{errc::invalid_argument, "invalid wrap cwd", request.cwd});
+        }
+        working_directory /= request.cwd.substr(prefix.size());
+    }
+    posix_spawn_file_actions_addchdir_np(&actions, working_directory.c_str());
+    auto stdout_descriptor = -1;
+    auto stderr_descriptor = -1;
+    if (!request.stdout_path.empty()) {
+        stdout_descriptor = ::open(request.stdout_path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        if (stdout_descriptor < 0) {
+            posix_spawn_file_actions_destroy(&actions);
+            return std::unexpected(
+                error{errc::io, std::strerror(errno), request.stdout_path.string()});
+        }
+        posix_spawn_file_actions_adddup2(&actions, stdout_descriptor, STDOUT_FILENO);
+        posix_spawn_file_actions_addclose(&actions, stdout_descriptor);
+    }
+    if (!request.stderr_path.empty()) {
+        stderr_descriptor = ::open(request.stderr_path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        if (stderr_descriptor < 0) {
+            if (stdout_descriptor >= 0) {
+                ::close(stdout_descriptor);
+            }
+            posix_spawn_file_actions_destroy(&actions);
+            return std::unexpected(
+                error{errc::io, std::strerror(errno), request.stderr_path.string()});
+        }
+        posix_spawn_file_actions_adddup2(&actions, stderr_descriptor, STDERR_FILENO);
+        posix_spawn_file_actions_addclose(&actions, stderr_descriptor);
+    }
     auto pid = pid_t{};
     const auto spawned = posix_spawn(&pid,
                                      "/usr/bin/sandbox-exec",
@@ -120,6 +161,12 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
                                      argument_pointers.data(),
                                      environment_pointers.data());
     posix_spawn_file_actions_destroy(&actions);
+    if (stdout_descriptor >= 0) {
+        ::close(stdout_descriptor);
+    }
+    if (stderr_descriptor >= 0) {
+        ::close(stderr_descriptor);
+    }
     if (spawned != 0)
         return std::unexpected(error{errc::io, std::strerror(spawned), "posix_spawn wrap"});
     auto status = int{};

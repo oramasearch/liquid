@@ -43,6 +43,7 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
 
 if(LIQUID_BUILD_CLI)
+  target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")
   add_executable(liquid-gc-cli-fixture store/gc_cli_fixture.cpp)
   target_link_libraries(liquid-gc-cli-fixture PRIVATE liquid::liquid)
   set(LIQUID_GC_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/gc-cli-repository)

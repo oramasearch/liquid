@@ -12,16 +12,12 @@
 namespace liquid::build_detail {
 namespace {
 
-constexpr std::array<std::byte, 8> index_magic{std::byte{'L'},
-                                               std::byte{'Q'},
-                                               std::byte{'A'},
-                                               std::byte{'C'},
-                                               std::byte{'T'},
-                                               std::byte{1},
-                                               std::byte{0},
-                                               std::byte{0}};
+constexpr std::array<std::byte, 5> index_magic{
+    std::byte{'L'}, std::byte{'Q'}, std::byte{'A'}, std::byte{'C'}, std::byte{'T'}};
+constexpr std::uint8_t current_index_version = 2;
 constexpr std::size_t index_header_size = 64;
-constexpr std::size_t index_record_size = 80;
+constexpr std::size_t legacy_index_record_size = 80;
+constexpr std::size_t index_record_size = 114;
 
 std::atomic_uint64_t sandbox_spawns{};
 
@@ -112,6 +108,8 @@ auto encode_index(std::span<const objects::action_index_entry> entries,
     auto output = std::vector<std::byte>{};
     output.reserve(index_header_size + entries.size() * index_record_size + 8);
     output.insert(output.end(), index_magic.begin(), index_magic.end());
+    output.push_back(std::byte{current_index_version});
+    output.insert(output.end(), 2, std::byte{0});
     put_u64(output, entries.size());
     put_u64(output, next_sequence);
     output.push_back(std::byte{static_cast<unsigned char>(root.alg)});
@@ -121,6 +119,12 @@ auto encode_index(std::span<const objects::action_index_entry> entries,
         append_digest(output, entry.candidate);
         append_digest(output, entry.result);
         put_u64(output, entry.sequence);
+        output.push_back(entry.divergent ? std::byte{1} : std::byte{0});
+        if (entry.verification) {
+            append_digest(output, *entry.verification);
+        } else {
+            output.insert(output.end(), 33, std::byte{0});
+        }
         output.insert(output.end(), 6, std::byte{0});
     }
     put_u64(output, checksum(output));
@@ -226,16 +230,21 @@ runtime::task<void> action_index::open() {
     }
     const auto bytes = std::span<const std::byte>{*raw};
     if (bytes.size() < index_header_size + 8 ||
-        !std::equal(index_magic.begin(), index_magic.end(), bytes.begin())) {
+        !std::equal(index_magic.begin(), index_magic.end(), bytes.begin()) ||
+        bytes[6] != std::byte{0} || bytes[7] != std::byte{0}) {
         co_return std::unexpected(cache_error(errc::corrupt, "invalid action index", path));
     }
+    const auto version = std::to_integer<std::uint8_t>(bytes[5]);
+    if (version != 1 && version != current_index_version) {
+        co_return std::unexpected(cache_error(errc::corrupt, "invalid action index", path));
+    }
+    const auto record_size = version == 1 ? legacy_index_record_size : index_record_size;
     const auto count = get_u64(bytes, 8);
     next_sequence_ = get_u64(bytes, 16);
-    constexpr auto maximum_records =
-        (std::numeric_limits<std::size_t>::max() - index_header_size - 8) / index_record_size;
+    const auto maximum_records =
+        (std::numeric_limits<std::size_t>::max() - index_header_size - 8) / record_size;
     if (count > maximum_records || next_sequence_ == 0 ||
-        bytes.size() !=
-            index_header_size + static_cast<std::size_t>(count) * index_record_size + 8 ||
+        bytes.size() != index_header_size + static_cast<std::size_t>(count) * record_size + 8 ||
         checksum(bytes.first(bytes.size() - 8)) != get_u64(bytes, bytes.size() - 8)) {
         co_return std::unexpected(cache_error(errc::corrupt, "corrupt action index", path));
     }
@@ -248,15 +257,34 @@ runtime::task<void> action_index::open() {
     std::ranges::copy_n(bytes.begin() + 32, root_.bytes.size(), root_.bytes.begin());
     entries_.reserve(static_cast<std::size_t>(count));
     for (auto index = std::uint64_t{}; index != count; ++index) {
-        const auto offset = index_header_size + static_cast<std::size_t>(index) * index_record_size;
+        const auto offset = index_header_size + static_cast<std::size_t>(index) * record_size;
         auto candidate = decode_digest(bytes, offset);
         auto result_id = decode_digest(bytes, offset + 33);
         const auto sequence = get_u64(bytes, offset + 66);
-        if (!candidate || !result_id || sequence == 0 || !all_zero(bytes.subspan(offset + 74, 6))) {
+        const auto divergent = version == 2 && bytes[offset + 74] == std::byte{1};
+        if (version == 2 && bytes[offset + 74] != std::byte{0} &&
+            bytes[offset + 74] != std::byte{1}) {
             co_return std::unexpected(
                 cache_error(errc::corrupt, "invalid action index entry", path));
         }
-        entries_.push_back({*candidate, *result_id, sequence});
+        auto verification = std::optional<digest>{};
+        if (version == 2 && bytes[offset + 75] != std::byte{0}) {
+            auto decoded = decode_digest(bytes, offset + 75);
+            if (!decoded) {
+                co_return std::unexpected(decoded.error());
+            }
+            verification = *decoded;
+        } else if (version == 2 && !all_zero(bytes.subspan(offset + 75, 33))) {
+            co_return std::unexpected(
+                cache_error(errc::corrupt, "invalid action verification digest", path));
+        }
+        const auto reserved_offset = version == 1 ? offset + 74 : offset + 108;
+        if (!candidate || !result_id || sequence == 0 ||
+            !all_zero(bytes.subspan(reserved_offset, 6))) {
+            co_return std::unexpected(
+                cache_error(errc::corrupt, "invalid action index entry", path));
+        }
+        entries_.push_back({*candidate, *result_id, sequence, divergent, verification});
     }
     if (!std::ranges::is_sorted(entries_, entry_less)) {
         co_return std::unexpected(cache_error(errc::corrupt, "unsorted action index", path));
@@ -442,6 +470,9 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
     }
     auto output = cache_lookup{};
     for (const auto& id : index_.candidates(*candidate)) {
+        if (divergent(id)) {
+            continue;
+        }
         auto bytes = co_await repository_detail::build_access::get(source_, id);
         if (!bytes) {
             if (bytes.error().code == errc::not_found) {
@@ -537,6 +568,56 @@ disk_cache::publish(digest candidate, result_id id, const action_result& value) 
     if (!inserted) {
         co_return std::unexpected(inserted.error());
     }
+    auto persisted = co_await persist_root();
+    if (!persisted) {
+        co_return std::unexpected(persisted.error());
+    }
+    auto result_bytes = objects::encode(value);
+    if (!result_bytes) {
+        co_return std::unexpected(result_bytes.error());
+    }
+    auto stored = co_await referenced_bytes(source_, value);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    repository_detail::build_access::record_cache_store(source_, result_bytes->size() + *stored);
+    co_return result<void>{};
+}
+
+runtime::task<void>
+disk_cache::record_verification(digest result, digest attestation, bool is_divergent) {
+    auto entries = index_.entries();
+    auto found = false;
+    for (auto& entry : entries) {
+        if (!same_digest(entry.result, result)) {
+            continue;
+        }
+        entry.verification = attestation;
+        entry.divergent = entry.divergent || is_divergent;
+        found = true;
+    }
+    if (!found) {
+        co_return std::unexpected(
+            error{errc::not_found, "cached result is not indexed", to_string(result)});
+    }
+    auto rebuilt = co_await index_.rebuild(std::move(entries), index_.root());
+    if (!rebuilt) {
+        co_return std::unexpected(rebuilt.error());
+    }
+    co_return co_await persist_root();
+}
+
+const std::vector<objects::action_index_entry>& disk_cache::entries() const noexcept {
+    return index_.entries();
+}
+
+bool disk_cache::divergent(digest result) const noexcept {
+    return std::ranges::any_of(index_.entries(), [&](const auto& entry) {
+        return same_digest(entry.result, result) && entry.divergent;
+    });
+}
+
+runtime::task<void> disk_cache::persist_root() {
     auto encoded_root = objects::encode(objects::action_index_root{index_.entries()});
     if (!encoded_root) {
         co_return std::unexpected(encoded_root.error());
@@ -554,20 +635,7 @@ disk_cache::publish(digest candidate, result_id id, const action_result& value) 
     if (!pointer) {
         co_return std::unexpected(pointer.error());
     }
-    auto persisted = co_await index_.persist(*root);
-    if (!persisted) {
-        co_return std::unexpected(persisted.error());
-    }
-    auto result_bytes = objects::encode(value);
-    if (!result_bytes) {
-        co_return std::unexpected(result_bytes.error());
-    }
-    auto stored = co_await referenced_bytes(source_, value);
-    if (!stored) {
-        co_return std::unexpected(stored.error());
-    }
-    repository_detail::build_access::record_cache_store(source_, result_bytes->size() + *stored);
-    co_return result<void>{};
+    co_return co_await index_.persist(*root);
 }
 
 void testing::reset_sandbox_spawn_count() noexcept {

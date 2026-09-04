@@ -39,6 +39,8 @@ struct action_index_entry {
     digest candidate;
     digest result;
     std::uint64_t sequence{};
+    bool divergent{};
+    std::optional<digest> verification;
 };
 
 struct action_index_root {

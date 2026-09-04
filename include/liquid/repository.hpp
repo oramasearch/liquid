@@ -43,11 +43,16 @@ struct LIQUID_EXPORT cache_config {
     bool publish{};
 };
 
+struct LIQUID_EXPORT verify_config {
+    std::uint32_t rate{20};
+};
+
 struct LIQUID_EXPORT repository_options {
     std::uint64_t checkpoint_interval{64};
     store_options store{};
     encryption_config encrypt{};
     cache_config cache{};
+    verify_config verify{};
 };
 
 struct LIQUID_EXPORT log_options {};
