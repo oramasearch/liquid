@@ -24,6 +24,9 @@ struct repo_record {
 [[nodiscard]] auto encode(const change& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_change_body(const change& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const repo_record& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const attestation& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode_attestation_body(const attestation& value)
+    -> result<std::vector<std::byte>>;
 
 [[nodiscard]] auto decode_blob(std::span<const std::byte> bytes) -> result<blob>;
 [[nodiscard]] auto decode_tree(std::span<const std::byte> bytes) -> result<tree>;
@@ -31,6 +34,7 @@ struct repo_record {
                                  std::optional<algorithm> hash_algorithm = std::nullopt)
     -> result<change>;
 [[nodiscard]] auto decode_repo(std::span<const std::byte> bytes) -> result<repo_record>;
+[[nodiscard]] auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>;
 [[nodiscard]] auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes)
     -> result<digest>;
 

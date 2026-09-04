@@ -223,10 +223,12 @@ add_library(libliquid
   src/crypto/crypto.cpp
   src/object.cpp
   src/objects/records.cpp
+  src/objects/attestation.cpp
   src/repository/merge.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
   src/runtime/runtime.cpp
+  src/scan/detectors.cpp
   src/store.cpp
   src/store/chunker.cpp
   src/store/collector.cpp

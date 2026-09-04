@@ -45,7 +45,9 @@ tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo, id:no
 change      { v, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), heads:[bytes…], conflicts?:[conflict…], symbols?:digest, sig:bytes }
 repo        { v, kind:"repo", repo_id, name, created:time, root_change:change_ref? }
-attestation, action, result   # kinds reserved now; records defined in Phase 2 (features/10, /04)
+attestation { v, kind:"attestation", subject:digest, profile, detectors:[text...], findings:uint,
+              at:time, issuer:actor, allowances:[scan allowance...], sig:bytes }
+action, result   # kinds reserved now; records defined in Phase 2 (features/10, /04)
 ```
 
 - **`node_id`** is 16 random bytes minted when a path is created. It is stored in the tree entry
@@ -62,6 +64,9 @@ attestation, action, result   # kinds reserved now; records defined in Phase 2 (
 - **`conflicts`** (liquid #40) and **`symbols`** (liquid #47) are the two fields that cannot be
   added later, so they are in the record from the first commit, optional and empty.
 - **`sig`** is the TAAP signature over the record with `sig` absent (liquid #4).
+- The first concrete **`attestation`** profile is `scan_result/1` (liquid #50). It is referenced
+  by each scanned drip and records detector ids, finding count, and configured exceptions, never
+  matched content. See [`secret-scanning.md`](secret-scanning.md).
 - A `repo` record identifies a repository independently of where it lives; `repo_id` is 16 random
   bytes minted at `create`.
 

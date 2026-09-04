@@ -46,6 +46,7 @@ public:
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>> lease_root(digest id,
                                                                          std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options);
+    [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
 
 private:
     explicit store_backend(std::filesystem::path root, store_options options);

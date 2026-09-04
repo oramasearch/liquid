@@ -3,11 +3,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
-#include <utility>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "crdt/document.hpp"
+#include "liquid/hash.hpp"
 
 namespace liquid::crdt {
 
@@ -18,27 +20,31 @@ struct drip_record {
     actor_id by{};
     std::int64_t at{0};
     std::optional<std::vector<std::byte>> signature;
+    std::optional<digest> scan_attestation;
+    bool redacted{};
 };
 
 class journal {
-  public:
+public:
     struct cursor {
         std::uint64_t offset{0};
 
-        auto operator==(const cursor &) const -> bool = default;
+        auto operator==(const cursor&) const -> bool = default;
     };
 
     explicit journal(std::filesystem::path path);
 
-    [[nodiscard]] auto append(const drip_record &record) -> result<void>;
+    [[nodiscard]] auto append(const drip_record& record) -> result<void>;
+    [[nodiscard]] auto append_redaction(node_id drip, std::string path, std::int64_t at)
+        -> result<void>;
     [[nodiscard]] auto read(cursor from, std::size_t max) const
         -> result<std::pair<std::vector<drip_record>, cursor>>;
     [[nodiscard]] auto end() const -> result<cursor>;
-    [[nodiscard]] auto cut(const document &value, std::uint64_t epoch) -> result<void>;
+    [[nodiscard]] auto cut(const document& value, std::uint64_t epoch) -> result<void>;
     [[nodiscard]] auto replay(std::string_view taap_id, std::string_view device_id) const
         -> result<document>;
 
-  private:
+private:
     [[nodiscard]] auto cut_path() const -> std::filesystem::path;
     std::filesystem::path path_;
 };

@@ -86,7 +86,7 @@ concept, three uses.
 Each protected subtree has its own key, distributed or KMS-wrapped only to that
 subtree's readers.
 
-## Enforcement at commit, not by filter
+## Enforcement on the recorded bytes
 
 git-crypt's own documentation warns that clean/smudge filters are not a security
 boundary: a bad rule or an incompatible tool can stage plaintext.
@@ -94,6 +94,12 @@ boundary: a bad rule or an incompatible tool can stage plaintext.
 liquid owns its client, so it **refuses to record plaintext at a path declared
 encrypted**, and verifies stored content rather than working-tree content. Secret
 scanning and push protection run on what is actually being written.
+
+Local capture also runs the detector set inline before the drip journal append. Findings block by
+default; repository path-and-detector rules and a literal same-line marker are the only exceptions.
+Each accepted scan writes `scan_result/1`, while `repository::redact` commits tombstones and proves
+the replaced blob digest is unreadable. The implementation and limits are in
+[`../library/secret-scanning.md`](../library/secret-scanning.md).
 
 ## Signing and encryption together
 

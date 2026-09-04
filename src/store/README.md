@@ -7,3 +7,7 @@ whole-pack removal. `compactor.cpp` rewrites selected partially dead packs by co
 frames byte-for-byte, with the collection manifest rename as the commit point. The object map also
 provides `store::key_version` with the recorded trust-domain data-key version and verifies whether
 the attached keyring can currently unwrap it; key-id parsing stays in `src/identity/key_version.hpp`.
+
+Targeted redaction removes selected object-map entries, commits tombstones for their unshared
+frames, rebuilds the index, and compacts only affected packs. It is separate from lease-driven
+reachability collection so unrelated repository objects remain available.

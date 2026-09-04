@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <span>
 #include <vector>
 
 #include "liquid/runtime.hpp"
@@ -29,6 +30,7 @@ class collector {
 public:
     explicit collector(store_backend& store) : store_(store) {}
     [[nodiscard]] runtime::task<collection_report> run(collection_options options);
+    [[nodiscard]] runtime::task<void> redact(std::span<const digest> ids);
 
 private:
     store_backend& store_;

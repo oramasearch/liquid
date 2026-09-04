@@ -109,6 +109,33 @@ auto decode_change_id(const cbor::value& value) -> result<change_id> {
     return change_id{*decoded};
 }
 
+auto encode_actor(const actor& value) -> cbor::value {
+    return map({{"taap_id", cbor::value{value.taap_id}},
+                {"algorithm", cbor::value{value.algorithm}},
+                {"fingerprint", cbor::value{value.fingerprint}},
+                {"public_key", byte_string(value.public_key)},
+                {"key_fingerprint", cbor::value{value.key_fingerprint}}});
+}
+
+auto decode_actor(const cbor::value& value) -> result<actor> {
+    const auto* taap_id = find(value, "taap_id");
+    const auto* algorithm = find(value, "algorithm");
+    const auto* fingerprint = find(value, "fingerprint");
+    const auto* public_key = find(value, "public_key");
+    const auto* key_fingerprint = find(value, "key_fingerprint");
+    const auto* identifier = taap_id ? std::get_if<std::string>(&taap_id->data) : nullptr;
+    const auto* algorithm_text = algorithm ? std::get_if<std::string>(&algorithm->data) : nullptr;
+    const auto* fingerprint_text =
+        fingerprint ? std::get_if<std::string>(&fingerprint->data) : nullptr;
+    const auto* key = public_key ? std::get_if<cbor::value::bytes>(&public_key->data) : nullptr;
+    const auto* key_fingerprint_text =
+        key_fingerprint ? std::get_if<std::string>(&key_fingerprint->data) : nullptr;
+    if (!identifier || !algorithm_text || !fingerprint_text || !key || !key_fingerprint_text) {
+        return std::unexpected(corrupt("invalid attestation issuer"));
+    }
+    return actor{*identifier, *algorithm_text, *fingerprint_text, *key, *key_fingerprint_text};
+}
+
 } // namespace
 
 auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes) -> result<digest> {
@@ -200,6 +227,42 @@ auto encode(const repo_record& value) -> result<std::vector<std::byte>> {
                              {"name", cbor::value{value.name}},
                              {"created", cbor::value{value.created}},
                              {"root_change", std::move(root)}}));
+}
+
+auto encode_attestation_value(const attestation& value, bool include_signature)
+    -> result<std::vector<std::byte>> {
+    auto detectors = cbor::value::array{};
+    for (const auto& detector : value.detectors) {
+        detectors.push_back(cbor::value{detector});
+    }
+    auto allowances = cbor::value::array{};
+    for (const auto& allowance : value.allowances) {
+        allowances.push_back(map({{"path", cbor::value{allowance.path}},
+                                  {"detector", cbor::value{allowance.detector}},
+                                  {"line", cbor::value{allowance.line}},
+                                  {"reason", cbor::value{allowance.reason}}}));
+    }
+    auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{1}}},
+                                   {"kind", "attestation"},
+                                   {"subject", encode_digest(value.subject)},
+                                   {"profile", cbor::value{value.profile}},
+                                   {"detectors", cbor::value{std::move(detectors)}},
+                                   {"findings", cbor::value{value.findings_count}},
+                                   {"at", cbor::value{value.at.time_since_epoch().count()}},
+                                   {"issuer", encode_actor(value.issuer)},
+                                   {"allowances", cbor::value{std::move(allowances)}}};
+    if (include_signature) {
+        fields.emplace_back("sig", cbor::value{value.signature});
+    }
+    return cbor::encode(cbor::value{std::move(fields)});
+}
+
+auto encode_attestation_body(const attestation& value) -> result<std::vector<std::byte>> {
+    return encode_attestation_value(value, false);
+}
+
+auto encode(const attestation& value) -> result<std::vector<std::byte>> {
+    return encode_attestation_value(value, true);
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
@@ -377,6 +440,81 @@ auto decode_repo(std::span<const std::byte> bytes) -> result<repo_record> {
     if (!identity)
         return std::unexpected(identity.error());
     return repo_record{*identity, *title, *when, std::nullopt};
+}
+
+auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation> {
+    auto source = decode(bytes, "attestation");
+    if (!source) {
+        return std::unexpected(source.error());
+    }
+    const auto* subject_value = find(*source, "subject");
+    const auto* profile_value = find(*source, "profile");
+    const auto* detectors_value = find(*source, "detectors");
+    const auto* findings_value = find(*source, "findings");
+    const auto* at_value = find(*source, "at");
+    const auto* issuer_value = find(*source, "issuer");
+    const auto* allowances_value = find(*source, "allowances");
+    const auto* signature_value = find(*source, "sig");
+    const auto* profile = profile_value ? std::get_if<std::string>(&profile_value->data) : nullptr;
+    const auto* detectors =
+        detectors_value ? std::get_if<cbor::value::array>(&detectors_value->data) : nullptr;
+    const auto* findings =
+        findings_value ? std::get_if<std::uint64_t>(&findings_value->data) : nullptr;
+    const auto* allowances =
+        allowances_value ? std::get_if<cbor::value::array>(&allowances_value->data) : nullptr;
+    const auto* signature =
+        signature_value ? std::get_if<cbor::value::bytes>(&signature_value->data) : nullptr;
+    auto at = std::int64_t{};
+    if (const auto* signed_at = at_value ? std::get_if<std::int64_t>(&at_value->data) : nullptr) {
+        at = *signed_at;
+    } else if (const auto* unsigned_at =
+                   at_value ? std::get_if<std::uint64_t>(&at_value->data) : nullptr;
+               unsigned_at && *unsigned_at <= static_cast<std::uint64_t>(
+                                                  std::numeric_limits<std::int64_t>::max())) {
+        at = static_cast<std::int64_t>(*unsigned_at);
+    } else {
+        return std::unexpected(corrupt("invalid attestation timestamp"));
+    }
+    if (!subject_value || !profile || !detectors || !findings || !issuer_value || !allowances ||
+        !signature) {
+        return std::unexpected(corrupt("invalid attestation record"));
+    }
+    auto subject = decode_digest(*subject_value);
+    auto issuer = decode_actor(*issuer_value);
+    if (!subject || !issuer) {
+        return std::unexpected(corrupt("invalid attestation identity"));
+    }
+    attestation output{.subject = *subject,
+                       .profile = *profile,
+                       .detectors = {},
+                       .findings_count = *findings,
+                       .at = std::chrono::sys_seconds{std::chrono::seconds{at}},
+                       .issuer = std::move(*issuer),
+                       .allowances = {},
+                       .signature = *signature};
+    for (const auto& detector : *detectors) {
+        const auto* id = std::get_if<std::string>(&detector.data);
+        if (!id) {
+            return std::unexpected(corrupt("invalid attestation detector"));
+        }
+        output.detectors.push_back(*id);
+    }
+    for (const auto& allowance : *allowances) {
+        const auto* path_value = find(allowance, "path");
+        const auto* detector_value = find(allowance, "detector");
+        const auto* line_value = find(allowance, "line");
+        const auto* reason_value = find(allowance, "reason");
+        const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+        const auto* detector =
+            detector_value ? std::get_if<std::string>(&detector_value->data) : nullptr;
+        const auto* line = line_value ? std::get_if<std::uint64_t>(&line_value->data) : nullptr;
+        const auto* reason = reason_value ? std::get_if<std::string>(&reason_value->data) : nullptr;
+        if (!path || !detector || !line || !reason) {
+            return std::unexpected(corrupt("invalid attestation allowance"));
+        }
+        output.allowances.push_back({*path, *detector, *line, *reason});
+    }
+    return output;
 }
 
 } // namespace liquid::objects

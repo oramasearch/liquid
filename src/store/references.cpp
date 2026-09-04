@@ -117,6 +117,7 @@ reference_registry::reference_registry() {
     register_kind("blob", extract_blob);
     register_kind("tree", extract_tree);
     register_kind("change", extract_change);
+    register_kind("attestation", [](std::span<const std::byte>) { return std::vector<digest>{}; });
 }
 
 void reference_registry::register_kind(std::string kind, reference_extractor extractor) {
@@ -165,6 +166,8 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "blob";
     if (objects::decode_change(bytes))
         return "change";
+    if (objects::decode_attestation(bytes))
+        return "attestation";
     return "unknown";
 }
 

@@ -84,6 +84,11 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
     [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
+    [[nodiscard]] runtime::task<void> redact(std::string path,
+                                             std::optional<change_id> change = std::nullopt);
+    [[nodiscard]] runtime::task<void> redact(std::string path,
+                                             std::vector<std::byte> replacement,
+                                             std::optional<change_id> change = std::nullopt);
     [[nodiscard]] runtime::task<void> move(std::string from, std::string to);
     [[nodiscard]] runtime::task<void> remove(std::string path);
     [[nodiscard]] runtime::task<change_id> cut(std::string message);
@@ -103,6 +108,9 @@ public:
     [[nodiscard]] runtime::task<void> unlock(std::string path);
 
 private:
+    [[nodiscard]] runtime::task<void>
+    redact_impl(std::string path, std::vector<std::byte> replacement, digest target);
+
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     struct impl;
