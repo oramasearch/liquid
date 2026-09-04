@@ -181,6 +181,12 @@ class repository {
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
+  runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
+  runtime::task<void> remove(std::string path);
+  runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
+  runtime::task<std::vector<ref>> refs();                 // name → change_id
+  runtime::task<void> set_ref(std::string name, change_id);
+  result<repository_status> status();                     // pending drips, paused, conflicts, oversized directories
   runtime::task<std::vector<change>> log(log_options = {});
   runtime::task<snapshot> at(change_id);                 // time travel
   runtime::task<void> nest(repository source, std::string path);
@@ -193,13 +199,21 @@ class repository {
 };
 ```
 
+`ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
+`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
+
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 
 ```cpp
 struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
               std::vector<std::byte> signature; std::chrono::sys_seconds at; };
+struct capture_options { std::vector<std::string> exclude;            // glob patterns from config
+                         std::chrono::milliseconds coalesce_window{200};
+                         bool attribution{false}; };                   // Phase 2 turns it on
 class capture {                        // the journal, as a subscription
  public:
+  static runtime::task<capture> open(std::filesystem::path workspace, capture_options = {});   // starts the watcher
+  runtime::task<void> close();
   result<subscription> subscribe(std::function<void(const drip&)>);   // registration is synchronous
   runtime::task<void> pause();  runtime::task<void> resume();  result<capture_status> status();
 };
