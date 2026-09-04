@@ -130,4 +130,21 @@ TEST(Repository, split_nest_and_combine_are_composable) {
   EXPECT_EQ(root->entries.size(), 3U);
 }
 
+TEST(Repository, combine_collision_is_a_conflict_value) {
+  temporary_repository left_path;
+  temporary_repository right_path;
+  auto left = liquid::runtime::block_on(liquid::repository::create(left_path.path()));
+  auto right = liquid::runtime::block_on(liquid::repository::create(right_path.path()));
+  ASSERT_TRUE(left);
+  ASSERT_TRUE(right);
+  ASSERT_TRUE(liquid::runtime::block_on(left->write("same", content("left"))));
+  ASSERT_TRUE(liquid::runtime::block_on(right->write("same", content("right"))));
+  ASSERT_TRUE(liquid::runtime::block_on(left->combine(std::move(*right), "same")));
+  auto conflicts = liquid::runtime::block_on(left->conflicts());
+  ASSERT_TRUE(conflicts);
+  ASSERT_EQ(conflicts->size(), 1U);
+  EXPECT_EQ(conflicts->front().path, "same");
+  EXPECT_EQ(conflicts->front().refs.size(), 2U);
+}
+
 } // namespace

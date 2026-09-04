@@ -208,6 +208,9 @@ fixture in `tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree
 - Conflict: two replicas write the same path; after sync the change carries one conflict value
   and both `ref`s are recoverable from it.
 
+The Phase 1 merge helper preserves both differing object references in a `conflict` value. The
+entry remains readable from the local directory document while callers resolve that value.
+
 ## How to change
 
 A new record kind is a row in the records block, a `kind` string, a version, and a fixture. A

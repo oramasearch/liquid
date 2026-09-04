@@ -11,6 +11,7 @@
 #include "crdt/document.hpp"
 #include "encoding/cbor.hpp"
 #include "objects/records.hpp"
+#include "repository/merge.hpp"
 #include "store/pack.hpp"
 
 namespace liquid {
@@ -31,7 +32,7 @@ struct operation_record {
   std::string to;
   std::optional<working_entry> prior;
 };
-struct state {
+struct repository_document {
   node_id repository{};
   working_entry root{entry_kind::directory, {}, 0040755, {algorithm::blake3, {}}, {}};
   std::map<std::string, change_id> refs;
@@ -120,7 +121,8 @@ auto decode_entry(const cbor::value &value) -> result<working_entry> {
   }
   return output;
 }
-auto encode_state(const state &value) -> result<std::vector<std::byte>> {
+auto encode_repository_document(const repository_document &value)
+    -> result<std::vector<std::byte>> {
   auto refs = cbor::value::array{};
   for (const auto &[name, id] : value.refs)
     refs.push_back(map({{"name", cbor::value{name}}, {"id", digest_value(id.value)}}));
@@ -150,7 +152,7 @@ auto encode_state(const state &value) -> result<std::vector<std::byte>> {
                            {"locks", cbor::value{std::move(locks)}},
                            {"pending", cbor::value{value.pending_drips}}}));
 }
-auto decode_state(std::span<const std::byte> input) -> result<state> {
+auto decode_repository_document(std::span<const std::byte> input) -> result<repository_document> {
   auto decoded = cbor::decode(input);
   if (!decoded)
     return std::unexpected(decoded.error());
@@ -178,7 +180,7 @@ auto decode_state(std::span<const std::byte> input) -> result<state> {
   auto root_entry = decode_entry(*root);
   if (!root_entry)
     return std::unexpected(root_entry.error());
-  state output{};
+  repository_document output{};
   std::ranges::copy(*id, output.repository.begin());
   output.root = std::move(*root_entry);
   output.pending_drips = *drips;
@@ -312,10 +314,11 @@ auto same_path_or_descendant(std::string_view path, std::string_view root) -> bo
 struct repository::impl {
   std::filesystem::path root_path;
   store objects;
-  state current;
+  repository_document current;
   std::uint64_t checkpoint_interval{64};
   std::map<node_id, crdt::directory_document> directory_cache;
-  impl(std::filesystem::path path, store value, state document, std::uint64_t interval = 64)
+  impl(std::filesystem::path path, store value, repository_document document,
+       std::uint64_t interval = 64)
       : root_path(std::move(path)), objects(std::move(value)), current(std::move(document)),
         checkpoint_interval(std::max(std::uint64_t{1}, interval)) {}
   auto marker() const -> std::filesystem::path { return root_path / "LIQUID_REPO"; }
@@ -352,7 +355,7 @@ struct repository::impl {
         co_return std::unexpected(saved_id.error());
       current.dirs[node] = *saved_id;
     }
-    auto encoded = encode_state(current);
+    auto encoded = encode_repository_document(current);
     if (!encoded)
       co_return std::unexpected(encoded.error());
     auto stored = co_await objects.put(std::move(*encoded));
@@ -381,7 +384,7 @@ struct repository::impl {
   runtime::task<void> checkpoint_or_journal() {
     if (current.pending_drips >= checkpoint_interval)
       co_return co_await persist();
-    auto encoded = encode_state(current);
+    auto encoded = encode_repository_document(current);
     if (!encoded)
       co_return std::unexpected(encoded.error());
     co_return co_await store_detail::write_file(journal_marker(), std::move(*encoded));
@@ -438,7 +441,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
   auto objects = co_await store::open(path / ".liquid-store");
   if (!objects)
     co_return std::unexpected(objects.error());
-  state document{};
+  repository_document document{};
   document.repository = random_id();
   document.root.node = random_id();
   repository output;
@@ -465,14 +468,14 @@ runtime::task<repository> repository::open(std::filesystem::path path) {
   auto saved = co_await objects->get(*document_id);
   if (!saved)
     co_return std::unexpected(saved.error());
-  auto document = decode_state(*saved);
+  auto document = decode_repository_document(*saved);
   if (!document)
     co_return std::unexpected(document.error());
   if (std::filesystem::exists(path / "LIQUID_JOURNAL")) {
     auto journal = co_await store_detail::read_file(path / "LIQUID_JOURNAL");
     if (!journal)
       co_return std::unexpected(journal.error());
-    auto replayed = decode_state(*journal);
+    auto replayed = decode_repository_document(*journal);
     if (!replayed)
       co_return std::unexpected(replayed.error());
     document = std::move(replayed);
@@ -814,9 +817,11 @@ runtime::task<void> repository::combine(repository other, std::optional<std::str
   auto parent = parent_for(impl_->current.root, *parts, true);
   if (!parent)
     co_return std::unexpected(parent.error());
-  if ((*parent)->entries.contains(parts->back()))
-    impl_->current.conflict_values.push_back({path, {}});
-  else {
+  if ((*parent)->entries.contains(parts->back())) {
+    if (auto value = repository_detail::entry_conflict(
+            path, (*parent)->entries.at(parts->back()).object, other.impl_->current.root.object))
+      impl_->current.conflict_values.push_back(std::move(*value));
+  } else {
     auto copy = other.impl_->current.root;
     copy.kind = entry_kind::nested_repository;
     (*parent)->entries.emplace(parts->back(), std::move(copy));
