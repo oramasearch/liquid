@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 
@@ -40,6 +41,21 @@ auto run(std::string command) -> bool {
     return std::system(command.c_str()) == 0;
 }
 
+auto capture(const std::string& command) -> std::string {
+    auto output = std::string{};
+    const auto pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr)
+        return output;
+    std::array<char, 256> buffer{};
+    while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr)
+        output += buffer.data();
+    if (pclose(pipe) != 0)
+        return {};
+    while (!output.empty() && (output.back() == '\n' || output.back() == '\r'))
+        output.pop_back();
+    return output;
+}
+
 TEST(GitObjectStore, hashes_and_verifies_loose_objects) {
     EXPECT_EQ(liquid::git_detail::sha1_hex(liquid::git_detail::sha1_hash(bytes("abc"))),
               "a9993e364706816aba3e25717850c26c9cd0d89d");
@@ -52,6 +68,24 @@ TEST(GitObjectStore, hashes_and_verifies_loose_objects) {
     ASSERT_TRUE(object) << object.error().message;
     EXPECT_EQ(object->kind, liquid::git_detail::object_kind::blob);
     EXPECT_EQ(object->payload, bytes("contents"));
+}
+
+TEST(GitObjectStore, refuses_a_corrupt_loose_object) {
+    temporary_directory temporary;
+    const auto id = liquid::git_detail::write_loose_object(
+        temporary.path(), liquid::git_detail::object_kind::blob, bytes("contents"));
+    ASSERT_TRUE(id) << id.error().message;
+    const auto name = liquid::git_detail::sha1_hex(*id);
+    const auto path = temporary.path() / "objects" / name.substr(0, 2) / name.substr(2);
+    auto output = std::fstream{path, std::ios::in | std::ios::out | std::ios::binary};
+    ASSERT_TRUE(output);
+    output.seekp(-1, std::ios::end);
+    output.put('x');
+    output.close();
+    liquid::git_detail::object_store store{temporary.path()};
+    const auto object = store.read(*id);
+    ASSERT_FALSE(object);
+    EXPECT_EQ(object.error().code, liquid::errc::corrupt);
 }
 
 TEST(GitObjectStore, reads_packed_objects_and_deltas) {
@@ -88,7 +122,7 @@ TEST(GitObjectStore, reads_packed_objects_and_deltas) {
     EXPECT_EQ(blob->payload.size(), 4098U);
 }
 
-TEST(GitInteroperability, imports_a_local_history_and_preserves_mappings) {
+TEST(GitInteroperability, imports_exports_and_resumes_a_complete_history) {
     if (!run("git --version >/dev/null 2>&1"))
         GTEST_SKIP() << "git is not installed";
     temporary_directory source;
@@ -96,38 +130,101 @@ TEST(GitInteroperability, imports_a_local_history_and_preserves_mappings) {
     ASSERT_TRUE(run("git -C " + source.path().string() + " init -q"));
     ASSERT_TRUE(run("git -C " + source.path().string() + " config user.name Test"));
     ASSERT_TRUE(run("git -C " + source.path().string() + " config user.email test@example.test"));
-    for (unsigned index = 0; index < 3; ++index) {
-        auto output = std::ofstream{source.path() / "file.txt", std::ios::binary | std::ios::trunc};
+    for (unsigned index = 0; index < 20; ++index) {
+        auto output = std::ofstream{source.path() / "old.txt", std::ios::binary | std::ios::trunc};
         output << "value " << index << '\n';
         output.close();
-        ASSERT_TRUE(run("git -C " + source.path().string() + " add file.txt"));
+        ASSERT_TRUE(run("git -C " + source.path().string() + " add old.txt"));
         ASSERT_TRUE(run("git -C " + source.path().string() + " commit -qm update"));
     }
+    ASSERT_TRUE(run("git -C " + source.path().string() + " branch topic"));
+    std::error_code rename_error;
+    std::filesystem::rename(source.path() / "old.txt", source.path() / "new.txt", rename_error);
+    ASSERT_FALSE(rename_error) << rename_error.message();
+    ASSERT_TRUE(run("git -C " + source.path().string() + " add -A"));
+    ASSERT_TRUE(run("git -C " + source.path().string() + " commit -qm rename"));
+    for (unsigned index = 21; index < 48; ++index) {
+        auto output = std::ofstream{source.path() / "new.txt", std::ios::binary | std::ios::trunc};
+        output << "value " << index << '\n';
+        output.close();
+        ASSERT_TRUE(run("git -C " + source.path().string() + " add new.txt"));
+        ASSERT_TRUE(run("git -C " + source.path().string() + " commit -qm update"));
+    }
+    ASSERT_TRUE(run("git -C " + source.path().string() + " checkout -q topic"));
+    {
+        auto output =
+            std::ofstream{source.path() / "topic.txt", std::ios::binary | std::ios::trunc};
+        output << "topic\n";
+    }
+    ASSERT_TRUE(run("git -C " + source.path().string() + " add topic.txt"));
+    ASSERT_TRUE(run("git -C " + source.path().string() + " commit -qm topic"));
+    ASSERT_TRUE(run("git -C " + source.path().string() + " checkout -q -"));
+    ASSERT_TRUE(run("git -C " + source.path().string() + " merge --no-ff -qm merge topic"));
+    ASSERT_TRUE(run("git -C " + source.path().string() + " tag v1"));
+    EXPECT_EQ(capture("git -C " + source.path().string() + " rev-list --all --count"), "50");
+
     auto created = liquid::runtime::block_on(liquid::repository::create(destination.path()));
     ASSERT_TRUE(created) << created.error().message;
     auto repository = std::move(*created);
     const auto imported = liquid::runtime::block_on(liquid::import_git(repository, source.path()));
     ASSERT_TRUE(imported) << imported.error().message;
-    EXPECT_EQ(imported->commits, 3U);
+    EXPECT_EQ(imported->commits, 50U);
     const auto refs = liquid::runtime::block_on(repository.refs());
     ASSERT_TRUE(refs) << refs.error().message;
-    ASSERT_EQ(refs->size(), 1U);
-    const auto history = liquid::runtime::block_on(repository.log({.from = refs->front().id}));
+    ASSERT_EQ(refs->size(), 3U);
+    const auto main = std::ranges::find_if(
+        *refs, [](const auto& value) { return value.name == "master" || value.name == "main"; });
+    ASSERT_NE(main, refs->end());
+    const auto history = liquid::runtime::block_on(repository.log({.from = main->id}));
     ASSERT_TRUE(history) << history.error().message;
-    EXPECT_EQ(history->size(), 3U);
-    const auto mapped = liquid::runtime::block_on(repository.metadata("git.commit."));
+    EXPECT_EQ(history->size(), 50U);
+    const auto mapped = liquid::runtime::block_on(repository.metadata_keys("git.commit."));
     ASSERT_TRUE(mapped) << mapped.error().message;
-    const auto contents = liquid::runtime::block_on(repository.read("file.txt"));
+    EXPECT_EQ(mapped->size(), 50U);
+    const auto contents = liquid::runtime::block_on(repository.read("new.txt"));
     ASSERT_TRUE(contents) << contents.error().message;
     EXPECT_EQ((std::string{reinterpret_cast<const char*>(contents->data()), contents->size()}),
-              "value 2\n");
+              "value 47\n");
+
+    const auto before_name = capture("git -C " + source.path().string() + " rev-parse HEAD~29");
+    const auto after_name = capture("git -C " + source.path().string() + " rev-parse HEAD~28");
+    const auto before_mapping =
+        liquid::runtime::block_on(repository.metadata("git.commit." + before_name));
+    const auto after_mapping =
+        liquid::runtime::block_on(repository.metadata("git.commit." + after_name));
+    ASSERT_TRUE(before_mapping) << before_mapping.error().message;
+    ASSERT_TRUE(after_mapping) << after_mapping.error().message;
+    ASSERT_TRUE(*before_mapping);
+    ASSERT_TRUE(*after_mapping);
+    const auto before_id = liquid::parse_digest(std::string{
+        reinterpret_cast<const char*>((*before_mapping)->data()), (*before_mapping)->size()});
+    const auto after_id = liquid::parse_digest(std::string{
+        reinterpret_cast<const char*>((*after_mapping)->data()), (*after_mapping)->size()});
+    ASSERT_TRUE(before_id) << before_id.error().message;
+    ASSERT_TRUE(after_id) << after_id.error().message;
+    const auto before = liquid::runtime::block_on(repository.at(liquid::change_id{*before_id}));
+    const auto after = liquid::runtime::block_on(repository.at(liquid::change_id{*after_id}));
+    ASSERT_TRUE(before) << before.error().message;
+    ASSERT_TRUE(after) << after.error().message;
+    ASSERT_EQ(before->root.entries.size(), 1U);
+    ASSERT_EQ(after->root.entries.size(), 1U);
+    EXPECT_EQ(before->root.entries.front().name, "old.txt");
+    EXPECT_EQ(after->root.entries.front().name, "new.txt");
+    EXPECT_EQ(before->root.entries.front().node, after->root.entries.front().node);
+
+    const auto resumed = liquid::runtime::block_on(liquid::import_git(repository, source.path()));
+    ASSERT_TRUE(resumed) << resumed.error().message;
+    EXPECT_EQ(resumed->commits, 0U);
+    EXPECT_EQ(resumed->skipped_commits, 50U);
 
     temporary_directory exported;
-    const auto report = liquid::runtime::block_on(
-        liquid::export_git(repository, exported.path(), refs->front().name));
+    const auto report =
+        liquid::runtime::block_on(liquid::export_git(repository, exported.path(), main->name));
     ASSERT_TRUE(report) << report.error().message;
-    EXPECT_EQ(report->commits, 3U);
+    EXPECT_EQ(report->commits, 50U);
     ASSERT_TRUE(run("git -C " + exported.path().string() + " fsck --no-dangling"));
+    EXPECT_EQ(capture("git -C " + exported.path().string() + " rev-list --all --count"), "50");
+    EXPECT_EQ(capture("git -C " + exported.path().string() + " show HEAD:new.txt"), "value 47");
 }
 
 } // namespace
