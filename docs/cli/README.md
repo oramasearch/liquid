@@ -31,6 +31,7 @@ that the table and `liquid --help` name the same commands.
 | `serve` | `serve sync <path> [--listen <address>] [--port <port>]` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
+| `anchor` | `anchor <path>:<line>@<change> --to <change>` | Map a text position between changes. | available |
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
 | `split` | `split <path> <into>` | Split a subtree into a repository. | available |
 | `combine` | `combine <repository> [--at <path>]` | Combine another repository. | available |
@@ -74,6 +75,10 @@ distance behind capture, and successful delivery count.
 `push` and `pull` print metadata item, object, byte, and cursor counts. They use `LIQUID_TOKEN` as
 an optional bearer credential and never print it. A URL must use HTTP or HTTPS and identify one
 lake repository.
+`anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
+output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
+The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
+sets `approximate`; and a removed line or file sets `deleted`.
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. It has no built-in authentication policy, so the default is appropriate for local use;
@@ -216,6 +221,7 @@ LIQUID_TOKEN="$token" liquid push https://lake.example/repositories/project
 LIQUID_TOKEN="$token" liquid pull https://lake.example/repositories/project
 liquid move notes.txt archive/notes.txt
 liquid rm archive/notes.txt
+liquid anchor src/main.cpp:42@blake3:<source-change> --to blake3:<target-change>
 liquid nest ../shared-assets vendor/assets
 liquid split src ../src-repository
 liquid combine ../src-repository --at imported-src

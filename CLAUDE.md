@@ -73,6 +73,8 @@ benchmarks live under `bench/` and are excluded unless their build option is ena
 
 Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
 enumeration used by CLI record views.
+Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
+approximate, or deleted positions across changes.
 
 ### Vocabulary — use these words exactly
 

@@ -214,6 +214,36 @@ whose line matrix would exceed 4,000,000 cells it returns the exact common-prefi
 envelope as one bounded-memory hunk. The value type can gain Phase 4's syntax-aware `structural`
 field without changing these path, identity, conflict, or text fields.
 
+## Anchors
+
+Issue #174 adds text positions that follow a file from one change to another without changing the
+object model or introducing a text CRDT. A `text_anchor` stores a source `change_id`, path, line,
+and column. Lines and columns are one-based. `repository::map_anchor` returns the corresponding
+`mapped_anchor` at a target change; `map_anchors` accepts many anchors from the same source change
+and preserves their input order.
+
+Mapping is a projection over the line hunks from one `repository::diff` call with text enabled:
+
+- An anchor before the first hunk or between hunks keeps its column and accumulates the line-count
+  changes from earlier hunks. Insertions or removals above it therefore shift the line without
+  reading the file again.
+- An anchor inside a replacement selects the same relative line in the replacement, clamped to
+  its last line, retains its column, and sets `approximate` because line hunks do not contain a
+  character-level correspondence.
+- An anchor inside a hunk with no replacement lines sets `deleted`, reports the target insertion
+  line with column one, and cannot be treated as an exact position. Removing the complete file
+  also sets `deleted`; its source path and coordinates remain available for diagnostics.
+- A rename or move follows the tree entry's `node_id`, changes the returned path, and sets `moved`.
+  `moved` also reports a changed line number; `approximate` is independent, so a same-number
+  replacement can be approximate without being moved.
+- A content-changing entry whose blobs are not UTF-8 text returns `errc::unsupported`. A batch
+  containing different source changes or a zero line/column returns `errc::invalid_argument`.
+
+The batch groups anchors by source path, scans the diff entries once, sorts only the anchors for
+each matched path, and advances through that path's hunks once. Its mapping cost is proportional to
+the produced diff and anchors, not the file length or one full diff per anchor. The diff algorithm
+remains responsible for materialising changed text and producing hunks.
+
 ## Document boundary
 
 **Decided (2026-09-04): one automerge document per directory.** The measurement below, made for

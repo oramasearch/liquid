@@ -514,6 +514,92 @@ TEST(Repository, diff_reports_path_changes_and_optional_text_hunks) {
         *tree_changes, [](const auto& entry) { return !entry.line_hunks.has_value(); }));
 }
 
+TEST(Repository, text_anchors_follow_hunks_and_node_identity_moves) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write(
+        "notes.txt", content("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("removed.txt", content("gone\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("stable.txt", content("same\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("shrink.txt", content("a\nb\nc\n"))));
+    const auto before = liquid::runtime::block_on(repository.cut("before anchors"));
+    ASSERT_TRUE(before) << before.error().message;
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("notes.txt", "renamed.txt")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write(
+        "renamed.txt", content("zero\none\ntwo\nthree\nFOUR\nfive\nseven\neight\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.remove("removed.txt")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("shrink.txt", content("b\nc\n"))));
+    const auto after = liquid::runtime::block_on(repository.cut("after anchors"));
+    ASSERT_TRUE(after) << after.error().message;
+
+    const auto anchors = std::to_array<liquid::text_anchor>({
+        {*before, "notes.txt", 7, 2},
+        {*before, "notes.txt", 4, 3},
+        {*before, "notes.txt", 1, 1},
+        {*before, "notes.txt", 6, 4},
+        {*before, "removed.txt", 1, 1},
+        {*before, "stable.txt", 1, 3},
+        {*before, "shrink.txt", 3, 1},
+    });
+    const auto mapped = liquid::runtime::block_on(repository.map_anchors(anchors, *after));
+    ASSERT_TRUE(mapped) << mapped.error().message;
+    ASSERT_EQ(mapped->size(), anchors.size());
+
+    EXPECT_EQ(mapped->at(0).path, "renamed.txt");
+    EXPECT_EQ(mapped->at(0).line, 7U);
+    EXPECT_EQ(mapped->at(0).column, 2U);
+    EXPECT_TRUE(mapped->at(0).moved);
+    EXPECT_FALSE(mapped->at(0).approximate);
+    EXPECT_FALSE(mapped->at(0).deleted);
+
+    EXPECT_EQ(mapped->at(1).path, "renamed.txt");
+    EXPECT_EQ(mapped->at(1).line, 5U);
+    EXPECT_EQ(mapped->at(1).column, 3U);
+    EXPECT_TRUE(mapped->at(1).moved);
+    EXPECT_TRUE(mapped->at(1).approximate);
+    EXPECT_FALSE(mapped->at(1).deleted);
+
+    EXPECT_EQ(mapped->at(2).line, 2U);
+    EXPECT_TRUE(mapped->at(2).moved);
+    EXPECT_FALSE(mapped->at(2).approximate);
+    EXPECT_FALSE(mapped->at(2).deleted);
+
+    EXPECT_EQ(mapped->at(3).path, "renamed.txt");
+    EXPECT_EQ(mapped->at(3).line, 7U);
+    EXPECT_EQ(mapped->at(3).column, 1U);
+    EXPECT_TRUE(mapped->at(3).moved);
+    EXPECT_FALSE(mapped->at(3).approximate);
+    EXPECT_TRUE(mapped->at(3).deleted);
+
+    EXPECT_EQ(mapped->at(4).path, "removed.txt");
+    EXPECT_TRUE(mapped->at(4).deleted);
+
+    EXPECT_EQ(mapped->at(5).path, "stable.txt");
+    EXPECT_EQ(mapped->at(5).line, 1U);
+    EXPECT_EQ(mapped->at(5).column, 3U);
+    EXPECT_FALSE(mapped->at(5).moved);
+    EXPECT_FALSE(mapped->at(5).approximate);
+    EXPECT_FALSE(mapped->at(5).deleted);
+
+    EXPECT_EQ(mapped->at(6).path, "shrink.txt");
+    EXPECT_EQ(mapped->at(6).line, 2U);
+    EXPECT_TRUE(mapped->at(6).moved);
+    EXPECT_FALSE(mapped->at(6).approximate);
+    EXPECT_FALSE(mapped->at(6).deleted);
+
+    const auto single = liquid::runtime::block_on(repository.map_anchor(
+        {.change = *before, .path = "notes.txt", .line = 8, .column = 1}, *after));
+    ASSERT_TRUE(single) << single.error().message;
+    EXPECT_EQ(single->path, "renamed.txt");
+    EXPECT_EQ(single->line, 8U);
+    EXPECT_TRUE(single->moved);
+    EXPECT_FALSE(single->approximate);
+    EXPECT_FALSE(single->deleted);
+}
+
 TEST(Repository, diff_surfaces_recorded_conflict_values) {
     temporary_repository left_location;
     temporary_repository right_location;

@@ -29,7 +29,9 @@ retains checkpointed content while reclaiming an orphan. The supplied-store case
 repository identifiers on one store, counts one physical frame for their repeated payload, collects
 one repository without losing the other, and reopens by identifier. Tree-diff cases cover
 additions, removals, content and mode changes, `node_id` moves, opt-in text hunks, and stored
-conflict values. CLI scenario and command-documentation tests live in `cli/`. `test_runtime.cpp`
+conflict values. Text-anchor cases map unchanged and shifted lines, approximate replacements,
+deleted regions and files, and a renamed node in one unsorted batch. CLI scenario and
+command-documentation tests live in `cli/`. `test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and

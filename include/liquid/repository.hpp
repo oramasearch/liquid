@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -168,6 +169,23 @@ struct LIQUID_EXPORT tree_diff_entry {
     std::vector<digest> new_conflicts;
 };
 
+struct LIQUID_EXPORT text_anchor {
+    change_id change;
+    std::string path;
+    std::uint64_t line{};
+    std::uint64_t column{};
+};
+
+struct LIQUID_EXPORT mapped_anchor {
+    change_id change;
+    std::string path;
+    std::uint64_t line{};
+    std::uint64_t column{};
+    bool moved{};
+    bool approximate{};
+    bool deleted{};
+};
+
 struct LIQUID_EXPORT record_cursor {
     std::string token;
 };
@@ -293,6 +311,9 @@ public:
     diff(digest old_tree, digest new_tree, tree_diff_options options = {});
     [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>
     diff(liquid::tree old_tree, liquid::tree new_tree, tree_diff_options options = {});
+    [[nodiscard]] runtime::task<mapped_anchor> map_anchor(text_anchor anchor, change_id target);
+    [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
+    map_anchors(std::span<const text_anchor> anchors, change_id target);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
     [[nodiscard]] runtime::task<record_page<repository_attestation>>
     attestations(attestation_filter filter = {});
