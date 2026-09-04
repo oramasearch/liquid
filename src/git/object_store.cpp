@@ -196,6 +196,50 @@ auto pack_offset(const std::filesystem::path& index, const sha1& id)
     return std::optional<std::uint64_t>{};
 }
 
+auto pack_id_at_offset(const std::filesystem::path& index, std::uint64_t wanted)
+    -> result<std::optional<sha1>> {
+    const auto header = read_at(index, 0, 8 + 256 * 4);
+    if (!header)
+        return std::unexpected(header.error());
+    if (big_endian32(std::span{*header}.subspan(0, 4)) != 0xff744f63U ||
+        big_endian32(std::span{*header}.subspan(4, 4)) != 2U)
+        return std::unexpected(
+            failure(errc::corrupt, "unsupported Git pack index", index.string()));
+    const auto count = big_endian32(std::span{*header}.subspan(8 + 255 * 4, 4));
+    constexpr std::uint64_t names = 8 + 256 * 4;
+    const auto offset_table = names + static_cast<std::uint64_t>(count) * sha1{}.size() +
+                              static_cast<std::uint64_t>(count) * 4;
+    for (std::uint32_t number{}; number < count; ++number) {
+        const auto raw = read_at(index, offset_table + static_cast<std::uint64_t>(number) * 4, 4);
+        if (!raw)
+            return std::unexpected(raw.error());
+        const auto short_offset = big_endian32(*raw);
+        std::uint64_t offset = short_offset;
+        if ((short_offset & 0x80000000U) != 0) {
+            const auto large =
+                read_at(index,
+                        offset_table + static_cast<std::uint64_t>(count) * 4 +
+                            static_cast<std::uint64_t>(short_offset & 0x7fffffffU) * 8,
+                        8);
+            if (!large)
+                return std::unexpected(large.error());
+            offset =
+                (static_cast<std::uint64_t>(big_endian32(std::span{*large}.subspan(0, 4))) << 32U) |
+                big_endian32(std::span{*large}.subspan(4, 4));
+        }
+        if (offset != wanted)
+            continue;
+        const auto value = read_at(
+            index, names + static_cast<std::uint64_t>(number) * sha1{}.size(), sha1{}.size());
+        if (!value)
+            return std::unexpected(value.error());
+        sha1 id{};
+        std::ranges::copy(*value, id.begin());
+        return std::optional<sha1>{id};
+    }
+    return std::optional<sha1>{};
+}
+
 struct inflated_pack {
     std::vector<std::byte> bytes;
 };
@@ -388,7 +432,13 @@ auto object_store::read(const sha1& id) -> result<object> {
                 if (distance > position)
                     return std::unexpected(
                         failure(errc::corrupt, "invalid OFS_DELTA base", pack.string()));
-                auto decoded = self(self, position - distance, std::nullopt);
+                const auto base_id = pack_id_at_offset(it->path(), position - distance);
+                if (!base_id)
+                    return std::unexpected(base_id.error());
+                if (!*base_id)
+                    return std::unexpected(failure(
+                        errc::corrupt, "OFS_DELTA base is absent from index", pack.string()));
+                auto decoded = self(self, position - distance, *base_id);
                 if (!decoded)
                     return std::unexpected(decoded.error());
                 base = std::move(*decoded);

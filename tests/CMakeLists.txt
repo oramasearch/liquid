@@ -235,9 +235,12 @@ target_compile_definitions(liquid-record-tests PRIVATE
 target_link_libraries(liquid-record-tests PRIVATE liquid::liquid GTest::gtest_main)
 gtest_discover_tests(liquid-record-tests)
 
-add_executable(liquid-git-tests git/test_object_store.cpp)
+add_executable(liquid-git-tests
+  git/test_object_store.cpp
+  ${PROJECT_SOURCE_DIR}/src/git/object_store.cpp
+  ${PROJECT_SOURCE_DIR}/src/git/sha1.cpp)
 target_include_directories(liquid-git-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_link_libraries(liquid-git-tests PRIVATE liquid::liquid GTest::gtest_main)
+target_link_libraries(liquid-git-tests PRIVATE liquid::liquid GTest::gtest_main ZLIB::ZLIB)
 gtest_discover_tests(liquid-git-tests)
 
 add_executable(liquid-repository-scenario repository/scenario.cpp)
