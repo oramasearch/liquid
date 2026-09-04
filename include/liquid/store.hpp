@@ -12,6 +12,7 @@
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
+#include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -89,6 +90,8 @@ public:
     [[nodiscard]] static runtime::task<store> open(std::filesystem::path path,
                                                    store_options options = {});
     [[nodiscard]] runtime::task<digest> put(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_file(std::filesystem::path source);
+    [[nodiscard]] runtime::task<void> get_to_file(digest id, std::filesystem::path destination);
     [[nodiscard]] runtime::task<std::vector<std::byte>> get(digest id);
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
@@ -97,6 +100,10 @@ public:
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
 
 private:
+    friend class repository;
+
+    [[nodiscard]] result<blob> blob_for(digest id) const;
+
     struct impl;
     std::unique_ptr<impl> impl_;
 };

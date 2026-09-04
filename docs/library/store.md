@@ -1,10 +1,10 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process local stores (liquid #1, #7, #8, #46).** `store::open`, `put`,
-`get`, `read`, and `contains` are Capy coroutines. The same operations support encrypted
-objects when supplied a keyring. Leased roots and epoch collection are implemented as Capy
-coroutines; see [gc.md](gc.md). Collection also compacts sparse packs without recompressing
-frames.
+**Status: implemented for single-process local stores (liquid #1, #7, #8, #46, #116).**
+`store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
+coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
+and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
+compacts sparse packs without recompressing frames. The Phase 1 large-input exit criterion is met.
 
 ## What and why
 
@@ -58,11 +58,14 @@ Encrypted frames use the encrypted variant of the frame magic, and their compres
 replaced by `nonce[24] || tag[16] || ciphertext`. The nonce comes from the operating system random
 source for every new chunk. Recovery can structurally recognize a complete encrypted frame; its
 AEAD authentication and keyed digest are verified when the chunk is read with its trust-domain
-key. The object map format is now `LQOBJ3`: each record carries the descriptor digest and object
-kind in addition to `LQOBJ2`'s encryption flag and optional length-prefixed key id. A zero
+key. The object map format is now `LQOBJ4`: each record carries every chunk's raw size in addition
+to `LQOBJ3`'s descriptor digest and object kind and `LQOBJ2`'s encryption flag and optional
+length-prefixed key id. Those sizes let `read` jump to the first chunk overlapping a large offset
+without loading preceding chunks. A zero
 descriptor algorithm is the sentinel for legacy records that predate stored chunk-list objects.
 Its chunk-list descriptor contains the same key id and is encrypted too. `LQOBJ1` plaintext and `LQOBJ2`
-encrypted metadata remain readable.
+encrypted metadata remain readable, as does `LQOBJ3`; the next metadata write fills legacy chunk
+sizes from pack tables before publishing `LQOBJ4`.
 
 Every encrypted read first unwraps the domain data key, then authenticates and decompresses each
 requested chunk and verifies its keyed id. A missing or wrong key is `unauthorized` with the key
@@ -91,6 +94,57 @@ The ordering makes a process crash safe: complete frames can be found by the rec
 frames are ignored. A power loss needs `durable` for the operating system to make that guarantee.
 An interrupted put may remain as an orphan: **acknowledged ⊆ visible ⊆ correct**. A visible object
 is always verified against its digest, and collection reclaims unleased orphans.
+
+## Streaming files
+
+`store::put_file` opens its source with Corosio `random_access_file` and reads 8 MiB windows. A
+stateful FastCDC chunker carries only the current chunk across window boundaries, so it produces
+the same ordered cuts as `put` without retaining the input. BLAKE3, keyed BLAKE3, or SHA-256 is
+updated for each window and finalized only after the last byte. Each completed chunk is
+deduplicated and framed immediately; the whole-object chunk-list descriptor and `LQOBJ4` metadata
+are published at the end.
+
+`store::get_to_file` loads and verifies one chunk at a time and writes it with Corosio
+`random_access_file`. It incrementally verifies the whole-object digest before acknowledging the
+export. A one-chunk cache avoids reopening and decompressing consecutive duplicate chunks while
+remaining bounded. `repository::write_file` imports through `put_file`, derives its canonical blob
+record from that stored ordered chunk list, and records one drip. The in-memory repository write
+uses the same stored list, so both paths produce the same blob record. Raw blob chunks remain
+readable under encryption through their parent object's trust-domain key.
+
+The default suite exercises this path with a deterministic sparse 256 MiB file. The labelled
+`large-40g` test uses a 40 GiB file and a 40-byte file through the same `write_file` call. It
+verifies three 4 KiB ranges through `store::read`, verifies the middle range through VFS hydration,
+exports the large object, re-imports the export, compares digests, and asserts peak RSS below 1
+GiB.
+
+The recorded run used the default sparse fixture: zeros throughout with three seeded 4 KiB marker
+blocks at byte 0, 20 GiB, and 40 GiB minus 4 KiB. The store deduplicated that input to about 15 MB.
+Consequently, its measurements prove bounded memory and the streaming code path over a 40 GiB
+input; they do not measure unique-data throughput.
+
+Set `LIQUID_40G_RANDOM=1` to generate the source as a streamed seeded pseudo-random byte sequence
+instead. That mode creates about 40 GiB of packs and is opt-in because it needs the corresponding
+disk capacity. For example:
+
+```sh
+LIQUID_40G_RANDOM=1 ctest --test-dir build -L large-40g --output-on-failure
+```
+
+Recorded on an Apple M3 Max with 64 GiB RAM and macOS 14.6.1:
+
+| Measurement | Result |
+|---|---:|
+| `repository::write_file` wall time | 177.189 s |
+| Import throughput | 231.165 MiB/s |
+| Full labelled-test wall time | 587.936 s |
+| Peak RSS (`getrusage`) | 400,048,128 bytes (381.5 MiB) |
+| Store on-disk logical size | 15,033,445 bytes (14.3 MiB) |
+
+The source and exported temporary files were deleted after the run. The small store size is
+expected for the sparse fixture: repeated zero chunks deduplicate and compress, while the full
+40 GiB logical byte stream still passes through hashing, FastCDC, range reads, export, and digest
+verification.
 
 ## Garbage collection
 
@@ -172,8 +226,10 @@ for mapped reopen, rebuild, read integrity, and compaction.
 cmake -S . -B build -G Ninja && cmake --build build
 ctest --test-dir build --output-on-failure
 ctest --test-dir build -L large --output-on-failure
+ctest --test-dir build -L large-40g --output-on-failure
 ```
 
 The default tests cover deterministic boundaries, range reads, deduplication, corruption, reopen,
 unknown versions, index reconstruction, run corruption, compaction, and separate SHA-256 run-set
-lookup. The `large` label contains the 256 MiB round trip.
+lookup. The `large` label contains the 256 MiB streaming round trip; `large-40g` is the labelled
+Phase 1 exit test.

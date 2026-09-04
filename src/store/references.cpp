@@ -103,10 +103,18 @@ std::vector<digest> extract_change(std::span<const std::byte> bytes) {
     return output;
 }
 
+std::vector<digest> extract_blob(std::span<const std::byte> bytes) {
+    const auto blob = objects::decode_blob(bytes);
+    if (!blob)
+        return {};
+    return blob->chunks;
+}
+
 } // namespace
 
 reference_registry::reference_registry() {
     register_kind("chunk-list", extract_chunk_list);
+    register_kind("blob", extract_blob);
     register_kind("tree", extract_tree);
     register_kind("change", extract_change);
 }
@@ -153,6 +161,8 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "chunk-list";
     if (objects::decode_tree(bytes))
         return "tree";
+    if (objects::decode_blob(bytes))
+        return "blob";
     if (objects::decode_change(bytes))
         return "change";
     return "unknown";

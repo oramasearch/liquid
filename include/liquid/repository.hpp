@@ -67,6 +67,7 @@ public:
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
+    [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
     [[nodiscard]] runtime::task<void> move(std::string from, std::string to);
     [[nodiscard]] runtime::task<void> remove(std::string path);
     [[nodiscard]] runtime::task<change_id> cut(std::string message);

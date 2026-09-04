@@ -14,7 +14,6 @@
 #include "objects/records.hpp"
 #include "repository/merge.hpp"
 #include "repository/testing.hpp"
-#include "store/chunker.hpp"
 #include "store/pack.hpp"
 #include "vfs/repository_access.hpp"
 
@@ -509,6 +508,63 @@ struct repository::impl {
             return same_path_or_descendant(path, pattern);
         });
     }
+    runtime::task<void> record_blob(std::string path, blob record) {
+        if (locked(path))
+            co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+        auto parts = split_path(path);
+        if (!parts)
+            co_return std::unexpected(parts.error());
+        auto encoded = objects::encode(record);
+        if (!encoded)
+            co_return std::unexpected(encoded.error());
+        auto reference = co_await objects.put(std::move(*encoded));
+        if (!reference)
+            co_return std::unexpected(reference.error());
+        auto parent = parent_for(current.root, *parts, true, hash_algorithm);
+        if (!parent)
+            co_return std::unexpected(parent.error());
+        auto found = (*parent)->entries.find(parts->back());
+        std::optional<working_entry> prior;
+        if (found != (*parent)->entries.end() && found->second.kind != entry_kind::file) {
+            co_return std::unexpected(
+                failure(errc::invalid_argument, "cannot overwrite directory", path));
+        }
+        auto directory_document = co_await directory((*parent)->node);
+        if (!directory_document)
+            co_return std::unexpected(directory_document.error());
+        const auto existing_id = found == (*parent)->entries.end() ? node_id{} : found->second.node;
+        auto recorded =
+            (*directory_document)
+                ->put_entry(parts->back(), {"blob", existing_id, 0100644, to_string(*reference)});
+        if (!recorded)
+            co_return std::unexpected(recorded.error());
+        if (found != (*parent)->entries.end()) {
+            prior = found->second;
+            found->second.object = *reference;
+        } else {
+            found =
+                (*parent)
+                    ->entries
+                    .emplace(parts->back(),
+                             working_entry{entry_kind::file, random_id(), 0100644, *reference, {}})
+                    .first;
+        }
+        std::erase_if(current.conflict_values,
+                      [&](const conflict& value) { return value.path == path; });
+        auto operation_hash = hash(hash_algorithm, std::span<const std::byte>{reference->bytes});
+        if (!operation_hash)
+            co_return std::unexpected(operation_hash.error());
+        current.operations.push_back(
+            {op_id{*operation_hash}, "write", path, {}, found->second.node, prior});
+        auto signed_drip = co_await append_drip("write", found->second.node);
+        if (!signed_drip)
+            co_return std::unexpected(signed_drip.error());
+        ++current.pending_drips;
+        auto saved = co_await checkpoint_or_journal();
+        if (!saved)
+            co_return std::unexpected(saved.error());
+        co_return result<void>{};
+    }
 };
 repository::repository() noexcept = default;
 repository::~repository() = default;
@@ -627,69 +683,24 @@ runtime::task<std::vector<std::byte>> repository::read(std::string path) {
 runtime::task<void> repository::write(std::string path, std::vector<std::byte> contents) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    if (impl_->locked(path))
-        co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
-    auto parts = split_path(path);
-    if (!parts)
-        co_return std::unexpected(parts.error());
-    const auto size = contents.size();
-    blob record{{}, size, {}};
-    for (const auto range : store_detail::fastcdc(contents)) {
-        auto chunk = std::vector<std::byte>(contents.begin() + range.offset,
-                                            contents.begin() + range.offset + range.size);
-        auto content = co_await impl_->objects.put(std::move(chunk));
-        if (!content)
-            co_return std::unexpected(content.error());
-        record.chunks.push_back(*content);
-        record.chunk_sizes.push_back(range.size);
-    }
-    auto encoded = objects::encode(record);
-    if (!encoded)
-        co_return std::unexpected(encoded.error());
-    auto reference = co_await impl_->objects.put(std::move(*encoded));
-    if (!reference)
-        co_return std::unexpected(reference.error());
-    auto parent = parent_for(impl_->current.root, *parts, true, impl_->hash_algorithm);
-    if (!parent)
-        co_return std::unexpected(parent.error());
-    auto found = (*parent)->entries.find(parts->back());
-    std::optional<working_entry> prior;
-    if (found != (*parent)->entries.end() && found->second.kind != entry_kind::file)
-        co_return std::unexpected(
-            failure(errc::invalid_argument, "cannot overwrite directory", path));
-    auto directory = co_await impl_->directory((*parent)->node);
-    if (!directory)
-        co_return std::unexpected(directory.error());
-    const auto existing_id = found == (*parent)->entries.end() ? node_id{} : found->second.node;
-    auto recorded =
-        (*directory)
-            ->put_entry(parts->back(), {"blob", existing_id, 0100644, to_string(*reference)});
-    if (!recorded)
-        co_return std::unexpected(recorded.error());
-    if (found != (*parent)->entries.end()) {
-        prior = found->second;
-        found->second.object = *reference;
-    } else
-        found = (*parent)
-                    ->entries
-                    .emplace(parts->back(),
-                             working_entry{entry_kind::file, random_id(), 0100644, *reference, {}})
-                    .first;
-    std::erase_if(impl_->current.conflict_values,
-                  [&](const conflict& value) { return value.path == path; });
-    auto operation_hash = hash(impl_->hash_algorithm, std::span<const std::byte>{reference->bytes});
-    if (!operation_hash)
-        co_return std::unexpected(operation_hash.error());
-    impl_->current.operations.push_back(
-        {op_id{*operation_hash}, "write", path, {}, found->second.node, prior});
-    auto signed_drip = co_await impl_->append_drip("write", found->second.node);
-    if (!signed_drip)
-        co_return std::unexpected(signed_drip.error());
-    ++impl_->current.pending_drips;
-    auto saved = co_await impl_->checkpoint_or_journal();
-    if (!saved)
-        co_return std::unexpected(saved.error());
-    co_return result<void>{};
+    auto content = co_await impl_->objects.put(std::move(contents));
+    if (!content)
+        co_return std::unexpected(content.error());
+    auto record = impl_->objects.blob_for(*content);
+    if (!record)
+        co_return std::unexpected(record.error());
+    co_return co_await impl_->record_blob(std::move(path), std::move(*record));
+}
+runtime::task<void> repository::write_file(std::string path, std::filesystem::path source) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto content = co_await impl_->objects.put_file(std::move(source));
+    if (!content)
+        co_return std::unexpected(content.error());
+    auto record = impl_->objects.blob_for(*content);
+    if (!record)
+        co_return std::unexpected(record.error());
+    co_return co_await impl_->record_blob(std::move(path), std::move(*record));
 }
 runtime::task<void> repository::move(std::string from, std::string to) {
     if (!impl_)

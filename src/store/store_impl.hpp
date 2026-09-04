@@ -26,6 +26,7 @@ struct stored_object {
     bool has_descriptor{};
     std::string kind{"unknown"};
     std::vector<digest> chunks;
+    std::vector<std::uint64_t> chunk_sizes;
 };
 
 class store_backend {
@@ -34,6 +35,9 @@ public:
                                                               store_options options);
 
     [[nodiscard]] runtime::task<digest> put(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_file(std::filesystem::path source);
+    [[nodiscard]] runtime::task<void> get_to_file(digest id, std::filesystem::path destination);
+    [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] runtime::task<std::vector<std::byte>> get(digest id);
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
@@ -70,6 +74,7 @@ private:
     chunk_index index_;
     std::map<std::uint32_t, pack_contents> packs_;
     std::map<std::string, stored_object> objects_;
+    std::map<std::string, std::string> chunk_keys_;
     std::uint32_t current_pack_{};
     boost::capy::async_mutex mutation_;
 };

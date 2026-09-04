@@ -97,6 +97,15 @@ auto read_file(const std::filesystem::path& path) -> std::vector<std::byte> {
     return output;
 }
 
+void write_file(const std::filesystem::path& path, std::span<const std::byte> bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+    ASSERT_TRUE(output);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    ASSERT_TRUE(output);
+}
+
 TEST(Repository, create_write_move_cut_open_and_time_travel) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
@@ -506,6 +515,42 @@ TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_val
     auto resolved = liquid::runtime::block_on(left->conflicts());
     ASSERT_TRUE(resolved);
     EXPECT_TRUE(resolved->empty());
+}
+
+TEST(Repository, WriteFileMatchesWriteBlobAndRecordsOneDrip) {
+    temporary_repository source_path;
+    temporary_repository memory_path;
+    temporary_repository file_path;
+    auto bytes = std::vector<std::byte>(10U * 1024U * 1024U + 91U);
+    for (std::size_t index = 0; index < bytes.size(); ++index)
+        bytes[index] = std::byte{static_cast<unsigned char>((index * 37U + 11U) & 0xffU)};
+    const auto input = source_path.path() / "input.bin";
+    write_file(input, bytes);
+
+    auto memory_created = liquid::runtime::block_on(liquid::repository::create(memory_path.path()));
+    auto file_created = liquid::runtime::block_on(liquid::repository::create(file_path.path()));
+    ASSERT_TRUE(memory_created) << memory_created.error().message;
+    ASSERT_TRUE(file_created) << file_created.error().message;
+    auto memory_repository = std::move(*memory_created);
+    auto file_repository = std::move(*file_created);
+    const auto memory_before = memory_repository.status()->pending_drips;
+    const auto file_before = file_repository.status()->pending_drips;
+    ASSERT_TRUE(liquid::runtime::block_on(memory_repository.write("input.bin", bytes)));
+    ASSERT_TRUE(liquid::runtime::block_on(file_repository.write_file("input.bin", input)));
+    EXPECT_EQ(memory_repository.status()->pending_drips, memory_before + 1);
+    EXPECT_EQ(file_repository.status()->pending_drips, file_before + 1);
+
+    const auto memory_root = liquid::runtime::block_on(memory_repository.root());
+    const auto file_root = liquid::runtime::block_on(file_repository.root());
+    ASSERT_TRUE(memory_root) << memory_root.error().message;
+    ASSERT_TRUE(file_root) << file_root.error().message;
+    ASSERT_EQ(memory_root->entries.size(), 1U);
+    ASSERT_EQ(file_root->entries.size(), 1U);
+    EXPECT_EQ(memory_root->entries.front().id.alg, file_root->entries.front().id.alg);
+    EXPECT_EQ(memory_root->entries.front().id.bytes, file_root->entries.front().id.bytes);
+    const auto read = liquid::runtime::block_on(file_repository.read("input.bin"));
+    ASSERT_TRUE(read) << read.error().message;
+    EXPECT_EQ(*read, bytes);
 }
 
 } // namespace
