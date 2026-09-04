@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -28,12 +29,14 @@ struct launch_request {
     std::vector<std::string> outputs;
     std::optional<std::chrono::seconds> timeout;
     bool remote_eligible{};
+    std::stop_token stop;
 };
 
 struct launch_result {
     int exit{};
     bool timed_out{};
     std::optional<std::string> forbidden_read;
+    bool cancelled{};
 };
 
 struct wrap_launch_request {

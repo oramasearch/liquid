@@ -62,12 +62,17 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
 > misses with digest, argv, environment,
 > toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk hit
-> rates and output bytes avoided versus rebuilt. Memory and remote cache tiers remain separate work;
+> rates and output bytes avoided versus rebuilt. Memory and network remote-cache tiers remain separate work;
 > macOS needs macFUSE and Windows returns its documented unsupported result.
 > Each result records non-overlapping queued, sandbox, exec, hash, and store phases. Every wrap
 > retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
-> totals, and supports `liquid build trace --chrome` and `liquid why-slow <target>`. Remote transfer
-> timing remains Phase 3 work.
+> totals, and supports `liquid build trace --chrome` and `liquid why-slow <target>`. Issue #18 adds
+> transport-independent remote blob and executor interfaces, ships source and toolchain trees from
+> the store, and chooses local, remote, or racing execution from recorded timing, absent bytes,
+> queue depth, and cache locality. Four or more short actions share one supported remote batch; a
+> race cancels its loser and publishes only its winner. Results, `liquid why`, retained traces, and
+> Chrome events preserve the decision and every model input. The REAPI transport, production
+> workers, remote cache tier, and measured transfer timing remain Phase 3 work.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -76,7 +81,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > refuses to execute an uncached probe for a foreign target.
 > Typed retention rules keep matching refs and cost-weighted results through computed reachability;
 > a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
-> names the responsible rule and lease. Memory and remote cache tiers remain separate work; macOS needs
+> names the responsible rule and lease. Memory and network remote-cache tiers remain separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
 
 > **Phase 3 build-without-bytes is implemented behind a transport-neutral remote blob source.**

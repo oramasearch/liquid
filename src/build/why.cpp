@@ -770,6 +770,7 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
         co_return report;
     }
     report.action = value->action;
+    report.schedule = value->schedule;
     if (selected->previous) {
         auto previous = co_await build_detail::load_result(*source, selected->previous->value);
         if (previous) {

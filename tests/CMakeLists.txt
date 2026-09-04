@@ -25,6 +25,7 @@ add_executable(liquid-tests
   vfs/test_mount.cpp
   build/test_executor.cpp
   build/test_remote_outputs.cpp
+  build/test_distribution.cpp
   build/test_policy.cpp
   build/test_facts.cpp
   build/test_provenance.cpp

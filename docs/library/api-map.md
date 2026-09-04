@@ -65,8 +65,8 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #17, #19, #57, #60, #56, #58, #61 | implemented local executor, remote-result recording, wrapper, disk cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
-| `liquid/remote.hpp` | #17, Phase 6 | implemented source interface; declared service handle | `remote_blob_source`: transport-neutral missing/read/write operations; `remote`: later hosted push and pull |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local executor, remote-result recording, wrapper, disk cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, SBOMs, and remote scheduling | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/remote.hpp` | #17, #18, Phase 6 | implemented blob and executor interfaces; declared service handle | `remote_blob_location`, transport-neutral instance-aware source operations, `remote_executor` scheduling contract, and later hosted `remote` push/pull |
 
 ### `liquid/error.hpp`
 
@@ -200,10 +200,19 @@ class remote_blob_source {
                                                   std::span<std::byte>) = 0;
   virtual runtime::task<void> write(std::string, digest, std::vector<std::byte>) = 0;
 };
+class remote_executor {
+ public:
+  virtual remote_blob_source& blobs() noexcept = 0;
+  virtual std::string instance() const = 0;
+  virtual std::uint64_t queue_depth() const noexcept = 0;
+  virtual bool supports_batch() const noexcept = 0;
+  virtual runtime::task<action_result> execute(action_input) = 0;
+  virtual runtime::task<std::vector<action_result>> execute_batch(std::vector<action_input>) = 0;
+};
 ```
 
-The interface is transport-neutral. A later REAPI or hosted implementation stays behind it; the
-store and VFS depend only on range reads and digest verification.
+The interfaces are transport-neutral. A later REAPI or hosted implementation stays behind them;
+the store and VFS depend only on range reads and digest verification.
 
 ### `liquid/delta.hpp`
 
@@ -476,6 +485,17 @@ struct cache_report {
   cache_tier_report memory, disk, remote;
   std::vector<critical_cache_alert> critical_alerts;
 };
+enum class action_size_class : std::uint8_t { unknown, tiny, short_action, medium, long_action };
+enum class execution_decision : std::uint8_t { local, remote, race };
+struct scheduling_inputs {
+  std::vector<action_timing> history; action_size_class size_class; std::uint64_t input_bytes;
+  bool remote_state_queried; std::uint64_t remote_missing_bytes, remote_queue_depth;
+  std::uint32_t remote_cache_locality_permille; bool batch_supported; std::uint64_t batch_size;
+};
+struct execution_schedule {
+  execution_decision decision; scheduling_inputs inputs;
+  std::chrono::milliseconds local_estimate, remote_estimate; std::string reason;
+};
 struct action_result {
   digest action; int exit; std::vector<action_output> outputs; digest stdout_output, stderr_output;
   std::vector<observed_input> manifest; action_timing timing; std::string worker;
@@ -483,10 +503,11 @@ struct action_result {
   cache_status cache; std::optional<cache_miss> why;
   std::optional<std::chrono::sys_seconds> started_at, finished_at;
   std::optional<digest> provenance; std::uint64_t record_version;
-  std::vector<digest> sboms;
+  std::vector<digest> sboms; std::optional<execution_schedule> schedule;
 };
 struct build_trace_action { result_id result; digest action; std::vector<std::string> outputs;
-  action_timing timing; cache_status cache; std::chrono::milliseconds start_offset; };
+  action_timing timing; cache_status cache; std::chrono::milliseconds start_offset;
+  std::optional<execution_schedule> schedule; };
 struct build_trace_edge { digest dependency, dependent; };
 struct build_trace { digest id; std::chrono::milliseconds wall_time;
   std::vector<build_trace_action> actions; std::vector<build_trace_edge> edges; cache_report cache; };
@@ -532,8 +553,12 @@ struct replay_report {
   std::vector<reproducibility_difference> differences; std::optional<digest> attestation;
 };
 namespace build {
+execution_schedule choose_execution(scheduling_inputs);
 runtime::task<result_id> execute(repository&, action_input);
 runtime::task<result_id> record_remote_result(repository&, action_input, action_result);
+runtime::task<result_id> execute(repository&, action_input, remote_executor&);
+runtime::task<std::vector<result_id>> execute_batch(repository&, std::vector<action_input>,
+                                                    remote_executor&);
 runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
 runtime::task<verify_report> verify(repository&, verify_options = {});
@@ -574,7 +599,12 @@ the canonical policy digest.
 `execute` returns an indexed result only after the result's signed action derives that same key,
 all observed paths match the current input tree, all referenced blobs exist, and the referenced
 provenance and SBOMs verify. Producer, `sig`, timestamps, `provenance`, and `sboms` are immutable
-record fields; cache status and miss detail describe the current request. `verify` re-executes
+record fields; cache status and miss detail describe the current request. The remote overload
+ships source and toolchain object graphs through `remote_blob_source`, then records the
+`choose_execution` inputs and local, remote, or race decision in the signed result. `execute_batch`
+groups at least four recorded short actions when the executor advertises support. A race publishes
+only the winner and cancels the other task. The interfaces have no REAPI, gRPC, protobuf, lake, or
+worker implementation dependency. `verify` re-executes
 selected cache entries with their recorded sandbox definition, compares exit status and output
 digests, and returns the signed attestation digest plus any differences. A divergent index entry is
 permanently excluded from lookup.
@@ -593,7 +623,10 @@ current/prior identifiers and a typed cause. It re-evaluates current policy befo
 hit or ordinary miss and uses `cache_miss_reason::policy_refused` for an unsatisfied refuse rule.
 `wrap_report` includes action counts, its per-wrap `cache_report`, typed miss details, the retained
 trace digest, phase totals, achieved parallelism, and the dependency-aware critical path.
-`latest_trace`, `why_slow`, and `chrome_trace` query and project only recorded trace/result data.
+`why_report`, trace actions, critical-path actions, and Chrome events carry the stored schedule, so
+diagnostics expose history, size class, byte counts, queue depth, locality, batching, estimates, and
+reason without recalculating the choice. `latest_trace`, `why_slow`, and `chrome_trace` query and
+project only recorded trace/result data.
 The path-taking `cache_stats`
 returns cumulative completed-wrap statistics; the repository member remains scoped to its open
 handle.

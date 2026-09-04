@@ -779,6 +779,8 @@ runtime::task<saved_action> publish_action(repository& source,
                                                                                   hash_finished)},
         .worker = input.platform.os + "/" + input.platform.arch,
         .observed_at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())};
+    value.schedule = execution_schedule{.decision = execution_decision::local,
+                                        .reason = "wrap has no remote executor configured"};
     value.started_at = started_at;
     value.finished_at = finished_at;
     auto stored_result = co_await build_detail::store_result_with_provenance(source, value);
@@ -1023,8 +1025,13 @@ void add_timing(wrap_report& report,
     for (const auto& output : value.outputs) {
         outputs.push_back(output.path);
     }
-    report.trace_actions.push_back(
-        {result, value.action, std::move(outputs), value.timing, status, start_offset});
+    report.trace_actions.push_back({result,
+                                    value.action,
+                                    std::move(outputs),
+                                    value.timing,
+                                    status,
+                                    start_offset,
+                                    value.schedule});
 }
 
 runtime::task<std::optional<result_id>>

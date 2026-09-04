@@ -37,6 +37,10 @@ public:
         return read_blobs_;
     }
 
+    auto store() -> liquid::store& {
+        return contents_;
+    }
+
     runtime::task<std::vector<digest>> find_missing(std::string instance,
                                                     std::vector<digest> blobs) override {
         if (instance != "worker-a") {

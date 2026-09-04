@@ -145,6 +145,20 @@ TEST(Records, result_records_round_trip_positive_observed_time) {
     complete.started_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'001}};
     complete.finished_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'002}};
     complete.provenance = example_digest(0x06);
+    complete.schedule =
+        liquid::execution_schedule{.decision = liquid::execution_decision::race,
+                                   .inputs = {.history = {{.exec = std::chrono::milliseconds{7}}},
+                                              .size_class = liquid::action_size_class::medium,
+                                              .input_bytes = 4096,
+                                              .remote_state_queried = true,
+                                              .remote_missing_bytes = 1024,
+                                              .remote_queue_depth = 2,
+                                              .remote_cache_locality_permille = 750,
+                                              .batch_supported = true,
+                                              .batch_size = 4},
+                                   .local_estimate = std::chrono::milliseconds{7},
+                                   .remote_estimate = std::chrono::milliseconds{6},
+                                   .reason = "test race"};
     auto encoded = liquid::objects::encode(complete);
     ASSERT_TRUE(encoded) << encoded.error().message;
     auto decoded = liquid::objects::decode_result(*encoded);
@@ -160,33 +174,41 @@ TEST(Records, result_records_round_trip_positive_observed_time) {
     EXPECT_EQ(decoded->finished_at, complete.finished_at);
     ASSERT_TRUE(decoded->provenance);
     EXPECT_EQ(liquid::to_string(*decoded->provenance), liquid::to_string(*complete.provenance));
+    ASSERT_TRUE(decoded->schedule);
+    EXPECT_EQ(decoded->schedule->decision, liquid::execution_decision::race);
+    EXPECT_EQ(decoded->schedule->inputs.history.front().exec, std::chrono::milliseconds{7});
+    EXPECT_EQ(decoded->schedule->inputs.remote_missing_bytes, 1024U);
+    EXPECT_EQ(decoded->schedule->reason, "test race");
 }
 
 TEST(Records, build_trace_round_trips_actions_edges_timing_and_cache_outcome) {
-    const auto trace =
-        liquid::build_trace{.wall_time = std::chrono::milliseconds{42},
-                            .actions = {{.result = {example_digest(0x01)},
-                                         .action = example_digest(0x02),
-                                         .outputs = {"middle.o"},
-                                         .timing = {.queued = std::chrono::milliseconds{1},
-                                                    .sandbox = std::chrono::milliseconds{2},
-                                                    .exec = std::chrono::milliseconds{20},
-                                                    .hash = std::chrono::milliseconds{3},
-                                                    .store = std::chrono::milliseconds{4}},
-                                         .cache = liquid::cache_status::miss,
-                                         .start_offset = std::chrono::milliseconds{5}},
-                                        {.result = {example_digest(0x03)},
-                                         .action = example_digest(0x04),
-                                         .outputs = {"final.o"},
-                                         .timing = {.exec = std::chrono::milliseconds{10}},
-                                         .cache = liquid::cache_status::hit,
-                                         .start_offset = std::chrono::milliseconds{25}}},
-                            .edges = {{example_digest(0x02), example_digest(0x04)}},
-                            .cache = {.hits = 1,
-                                      .misses = 1,
-                                      .bytes_served = 7,
-                                      .bytes_rebuilt = 9,
-                                      .disk = {.available = true, .bytes_avoided = 11}}};
+    const auto trace = liquid::build_trace{
+        .wall_time = std::chrono::milliseconds{42},
+        .actions = {{.result = {example_digest(0x01)},
+                     .action = example_digest(0x02),
+                     .outputs = {"middle.o"},
+                     .timing = {.queued = std::chrono::milliseconds{1},
+                                .sandbox = std::chrono::milliseconds{2},
+                                .exec = std::chrono::milliseconds{20},
+                                .hash = std::chrono::milliseconds{3},
+                                .store = std::chrono::milliseconds{4}},
+                     .cache = liquid::cache_status::miss,
+                     .start_offset = std::chrono::milliseconds{5},
+                     .schedule =
+                         liquid::execution_schedule{.decision = liquid::execution_decision::remote,
+                                                    .reason = "test remote"}},
+                    {.result = {example_digest(0x03)},
+                     .action = example_digest(0x04),
+                     .outputs = {"final.o"},
+                     .timing = {.exec = std::chrono::milliseconds{10}},
+                     .cache = liquid::cache_status::hit,
+                     .start_offset = std::chrono::milliseconds{25}}},
+        .edges = {{example_digest(0x02), example_digest(0x04)}},
+        .cache = {.hits = 1,
+                  .misses = 1,
+                  .bytes_served = 7,
+                  .bytes_rebuilt = 9,
+                  .disk = {.available = true, .bytes_avoided = 11}}};
     auto encoded = liquid::objects::encode(trace);
     ASSERT_TRUE(encoded) << encoded.error().message;
     auto decoded = liquid::objects::decode_build_trace(*encoded);
@@ -195,6 +217,8 @@ TEST(Records, build_trace_round_trips_actions_edges_timing_and_cache_outcome) {
     ASSERT_EQ(decoded->actions.size(), 2U);
     EXPECT_EQ(decoded->actions.front().timing.exec, std::chrono::milliseconds{20});
     EXPECT_EQ(decoded->actions.back().cache, liquid::cache_status::hit);
+    ASSERT_TRUE(decoded->actions.front().schedule);
+    EXPECT_EQ(decoded->actions.front().schedule->decision, liquid::execution_decision::remote);
     ASSERT_EQ(decoded->edges.size(), 1U);
     EXPECT_EQ(liquid::to_string(decoded->edges.front().dependency),
               liquid::to_string(trace.edges.front().dependency));
