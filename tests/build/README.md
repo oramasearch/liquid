@@ -6,6 +6,8 @@ privileged Linux container runs them for real. Portable tests cover action-index
 rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA provenance derivation
 and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
 SPDX/CycloneDX structure, and fully marked system-binary inference.
+The SBOM finalization bound publishes 24 producer actions and gives one final action 96 reads and
+24 outputs; result creation and cache validation must complete within twenty seconds.
 
 `test_why.cpp` builds signed action/result histories without a mount and proves input digests and
 line ranges, drip attribution, argv, environment, toolchain, sandbox, never-built, imported-index,

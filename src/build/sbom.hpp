@@ -9,4 +9,8 @@ namespace liquid::build_detail {
                                        const objects::action_record& action,
                                        action_result& value) -> runtime::task<void>;
 
+[[nodiscard]] auto validate_derived_sboms(repository& source,
+                                          result_id id,
+                                          const action_result& value) -> runtime::task<bool>;
+
 } // namespace liquid::build_detail

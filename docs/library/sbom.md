@@ -39,6 +39,15 @@ intermediate outputs, `depends_on` its toolchain components, and the root target
 complete reached component set. Duplicate components and relationships are removed without losing
 distinct paths that happen to have the same content digest.
 
+Graph construction indexes every earlier result output by content digest once, then resolves all
+observed reads against that index. Reached result and action records, toolchain trees, and input
+trees are retained for the duration of the graph build. A multi-output result builds this graph
+once and changes only the root output name and digest before encoding each output's two records.
+Cache publication and lookup validate the same batch with one graph build. This keeps finalization
+proportional to indexed actions plus observed reads plus emitted records instead of multiplying a
+full index and tree walk by every read and output. Validation also indexes the result's attestations
+by output and format once rather than searching the complete list for each output.
+
 ## Records and signatures
 
 Result creation stores both formats before signing the result:
@@ -157,8 +166,10 @@ printing an unverified document.
 The portable `BuildSbom` tests construct a graph containing two manifest inputs, two toolchain
 leaves, a nested repository, and one output. They verify both required JSON structures, every
 digest, the repository id and pin, the profile flags, signature verification, and that both writers
-use the same component and relationship model. A system-binary test verifies that the document is
-never derived and every component is inferred.
+use the same component and relationship model. A bounded finalization case publishes 24 producer
+actions, then records 96 reads and 24 outputs and requires result creation plus cache validation to
+finish within twenty seconds. A system-binary test verifies that the document is never derived and
+every component is inferred.
 
 The privileged Linux wrap test generates an SBOM for the unchanged CMake fixture and compares every
 manifest digest and toolchain-tree leaf with the component model. CLI tests invoke both format

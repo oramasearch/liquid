@@ -24,7 +24,10 @@ content-addressed fact records, index rebuild, Autotools and CMake cache-variabl
 provenance and SBOMs and owns output-path lookup.
 `sbom.cpp` walks producing results to manifest leaves, adds toolchain and nested-repository
 components, writes SPDX 2.3 and CycloneDX 1.5 from one model, stores signed `sbom/1` claims, and
-performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts.
+performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts. It indexes producing
+results once per graph, caches reached records and trees, and reuses one graph across every output
+of a result for both storage and cache validation. Validation indexes the result's SBOM claims by
+output and format once.
 
 `wrap.cpp` snapshots an existing working tree, uses the persistent project cache and toolchain pin,
 validates saved actions, launches one writable observed mount, derives child actions from process
