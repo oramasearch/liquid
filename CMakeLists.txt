@@ -142,6 +142,38 @@ set_target_properties(liquid_monocypher PROPERTIES
   C_VISIBILITY_PRESET hidden
   POSITION_INDEPENDENT_CODE ON)
 
+# automerge-cpp is the private CRDT engine. Keep it static even when libliquid is shared;
+# no dependency header or target is part of liquid's installed interface.
+set(LIQUID_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+set(AUTOMERGE_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(AUTOMERGE_CPP_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(AUTOMERGE_CPP_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(AUTOMERGE_CPP_BUILD_FUZZ OFF CACHE BOOL "" FORCE)
+add_subdirectory(modules/automerge-cpp EXCLUDE_FROM_ALL)
+set(BUILD_SHARED_LIBS ${LIQUID_SAVED_BUILD_SHARED_LIBS})
+set_target_properties(automerge-cpp PROPERTIES
+  CXX_VISIBILITY_PRESET hidden
+  VISIBILITY_INLINES_HIDDEN ON
+  POSITION_INDEPENDENT_CODE ON
+  EXCLUDE_FROM_ALL ON)
+
+add_library(liquid_metadata_objects OBJECT
+  src/crdt/document.cpp
+  src/crdt/journal.cpp
+  src/crdt/schema.cpp
+  src/encoding/cbor.cpp)
+target_include_directories(liquid_metadata_objects PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_BINARY_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(liquid_metadata_objects PRIVATE cxx_std_26)
+target_link_libraries(liquid_metadata_objects PRIVATE automerge-cpp::automerge-cpp)
+set_target_properties(liquid_metadata_objects PROPERTIES
+  CXX_VISIBILITY_PRESET hidden
+  VISIBILITY_INLINES_HIDDEN ON
+  POSITION_INDEPENDENT_CODE ON)
+
 add_library(libliquid
   src/drip.cpp
   src/error.cpp
@@ -163,6 +195,7 @@ add_library(libliquid
   src/version.cpp
   src/vfs.cpp
 )
+target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 add_library(liquid::liquid ALIAS libliquid)
 set_target_properties(libliquid PROPERTIES
   OUTPUT_NAME liquid            # libliquid.a / libliquid.dylib / libliquid.so
@@ -174,11 +207,14 @@ target_include_directories(libliquid PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  PRIVATE ${blake3_source_SOURCE_DIR}/c ${monocypher_source_SOURCE_DIR}/src)
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${blake3_source_SOURCE_DIR}/c
+          ${monocypher_source_SOURCE_DIR}/src)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_link_libraries(libliquid
   PUBLIC Boost::capy
-  PRIVATE Boost::corosio libzstd_static)
+  PRIVATE Boost::corosio libzstd_static
+          $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
 if(BUILD_SHARED_LIBS)
   target_link_libraries(libliquid PRIVATE liquid_blake3 liquid_monocypher)
 else()

@@ -6,3 +6,6 @@
 	path = modules/corosio
 	url = git@github.com:oramasearch/corosio.git
 	branch = orama-main
+[submodule "modules/automerge-cpp"]
+	path = modules/automerge-cpp
+	url = git@github.com:oramasearch/automerge-cpp.git

@@ -31,3 +31,9 @@ Boost.Corosio
   Revision: 1c1a6abf82c37ac2628d18cec2add502043c59c1
   Licence: Boost Software License 1.0
   The source is vendored as modules/corosio and linked privately by libliquid.
+
+automerge-cpp
+  Project: https://github.com/oramasearch/automerge-cpp
+  Revision: 4dd795513510ae2c58bacd384c3d8fd98f523123 (v0.6.0)
+  Licence: MIT
+  The source is a private git submodule under modules/automerge-cpp and is linked privately.
