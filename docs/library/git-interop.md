@@ -15,7 +15,8 @@ liquid change identifier, and `git.change.<change-id>` stores the Git name. A ch
 modes. Git submodules become nested-repository placeholders. Loose, packed, and symbolic refs are
 resolved before the reachable graph is walked. Pack offset-to-object lookups use a bounded 32 MiB
 index cache; the same cache resolves known object names without reopening an index file. Larger
-indexes are scanned without retaining their entries.
+indexes are scanned without retaining their entries. A bounded eight-file pack-stream cache avoids
+reopening the active pack for each object while preserving streamed zlib inflation.
 
 ## Import design
 

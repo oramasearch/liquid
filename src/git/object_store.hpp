@@ -3,7 +3,9 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -55,11 +57,19 @@ public:
     [[nodiscard]] auto git_directory() const -> const std::filesystem::path&;
 
 private:
+    struct pack_stream {
+        std::filesystem::path path;
+        std::unique_ptr<std::ifstream> input;
+    };
+
+    [[nodiscard]] auto stream_for(const std::filesystem::path& path) -> result<std::ifstream*>;
+
     std::filesystem::path directory_;
     std::map<std::string, object> delta_cache_;
     std::uint64_t delta_cache_bytes_{};
     std::filesystem::path indexed_pack_;
     std::vector<pack_index_entry> indexed_objects_;
+    std::vector<pack_stream> streams_;
 };
 
 [[nodiscard]] auto git_directory(const std::filesystem::path& source)

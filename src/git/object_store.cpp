@@ -132,17 +132,25 @@ auto big_endian32(std::span<const std::byte> bytes) -> std::uint32_t {
            (static_cast<std::uint32_t>(bytes[2]) << 8U) | static_cast<std::uint32_t>(bytes[3]);
 }
 
-auto read_at(const std::filesystem::path& path, std::uint64_t offset, std::size_t size)
-    -> result<std::vector<std::byte>> {
-    auto input = std::ifstream{path, std::ios::binary};
-    if (!input)
-        return std::unexpected(failure(errc::not_found, "Git pack is not present", path.string()));
+auto read_at(std::istream& input,
+             const std::filesystem::path& path,
+             std::uint64_t offset,
+             std::size_t size) -> result<std::vector<std::byte>> {
+    input.clear();
     input.seekg(static_cast<std::streamoff>(offset));
     auto output = std::vector<std::byte>(size);
     input.read(reinterpret_cast<char*>(output.data()), static_cast<std::streamsize>(output.size()));
     if (!input)
         return std::unexpected(failure(errc::corrupt, "truncated Git pack", path.string()));
     return output;
+}
+
+auto read_at(const std::filesystem::path& path, std::uint64_t offset, std::size_t size)
+    -> result<std::vector<std::byte>> {
+    auto input = std::ifstream{path, std::ios::binary};
+    if (!input)
+        return std::unexpected(failure(errc::not_found, "Git pack is not present", path.string()));
+    return read_at(input, path, offset, size);
 }
 
 auto pack_offset(const std::filesystem::path& index, const sha1& id)
@@ -309,11 +317,9 @@ struct inflated_pack {
     std::vector<std::byte> bytes;
 };
 
-auto inflate_pack(const std::filesystem::path& path, std::uint64_t offset)
+auto inflate_pack(std::istream& input, const std::filesystem::path& path, std::uint64_t offset)
     -> result<inflated_pack> {
-    auto input = std::ifstream{path, std::ios::binary};
-    if (!input)
-        return std::unexpected(failure(errc::not_found, "Git pack is not present", path.string()));
+    input.clear();
     input.seekg(static_cast<std::streamoff>(offset));
     auto stream = z_stream{};
     if (inflateInit(&stream) != Z_OK)
@@ -432,6 +438,24 @@ auto kind_name(object_kind kind) -> std::string_view {
 
 object_store::object_store(std::filesystem::path directory) : directory_(std::move(directory)) {}
 
+auto object_store::stream_for(const std::filesystem::path& path) -> result<std::ifstream*> {
+    const auto found = std::ranges::find(streams_, path, &pack_stream::path);
+    if (found != streams_.end()) {
+        auto stream = std::move(*found);
+        streams_.erase(found);
+        streams_.insert(streams_.begin(), std::move(stream));
+        return streams_.front().input.get();
+    }
+    auto input = std::make_unique<std::ifstream>(path, std::ios::binary);
+    if (!*input)
+        return std::unexpected(failure(errc::not_found, "Git pack is not present", path.string()));
+    streams_.insert(streams_.begin(), {path, std::move(input)});
+    constexpr std::size_t stream_limit = 8;
+    if (streams_.size() > stream_limit)
+        streams_.pop_back();
+    return streams_.front().input.get();
+}
+
 auto object_store::read(const sha1& id) -> result<object> {
     const auto hex = sha1_hex(id);
     if (const auto cached = delta_cache_.find(hex); cached != delta_cache_.end())
@@ -474,7 +498,10 @@ auto object_store::read(const sha1& id) -> result<object> {
         auto decode = [&](auto&& self,
                           std::uint64_t position,
                           std::optional<sha1> expected) -> result<object> {
-            const auto header = read_at(pack, position, 64);
+            const auto input = stream_for(pack);
+            if (!input)
+                return std::unexpected(input.error());
+            const auto header = read_at(**input, pack, position, 64);
             if (!header)
                 return std::unexpected(header.error());
             std::size_t cursor{};
@@ -530,7 +557,10 @@ auto object_store::read(const sha1& id) -> result<object> {
                     return std::unexpected(decoded.error());
                 base = std::move(*decoded);
             }
-            const auto inflated = inflate_pack(pack, position + cursor);
+            const auto inflated_input = stream_for(pack);
+            if (!inflated_input)
+                return std::unexpected(inflated_input.error());
+            const auto inflated = inflate_pack(**inflated_input, pack, position + cursor);
             if (!inflated)
                 return std::unexpected(inflated.error());
             object output{};
