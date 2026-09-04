@@ -6,8 +6,9 @@ round trip. `Http2Interop.GetsCapabilitiesFromNativeLinkOverH2c` uses the peer s
 `tools/reapi-peers`; it skips with a diagnostic unless `LIQUID_HTTP2_NATIVE_LINK` is set.
 The loopback exchange finishes through HTTP/2 GOAWAY so both peers complete their final writes.
 
-TLS framing is covered by the common connection code. A negotiated TLS peer test waits for
-Corosio #3 to expose the selected ALPN protocol.
+`Http2Interop.GetsCapabilitiesFromNativeLinkOverTls` offers `h2` to the configured TLS peer and
+requires Corosio to report that selected protocol before it exchanges gRPC frames. It skips with a
+diagnostic unless `LIQUID_HTTP2_NATIVE_LINK_TLS` is set.
 
 The HTTP/2 source files are compiled into these private test executables. This keeps their symbols
 out of the shared library's public ABI while exercising the same source in static and shared builds.

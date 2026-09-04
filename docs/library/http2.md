@@ -65,6 +65,11 @@ It starts the NativeLink configuration with host networking, then runs
 `Http2Interop.GetsCapabilitiesFromNativeLinkOverH2c`. The test sends the empty protobuf
 `GetCapabilitiesRequest` through this layer and requires a gRPC response and `grpc-status: 0`.
 The same script starts a one-request private HTTP/2 test server and invokes it through
-`grpcurl -plaintext`, proving the server direction. Its TLS companion starts the same peer with a
-self-signed certificate, confirms liquid negotiated `h2`, and invokes the private test server with
-`grpcurl -insecure`. It prints a skip diagnostic when Docker is unavailable.
+`grpcurl -plaintext`, proving the server direction.
+
+`tools/reapi-peers/run-tls-interop.sh build-linux` starts NativeLink with the committed
+self-signed certificate and offers `h2` from liquid's TLS client. The client requires Corosio to
+report `h2` after the handshake before sending `GetCapabilities`; it then requires a gRPC response
+and `grpc-status: 0`. The script starts liquid's private server with the same certificate and uses
+`grpcurl -insecure` to reach it, which proves server-side ALPN selection and TLS gRPC framing. It
+prints a skip diagnostic when Docker is unavailable.
