@@ -15,6 +15,10 @@ target_link_libraries(liquid-tests PRIVATE liquid::liquid GTest::gtest_main)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
 
+add_executable(liquid-store-large-tests test_store_large.cpp)
+target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
+gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large)
+
 add_executable(liquid-header-tests
   headers/drip.cpp
   headers/error.cpp

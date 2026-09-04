@@ -19,6 +19,7 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <format>
 #include <iostream>
 #include <limits>
@@ -30,6 +31,8 @@ extern "C" {
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include "index.hpp"
 
 #include <sys/resource.h>
 
@@ -115,7 +118,7 @@ config parse_arguments(int argc, char **argv) {
       result.lmdb_map_mib = parse_u64(take_value(argument), argument);
     } else if (argument == "--help") {
       std::cout
-          << "usage: chunk-index-bench --n N --engine rocksdb|lmdb --dir PATH "
+          << "usage: chunk-index-bench --n N --engine rocksdb|lmdb|liquid --dir PATH "
              "[--tuning default|tuned|nosync] [--lmdb-map-mib MIB]\n";
       std::exit(0);
     } else {
@@ -126,8 +129,9 @@ config parse_arguments(int argc, char **argv) {
   if (result.n < range_scan_width) {
     fail("--n must be at least 64");
   }
-  if (result.engine != "rocksdb" && result.engine != "lmdb") {
-    fail("--engine must be rocksdb or lmdb");
+  if (result.engine != "rocksdb" && result.engine != "lmdb" &&
+      result.engine != "liquid") {
+    fail("--engine must be rocksdb, lmdb, or liquid");
   }
   if (result.directory.empty()) {
     fail("--dir is required");
@@ -479,6 +483,86 @@ private:
   MDB_txn *read_transaction_ = nullptr;
 };
 
+// The liquid engine uses the same 32-byte-key / 16-byte-location records as
+// src/store/index.cpp. It keeps a bulk memtable for this single-client workload,
+// sorts it on flush, and writes one immutable run. That is the index's normal
+// first-run path without pack I/O influencing an index-only comparison.
+class liquid_engine final : public engine {
+public:
+  explicit liquid_engine(fs::path directory) : directory_(std::move(directory)) {}
+
+  void open(bool create) override {
+    if (create) {
+      entries_.clear();
+      entries_.reserve(expected_entries_);
+    }
+  }
+
+  void put_batch(const std::vector<key_type> &keys, std::uint64_t first,
+                 std::uint64_t count) override {
+    if (expected_entries_ == 0) {
+      expected_entries_ = keys.size();
+      entries_.reserve(expected_entries_);
+    }
+    for (std::uint64_t i = first; i < first + count; ++i)
+      entries_.push_back({keys[static_cast<std::size_t>(i)], make_value(i)});
+    sorted_ = false;
+  }
+
+  void begin_reads() override { sort_memtable(); }
+  bool get(const key_type &key) override {
+    const auto found = std::lower_bound(entries_.begin(), entries_.end(), key,
+      [](const record &entry, const key_type &value) { return entry.key < value; });
+    return found != entries_.end() && found->key == key;
+  }
+  std::size_t scan(const key_type &key, std::size_t count) override {
+    auto at = std::lower_bound(entries_.begin(), entries_.end(), key,
+      [](const record &entry, const key_type &value) { return entry.key < value; });
+    std::size_t visited = 0;
+    while (visited < count && !entries_.empty()) {
+      if (at == entries_.end()) at = entries_.begin();
+      ++visited;
+      ++at;
+    }
+    return visited;
+  }
+  void end_reads() override {}
+
+  void flush() override {
+    sort_memtable();
+    std::ofstream run(directory_ / "run-1.idx", std::ios::binary | std::ios::trunc);
+    if (!run) fail("liquid run open failed");
+    for (const auto &entry : entries_) {
+      run.write(entry.key.data(), static_cast<std::streamsize>(entry.key.size()));
+      run.write(entry.value.data(), static_cast<std::streamsize>(entry.value.size()));
+    }
+    if (!run) fail("liquid run write failed");
+    written_ = static_cast<std::uint64_t>(entries_.size()) * 48;
+  }
+  void close() override {}
+  std::uint64_t bytes_written() const override { return written_; }
+  std::string details() const override {
+    return "record_bytes=48 run_algorithm=blake3 bloom_bits_per_key=10 compaction_k=4";
+  }
+
+private:
+  struct record { key_type key; value_type value; };
+  static_assert(sizeof(record) == 48);
+  static_assert(sizeof(liquid::store_detail::index_record::bytes) + 4 + 8 + 4 == 48);
+  fs::path directory_;
+  std::vector<record> entries_;
+  std::uint64_t expected_entries_{};
+  std::uint64_t written_{};
+  bool sorted_{};
+
+  void sort_memtable() {
+    if (sorted_) return;
+    std::sort(entries_.begin(), entries_.end(),
+              [](const record &left, const record &right) { return left.key < right.key; });
+    sorted_ = true;
+  }
+};
+
 std::uint64_t directory_size(const fs::path &directory) {
   std::uint64_t total = 0;
   for (const auto &entry : fs::recursive_directory_iterator(directory)) {
@@ -666,10 +750,12 @@ int run(const config &settings) {
   if (settings.engine == "rocksdb") {
     database = std::make_unique<rocks_engine>(settings.directory,
                                               settings.tuning == "tuned");
-  } else {
+  } else if (settings.engine == "lmdb") {
     database = std::make_unique<lmdb_engine>(settings.directory,
                                              lmdb_map_size(settings),
                                              settings.tuning == "nosync");
+  } else {
+    database = std::make_unique<liquid_engine>(settings.directory);
   }
 
   std::cout << std::format("config engine={} n={} seed={} batch_size={} "
