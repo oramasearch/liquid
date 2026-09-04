@@ -442,10 +442,11 @@ the host.
 ## What remains beyond Phase 2
 
 The demand-driven graph now makes action results and ordinary queries one engine in Phase 4 #20;
-its contract and proof are in [`incremental-engine.md`](incremental-engine.md). The daemon and
-per-definition granularity remain Phase 4 work. There is no production worker (Phase 3), daemon,
-or per-definition granularity. Actions remain the coarse end of the spectrum features/04
-describes; frontend queries add the fine end.
+its contract and proof are in [`incremental-engine.md`](incremental-engine.md). Issue #65 adds
+unit-keyed definition actions and translation-unit assembly through replaceable frontend modules;
+the ABI and proof are in [`frontends.md`](frontends.md). There is no production worker (Phase 3) or
+daemon. Actions remain the coarse end of the spectrum features/04 describes; frontend queries add
+the fine end.
 
 Measured remote transfer timing remains Phase 3 work; #18 records absent bytes and its deterministic
 transfer estimate. Continuous daemon profiles remain Phase 4 work. The stored trace and its Chrome

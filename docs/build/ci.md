@@ -19,7 +19,9 @@ on each desktop platform.
 Every static or shared CTest run includes `consumer-project-build`. It configures a separate CMake
 project that defines Capy, Corosio, and nlohmann/json before adding liquid, then builds and runs its
 own `liquid::liquid` client. `cli-identity-codec` also verifies that the public identity codec reads
-the initial and rotation documents written by the CLI.
+the initial and rotation documents written by the CLI. The frontend cases compile the standalone C
+ABI header, load the Clang frontend shared object, exercise static registration, and run the C and
+C++ unit tests against the same pinned tree-sitter runtime and grammars on every platform.
 
 `CMakeLists.txt` selects Homebrew LLVM on macOS, a versioned `clang++` on Linux, and `clang-cl`
 for both C and C++ on Windows before `project()`. GoogleTest enables C when FetchContent adds it;
@@ -86,6 +88,8 @@ executor. A successful named run reports one passed test and no skipped tests.
 
 `BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
 The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.
+`FrontendModule.*` and `FrontendGraph.*` exercise dynamic loading, the C fallback, real definition
+compiler actions, relocatable-object assembly, and body/header invalidation in the same container.
 
 Run the Linux restart scenario by itself with:
 
