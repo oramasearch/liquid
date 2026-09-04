@@ -14,8 +14,10 @@ and runtime in one program. See [`README.md`](README.md).
 Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
-error and digest APIs are implemented, while operations owned by later issues return
-`errc::unsupported`. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store) is built inside
+error and digest APIs are implemented. The content-defined store implements open, put, get, range
+read, contains, verified chunks, packs, deduplication and its RocksDB index; leases and collection
+remain `errc::unsupported` for liquid #8, as do operations owned by later issues. Clang 17+,
+CMake + Ninja, GoogleTest. Phase 1 (the store) is built inside
 libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
 option is enabled.
 

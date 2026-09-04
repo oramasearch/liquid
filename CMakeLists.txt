@@ -53,17 +53,57 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(LIQUID_BUILD_CLI   "Build the liquid command-line binary" ON)
 option(LIQUID_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 option(LIQUID_BUILD_BENCH "Build optional benchmarks" OFF)
+option(LIQUID_BUILD_FUZZ  "Build the store chunker fuzz target" OFF)
+option(LIQUID_BUILD_STORE_MEASUREMENTS "Build the POSIX store measurement tool" OFF)
 option(BUILD_SHARED_LIBS  "Build libliquid as a shared library" OFF)
 if(LIQUID_BUILD_BENCH AND NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 # -----------------------------------------------------------------------------
 # libliquid — everything under include/liquid/ is the public API.
 # -----------------------------------------------------------------------------
 include(FetchContent)
+
+# RocksDB is shared by libliquid and the optional chunk-index benchmark. Declaring it here first
+# means FetchContent resolves one copy when both are enabled.
+set(WITH_GFLAGS OFF CACHE BOOL "" FORCE)
+set(WITH_TESTS OFF CACHE BOOL "" FORCE)
+set(WITH_TOOLS OFF CACHE BOOL "" FORCE)
+set(WITH_BENCHMARK_TOOLS OFF CACHE BOOL "" FORCE)
+set(WITH_CORE_TOOLS OFF CACHE BOOL "" FORCE)
+set(WITH_TRACE_TOOLS OFF CACHE BOOL "" FORCE)
+set(ROCKSDB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(FAIL_ON_WARNINGS OFF CACHE BOOL "" FORCE)
+set(WITH_SNAPPY OFF CACHE BOOL "" FORCE)
+set(WITH_LZ4 OFF CACHE BOOL "" FORCE)
+set(WITH_ZLIB OFF CACHE BOOL "" FORCE)
+set(WITH_ZSTD OFF CACHE BOOL "" FORCE)
+set(WITH_BZ2 OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(rocksdb
+  GIT_REPOSITORY https://github.com/facebook/rocksdb.git
+  GIT_TAG        v10.10.1
+  GIT_SHALLOW    TRUE
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(rocksdb)
+
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zstd_source
+  GIT_REPOSITORY https://github.com/facebook/zstd.git
+  GIT_TAG        v1.5.7
+  GIT_SHALLOW    TRUE
+  SOURCE_SUBDIR  build/cmake
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(zstd_source)
+set_target_properties(rocksdb libzstd_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 FetchContent_Declare(blake3_source
   GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
   GIT_TAG        1.8.7
@@ -107,6 +147,10 @@ add_library(libliquid
   src/remote.cpp
   src/repository.cpp
   src/store.cpp
+  src/store/chunker.cpp
+  src/store/index.cpp
+  src/store/pack.cpp
+  src/store/store_impl.cpp
   src/version.cpp
   src/vfs.cpp
 )
@@ -121,12 +165,33 @@ target_include_directories(libliquid PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  PRIVATE ${blake3_source_SOURCE_DIR}/c)
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${blake3_source_SOURCE_DIR}/c
+    ${rocksdb_SOURCE_DIR}/include
+    ${zstd_source_SOURCE_DIR}/lib)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 if(BUILD_SHARED_LIBS)
-  target_link_libraries(libliquid PRIVATE liquid_blake3)
+  target_link_libraries(libliquid PRIVATE liquid_blake3 rocksdb libzstd_static)
+  if(APPLE)
+    target_link_options(libliquid PRIVATE
+      "LINKER:-unexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/cmake/private-symbols.txt")
+  elseif(UNIX)
+    target_link_options(libliquid PRIVATE "LINKER:--exclude-libs,ALL")
+  endif()
 else()
   target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_blake3_objects>)
+  add_dependencies(libliquid rocksdb libzstd_static)
+  add_custom_command(TARGET libliquid POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_ARCHIVE=$<TARGET_FILE:libliquid>
+      -DROCKSDB_ARCHIVE=$<TARGET_FILE:rocksdb>
+      -DZSTD_ARCHIVE=$<TARGET_FILE:libzstd_static>
+      -DARCHIVER=${CMAKE_AR}
+      -DHOST_APPLE=${APPLE}
+      -DHOST_MSVC=${MSVC}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/merge-static.cmake
+    VERBATIM)
 endif()
 include(GenerateExportHeader)
 generate_export_header(libliquid
@@ -182,6 +247,29 @@ if(LIQUID_BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+if(LIQUID_BUILD_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "LIQUID_BUILD_FUZZ requires Clang")
+  endif()
+  add_executable(liquid-chunker-fuzz
+    tests/store/chunker_fuzz.cpp
+    src/store/chunker.cpp)
+  target_include_directories(liquid-chunker-fuzz PRIVATE src)
+  target_compile_options(liquid-chunker-fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(liquid-chunker-fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
+
+if(LIQUID_BUILD_STORE_MEASUREMENTS)
+  if(NOT UNIX)
+    message(FATAL_ERROR "LIQUID_BUILD_STORE_MEASUREMENTS is supported on POSIX hosts")
+  endif()
+  add_executable(liquid-store-measure
+    tests/store/store_measure.cpp
+    src/store/chunker.cpp)
+  target_include_directories(liquid-store-measure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(liquid-store-measure PRIVATE liquid::liquid)
 endif()
 
 # Optional benchmarks have their own dependencies and never enter the default build.

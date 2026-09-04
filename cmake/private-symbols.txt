@@ -1,0 +1,9 @@
+# Private static dependencies folded into the shared libliquid image.
+_ZSTD*
+_g_ZSTD*
+__ZN7rocksdb*
+__ZNK7rocksdb*
+__ZTI*7rocksdb*
+__ZTS*7rocksdb*
+__ZTV*7rocksdb*
+_blake3*

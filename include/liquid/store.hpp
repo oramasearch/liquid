@@ -17,6 +17,7 @@ namespace liquid {
 struct LIQUID_EXPORT store_options {
     algorithm hash_algorithm{algorithm::blake3};
     std::uint64_t pack_size{};
+    std::uint64_t index_cache_size{};
 };
 
 struct LIQUID_EXPORT collection_options {};

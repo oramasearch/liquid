@@ -15,8 +15,9 @@ command-line binary, liquify and lake are clients of it. Decided 2026-09-02 (`CL
 **Public API.** Everything under `include/liquid/`; `liquid/liquid.hpp` is the umbrella. Today:
 the version API; `errc`, `error` and `result<T>`; algorithm-tagged digests with BLAKE3 and
 SHA-256; plain object, drip and identity values; and opaque store, repository, capture, signer,
-key-provider, mount and remote handles. Hashing, digest text conversion and the error model are
-implemented. Operations owned by later issues return `errc::unsupported` and name that issue in
+key-provider, mount and remote handles. Hashing, digest text conversion, the error model, and the
+store's open/put/get/read/contains operations are implemented. Store leases, collection, and
+operations owned by later issues return `errc::unsupported` and name that issue in
 `error::context`. Rules: `std::expected` at the boundary, no exceptions across it, **never a
 Zetta type**, and no third-party type in a public header. The CLI never carries behaviour the
 library lacks.

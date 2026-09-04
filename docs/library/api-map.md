@@ -47,7 +47,7 @@ owning issue in `error::context`.
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, text round trip |
-| `liquid/store.hpp` | #1, #8 | declared | `store`: content in, digests out; leases and collection |
+| `liquid/store.hpp` | #1, #8 | implemented / declared | `store`: content in, digests out; leases and collection |
 | `liquid/object.hpp` | #2 | declared | node kinds and their records; `blob`, `tree`, `change`, and the reserved shapes |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | declared | `repository`: open, read, write, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared | `drip`, `capture`: the journal as a subscription, pause and resume |
@@ -109,7 +109,9 @@ class store {                          // the chunk store: chunks, packs, the in
 ```
 
 Chunking (FastCDC), packs, compression, the index engine and its tuning are internal; none of
-them appears in a signature. `store_options` names the algorithm and the pack size only.
+them appears in a signature. `store_options` names the algorithm, pack size, and index block-cache
+size. `open`, `put`, `get`, `read`, and `contains` are implemented by liquid #1; `lease_root` and
+`collect` remain declared for liquid #8 and return `errc::unsupported`.
 
 ### `liquid/object.hpp`
 

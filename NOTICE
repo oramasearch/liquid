@@ -13,3 +13,15 @@ SHA-256 implementation
   Revision: cfbde48414baacf51fc7c74f275190881f037d32
   Licence: public domain, free of restrictions
   The source is vendored under src/hash/.
+
+RocksDB
+  Project: https://github.com/facebook/rocksdb
+  Version: 10.10.1
+  Licence: Apache 2.0 or GPLv2
+  The source is fetched during configuration and compiled as a private static component.
+
+Zstandard
+  Project: https://github.com/facebook/zstd
+  Version: 1.5.7
+  Licence: BSD 3-Clause or GPLv2
+  The source is fetched during configuration and compiled as a private static component.

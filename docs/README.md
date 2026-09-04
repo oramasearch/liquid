@@ -11,4 +11,5 @@ notes so that each claim has a clear role.
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/api-map.md`](library/api-map.md) | The implemented and declared public headers of libliquid for Phase 1, the rules every one obeys, dependency provenance, what is deliberately internal, and the ABI policy. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
+| [`library/store.md`](library/store.md) | Content-defined chunk store layout, formats, tuning, integrity, tests, and measurements. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |
