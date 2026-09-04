@@ -30,8 +30,10 @@ sampled local re-execution, signed `reproducibility/1` attestations, critical di
 permanent divergent-result quarantine, and result-bound `slsa_provenance/1` attestations that
 verify on cache lookup and publication and export as in-toto/DSSE; operations owned by later issues
 return
-`errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
-and drip journal are implemented. Full materialisation works on every platform; lazy VFS mounts use
+`errc::unsupported`. Liquid #15 provides record-derived `liquid why`, per-wrap explanations,
+disk-tier hit rates, miss reasons, and output-byte statistics. The repository object model, internal
+CRDT metadata document, canonical CBOR codec and drip journal are implemented. Full materialisation
+works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, and identity calls plus the Phase 2 build wrapper. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store)
 is built inside

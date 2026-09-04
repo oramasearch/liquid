@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
@@ -25,6 +26,7 @@
 #include "build/repository_access.hpp"
 #include "build/verify.hpp"
 #include "build/wrap.hpp"
+#include "build/why.hpp"
 #include "formats/json.hpp"
 #include "objects/records.hpp"
 #include "sandbox/sandbox.hpp"
@@ -77,12 +79,15 @@ struct wrap_state {
     std::set<std::string> tools;
     std::vector<std::string> action_command;
     std::vector<saved_action> actions;
+    std::optional<digest> outer_result;
 };
 
 struct cache_plan {
     std::vector<saved_action> next_actions;
     std::set<std::uint64_t> missed_actions;
+    std::set<std::uint64_t> reasoned_actions;
     std::map<std::uint64_t, int> processes;
+    std::vector<build_detail::lookup_record> lookups;
 };
 
 struct observed_run {
@@ -176,6 +181,13 @@ auto read_state(const std::filesystem::path& path) -> liquid::result<wrap_state>
             output.actions.push_back({key, *id});
             continue;
         }
+        if (fields[0] == "R" && fields.size() == 2) {
+            auto id = parse_digest(fields[1]);
+            if (!id)
+                return std::unexpected(wrap_error(errc::corrupt, "invalid outer action", path));
+            output.outer_result = *id;
+            continue;
+        }
         auto value = unhex(fields[1]);
         if (!value)
             return std::unexpected(value.error());
@@ -210,6 +222,8 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
         output << "C\t" << hex(argument) << '\n';
     for (const auto& action : state.actions)
         output << "A\t" << std::hex << action.key << '\t' << to_string(action.result) << '\n';
+    if (state.outer_result)
+        output << "R\t" << to_string(*state.outer_result) << '\n';
     output.close();
     if (!output)
         return std::unexpected(wrap_error(errc::io, "cannot write wrap state", path));
@@ -225,52 +239,9 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
     return {};
 }
 
-auto project_key(const std::filesystem::path& root) -> liquid::result<std::string> {
-    auto material = std::string{};
-    for (const auto* name :
-         {"CMakeLists.txt", "configure.ac", "configure.in", "Makefile", "compile_commands.json"}) {
-        const auto path = root / name;
-        if (!std::filesystem::is_regular_file(path)) {
-            continue;
-        }
-        auto input = std::ifstream{path, std::ios::binary};
-        if (!input) {
-            return std::unexpected(wrap_error(errc::io, "cannot identify wrapped project", path));
-        }
-        material += name;
-        material.push_back('\0');
-        material.append(std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{});
-        material.push_back('\0');
-    }
-    if (material.empty()) {
-        material = root.filename().string();
-    }
-    auto value = hash(algorithm::blake3,
-                      {reinterpret_cast<const std::byte*>(material.data()), material.size()});
-    if (!value) {
-        return std::unexpected(value.error());
-    }
-    auto text = to_string(*value);
-    std::ranges::replace(text, ':', '-');
-    return text;
-}
-
 auto default_cache_directory(const std::filesystem::path& root)
     -> liquid::result<std::filesystem::path> {
-    auto key = project_key(root);
-    if (!key) {
-        return std::unexpected(key.error());
-    }
-    if (const auto* configured = std::getenv("LIQUID_WRAP_CACHE")) {
-        return std::filesystem::path{configured} / *key;
-    }
-    if (const auto* configured = std::getenv("XDG_CACHE_HOME")) {
-        return std::filesystem::path{configured} / "liquid/wrap" / *key;
-    }
-    if (const auto* home = std::getenv("HOME")) {
-        return std::filesystem::path{home} / ".cache/liquid/wrap" / *key;
-    }
-    return root / ".liquid-wrap-cache" / *key;
+    return build_detail::wrap_cache_directory(root);
 }
 
 auto wrap_hook_path() -> liquid::result<std::filesystem::path> {
@@ -826,6 +797,7 @@ runtime::task<digest> store_toolchain(repository& source,
         value.entries.push_back({.name = std::to_string(index++) + "-" + hex(executable),
                                  .mode = static_cast<std::uint32_t>(status.permissions()) & 0777U,
                                  .kind = node_kind::blob,
+                                 .id = *blob,
                                  .ref = *blob});
     }
     auto encoded = objects::encode(value);
@@ -937,6 +909,94 @@ launch_seed_processes(const sandbox_detail::wrap_launch_request& base,
     co_return output;
 }
 
+void add_miss(wrap_report& report, cache_miss miss) {
+    ++report.cache.misses_by_reason[miss.reason];
+    report.why.push_back(std::move(miss));
+}
+
+void add_timing(wrap_report& report, const action_result& value) {
+    const auto duration =
+        value.timing.queued + value.timing.sandbox + value.timing.exec + value.timing.upload;
+    if (duration.count() == 0) {
+        return;
+    }
+    auto outputs = std::vector<std::string>{};
+    outputs.reserve(value.outputs.size());
+    for (const auto& output : value.outputs) {
+        outputs.push_back(output.path);
+    }
+    report.critical_path.push_back({value.action, duration, std::move(outputs)});
+}
+
+runtime::task<std::optional<result_id>>
+previous_for_outputs(repository& source,
+                     const std::vector<saved_action>& actions,
+                     const std::set<std::string>& outputs) {
+    auto selected = std::optional<result_id>{};
+    auto selected_size = std::numeric_limits<std::size_t>::max();
+    for (const auto& saved : actions) {
+        auto value = co_await load_result(source, saved.result);
+        if (!value) {
+            continue;
+        }
+        const auto overlaps = std::ranges::any_of(value->outputs, [&](const action_output& output) {
+            return outputs.contains(output.path);
+        });
+        if (!overlaps || value->outputs.size() >= selected_size) {
+            continue;
+        }
+        selected = result_id{saved.result};
+        selected_size = value->outputs.size();
+    }
+    co_return selected;
+}
+
+runtime::task<void> record_rebuilt_action(repository& source,
+                                          const saved_action& saved,
+                                          std::optional<result_id> previous,
+                                          cache_plan& plan,
+                                          bool reason_recorded,
+                                          wrap_report& report) {
+    auto value = co_await load_result(source, saved.result);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    auto bytes = co_await build_detail::output_bytes(source, *value);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    report.cache.bytes_rebuilt += *bytes;
+    add_timing(report, *value);
+    if (!reason_recorded) {
+        auto action = co_await load_action(source, value->action);
+        if (!action) {
+            co_return std::unexpected(action.error());
+        }
+        auto cause = co_await build_detail::classify_miss(
+            source, action->input, action->sandbox, previous, &*value);
+        if (!cause) {
+            co_return std::unexpected(cause.error());
+        }
+        add_miss(report, std::move(*cause));
+    }
+    plan.lookups.push_back({cache_status::miss, result_id{saved.result}, std::move(previous)});
+    co_return liquid::result<void>{};
+}
+
+auto complete_report(const std::filesystem::path& cache_directory, wrap_report& report)
+    -> liquid::result<void> {
+    report.cache.hits = report.hits;
+    report.cache.misses = report.misses;
+    report.cache.disk.hits = report.hits;
+    report.cache.disk.misses = report.misses;
+    report.cache.disk.bytes_transferred = report.cache.bytes_served;
+    std::ranges::sort(report.critical_path, std::greater{}, &critical_action::duration);
+    if (report.critical_path.size() > 5) {
+        report.critical_path.resize(5);
+    }
+    return build_detail::update_cache_stats(cache_directory, report);
+}
+
 runtime::task<cache_plan> prepare_cache_plan(repository& source,
                                              build_detail::disk_cache& cache,
                                              const wrap_state& state,
@@ -974,16 +1034,26 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
                 output.processes.insert_or_assign(saved.key, 0);
                 output.next_actions.push_back({saved.key, lookup->hit->value});
                 ++report.hits;
+                report.cache.bytes_served += lookup->bytes_served;
+                report.cache.disk.bytes_avoided += lookup->bytes_avoided;
+                output.lookups.push_back(
+                    {cache_status::hit, *lookup->hit, result_id{saved.result}});
                 auto value = co_await load_result(source, lookup->hit->value);
                 if (value) {
+                    add_timing(report, *value);
                     auto materialised = co_await materialise_result(source, *value);
                     if (!materialised)
                         co_return std::unexpected(materialised.error());
                 }
                 continue;
             }
-            if (lookup->why && options.explain)
-                report.why.push_back(*lookup->why);
+            auto cause = co_await build_detail::classify_miss(
+                source, input, sandbox, result_id{saved.result});
+            if (!cause) {
+                co_return std::unexpected(cause.error());
+            }
+            add_miss(report, std::move(*cause));
+            output.reasoned_actions.insert(saved.key);
         }
         ++report.misses;
         output.missed_actions.insert(saved.key);
@@ -1017,8 +1087,14 @@ runtime::task<bool> serve_outer_action(repository& source,
         co_return std::unexpected(lookup.error());
     if (!lookup->hit) {
         ++report.misses;
-        if (lookup->why && options.explain)
-            report.why.push_back(*lookup->why);
+        auto previous = state.outer_result
+                            ? std::optional<result_id>{result_id{*state.outer_result}}
+                            : std::nullopt;
+        auto cause = co_await build_detail::classify_miss(source, input, sandbox, previous);
+        if (!cause) {
+            co_return std::unexpected(cause.error());
+        }
+        add_miss(report, std::move(*cause));
         co_return false;
     }
     auto value = co_await load_result(source, lookup->hit->value);
@@ -1031,8 +1107,30 @@ runtime::task<bool> serve_outer_action(repository& source,
         state.outputs.insert(action_output.path);
     report.exit = value->exit;
     report.outer = cache_status::hit;
-    ++report.hits;
     report.actions = (state.action_command == command ? state.actions.size() : std::size_t{}) + 1;
+    report.hits = report.actions;
+    report.cache.bytes_served += lookup->bytes_served;
+    report.cache.disk.bytes_avoided += lookup->bytes_avoided;
+    add_timing(report, *value);
+    auto recorded = cache.record_lookup(
+        cache_status::hit,
+        *lookup->hit,
+        state.outer_result ? std::optional<result_id>{result_id{*state.outer_result}}
+                           : std::nullopt);
+    if (!recorded) {
+        co_return std::unexpected(recorded.error());
+    }
+    for (const auto& saved_action : state.actions) {
+        auto child = co_await load_result(source, saved_action.result);
+        if (!child) {
+            continue;
+        }
+        auto child_recorded = cache.record_lookup(
+            cache_status::hit, result_id{saved_action.result}, result_id{saved_action.result});
+        if (!child_recorded) {
+            co_return std::unexpected(child_recorded.error());
+        }
+    }
     auto saved = write_state(state_path, state);
     if (!saved)
         co_return std::unexpected(saved.error());
@@ -1176,7 +1274,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                          observed_run& run,
                                          const wrap_options& options,
                                          bool outer_miss_recorded,
-                                         wrap_report& report) {
+    wrap_report& report) {
     report.exit = run.launch.exit;
     auto cut = co_await source.cut("wrap output snapshot");
     if (!cut) {
@@ -1190,9 +1288,14 @@ runtime::task<void> publish_observed_run(repository& source,
                                       : log.error());
     }
     const auto replay_tree = log->front().root;
+    const auto previous_actions = state.actions;
+    const auto previous_outer = state.outer_result
+                                    ? std::optional<result_id>{result_id{*state.outer_result}}
+                                    : std::nullopt;
     if (!toolchain) {
-        for (const auto& process : run.processes)
+        for (const auto& process : run.processes) {
             state.tools.insert(process.executable);
+        }
         auto stored = co_await store_toolchain(source, state.tools);
         if (!stored) {
             static_cast<void>(remove_run(run.directory));
@@ -1228,6 +1331,11 @@ runtime::task<void> publish_observed_run(repository& source,
         const auto found = writes.find(process.pid);
         if (found == writes.end() || found->second.empty())
             continue;
+        auto previous = co_await previous_for_outputs(source, previous_actions, found->second);
+        if (!previous) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(previous.error());
+        }
         auto published = co_await publish_action(source,
                                                  cache,
                                                  process,
@@ -1247,6 +1355,16 @@ runtime::task<void> publish_observed_run(repository& source,
             co_return std::unexpected(published.error());
         }
         plan.next_actions.push_back(*published);
+        auto recorded = co_await record_rebuilt_action(source,
+                                                       *published,
+                                                       *previous,
+                                                       plan,
+                                                       plan.reasoned_actions.contains(process.key),
+                                                       report);
+        if (!recorded) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(recorded.error());
+        }
         ++report.processes_started;
         if (!plan.missed_actions.contains(process.key))
             ++report.misses;
@@ -1273,9 +1391,35 @@ runtime::task<void> publish_observed_run(repository& source,
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(outer_saved.error());
     }
-    if (!outer_miss_recorded)
+    auto outer_value = co_await load_result(source, outer_saved->result);
+    if (!outer_value) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(outer_value.error());
+    }
+    auto outer_bytes = co_await build_detail::output_bytes(source, *outer_value);
+    if (!outer_bytes) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(outer_bytes.error());
+    }
+    report.cache.bytes_rebuilt += *outer_bytes;
+    add_timing(report, *outer_value);
+    if (!outer_miss_recorded) {
         ++report.misses;
+        auto outer_action = co_await load_action(source, outer_value->action);
+        if (!outer_action) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(outer_action.error());
+        }
+        auto cause = co_await build_detail::classify_miss(
+            source, outer_action->input, outer_action->sandbox, previous_outer);
+        if (!cause) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(cause.error());
+        }
+        add_miss(report, std::move(*cause));
+    }
     state.actions = std::move(plan.next_actions);
+    state.outer_result = outer_saved->result;
     state.action_command = command;
     state.outputs.insert(all_writes.begin(), all_writes.end());
     auto copied = co_await copy_outputs(source, working_tree, state.outputs);
@@ -1289,6 +1433,15 @@ runtime::task<void> publish_observed_run(repository& source,
         co_return std::unexpected(saved.error());
     if (!removed)
         co_return std::unexpected(removed.error());
+    auto outer_recorded =
+        cache.record_lookup(cache_status::miss, result_id{outer_saved->result}, previous_outer);
+    if (!outer_recorded)
+        co_return std::unexpected(outer_recorded.error());
+    for (const auto& lookup : plan.lookups) {
+        auto recorded = cache.record_lookup(lookup.status, lookup.result, lookup.previous);
+        if (!recorded)
+            co_return std::unexpected(recorded.error());
+    }
     report.actions = state.actions.size() + 1;
     co_return liquid::result<void>{};
 }
@@ -1523,6 +1676,17 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     auto toolchain = read_toolchain(toolchain_path);
     if (!toolchain)
         co_return std::unexpected(toolchain.error());
+    if (*toolchain && !state->tools.empty()) {
+        auto refreshed = co_await store_toolchain(*source, state->tools);
+        if (!refreshed)
+            co_return std::unexpected(refreshed.error());
+        if (!same_digest(**toolchain, *refreshed)) {
+            *toolchain = *refreshed;
+            auto pinned = write_toolchain(toolchain_path, *refreshed);
+            if (!pinned)
+                co_return std::unexpected(pinned.error());
+        }
+    }
     auto sandbox = co_await store_sandbox(*source);
     if (!sandbox)
         co_return std::unexpected(sandbox.error());
@@ -1572,6 +1736,10 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                 build_detail::schedule_verification(std::move(*source));
                 report.verification_scheduled = true;
             }
+            auto completed = complete_report(*cache_directory, report);
+            if (!completed) {
+                co_return std::unexpected(completed.error());
+            }
             co_return report;
         }
         outer_miss_recorded = true;
@@ -1605,6 +1773,14 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    report);
     if (!published)
         co_return std::unexpected(published.error());
+    if (options.verify) {
+        build_detail::schedule_verification(std::move(*source));
+        report.verification_scheduled = true;
+    }
+    auto completed = complete_report(*cache_directory, report);
+    if (!completed) {
+        co_return std::unexpected(completed.error());
+    }
     if (options.verify) {
         build_detail::schedule_verification(std::move(*source));
         report.verification_scheduled = true;

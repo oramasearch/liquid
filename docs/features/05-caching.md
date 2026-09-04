@@ -107,6 +107,14 @@ the bar; almost nothing else clears it.
 Also reported: hit rate by tier, bytes transferred versus bytes avoided, and the
 actions dominating the critical path.
 
+**Implemented locally (#15).** The target may be an output path, action digest, or result digest.
+Input explanations carry both stored digests, a UTF-8 line hunk, and recorded drip attribution;
+command, environment, toolchain, sandbox, never-built, and unknown results have distinct output.
+`--json` exposes the same fields. `wrap --explain` and `cache stats` report miss reasons, the disk
+hit rate, and output bytes rebuilt versus avoided. The memory and remote tier rows remain explicitly
+unavailable, and #57 owns dependency-aware critical-path refinement. Divergence remains unknown
+until #13's quarantine record exists; diagnostics do not infer quarantine from differing bytes.
+
 ## Eviction
 
 Size-capped with a policy that accounts for recomputation cost, not just recency —

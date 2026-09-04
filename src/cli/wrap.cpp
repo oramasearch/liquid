@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <charconv>
 #include <filesystem>
 #include <print>
@@ -20,6 +21,76 @@ auto fail(const liquid::error& value) -> int {
 auto usage(std::string_view message) -> int {
     std::println(stderr, "error: usage: {} ()", message);
     return 2;
+}
+
+auto reason_name(liquid::cache_miss_reason reason) -> std::string_view {
+    switch (reason) {
+    case liquid::cache_miss_reason::input_changed:
+        return "input changed";
+    case liquid::cache_miss_reason::command_changed:
+        return "command changed";
+    case liquid::cache_miss_reason::environment_changed:
+        return "environment changed";
+    case liquid::cache_miss_reason::toolchain_changed:
+        return "toolchain changed";
+    case liquid::cache_miss_reason::sandbox_changed:
+        return "sandbox changed";
+    case liquid::cache_miss_reason::never_built:
+        return "never built";
+    case liquid::cache_miss_reason::divergent_result_quarantined:
+        return "divergent result quarantined";
+    case liquid::cache_miss_reason::unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+auto hit_rate(const liquid::wrap_report& report) -> double {
+    const auto total = report.hits + report.misses;
+    return total == 0 ? 0.0 : static_cast<double>(report.hits) * 100.0 / static_cast<double>(total);
+}
+
+void print_miss(const liquid::cache_miss& miss) {
+    std::println(
+        "miss: {}{}{}", reason_name(miss.reason), miss.path.empty() ? "" : ": ", miss.path);
+    if (miss.expected)
+        std::println("  old: {}", liquid::to_string(*miss.expected));
+    if (miss.actual)
+        std::println("  new: {}", liquid::to_string(*miss.actual));
+    if (miss.lines) {
+        std::println("  diff: @@ -{},{} +{},{} @@",
+                     miss.lines->old_line,
+                     miss.lines->old_count,
+                     miss.lines->new_line,
+                     miss.lines->new_count);
+    }
+    if (miss.changed_by) {
+        std::println("  drip: {} by {} at {}",
+                     liquid::to_string(miss.changed_by->drip),
+                     miss.changed_by->by.taap_id,
+                     miss.changed_by->at.time_since_epoch().count());
+    }
+    if (miss.reason == liquid::cache_miss_reason::command_changed) {
+        const auto count = std::max(miss.expected_command.size(), miss.actual_command.size());
+        for (auto index = std::size_t{}; index != count; ++index) {
+            const auto old_value =
+                index < miss.expected_command.size() ? miss.expected_command[index] : "<absent>";
+            const auto new_value =
+                index < miss.actual_command.size() ? miss.actual_command[index] : "<absent>";
+            if (old_value != new_value)
+                std::println("  argv[{}]: {} -> {}", index, old_value, new_value);
+        }
+    }
+    if (!miss.environment_key.empty()) {
+        std::println("  environment {}: {} -> {}",
+                     miss.environment_key,
+                     miss.expected_value.value_or("<absent>"),
+                     miss.actual_value.value_or("<absent>"));
+    }
+    if (!miss.tool.empty())
+        std::println("  tool: {}", miss.tool);
+    if (!miss.detail.empty())
+        std::println("  detail: {}", miss.detail);
 }
 
 } // namespace
@@ -69,9 +140,21 @@ auto wrap(int argc, char** argv) -> int {
                  result->misses,
                  result->processes_started,
                  result->outer == liquid::cache_status::hit ? "hit" : "miss");
+    std::println("disk_hit_rate={:.2f}% bytes_transferred={} bytes_avoided={} bytes_rebuilt={}",
+                 hit_rate(*result),
+                 result->cache.disk.bytes_transferred,
+                 result->cache.disk.bytes_avoided,
+                 result->cache.bytes_rebuilt);
+    for (const auto& [reason, count] : result->cache.misses_by_reason)
+        std::println("misses[{}]={}", reason_name(reason), count);
+    for (const auto& action : result->critical_path) {
+        std::println("critical_action={} duration_ms={}",
+                     liquid::to_string(action.action),
+                     action.duration.count());
+    }
     if (options.explain) {
         for (const auto& miss : result->why)
-            std::println("miss: {}", miss.path);
+            print_miss(miss);
     }
     return result->exit;
 }

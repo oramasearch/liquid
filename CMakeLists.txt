@@ -337,6 +337,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp
+    src/cli/why.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE liquid::liquid)

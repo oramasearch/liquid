@@ -76,6 +76,18 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-why-json
+    COMMAND ${CMAKE_COMMAND} -E env
+      LIQUID_WRAP_CACHE=${CMAKE_CURRENT_BINARY_DIR}/why-cli-cache
+      $<TARGET_FILE:liquid-cli> why never-built.o --json)
+  set_tests_properties(cli-why-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"reason\":\"never built\"")
+  add_test(NAME cli-cache-stats-json
+    COMMAND ${CMAKE_COMMAND} -E env
+      LIQUID_WRAP_CACHE=${CMAKE_CURRENT_BINARY_DIR}/why-cli-cache
+      $<TARGET_FILE:liquid-cli> cache stats --json)
+  set_tests_properties(cli-cache-stats-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"disk\":\\{\"available\":true")
   add_test(NAME cli-public-includes
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI_SOURCE=${PROJECT_SOURCE_DIR}

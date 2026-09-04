@@ -42,7 +42,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and `find_package(liquid)` works from an install.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk
-> cache, sampled reproducibility verification, and signed SLSA provenance for every result.**
+> **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
+> reproducibility verification, signed SLSA provenance, and record-derived cache diagnostics.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -56,6 +57,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
 > in-toto Statement. Memory and remote tiers remain separate work; macOS needs macFUSE and Windows
 > returns its documented unsupported result.
+> store root. `liquid why` explains output, action, and result misses with digest, argv, environment,
+> toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk hit
+> rates and output bytes avoided versus rebuilt. Memory and remote tiers remain separate work;
+> macOS needs macFUSE and Windows returns its documented unsupported result.
 
 ## Where this sits
 
