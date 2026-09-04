@@ -88,6 +88,12 @@ path. Advisory-lock failures become `EACCES`. The repository journal records the
 stable `node_id`, so a VFS write is visible as a drip without an OS watcher; one rename request is
 one recorded move.
 
+Tree entries always carry Git-style modes: `0100644` for ordinary files, `0100755` for executable
+files, `0120000` for symbolic links, and `040000` plus permission bits for directories. Every VFS
+writer supplies the complete mode. Create combines the regular-file type with the requested
+permissions, while write, truncate, and open with `O_TRUNC` retain the existing entry mode. Chmod
+changes only permission bits and retains the current file type, including the symbolic-link type.
+
 ## How to verify
 
 Run both library forms:
