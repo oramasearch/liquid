@@ -14,6 +14,7 @@
 #include "build/cache.hpp"
 #include "build/executor.hpp"
 #include "build/materialise.hpp"
+#include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "objects/records.hpp"
 #include "sandbox/environment.hpp"
@@ -312,6 +313,8 @@ runtime::task<action_result> run_action(repository& source,
                                                   .outputs = input.outputs,
                                                   .timeout = input.timeout};
     build_detail::testing::record_sandbox_spawn();
+    const auto wall_started =
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     auto launched = co_await runtime::offload(
         [launch_request] { return sandbox_detail::launch(launch_request); });
     const auto execution_finished = std::chrono::steady_clock::now();
@@ -356,6 +359,8 @@ runtime::task<action_result> run_action(repository& source,
         co_return std::unexpected(read_manifest.error());
     }
     const auto upload_finished = std::chrono::steady_clock::now();
+    const auto wall_finished =
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     action_result output{
         .action = action,
         .exit = (*launched)->exit,
@@ -371,6 +376,8 @@ runtime::task<action_result> run_action(repository& source,
                                                                                    upload_started)},
         .worker = input.platform.os + "/" + input.platform.arch,
         .observed_at = observed_at};
+    output.started_at = wall_started;
+    output.finished_at = wall_finished;
     auto signed_result = co_await repository_detail::build_access::sign_result(source, output);
     if (!signed_result) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
@@ -435,23 +442,17 @@ runtime::task<result_id> execute(repository& source, action_input input) {
         co_await run_action(source, input, *action_id, *sandbox_id, *source_time);
     if (!action_result_value)
         co_return std::unexpected(action_result_value.error());
-    auto result_bytes = objects::encode(*action_result_value);
-    if (!result_bytes) {
-        co_return std::unexpected(result_bytes.error());
-    }
-    auto stored =
-        co_await repository_detail::build_access::put_record(source, std::move(*result_bytes));
+    auto stored = co_await build_detail::store_result_with_provenance(source, *action_result_value);
     if (!stored)
         co_return std::unexpected(stored.error());
     repository_detail::build_access::record_cache_lookup(
-        source, *stored, cache_status::miss, cached->why, 0);
+        source, stored->value, cache_status::miss, cached->why, 0);
     if (repository_detail::build_access::cache_publish_enabled(source)) {
-        auto published =
-            co_await cache.publish(*candidate, result_id{*stored}, *action_result_value);
+        auto published = co_await cache.publish(*candidate, *stored, *action_result_value);
         if (!published)
             co_return std::unexpected(published.error());
     }
-    co_return result_id{*stored};
+    co_return *stored;
 #endif
 }
 

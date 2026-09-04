@@ -11,6 +11,7 @@ notes so that each claim has a clear role.
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in the store, the CRDT metadata document, how they reference each other, and how composition, conflicts, undo and locks work. Design for liquid #2 and #3. |
 | [`library/build-engine.md`](library/build-engine.md) | Phase 2's design: action and result records, observation by the mount with per-platform enforcement, the two-stage cache lookup, tiers over one store, and how `liquid wrap` splits an existing build into actions. |
+| [`library/provenance.md`](library/provenance.md) | Automatic result provenance: canonical TAAP storage, the exact SLSA v1 mapping, verification, and in-toto/DSSE export. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10's local executor: fixed environment, observed-mount manifest, Linux namespace enforcement, and platform limits. |
 | [`library/api-map.md`](library/api-map.md) | The implemented and declared public headers of libliquid for Phase 1, the rules every one obeys, dependency provenance, what is deliberately internal, and the ABI policy. |
 | [`library/hash-agility.md`](library/hash-agility.md) | Digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits. |

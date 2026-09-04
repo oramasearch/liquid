@@ -17,11 +17,13 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/store/chunker.cpp
   ${PROJECT_SOURCE_DIR}/src/objects/records.cpp
   ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp
   test_version.cpp
   test_vfs.cpp
   vfs/test_materialise.cpp
   vfs/test_mount.cpp
   build/test_executor.cpp
+  build/test_provenance.cpp
   build/test_wrap.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)

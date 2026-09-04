@@ -155,6 +155,67 @@ auto encode_attribute_value(const attestation_value& value) -> cbor::value {
         value);
 }
 
+auto decode_text_array(const cbor::value* value, std::string_view field)
+    -> result<std::vector<std::string>>;
+
+auto encode_text_map(const std::map<std::string, std::string>& input) -> cbor::value {
+    auto output = cbor::value::map{};
+    for (const auto& [name, value] : input) {
+        output.emplace_back(name, value);
+    }
+    return cbor::value{std::move(output)};
+}
+
+auto encode_resource_descriptor(const slsa_resource_descriptor& value) -> cbor::value {
+    auto fields = cbor::value::map{{"uri", cbor::value{value.uri}},
+                                   {"digest", encode_text_map(value.digest)}};
+    if (value.name) {
+        fields.emplace_back("name", *value.name);
+    }
+    return cbor::value{std::move(fields)};
+}
+
+auto encode_resource_descriptors(std::span<const slsa_resource_descriptor> values) -> cbor::value {
+    auto output = cbor::value::array{};
+    for (const auto& value : values) {
+        output.push_back(encode_resource_descriptor(value));
+    }
+    return cbor::value{std::move(output)};
+}
+
+auto encode_slsa_provenance(const slsa_provenance_v1& value) -> cbor::value {
+    auto command = cbor::value::array{};
+    for (const auto& argument : value.build_definition.external_parameters.command) {
+        command.emplace_back(argument);
+    }
+    const auto external_parameters = map(
+        {{"command", cbor::value{std::move(command)}},
+         {"cwd", cbor::value{value.build_definition.external_parameters.cwd}},
+         {"environment", encode_text_map(value.build_definition.external_parameters.environment)}});
+    const auto internal_parameters =
+        map({{"toolchain",
+              encode_resource_descriptor(value.build_definition.internal_parameters.toolchain)},
+             {"sandbox",
+              encode_resource_descriptor(value.build_definition.internal_parameters.sandbox)},
+             {"platform", encode_text_map(value.build_definition.internal_parameters.platform)}});
+    const auto build_definition =
+        map({{"buildType", cbor::value{value.build_definition.build_type}},
+             {"externalParameters", external_parameters},
+             {"internalParameters", internal_parameters},
+             {"resolvedDependencies",
+              encode_resource_descriptors(value.build_definition.resolved_dependencies)}});
+    const auto builder = map({{"id", cbor::value{value.run_details.builder.id}}});
+    const auto metadata =
+        map({{"invocationId", cbor::value{value.run_details.metadata.invocation_id}},
+             {"startedOn", cbor::value{value.run_details.metadata.started_on}},
+             {"finishedOn", cbor::value{value.run_details.metadata.finished_on}}});
+    const auto run_details =
+        map({{"builder", builder},
+             {"metadata", metadata},
+             {"byproducts", encode_resource_descriptors(value.run_details.byproducts)}});
+    return map({{"buildDefinition", build_definition}, {"runDetails", run_details}});
+}
+
 auto decode_attribute_value(const cbor::value& value) -> result<attestation_value> {
     if (const auto* text = std::get_if<std::string>(&value.data)) {
         return *text;
@@ -178,6 +239,122 @@ auto decode_attribute_value(const cbor::value& value) -> result<attestation_valu
         output.push_back(*text);
     }
     return attestation_value{std::move(output)};
+}
+
+auto decode_text_map(const cbor::value* value, std::string_view description)
+    -> result<std::map<std::string, std::string>> {
+    const auto* fields = value ? std::get_if<cbor::value::map>(&value->data) : nullptr;
+    if (!fields) {
+        return std::unexpected(corrupt(std::string{description} + " is not a map"));
+    }
+    auto output = std::map<std::string, std::string>{};
+    for (const auto& [key_value, item_value] : *fields) {
+        const auto* key = std::get_if<std::string>(&key_value.data);
+        const auto* item = std::get_if<std::string>(&item_value.data);
+        if (!key || !item || !output.emplace(*key, *item).second) {
+            return std::unexpected(corrupt("invalid " + std::string{description}));
+        }
+    }
+    return output;
+}
+
+auto decode_resource_descriptor(const cbor::value& value) -> result<slsa_resource_descriptor> {
+    const auto* uri_value = find(value, "uri");
+    const auto* digest_value = find(value, "digest");
+    const auto* uri = uri_value ? std::get_if<std::string>(&uri_value->data) : nullptr;
+    auto digests = decode_text_map(digest_value, "resource digest");
+    if (!uri || !digests) {
+        return std::unexpected(corrupt("invalid SLSA resource descriptor"));
+    }
+    auto output = slsa_resource_descriptor{*uri, std::move(*digests), std::nullopt};
+    if (const auto* name_value = find(value, "name")) {
+        const auto* name = std::get_if<std::string>(&name_value->data);
+        if (!name) {
+            return std::unexpected(corrupt("invalid SLSA resource name"));
+        }
+        output.name = *name;
+    }
+    return output;
+}
+
+auto decode_resource_descriptors(const cbor::value* value, std::string_view description)
+    -> result<std::vector<slsa_resource_descriptor>> {
+    const auto* entries = value ? std::get_if<cbor::value::array>(&value->data) : nullptr;
+    if (!entries) {
+        return std::unexpected(corrupt(std::string{description} + " is not an array"));
+    }
+    auto output = std::vector<slsa_resource_descriptor>{};
+    output.reserve(entries->size());
+    for (const auto& entry : *entries) {
+        auto decoded = decode_resource_descriptor(entry);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        output.push_back(std::move(*decoded));
+    }
+    return output;
+}
+
+auto decode_slsa_provenance(const cbor::value& value) -> result<slsa_provenance_v1> {
+    const auto* build_definition = find(value, "buildDefinition");
+    const auto* run_details = find(value, "runDetails");
+    if (!build_definition || !run_details) {
+        return std::unexpected(corrupt("invalid SLSA provenance predicate"));
+    }
+    const auto* build_type_value = find(*build_definition, "buildType");
+    const auto* external = find(*build_definition, "externalParameters");
+    const auto* internal = find(*build_definition, "internalParameters");
+    const auto* build_type =
+        build_type_value ? std::get_if<std::string>(&build_type_value->data) : nullptr;
+    if (!build_type || !external || !internal) {
+        return std::unexpected(corrupt("invalid SLSA build definition"));
+    }
+    auto command = decode_text_array(find(*external, "command"), "SLSA command");
+    const auto* cwd_value = find(*external, "cwd");
+    const auto* cwd = cwd_value ? std::get_if<std::string>(&cwd_value->data) : nullptr;
+    auto environment = decode_text_map(find(*external, "environment"), "SLSA environment");
+    auto toolchain = find(*internal, "toolchain")
+                         ? decode_resource_descriptor(*find(*internal, "toolchain"))
+                         : result<slsa_resource_descriptor>{
+                               std::unexpected(corrupt("SLSA toolchain is missing"))};
+    auto sandbox =
+        find(*internal, "sandbox")
+            ? decode_resource_descriptor(*find(*internal, "sandbox"))
+            : result<slsa_resource_descriptor>{std::unexpected(corrupt("SLSA sandbox is missing"))};
+    auto platform = decode_text_map(find(*internal, "platform"), "SLSA platform");
+    auto dependencies = decode_resource_descriptors(find(*build_definition, "resolvedDependencies"),
+                                                    "SLSA resolved dependencies");
+    if (!command || !cwd || !environment || !toolchain || !sandbox || !platform || !dependencies) {
+        return std::unexpected(corrupt("invalid SLSA build parameters"));
+    }
+    const auto* builder_value = find(*run_details, "builder");
+    const auto* metadata_value = find(*run_details, "metadata");
+    const auto* builder_id_value = builder_value ? find(*builder_value, "id") : nullptr;
+    const auto* invocation_value = metadata_value ? find(*metadata_value, "invocationId") : nullptr;
+    const auto* started_value = metadata_value ? find(*metadata_value, "startedOn") : nullptr;
+    const auto* finished_value = metadata_value ? find(*metadata_value, "finishedOn") : nullptr;
+    const auto* builder_id =
+        builder_id_value ? std::get_if<std::string>(&builder_id_value->data) : nullptr;
+    const auto* invocation =
+        invocation_value ? std::get_if<std::string>(&invocation_value->data) : nullptr;
+    const auto* started = started_value ? std::get_if<std::string>(&started_value->data) : nullptr;
+    const auto* finished =
+        finished_value ? std::get_if<std::string>(&finished_value->data) : nullptr;
+    auto byproducts =
+        decode_resource_descriptors(find(*run_details, "byproducts"), "SLSA byproducts");
+    if (!builder_id || !invocation || !started || !finished || !byproducts) {
+        return std::unexpected(corrupt("invalid SLSA run details"));
+    }
+    return slsa_provenance_v1{
+        .build_definition = {.build_type = *build_type,
+                             .external_parameters = {std::move(*command),
+                                                     *cwd,
+                                                     std::move(*environment)},
+                             .internal_parameters = {std::move(*toolchain),
+                                                     std::move(*sandbox),
+                                                     std::move(*platform)},
+                             .resolved_dependencies = std::move(*dependencies)},
+        .run_details = {{*builder_id}, {*invocation, *started, *finished}, std::move(*byproducts)}};
 }
 
 auto parse_subject_kind(std::string_view value) -> result<attestation_subject_kind> {
@@ -366,8 +543,14 @@ auto encode_attestation_value(const attestation& value,
     }
     if (value.profile != "scan_result/1") {
         auto attributes = cbor::value::map{};
-        for (const auto& attribute : value.attributes) {
-            attributes.emplace_back(attribute.name, encode_attribute_value(attribute.value));
+        if (value.profile == "slsa_provenance/1" && value.slsa_provenance) {
+            auto predicate_value = encode_slsa_provenance(*value.slsa_provenance);
+            const auto* predicate = std::get_if<cbor::value::map>(&predicate_value.data);
+            attributes = *predicate;
+        } else {
+            for (const auto& attribute : value.attributes) {
+                attributes.emplace_back(attribute.name, encode_attribute_value(attribute.value));
+            }
         }
         auto commitments = cbor::value::map{};
         for (const auto& commitment : value.disclosure_commitments) {
@@ -458,6 +641,19 @@ auto encode_result_value(const action_result& value, bool include_signature)
          cbor::value{static_cast<std::int64_t>(value.observed_at.time_since_epoch().count())}},
         {"producer", encode_actor(value.producer)},
     };
+    if (value.started_at) {
+        fields.emplace_back(
+            "started_at",
+            cbor::value{static_cast<std::int64_t>(value.started_at->time_since_epoch().count())});
+    }
+    if (value.finished_at) {
+        fields.emplace_back(
+            "finished_at",
+            cbor::value{static_cast<std::int64_t>(value.finished_at->time_since_epoch().count())});
+    }
+    if (value.provenance) {
+        fields.emplace_back("provenance", encode_digest(*value.provenance));
+    }
     if (include_signature) {
         fields.emplace_back("sig", byte_string(value.sig));
     }
@@ -736,6 +932,14 @@ auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>
             return std::unexpected(parsed_kind.error());
         }
         output.subject_kind = *parsed_kind;
+        if (output.profile == "slsa_provenance/1") {
+            auto predicate = decode_slsa_provenance(*attributes_value);
+            if (!predicate || !commitments->empty()) {
+                return std::unexpected(corrupt("invalid SLSA provenance attestation"));
+            }
+            output.slsa_provenance = std::move(*predicate);
+            return output;
+        }
         for (const auto& [key, attribute_value] : *attributes) {
             const auto* name = std::get_if<std::string>(&key.data);
             if (!name) {
@@ -884,6 +1088,9 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* observed_value = find(*source, "observed_at");
     const auto* producer_value = find(*source, "producer");
     const auto* signature_value = find(*source, "sig");
+    const auto* started_value = find(*source, "started_at");
+    const auto* finished_value = find(*source, "finished_at");
+    const auto* provenance_value = find(*source, "provenance");
     const auto* outputs =
         output_values ? std::get_if<cbor::value::array>(&output_values->data) : nullptr;
     const auto* manifest =
@@ -916,6 +1123,37 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
                          .observed_at = std::chrono::sys_seconds{std::chrono::seconds{*observed}},
                          .producer = std::move(*producer),
                          .sig = *signature};
+    const auto decode_time =
+        [](const cbor::value* value,
+           std::string_view field) -> result<std::optional<std::chrono::sys_seconds>> {
+        if (!value) {
+            return std::nullopt;
+        }
+        if (const auto* signed_value = std::get_if<std::int64_t>(&value->data)) {
+            return std::chrono::sys_seconds{std::chrono::seconds{*signed_value}};
+        }
+        if (const auto* unsigned_value = std::get_if<std::uint64_t>(&value->data);
+            unsigned_value && *unsigned_value <= static_cast<std::uint64_t>(
+                                                     std::numeric_limits<std::int64_t>::max())) {
+            return std::chrono::sys_seconds{
+                std::chrono::seconds{static_cast<std::int64_t>(*unsigned_value)}};
+        }
+        return std::unexpected(corrupt("invalid result " + std::string{field}));
+    };
+    auto started = decode_time(started_value, "started time");
+    auto finished = decode_time(finished_value, "finished time");
+    if (!started || !finished) {
+        return std::unexpected(corrupt("invalid result execution timestamps"));
+    }
+    output.started_at = *started;
+    output.finished_at = *finished;
+    if (provenance_value) {
+        auto provenance = decode_digest(*provenance_value);
+        if (!provenance) {
+            return std::unexpected(corrupt("invalid result provenance reference"));
+        }
+        output.provenance = *provenance;
+    }
     for (const auto& item : *outputs) {
         const auto* path_value = find(item, "path");
         const auto* mode_value = find(item, "mode");

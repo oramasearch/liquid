@@ -12,6 +12,7 @@ profile is invalid, including when its signature is otherwise valid.
 `text_list`. New-profile records encode `subject_kind`, an `attributes` map, and an
 `attribute_disclosure_commitments` map alongside the signed common record fields. The old
 `scan_result/1` encoding has no new fields and is byte-identical to the #50 encoding.
+`slsa_provenance/1` instead uses a typed SLSA predicate under `attributes`.
 
 `verify_attestation` first reconstructs and verifies the TAAP signature, then verifies the
 registered profile, subject kind, schema, freshness, status evidence, and supplied attribute
@@ -25,7 +26,7 @@ the public encoder.
 | `delegation/1` | actor | `principal:text`, `scopes:text_list` | `not_after:unsigned_integer` | revocable; fresh status evidence no older than 1 hour |
 | `authorship/1` | drip | `author:text` | none | none |
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
-| `slsa_provenance/1` | artifact | `build_type:text`, `invocation:text*`, `materials:text_list*` | `metadata:text*` | none |
+| `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
 | `sbom/1` | artifact | `format:text`, `components:text_list*` | `supplier:text*` | none |
 | `model_provenance/1` | model | `training_dataset:text*`, `training_code:text*` | `base_model:text*` | none |
 | `abi_compatibility/1` | library | `compatible_with:text`, `compatibility:text` | `notes:text` | none |
@@ -43,6 +44,9 @@ allowance records. Its full encoding and privacy limits remain in
 device TAAP id, `sandbox` is the exact sandbox-definition digest, and `agreement` records whether
 exit status and all output digests matched. A disagreement includes each differing output with its
 cached and re-executed digest, including `missing` where one execution produced no value.
+The `slsa_provenance/1` predicate is derived from action and result records, not supplied as
+generic attributes. Its exact field mapping, interim artifact subject, and verification path are
+in [provenance.md](provenance.md).
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's
@@ -73,7 +77,9 @@ unregistered-profile fallback.
 
 ## Open questions
 
-- Object subjects remain the TAAP protocol gap described in
+- Final object-subject syntax remains the TAAP protocol gap described in
   [features/25](../features/25-identity-attestation-and-transparency.md#the-gap-you-need-to-close).
   `subject_kind` records the intended kind while object-subject protocol work is pending.
-- #14 and #60 will emit or consume the registry once their build functionality lands.
+   `slsa_provenance/1` uses the interim result-body digest documented in
+   [provenance.md](provenance.md#interim-taap-object-subject).
+- #60 will consume the registry when its build functionality lands.

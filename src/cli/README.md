@@ -6,5 +6,8 @@ paths for `--explain`. The command never reads the private action cache directly
 `verify.cpp` parses action, all, and changed selectors, calls the public verification API, prints
 attestation outcomes and critical output differences, and returns failure on divergence.
 
+`provenance.cpp` implements both `provenance` and the artifact-oriented `verify` alias entirely
+through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
+
 The public command table and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).

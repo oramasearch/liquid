@@ -37,6 +37,8 @@ system reduces to.
 rules are in [`../library/secret-scanning.md`](../library/secret-scanning.md#scan_result1).
 `reproducibility/1` is emitted by Phase 2 verification for agreement and disagreement; its subject
 is the cached result and its required fields identify the verifier, sandbox, and outcome.
+`slsa_provenance/1` is emitted for every local build result and has an in-toto/DSSE projection.
+Its canonical record and verification rules are in [`../library/provenance.md`](../library/provenance.md).
 
 **Users, agents, documents, artifacts, drips, changes — all subjects.** That is the whole
 point, and it is why TAAP is the security model rather than a signing library.
@@ -88,11 +90,15 @@ So for "attribution to users, agents, **documents**" to work as stated, TAAP nee
 **content-addressed subject form** — a subject identified by digest rather than by key,
 which cannot itself sign or hold status but can be the target of assertions.
 
+Build provenance uses an explicitly interim result-body digest until that protocol form is
+standardized; [the provenance guide](../library/provenance.md#interim-taap-object-subject) defines
+the signed bytes and migration rule.
+
 This is [open question 22.3](../standards/taap-1-spec-draft.md) ("should the Subject be
 allowed to be a non-human — a device, a build artifact, a corporate entity"). For liquid
-it is not an optional extension: **it is load-bearing, and it blocks.** Without it, liquid
-can attest about actors but not about the things they produce, which is most of what
-liquid needs to say.
+it is not an optional extension: **it is load-bearing for the final protocol.** The interim
+build-provenance form permits artifact attestations now without claiming that it resolves the
+protocol question for every content-addressed object.
 
 Suggested shape, as protocol feedback:
 

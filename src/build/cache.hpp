@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "liquid/build.hpp"
@@ -43,6 +44,8 @@ public:
     [[nodiscard]] runtime::task<void> open();
     [[nodiscard]] result<digest> candidate_key(const action_input& input, digest sandbox) const;
     [[nodiscard]] runtime::task<cache_lookup> lookup(const action_input& input, digest sandbox);
+    [[nodiscard]] runtime::task<std::optional<result_id>>
+    find_output(std::string_view path, std::optional<digest> content = std::nullopt);
     [[nodiscard]] runtime::task<void>
     publish(digest candidate, result_id id, const action_result& value);
     [[nodiscard]] runtime::task<void>

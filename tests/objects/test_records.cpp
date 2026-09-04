@@ -103,15 +103,23 @@ TEST(Records, result_records_round_trip_positive_observed_time) {
                    .upload = std::chrono::milliseconds{4}},
         .worker = "linux/x86_64",
         .observed_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'000}}};
-    auto encoded = liquid::objects::encode(record);
+    auto complete = record;
+    complete.started_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'001}};
+    complete.finished_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'002}};
+    complete.provenance = example_digest(0x06);
+    auto encoded = liquid::objects::encode(complete);
     ASSERT_TRUE(encoded) << encoded.error().message;
     auto decoded = liquid::objects::decode_result(*encoded);
     ASSERT_TRUE(decoded) << decoded.error().message;
-    EXPECT_EQ(liquid::to_string(decoded->action), liquid::to_string(record.action));
+    EXPECT_EQ(liquid::to_string(decoded->action), liquid::to_string(complete.action));
     ASSERT_EQ(decoded->outputs.size(), 1U);
     EXPECT_EQ(decoded->outputs.front().path, "out/hello.o");
     EXPECT_EQ(decoded->timing.exec, std::chrono::milliseconds{3});
-    EXPECT_EQ(decoded->observed_at, record.observed_at);
+    EXPECT_EQ(decoded->observed_at, complete.observed_at);
+    EXPECT_EQ(decoded->started_at, complete.started_at);
+    EXPECT_EQ(decoded->finished_at, complete.finished_at);
+    ASSERT_TRUE(decoded->provenance);
+    EXPECT_EQ(liquid::to_string(*decoded->provenance), liquid::to_string(*complete.provenance));
 }
 
 } // namespace

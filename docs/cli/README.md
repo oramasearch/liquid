@@ -38,6 +38,7 @@ that the table and `liquid --help` name the same commands.
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -67,6 +68,11 @@ cached result, and `--changed` selects results without a recorded verification. 
 action, result, signed attestation, and agreement. Divergence prints a `critical:` line naming every
 differing output and exits with status 1; `--explain` adds the first differing byte and its values.
 
+`provenance` accepts a result digest or produced path in a liquid repository. In a wrapped project,
+a produced path opens that project's persistent cache. It verifies the result and attestation before
+writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible envelope, projected
+from the same canonical TAAP record.
+
 ## Examples
 
 ```sh
@@ -93,6 +99,8 @@ liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
 liquid verify --all
 liquid verify --changed --explain
+liquid provenance blake3:<result-digest>
+liquid provenance --dsse build/output.o
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --jobs 8 --explain cmake --build build
 liquid pause

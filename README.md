@@ -26,7 +26,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1` and
-> `reproducibility/1`, and repository redaction are implemented; remote operations remain
+> secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
+> and structured `slsa_provenance/1`, and repository redaction are implemented; remote operations
+> remain
 > `unsupported` until their owning issues land. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
@@ -39,7 +41,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install.
 
-> **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache, and sampled reproducibility verification.**
+> **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk
+> cache, sampled reproducibility verification, and signed SLSA provenance for every result.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -50,8 +53,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > store root. `liquid verify` re-executes cached actions in fresh sandboxes, compares exit status
 > and every output digest, signs a `reproducibility/1` attestation, and permanently quarantines a
 > divergent result. `wrap` schedules a one-in-20 local sample on the shared runtime by default.
-> Memory and remote tiers remain separate work; macOS needs macFUSE and Windows returns
-> its documented unsupported result.
+> `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
+> in-toto Statement. Memory and remote tiers remain separate work; macOS needs macFUSE and Windows
+> returns its documented unsupported result.
 
 ## Where this sits
 
@@ -90,6 +94,8 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
+- [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
+
 | | |
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |

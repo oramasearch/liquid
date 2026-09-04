@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -72,6 +73,52 @@ struct LIQUID_EXPORT attestation_status {
     std::chrono::sys_seconds checked_at{};
 };
 
+struct LIQUID_EXPORT slsa_resource_descriptor {
+    std::string uri;
+    std::map<std::string, std::string> digest;
+    std::optional<std::string> name;
+};
+
+struct LIQUID_EXPORT slsa_external_parameters {
+    std::vector<std::string> command;
+    std::string cwd;
+    std::map<std::string, std::string> environment;
+};
+
+struct LIQUID_EXPORT slsa_internal_parameters {
+    slsa_resource_descriptor toolchain;
+    slsa_resource_descriptor sandbox;
+    std::map<std::string, std::string> platform;
+};
+
+struct LIQUID_EXPORT slsa_build_definition {
+    std::string build_type;
+    slsa_external_parameters external_parameters;
+    slsa_internal_parameters internal_parameters;
+    std::vector<slsa_resource_descriptor> resolved_dependencies;
+};
+
+struct LIQUID_EXPORT slsa_builder {
+    std::string id;
+};
+
+struct LIQUID_EXPORT slsa_build_metadata {
+    std::string invocation_id;
+    std::string started_on;
+    std::string finished_on;
+};
+
+struct LIQUID_EXPORT slsa_run_details {
+    slsa_builder builder;
+    slsa_build_metadata metadata;
+    std::vector<slsa_resource_descriptor> byproducts;
+};
+
+struct LIQUID_EXPORT slsa_provenance_v1 {
+    slsa_build_definition build_definition;
+    slsa_run_details run_details;
+};
+
 struct LIQUID_EXPORT attestation {
     digest subject{};
     std::string profile;
@@ -84,6 +131,7 @@ struct LIQUID_EXPORT attestation {
     attestation_subject_kind subject_kind{attestation_subject_kind::drip};
     std::vector<attestation_attribute> attributes;
     std::vector<attribute_disclosure_commitment> disclosure_commitments;
+    std::optional<slsa_provenance_v1> slsa_provenance;
 };
 
 struct LIQUID_EXPORT attestation_profile_field {

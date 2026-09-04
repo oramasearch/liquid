@@ -20,3 +20,7 @@ Build-cache collection roots are canonical `action-index-root` records under the
 reference registry traverses root to result, result to action/output/stdout/stderr, and action to
 input/toolchain/sandbox. It also traverses root to the verification attestation, so an indexed
 result, its trust evidence, and the bytes needed to use it remain one reachable graph.
+reference registry traverses root to result, result to action/output/stdout/stderr/provenance, and
+action to input/toolchain/sandbox. It also traverses root to the verification attestation, so an
+indexed result, its trust evidence, and the bytes needed to use and verify it remain one reachable
+graph.

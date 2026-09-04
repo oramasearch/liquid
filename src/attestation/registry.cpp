@@ -93,6 +93,38 @@ auto has_commitment(const attestation& value, std::string_view name) -> bool {
                                [name](const auto& commitment) { return commitment.name == name; });
 }
 
+auto valid_resource(const slsa_resource_descriptor& value) -> bool {
+    return !value.uri.empty() && !value.digest.empty() &&
+           std::ranges::all_of(value.digest, [](const auto& entry) {
+               return !entry.first.empty() && !entry.second.empty();
+           });
+}
+
+auto validate_slsa_provenance(const attestation& value) -> result<void> {
+    if (!value.attributes.empty() || !value.disclosure_commitments.empty()) {
+        return std::unexpected(invalid("slsa_provenance/1 uses its structured predicate"));
+    }
+    if (!value.slsa_provenance) {
+        return std::unexpected(invalid("SLSA provenance predicate is missing"));
+    }
+    const auto& predicate = *value.slsa_provenance;
+    const auto& definition = predicate.build_definition;
+    const auto& run = predicate.run_details;
+    if (definition.build_type.empty() || definition.external_parameters.command.empty() ||
+        !valid_resource(definition.internal_parameters.toolchain) ||
+        !valid_resource(definition.internal_parameters.sandbox) ||
+        definition.internal_parameters.platform.empty() || run.builder.id.empty() ||
+        run.metadata.invocation_id.empty() || run.metadata.started_on.empty() ||
+        run.metadata.finished_on.empty()) {
+        return std::unexpected(invalid("SLSA provenance predicate is incomplete"));
+    }
+    if (!std::ranges::all_of(definition.resolved_dependencies, valid_resource) ||
+        !std::ranges::all_of(run.byproducts, valid_resource)) {
+        return std::unexpected(invalid("SLSA resource descriptor is incomplete"));
+    }
+    return {};
+}
+
 } // namespace
 
 attestation_profile_registry::attestation_profile_registry()
@@ -121,10 +153,7 @@ attestation_profile_registry::attestation_profile_registry()
                         {attestation_subject_kind::change},
                         attestation_status_kind::none),
                 profile("slsa_provenance/1",
-                        {field("build_type", attestation_field_type::text, true),
-                         field("invocation", attestation_field_type::text, true, true),
-                         field("materials", attestation_field_type::text_list, true, true),
-                         field("metadata", attestation_field_type::text, false, true)},
+                        {},
                         {attestation_subject_kind::artifact},
                         attestation_status_kind::none),
                 profile("sbom/1",
@@ -184,7 +213,8 @@ result<void> attestation_profile_registry::validate(const attestation& value) co
         return std::unexpected(invalid("profile does not accept this subject kind"));
     }
     if (value.profile == "scan_result/1") {
-        if (!value.attributes.empty() || !value.disclosure_commitments.empty()) {
+        if (!value.attributes.empty() || !value.disclosure_commitments.empty() ||
+            value.slsa_provenance) {
             return std::unexpected(invalid("scan_result/1 uses its fixed record fields"));
         }
         if (value.detectors.empty()) {
@@ -196,6 +226,12 @@ result<void> attestation_profile_registry::validate(const attestation& value) co
             }
         }
         return {};
+    }
+    if (value.profile == "slsa_provenance/1") {
+        return validate_slsa_provenance(value);
+    }
+    if (value.slsa_provenance) {
+        return std::unexpected(invalid("structured SLSA predicate belongs to slsa_provenance/1"));
     }
     for (std::size_t index = 0; index < value.attributes.size(); ++index) {
         const auto& attribute = value.attributes[index];

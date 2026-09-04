@@ -122,6 +122,8 @@ std::vector<digest> extract_result(std::span<const std::byte> bytes) {
     if (!result)
         return {};
     auto output = std::vector<digest>{result->action, result->stdout_output, result->stderr_output};
+    if (result->provenance)
+        append_once(output, *result->provenance);
     for (const auto& action_output : result->outputs)
         append_once(output, action_output.blob);
     return output;

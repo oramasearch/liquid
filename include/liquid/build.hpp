@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "liquid/attestation.hpp"
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
@@ -100,6 +101,18 @@ struct LIQUID_EXPORT action_result {
     std::vector<std::byte> sig;
     cache_status cache{cache_status::miss};
     std::optional<cache_miss> why;
+    std::optional<std::chrono::sys_seconds> started_at;
+    std::optional<std::chrono::sys_seconds> finished_at;
+    std::optional<digest> provenance;
+};
+
+struct LIQUID_EXPORT provenance_report {
+    result_id result;
+    digest attestation;
+    liquid::attestation statement;
+    action_result value;
+    bool verified{};
+    std::string reason;
 };
 
 struct LIQUID_EXPORT wrap_options {
@@ -148,6 +161,14 @@ namespace build {
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
                                                              action_input input);
 [[nodiscard]] LIQUID_EXPORT runtime::task<action_result> result(repository& source, result_id id);
+[[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report> verify_provenance(repository& source,
+                                                                               result_id id);
+[[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report>
+verify_provenance(repository& source, std::string output_path);
+[[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report>
+verify_wrapped_provenance(std::filesystem::path working_tree, std::filesystem::path output_path);
+[[nodiscard]] LIQUID_EXPORT liquid::result<std::string>
+provenance_json(const provenance_report& report, bool dsse = false);
 [[nodiscard]] LIQUID_EXPORT runtime::task<wrap_report> wrap(std::filesystem::path working_tree,
                                                             std::vector<std::string> command,
                                                             wrap_options options = {});
