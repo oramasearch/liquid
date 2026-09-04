@@ -458,8 +458,10 @@ auto object_store::stream_for(const std::filesystem::path& path) -> result<std::
 
 auto object_store::read(const sha1& id) -> result<object> {
     const auto hex = sha1_hex(id);
-    if (const auto cached = delta_cache_.find(hex); cached != delta_cache_.end())
-        return cached->second;
+    if (const auto cached = delta_cache_.find(hex); cached != delta_cache_.end()) {
+        delta_lru_.splice(delta_lru_.begin(), delta_lru_, cached->second.position);
+        return cached->second.value;
+    }
     const auto compressed = read_file(directory_ / "objects" / hex.substr(0, 2) / hex.substr(2));
     if (compressed) {
         const auto raw = inflate(*compressed, hex);
@@ -498,11 +500,21 @@ auto object_store::read(const sha1& id) -> result<object> {
         auto cache = [this](const object& value) {
             constexpr std::uint64_t delta_cache_limit = 32U * 1024U * 1024U;
             const auto name = sha1_hex(value.id);
-            if (delta_cache_.contains(name) || value.payload.size() > delta_cache_limit ||
-                delta_cache_bytes_ + value.payload.size() > delta_cache_limit)
+            if (value.payload.size() > delta_cache_limit)
                 return;
+            if (const auto found = delta_cache_.find(name); found != delta_cache_.end()) {
+                delta_lru_.splice(delta_lru_.begin(), delta_lru_, found->second.position);
+                return;
+            }
+            while (delta_cache_bytes_ + value.payload.size() > delta_cache_limit) {
+                const auto oldest = delta_cache_.find(delta_lru_.back());
+                delta_cache_bytes_ -= oldest->second.value.payload.size();
+                delta_cache_.erase(oldest);
+                delta_lru_.pop_back();
+            }
             delta_cache_bytes_ += value.payload.size();
-            delta_cache_.emplace(name, value);
+            delta_lru_.push_front(name);
+            delta_cache_.emplace(name, cached_object{value, delta_lru_.begin()});
         };
         auto decode = [&](auto&& self,
                           std::uint64_t position,

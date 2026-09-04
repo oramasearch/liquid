@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -61,11 +62,16 @@ private:
         std::filesystem::path path;
         std::unique_ptr<std::ifstream> input;
     };
+    struct cached_object {
+        object value;
+        std::list<std::string>::iterator position;
+    };
 
     [[nodiscard]] auto stream_for(const std::filesystem::path& path) -> result<std::ifstream*>;
 
     std::filesystem::path directory_;
-    std::map<std::string, object> delta_cache_;
+    std::map<std::string, cached_object> delta_cache_;
+    std::list<std::string> delta_lru_;
     std::uint64_t delta_cache_bytes_{};
     std::filesystem::path indexed_pack_;
     std::vector<pack_index_entry> indexed_objects_;

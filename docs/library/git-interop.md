@@ -37,9 +37,9 @@ when it is absent.
 After the history and refs are recorded, import applies only the selected Git head tree to the
 working copy and checkpoints it. This keeps history construction independent of directory-document
 transactions while leaving the repository ready for ordinary local edits. The pack reader retains
-at most 32 MiB of resolved delta objects, retains verified small bases when an oversized object is
-encountered, including bases resolved inside a delta chain, and verifies every object SHA-1 before
-it is used.
+at most 32 MiB of resolved delta objects in an LRU, retaining verified small bases when an
+oversized object is encountered, including bases resolved inside a delta chain, and verifies every
+object SHA-1 before it is used.
 The real-world gate measures memory that the process actually owns: `phys_footprint` on macOS and
 `RssAnon` on Linux. `import_report::peak_anonymous_bytes` samples that value while history is
 recorded. This avoids treating reclaimable allocator reservations and mapped files as retained
