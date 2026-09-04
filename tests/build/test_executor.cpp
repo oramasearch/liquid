@@ -344,6 +344,30 @@ TEST(Build, denies_reads_outside_the_mount) {
     EXPECT_TRUE(result->manifest.empty());
 }
 
+#if defined(__linux__)
+TEST(Build, remote_eligible_action_reads_inputs_and_toolchain) {
+    action_fixture fixture;
+    auto input = fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    input.remote_eligible = true;
+    auto ran = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(ran) << ran.error().message << ": " << ran.error().context;
+    auto result = liquid::runtime::block_on(liquid::build::result(fixture.repository, *ran));
+    ASSERT_TRUE(result) << result.error().message;
+    EXPECT_EQ(result->exit, 0);
+}
+
+TEST(Build, refuses_non_hermetic_read_for_remote_eligible_action) {
+    action_fixture fixture;
+    auto input = fixture.input({"fixture", "outside-read"}, {});
+    input.remote_eligible = true;
+    auto ran = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_FALSE(ran);
+    EXPECT_EQ(ran.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(ran.error().message, "remote-eligible action read outside its inputs");
+    EXPECT_EQ(ran.error().context, "/etc/hostname");
+}
+#endif
+
 TEST(Build, rejects_writes_outside_declared_outputs) {
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(

@@ -124,6 +124,7 @@ struct LIQUID_EXPORT ref {
 
 struct LIQUID_EXPORT repository_status {
     std::uint64_t pending_drips{};
+    std::uint64_t remote_bytes{};
     bool paused{};
     std::vector<conflict> conflicts;
     std::vector<std::string> oversized_directories;
@@ -183,6 +184,9 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>> read_decrypted(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
     [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
+    [[nodiscard]] runtime::task<void>
+    write_remote(std::string path, blob value, write_options options = {});
+    [[nodiscard]] runtime::task<digest> store_remote_blob(blob value);
     [[nodiscard]] runtime::task<void>
     write(std::string path, std::vector<std::byte> contents, write_options options);
     [[nodiscard]] runtime::task<void> redact(std::string path,

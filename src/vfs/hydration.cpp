@@ -141,8 +141,8 @@ auto hydration_cache::chunk_path(const digest& id) const -> std::filesystem::pat
     return root_ / name;
 }
 
-runtime::task<std::vector<std::byte>>
-hydration_cache::load_chunk(repository& source, digest id, std::uint64_t size) {
+runtime::task<std::vector<std::byte>> hydration_cache::load_chunk(
+    repository& source, digest content, digest id, std::uint64_t offset, std::uint64_t size) {
     const auto path = chunk_path(id);
     auto cached =
         co_await runtime::offload([path, size, id] { return read_cached(path, size, id); });
@@ -154,7 +154,11 @@ hydration_cache::load_chunk(repository& source, digest id, std::uint64_t size) {
         co_return std::move(***cached);
 
     auto bytes = std::vector<std::byte>(static_cast<std::size_t>(size));
-    auto read = co_await repository_detail::vfs_access::read_chunk(source, id, 0, bytes);
+    const auto content_is_valid = content.alg == algorithm::blake3 ||
+                                  content.alg == algorithm::sha256 ||
+                                  content.alg == algorithm::blake3_keyed;
+    auto read = co_await repository_detail::vfs_access::read_chunk(
+        source, content_is_valid ? content : id, content_is_valid ? offset : 0, bytes);
     if (!read)
         co_return std::unexpected(read.error());
     if (*read != size)
@@ -197,7 +201,8 @@ hydration_cache::read(repository& source,
         const auto chunk_size = file.chunk_sizes[index];
         const auto end = position + chunk_size;
         if (end > offset && copied < wanted) {
-            auto chunk = co_await load_chunk(source, file.chunks[index], chunk_size);
+            auto chunk =
+                co_await load_chunk(source, file.content, file.chunks[index], position, chunk_size);
             if (!chunk)
                 co_return std::unexpected(chunk.error());
             const auto begin = static_cast<std::size_t>(std::max(position, offset) - position);

@@ -1368,6 +1368,18 @@ struct repository::impl {
         if (!record) {
             co_return std::unexpected(record.error());
         }
+        if (record->content.alg == algorithm::blake3 || record->content.alg == algorithm::sha256 ||
+            record->content.alg == algorithm::blake3_keyed) {
+            auto content = co_await objects.get(record->content);
+            if (!content) {
+                co_return std::unexpected(content.error());
+            }
+            if (content->size() != record->size) {
+                co_return std::unexpected(
+                    failure(errc::corrupt, "blob size does not match content", std::move(path)));
+            }
+            co_return content;
+        }
         auto output = std::vector<std::byte>{};
         output.reserve(static_cast<std::size_t>(record->size));
         for (const auto& chunk : record->chunks) {
@@ -1558,6 +1570,8 @@ struct repository::impl {
         auto parts = split_path(path);
         if (!parts)
             co_return std::unexpected(parts.error());
+        if (!record.remote)
+            record.content = {};
         auto encoded = objects::encode(record);
         if (!encoded)
             co_return std::unexpected(encoded.error());
@@ -1859,6 +1873,39 @@ runtime::task<void> repository::write_file(std::string path, std::filesystem::pa
     if (!record)
         co_return std::unexpected(record.error());
     co_return co_await impl_->record_blob(std::move(path), std::move(*record));
+}
+
+runtime::task<digest> repository::store_remote_blob(::liquid::blob value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto registered =
+        co_await repository_detail::store_access::register_remote(impl_->objects, value);
+    if (!registered) {
+        co_return std::unexpected(registered.error());
+    }
+    auto encoded = objects::encode(value);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return co_await repository_detail::store_access::put_plain(impl_->objects,
+                                                                  std::move(*encoded));
+}
+
+runtime::task<void>
+repository::write_remote(std::string path, ::liquid::blob value, write_options options) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U) {
+        co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
+    }
+    auto registered =
+        co_await repository_detail::store_access::register_remote(impl_->objects, value);
+    if (!registered) {
+        co_return std::unexpected(registered.error());
+    }
+    co_return co_await impl_->record_blob(std::move(path), std::move(value), options.mode);
 }
 runtime::task<void> repository::redact(std::string path, std::optional<change_id> change) {
     if (!impl_) {
@@ -2305,6 +2352,7 @@ runtime::task<digest> repository_detail::git_access::put_blob(repository& destin
     auto value = repository_detail::store_access::blob_for(destination.impl_->objects, *content);
     if (!value)
         co_return std::unexpected(value.error());
+    value->content = {};
     auto encoded = objects::encode(*value);
     if (!encoded)
         co_return std::unexpected(encoded.error());
@@ -2426,13 +2474,30 @@ result<repository_status> repository::status() {
     output.pending_drips = impl_->current.pending_drips;
     output.conflicts = impl_->current.conflict_values;
     output.head = impl_->current.head;
-    auto visit = [&](auto&& self, const working_entry& entry, std::string path) -> void {
-        if (entry.kind == entry_kind::directory && entry.entries.size() > 10000)
+    auto visit = [&](auto&& self, const working_entry& entry, std::string path) -> result<void> {
+        if (entry.kind == entry_kind::file) {
+            auto remote =
+                repository_detail::store_access::remote_bytes(impl_->objects, entry.object);
+            if (!remote) {
+                return std::unexpected(remote.error());
+            }
+            output.remote_bytes += *remote;
+        }
+        if (entry.kind == entry_kind::directory && entry.entries.size() > 10000) {
             output.oversized_directories.push_back(path);
-        for (const auto& [name, child] : entry.entries)
-            self(self, child, path.empty() ? name : path + "/" + name);
+        }
+        for (const auto& [name, child] : entry.entries) {
+            auto visited = self(self, child, path.empty() ? name : path + "/" + name);
+            if (!visited) {
+                return std::unexpected(visited.error());
+            }
+        }
+        return {};
     };
-    visit(visit, impl_->current.root, "");
+    auto visited = visit(visit, impl_->current.root, "");
+    if (!visited) {
+        return std::unexpected(visited.error());
+    }
     return output;
 }
 runtime::task<std::vector<change>> repository::log(log_options options) {
@@ -2555,6 +2620,10 @@ runtime::task<std::vector<std::byte>> repository::blob(digest id) {
     auto value = objects::decode_blob(*encoded);
     if (!value)
         co_return std::unexpected(value.error());
+    if (value->content.alg == algorithm::blake3 || value->content.alg == algorithm::sha256 ||
+        value->content.alg == algorithm::blake3_keyed) {
+        co_return co_await impl_->objects.get(value->content);
+    }
     std::vector<std::byte> output;
     output.reserve(static_cast<std::size_t>(value->size));
     for (const auto& chunk : value->chunks) {
@@ -2983,6 +3052,8 @@ runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry
         output.size = record->size;
         output.chunks = std::move(record->chunks);
         output.chunk_sizes = std::move(record->chunk_sizes);
+        output.content = record->content;
+        output.remote = std::move(record->remote);
     }
     co_return output;
 }
@@ -3020,6 +3091,8 @@ repository_detail::vfs_access::children(repository& source, std::string path) {
             value.size = record->size;
             value.chunks = std::move(record->chunks);
             value.chunk_sizes = std::move(record->chunk_sizes);
+            value.content = record->content;
+            value.remote = std::move(record->remote);
         }
         output.push_back(std::move(value));
     }
@@ -3145,6 +3218,7 @@ runtime::task<digest> repository_detail::build_access::put_file(repository& sour
     auto blob = repository_detail::store_access::blob_for(source.impl_->objects, *content);
     if (!blob)
         co_return std::unexpected(blob.error());
+    blob->content = {};
     auto encoded = objects::encode(*blob);
     if (!encoded)
         co_return std::unexpected(encoded.error());

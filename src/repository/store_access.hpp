@@ -13,6 +13,16 @@ struct store_access {
         return source.blob_for(id);
     }
 
+    [[nodiscard]] static auto remote_bytes(const store& source, digest id)
+        -> result<std::uint64_t> {
+        return source.remote_bytes(id);
+    }
+
+    [[nodiscard]] static auto register_remote(store& destination, blob value)
+        -> runtime::task<void> {
+        return destination.register_remote(std::move(value));
+    }
+
     static void begin_object_batch(store& destination) {
         destination.begin_object_batch();
     }

@@ -42,6 +42,8 @@ auto reason_name(liquid::cache_miss_reason reason) -> std::string_view {
         return "unknown";
     case liquid::cache_miss_reason::policy_refused:
         return "policy refused";
+    case liquid::cache_miss_reason::non_hermetic_read:
+        return "non-hermetic read";
     }
     return "unknown";
 }

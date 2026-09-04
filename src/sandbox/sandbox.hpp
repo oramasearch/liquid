@@ -27,11 +27,13 @@ struct launch_request {
     std::map<std::string, std::string> environment;
     std::vector<std::string> outputs;
     std::optional<std::chrono::seconds> timeout;
+    bool remote_eligible{};
 };
 
 struct launch_result {
     int exit{};
     bool timed_out{};
+    std::optional<std::string> forbidden_read;
 };
 
 struct wrap_launch_request {

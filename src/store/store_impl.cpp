@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstring>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -55,6 +56,14 @@ constexpr std::array<std::byte, 8> objects_magic_v4{std::byte{'L'},
                                                     std::byte{'B'},
                                                     std::byte{'J'},
                                                     std::byte{4},
+                                                    std::byte{0},
+                                                    std::byte{0}};
+constexpr std::array<std::byte, 8> remotes_magic_v1{std::byte{'L'},
+                                                    std::byte{'Q'},
+                                                    std::byte{'R'},
+                                                    std::byte{'E'},
+                                                    std::byte{'M'},
+                                                    std::byte{1},
                                                     std::byte{0},
                                                     std::byte{0}};
 
@@ -167,6 +176,7 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         std::error_code ignored;
         std::filesystem::remove(root / "gc" / "MANIFEST.tmp", ignored);
         std::filesystem::remove(root / "packs" / "objects.meta.tmp", ignored);
+        std::filesystem::remove(root / "packs" / "remotes.meta.tmp", ignored);
         const auto marker = root / "LIQUID_STORE";
         if (std::filesystem::exists(marker)) {
             auto text = co_await read_file(marker);
@@ -197,6 +207,9 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         auto objects = co_await result->load_objects();
         if (!objects)
             co_return std::unexpected(objects.error());
+        auto remotes = co_await result->load_remotes();
+        if (!remotes)
+            co_return std::unexpected(remotes.error());
         auto collection = co_await load_collection_manifest(result->root_);
         if (!collection)
             co_return std::unexpected(collection.error());
@@ -214,6 +227,9 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         auto subjects = co_await result->rebuild_subject_index();
         if (!subjects)
             co_return std::unexpected(subjects.error());
+        auto remote_records = co_await result->rebuild_remote_record_index();
+        if (!remote_records)
+            co_return std::unexpected(remote_records.error());
         co_return result;
     } catch (const std::system_error& caught) {
         co_return std::unexpected(store_error(errc::io, caught.what(), root.string()));
@@ -404,6 +420,165 @@ runtime::task<void> store_backend::load_objects() {
     if (at != bytes.size())
         co_return std::unexpected(
             store_error(errc::corrupt, "trailing object map data", path.string()));
+    co_return result<void>{};
+}
+
+runtime::task<void> store_backend::load_remotes() {
+    const auto path = root_ / "packs" / "remotes.meta";
+    if (!std::filesystem::exists(path)) {
+        co_return result<void>{};
+    }
+    auto raw = co_await read_file(path);
+    if (!raw) {
+        co_return std::unexpected(raw.error());
+    }
+    const auto bytes = std::span<const std::byte>(*raw);
+    if (bytes.size() < 12 ||
+        !std::equal(remotes_magic_v1.begin(), remotes_magic_v1.end(), bytes.begin())) {
+        co_return std::unexpected(
+            store_error(errc::corrupt, "invalid remote object map", path.string()));
+    }
+    const auto count = get_u32(bytes, 8);
+    auto at = std::size_t{12};
+    for (auto number = std::uint32_t{}; number < count; ++number) {
+        if (at + 43 > bytes.size() || !valid_algorithm(std::to_integer<unsigned char>(bytes[at]))) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "truncated remote object map", path.string()));
+        }
+        blob value{};
+        value.content.alg = static_cast<algorithm>(std::to_integer<unsigned char>(bytes[at++]));
+        std::copy_n(bytes.begin() + at, value.content.bytes.size(), value.content.bytes.begin());
+        at += value.content.bytes.size();
+        value.size = get_u64(bytes, at);
+        at += 8;
+        const auto source_size = get_u16(bytes, at);
+        at += 2;
+        if (source_size == 0 || at + source_size + 2 > bytes.size()) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "invalid remote source", path.string()));
+        }
+        auto location = remote_blob_location{};
+        location.source.assign(reinterpret_cast<const char*>(bytes.data() + at), source_size);
+        at += source_size;
+        const auto instance_size = get_u16(bytes, at);
+        at += 2;
+        if (at + instance_size + 4 > bytes.size()) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "invalid remote instance", path.string()));
+        }
+        location.instance.assign(reinterpret_cast<const char*>(bytes.data() + at), instance_size);
+        at += instance_size;
+        const auto chunks = get_u32(bytes, at);
+        at += 4;
+        if (chunks == 0 || chunks > (bytes.size() - at) / 41U) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "invalid remote chunk list", path.string()));
+        }
+        value.chunks.reserve(chunks);
+        value.chunk_sizes.reserve(chunks);
+        auto total = std::uint64_t{};
+        for (auto index = std::uint32_t{}; index < chunks; ++index) {
+            if (!valid_algorithm(std::to_integer<unsigned char>(bytes[at]))) {
+                co_return std::unexpected(
+                    store_error(errc::corrupt, "invalid remote chunk digest", path.string()));
+            }
+            auto chunk = digest{};
+            chunk.alg = static_cast<algorithm>(std::to_integer<unsigned char>(bytes[at++]));
+            std::copy_n(bytes.begin() + at, chunk.bytes.size(), chunk.bytes.begin());
+            at += chunk.bytes.size();
+            const auto chunk_size = get_u64(bytes, at);
+            at += 8;
+            if (chunk_size > value.size - total) {
+                co_return std::unexpected(
+                    store_error(errc::corrupt, "invalid remote chunk sizes", path.string()));
+            }
+            total += chunk_size;
+            value.chunks.push_back(chunk);
+            value.chunk_sizes.push_back(chunk_size);
+        }
+        if (total != value.size) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "invalid remote chunk sizes", path.string()));
+        }
+        value.remote = std::move(location);
+        remotes_.emplace(to_string(value.content), std::move(value));
+    }
+    if (at != bytes.size()) {
+        co_return std::unexpected(
+            store_error(errc::corrupt, "trailing remote object map data", path.string()));
+    }
+    co_return result<void>{};
+}
+
+runtime::task<void> store_backend::save_remotes() {
+    auto bytes = std::vector<std::byte>(remotes_magic_v1.begin(), remotes_magic_v1.end());
+    put_u32(bytes, static_cast<std::uint32_t>(remotes_.size()));
+    for (const auto& [unused, value] : remotes_) {
+        if (!value.remote || value.remote->source.empty() ||
+            value.remote->source.size() > std::numeric_limits<std::uint16_t>::max() ||
+            value.remote->instance.size() > std::numeric_limits<std::uint16_t>::max()) {
+            co_return std::unexpected(store_error(
+                errc::invalid_argument, "invalid remote blob location", to_string(value.content)));
+        }
+        bytes.push_back(std::byte{static_cast<unsigned char>(value.content.alg)});
+        bytes.insert(bytes.end(), value.content.bytes.begin(), value.content.bytes.end());
+        put_u64(bytes, value.size);
+        put_u16(bytes, static_cast<std::uint16_t>(value.remote->source.size()));
+        bytes.insert(bytes.end(),
+                     reinterpret_cast<const std::byte*>(value.remote->source.data()),
+                     reinterpret_cast<const std::byte*>(value.remote->source.data() +
+                                                        value.remote->source.size()));
+        put_u16(bytes, static_cast<std::uint16_t>(value.remote->instance.size()));
+        bytes.insert(bytes.end(),
+                     reinterpret_cast<const std::byte*>(value.remote->instance.data()),
+                     reinterpret_cast<const std::byte*>(value.remote->instance.data() +
+                                                        value.remote->instance.size()));
+        put_u32(bytes, static_cast<std::uint32_t>(value.chunks.size()));
+        for (auto index = std::size_t{}; index < value.chunks.size(); ++index) {
+            bytes.push_back(std::byte{static_cast<unsigned char>(value.chunks[index].alg)});
+            bytes.insert(
+                bytes.end(), value.chunks[index].bytes.begin(), value.chunks[index].bytes.end());
+            put_u64(bytes, value.chunk_sizes[index]);
+        }
+    }
+    const auto temporary = root_ / "packs" / "remotes.meta.tmp";
+    const auto destination = root_ / "packs" / "remotes.meta";
+    auto written = co_await write_file(temporary, std::move(bytes));
+    if (!written) {
+        co_return std::unexpected(written.error());
+    }
+    try {
+        std::filesystem::rename(temporary, destination);
+    } catch (const std::system_error& caught) {
+        co_return std::unexpected(store_error(errc::io, caught.what(), destination.string()));
+    }
+    co_return result<void>{};
+}
+
+runtime::task<void> store_backend::rebuild_remote_record_index() {
+    remote_records_.clear();
+    auto changed = false;
+    for (const auto& [unused, object] : objects_) {
+        if (object.kind != "blob") {
+            continue;
+        }
+        auto bytes = co_await get(object.id);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto value = objects::decode_blob(*bytes);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        if (!value->remote) {
+            continue;
+        }
+        remote_records_.emplace(to_string(object.id), value->content);
+        changed = remotes_.try_emplace(to_string(value->content), *value).second || changed;
+    }
+    if (changed) {
+        co_return co_await save_remotes();
+    }
     co_return result<void>{};
 }
 
@@ -751,6 +926,13 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     if (lock_error)
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put"));
     std::optional<crypto_detail::domain_keys> encryption;
+    auto remote_record = std::optional<blob>{};
+    if (!selected_key) {
+        auto decoded = objects::decode_blob(input);
+        if (decoded && decoded->remote) {
+            remote_record = std::move(*decoded);
+        }
+    }
     auto key_id = std::string{};
     if (selected_key) {
         if (!options_.keys) {
@@ -792,8 +974,17 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
         whole = *hashed;
         ranges = fastcdc(input);
     }
-    if (objects_.contains(to_string(whole)))
+    if (objects_.contains(to_string(whole))) {
+        if (remote_record) {
+            remote_records_[to_string(whole)] = remote_record->content;
+            remotes_[to_string(remote_record->content)] = *remote_record;
+            auto saved_remotes = co_await save_remotes();
+            if (!saved_remotes) {
+                co_return std::unexpected(saved_remotes.error());
+            }
+        }
         co_return whole;
+    }
     stored_object object;
     object.id = whole;
     object.size = input.size();
@@ -835,6 +1026,14 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     auto saved = co_await add_object(std::move(object));
     if (!saved)
         co_return std::unexpected(saved.error());
+    if (remote_record) {
+        remote_records_[to_string(whole)] = remote_record->content;
+        remotes_[to_string(remote_record->content)] = *remote_record;
+        auto saved_remotes = co_await save_remotes();
+        if (!saved_remotes) {
+            co_return std::unexpected(saved_remotes.error());
+        }
+    }
     if (attestation_subject) {
         subjects_.add(*attestation_subject, whole);
     }
@@ -1052,12 +1251,127 @@ result<blob> store_backend::blob_for(digest id) const {
         return std::unexpected(
             store_error(errc::corrupt, "object chunk sizes are unavailable", to_string(id)));
     }
-    return blob{found->second.chunks, found->second.size, found->second.chunk_sizes};
+    return blob{found->second.chunks, found->second.size, found->second.chunk_sizes, id};
+}
+
+runtime::task<std::vector<std::byte>>
+store_backend::hydrate_remote_chunk(const blob& value, std::size_t index, std::uint64_t offset) {
+    if (!value.remote || index >= value.chunks.size() || index >= value.chunk_sizes.size()) {
+        co_return std::unexpected(
+            store_error(errc::corrupt, "invalid remote chunk metadata", to_string(value.content)));
+    }
+    auto local = index_.find(value.chunks[index]);
+    if (!local) {
+        co_return std::unexpected(local.error());
+    }
+    if (*local) {
+        co_return co_await get(value.chunks[index]);
+    }
+    const auto source = options_.remote_sources.find(value.remote->source);
+    if (source == options_.remote_sources.end() || !source->second) {
+        co_return std::unexpected(store_error(
+            errc::unavailable, "remote blob source is unavailable", value.remote->source));
+    }
+    auto bytes = std::vector<std::byte>(static_cast<std::size_t>(value.chunk_sizes[index]));
+    auto received = std::uint64_t{};
+    while (received < value.chunk_sizes[index]) {
+        auto read = co_await source->second->read_range(
+            value.remote->instance,
+            value.content,
+            offset + received,
+            std::span<std::byte>(bytes).subspan(static_cast<std::size_t>(received)));
+        if (!read) {
+            co_return std::unexpected(read.error());
+        }
+        if (*read == 0 || *read > value.chunk_sizes[index] - received) {
+            co_return std::unexpected(store_error(
+                errc::corrupt, "remote source returned a short range", to_string(value.content)));
+        }
+        received += *read;
+    }
+    auto actual = hash(value.chunks[index].alg, bytes);
+    if (!actual || actual->alg != value.chunks[index].alg ||
+        actual->bytes != value.chunks[index].bytes) {
+        co_return std::unexpected(store_error(errc::corrupt,
+                                              "remote chunk failed digest verification",
+                                              to_string(value.chunks[index])));
+    }
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(
+            store_error(errc::busy, lock_error.message(), "remote chunk hydration"));
+    }
+    auto stored = co_await store_chunk(value.chunks[index], bytes);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    co_return bytes;
+}
+
+runtime::task<std::vector<std::byte>> store_backend::get_remote(const blob& value) {
+    auto output = std::vector<std::byte>{};
+    output.reserve(static_cast<std::size_t>(value.size));
+    auto offset = std::uint64_t{};
+    for (auto index = std::size_t{}; index < value.chunks.size(); ++index) {
+        auto chunk = co_await hydrate_remote_chunk(value, index, offset);
+        if (!chunk) {
+            co_return std::unexpected(chunk.error());
+        }
+        output.insert(output.end(), chunk->begin(), chunk->end());
+        offset += value.chunk_sizes[index];
+    }
+    if (output.size() != value.size) {
+        co_return std::unexpected(store_error(
+            errc::corrupt, "remote object length differs from metadata", to_string(value.content)));
+    }
+    auto actual = hash(value.content.alg, output);
+    if (!actual || actual->alg != value.content.alg || actual->bytes != value.content.bytes) {
+        co_return std::unexpected(store_error(
+            errc::corrupt, "remote object failed digest verification", to_string(value.content)));
+    }
+    co_return output;
+}
+
+runtime::task<std::uint64_t>
+store_backend::read_remote(const blob& value, std::uint64_t offset, std::span<std::byte> into) {
+    if (offset >= value.size || into.empty()) {
+        co_return std::uint64_t{};
+    }
+    const auto wanted = std::min<std::uint64_t>(into.size(), value.size - offset);
+    auto position = std::uint64_t{};
+    auto copied = std::uint64_t{};
+    for (auto index = std::size_t{}; index < value.chunks.size(); ++index) {
+        const auto end = position + value.chunk_sizes[index];
+        if (end > offset && copied < wanted) {
+            auto chunk = co_await hydrate_remote_chunk(value, index, position);
+            if (!chunk) {
+                co_return std::unexpected(chunk.error());
+            }
+            const auto begin = static_cast<std::size_t>(std::max(position, offset) - position);
+            const auto amount = static_cast<std::size_t>(
+                std::min<std::uint64_t>(chunk->size() - begin, wanted - copied));
+            std::copy_n(chunk->begin() + begin, amount, into.begin() + copied);
+            copied += amount;
+        }
+        position = end;
+        if (copied == wanted) {
+            break;
+        }
+    }
+    if (copied != wanted) {
+        co_return std::unexpected(store_error(
+            errc::corrupt, "remote chunk list does not cover range", to_string(value.content)));
+    }
+    co_return copied;
 }
 
 runtime::task<std::vector<std::byte>> store_backend::get(digest id) {
     const auto it = objects_.find(to_string(id));
     if (it == objects_.end()) {
+        const auto remote = remotes_.find(to_string(id));
+        if (remote != remotes_.end()) {
+            co_return co_await get_remote(remote->second);
+        }
         std::optional<crypto_detail::domain_keys> encryption;
         if (id.alg == algorithm::blake3_keyed) {
             const auto key = chunk_keys_.find(to_string(id));
@@ -1113,6 +1427,10 @@ runtime::task<std::uint64_t>
 store_backend::read(digest id, std::uint64_t offset, std::span<std::byte> into) {
     const auto it = objects_.find(to_string(id));
     if (it == objects_.end()) {
+        const auto remote = remotes_.find(to_string(id));
+        if (remote != remotes_.end()) {
+            co_return co_await read_remote(remote->second, offset, into);
+        }
         auto raw = co_await get(id);
         if (!raw)
             co_return std::unexpected(raw.error());
@@ -1189,6 +1507,80 @@ runtime::task<bool> store_backend::contains(digest id) {
     if (!found)
         co_return std::unexpected(found.error());
     co_return found->has_value();
+}
+
+runtime::task<blob_availability> store_backend::has(digest id) {
+    auto local = co_await contains(id);
+    if (!local) {
+        co_return std::unexpected(local.error());
+    }
+    if (*local) {
+        co_return blob_availability::local;
+    }
+    const auto remote = remotes_.find(to_string(id));
+    if (remote == remotes_.end()) {
+        co_return blob_availability::absent;
+    }
+    for (const auto& chunk : remote->second.chunks) {
+        auto present = index_.find(chunk);
+        if (!present) {
+            co_return std::unexpected(present.error());
+        }
+        if (!*present) {
+            co_return blob_availability::remote;
+        }
+    }
+    co_return blob_availability::local;
+}
+
+runtime::task<void> store_backend::register_remote(blob value) {
+    if (!value.remote || value.remote->source.empty() ||
+        (value.content.alg != algorithm::blake3 && value.content.alg != algorithm::sha256) ||
+        value.chunks.empty() || value.chunks.size() != value.chunk_sizes.size()) {
+        co_return std::unexpected(store_error(
+            errc::invalid_argument, "invalid remote blob metadata", to_string(value.content)));
+    }
+    const auto total =
+        std::accumulate(value.chunk_sizes.begin(), value.chunk_sizes.end(), std::uint64_t{});
+    if (total != value.size || std::ranges::any_of(value.chunks, [](const digest& chunk) {
+            return chunk.alg != algorithm::blake3 && chunk.alg != algorithm::sha256;
+        })) {
+        co_return std::unexpected(store_error(
+            errc::invalid_argument, "invalid remote chunk metadata", to_string(value.content)));
+    }
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(
+            store_error(errc::busy, lock_error.message(), "store::register_remote"));
+    }
+    remotes_[to_string(value.content)] = std::move(value);
+    co_return co_await save_remotes();
+}
+
+result<std::uint64_t> store_backend::remote_bytes(digest blob_record) const {
+    const auto record = remote_records_.find(to_string(blob_record));
+    if (record == remote_records_.end()) {
+        return std::uint64_t{};
+    }
+    const auto remote = remotes_.find(to_string(record->second));
+    if (remote == remotes_.end()) {
+        return std::unexpected(store_error(
+            errc::corrupt, "remote blob record has no location", to_string(blob_record)));
+    }
+    if (objects_.contains(to_string(remote->second.content))) {
+        return std::uint64_t{};
+    }
+    auto bytes = std::uint64_t{};
+    for (auto index = std::size_t{}; index < remote->second.chunks.size(); ++index) {
+        auto present = index_.find(remote->second.chunks[index]);
+        if (!present) {
+            return std::unexpected(present.error());
+        }
+        if (!*present) {
+            bytes += remote->second.chunk_sizes[index];
+        }
+    }
+    return bytes;
 }
 
 std::vector<digest> store_backend::attestations(digest subject) const {

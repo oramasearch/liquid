@@ -15,6 +15,7 @@
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/object.hpp"
+#include "liquid/remote.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -30,7 +31,10 @@ struct LIQUID_EXPORT store_options {
     std::shared_ptr<keyring> keys;
     std::string write_key;
     bool durable{};
+    std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
 };
+
+enum class blob_availability : std::uint8_t { absent, remote, local };
 
 struct LIQUID_EXPORT object_key_version {
     std::string key_id;
@@ -111,6 +115,8 @@ public:
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<bool> contains(digest id);
+    [[nodiscard]] runtime::task<blob_availability> has(digest id);
+    [[nodiscard]] runtime::task<void> register_remote(blob value);
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<lease> lease_root(digest id, std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
@@ -119,6 +125,7 @@ private:
     friend class repository;
 
     [[nodiscard]] result<blob> blob_for(digest id) const;
+    [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,

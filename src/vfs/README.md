@@ -13,3 +13,7 @@ configured request loop through the runtime blocking adapter, and interrupts tha
 recorded explicit stop. Writable observed mounts support build output creation, replacement,
 renaming, truncation, permissions, and synthetic source/output modification times. Explicit
 shutdown probes a fresh path so kernel attribute caching cannot leave the request loop asleep.
+
+Hydration passes a version 2 blob's whole-content digest and logical chunk offset to the store.
+Remote ranges therefore enter the existing serialized queue and persistent chunk cache without a
+second VFS path; full materialisation uses the same store-backed content identity.

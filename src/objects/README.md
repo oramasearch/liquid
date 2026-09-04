@@ -17,3 +17,7 @@ records hold the unsigned base SPDX or CycloneDX document.
 `action-index-root` records persist sorted candidate/result entries, divergence, and the optional
 verification-attestation digest plus ordered trace digests so the disk projection can be rebuilt
 and collection can traverse every published result, attestation, and trace.
+
+Blob version 2 appends a whole-content digest and optional remote source/instance to the existing
+chunk arrays. Action version 2 carries the opt-in remote-execution eligibility flag; default-off
+actions and local blobs keep their version 1 canonical bytes.

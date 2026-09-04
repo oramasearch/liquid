@@ -32,6 +32,18 @@ runtime::task<std::vector<std::byte>> read_blob(repository& source, const blob& 
         co_return std::unexpected(
             verification_error(errc::unsupported, "output is too large to explain"));
     }
+    if (value.content.alg == algorithm::blake3 || value.content.alg == algorithm::sha256 ||
+        value.content.alg == algorithm::blake3_keyed) {
+        auto contents = co_await repository_detail::build_access::get(source, value.content);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        if (contents->size() != value.size) {
+            co_return std::unexpected(
+                verification_error(errc::corrupt, "output length differs from its blob record"));
+        }
+        co_return contents;
+    }
     auto output = std::vector<std::byte>{};
     output.reserve(static_cast<std::size_t>(value.size));
     for (const auto& chunk : value.chunks) {

@@ -43,7 +43,8 @@ target_link_libraries(app PRIVATE liquid::liquid)
 
 `cmake --install build --prefix <p>` lays out `bin/liquid`, `lib/libliquid.a`, `include/liquid/`,
 `lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, and
-`liquidTargets.cmake`), plus Capy's public headers under `include/boost/`. The liquid export owns
+`liquidTargets.cmake`), the wrap hook and Linux remote-action read guard under `libexec/liquid/`,
+plus Capy's public headers under `include/boost/`. The liquid export owns
 Capy's `liquid::capy` library target and recreates its `Boost::capy` alias. It carries its
 internal Corosio archive to satisfy static linking, while `libliquid` links Corosio privately.
 Consumers receive Capy's headers, compile options, and link library transitively without

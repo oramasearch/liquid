@@ -77,11 +77,13 @@ auto valid_relative_path(std::string_view value, bool allow_empty) -> bool {
     return path.lexically_normal() == path;
 }
 
-auto validate(const action_input& input) -> liquid::result<void> {
+auto validate(const action_input& input, bool require_host_platform = true)
+    -> liquid::result<void> {
     if (input.command.empty() || input.command.front().empty())
         return std::unexpected(failure(errc::invalid_argument, "action command is empty"));
     const auto host = host_platform();
-    if (input.platform.os != host.os || input.platform.arch != host.arch) {
+    if (require_host_platform &&
+        (input.platform.os != host.os || input.platform.arch != host.arch)) {
         return std::unexpected(failure(errc::unsupported,
                                        "action platform does not match this worker",
                                        input.platform.os + "/" + input.platform.arch));
@@ -314,7 +316,8 @@ runtime::task<action_result> run_action(repository& source,
                                                       executable_command(input, *environment),
                                                   .environment = environment->values,
                                                   .outputs = input.outputs,
-                                                  .timeout = input.timeout};
+                                                  .timeout = input.timeout,
+                                                  .remote_eligible = input.remote_eligible};
     build_detail::testing::record_sandbox_spawn();
     const auto execution_started = std::chrono::steady_clock::now();
     auto launched = co_await runtime::offload(
@@ -337,6 +340,12 @@ runtime::task<action_result> run_action(repository& source,
     if ((*launched)->timed_out) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
         co_return std::unexpected(failure(errc::unavailable, "action timed out"));
+    }
+    if ((*launched)->forbidden_read) {
+        static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
+        co_return std::unexpected(failure(errc::unauthorized,
+                                          "remote-eligible action read outside its inputs",
+                                          *(*launched)->forbidden_read));
     }
     if (auto violation = denied_write(observed)) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
@@ -465,6 +474,76 @@ runtime::task<result_id> execute(repository& source, action_input input) {
     }
     co_return *stored;
 #endif
+}
+
+runtime::task<result_id>
+record_remote_result(repository& source, action_input input, action_result value) {
+    auto valid = validate(input, false);
+    if (!valid) {
+        co_return std::unexpected(valid.error());
+    }
+    for (const auto& output : value.outputs) {
+        auto bytes = co_await repository_detail::build_access::get(source, output.blob);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto record = objects::decode_blob(*bytes);
+        if (!record || !record->remote) {
+            co_return std::unexpected(failure(errc::invalid_argument,
+                                              "remote result output has no remote location",
+                                              output.path));
+        }
+    }
+    auto sandbox = sandbox_detail::definition(input.platform);
+    if (!sandbox) {
+        co_return std::unexpected(sandbox.error());
+    }
+    auto sandbox_bytes = objects::encode(*sandbox);
+    if (!sandbox_bytes) {
+        co_return std::unexpected(sandbox_bytes.error());
+    }
+    auto sandbox_id =
+        co_await repository_detail::build_access::put_record(source, std::move(*sandbox_bytes));
+    if (!sandbox_id) {
+        co_return std::unexpected(sandbox_id.error());
+    }
+    auto action_bytes = objects::encode(objects::action_record{input, *sandbox_id});
+    if (!action_bytes) {
+        co_return std::unexpected(action_bytes.error());
+    }
+    auto action_id =
+        co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
+    if (!action_id) {
+        co_return std::unexpected(action_id.error());
+    }
+    value.action = *action_id;
+    if (value.worker.empty()) {
+        value.worker = "remote:" + input.platform.os + "/" + input.platform.arch;
+    }
+    if (value.observed_at == std::chrono::sys_seconds{}) {
+        value.observed_at =
+            std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    }
+    auto stored = co_await build_detail::store_result_with_provenance(source, value);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    if (repository_detail::build_access::cache_publish_enabled(source)) {
+        auto cache = build_detail::disk_cache{source};
+        auto opened = co_await cache.open();
+        if (!opened) {
+            co_return std::unexpected(opened.error());
+        }
+        auto candidate = cache.candidate_key(input, *sandbox_id);
+        if (!candidate) {
+            co_return std::unexpected(candidate.error());
+        }
+        auto published = co_await cache.publish(*candidate, *stored, value);
+        if (!published) {
+            co_return std::unexpected(published.error());
+        }
+    }
+    co_return *stored;
 }
 
 runtime::task<action_result> result(repository& source, result_id id) {

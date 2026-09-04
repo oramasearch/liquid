@@ -11,3 +11,7 @@ Verification launches the recorded working directory in a newly materialised inp
 captures stdout and stderr separately for digest comparison.
 
 Windows deliberately returns `errc::unsupported` until its Phase 6 launcher exists.
+
+On Linux, a remote-eligible action is prefixed with the static `read_guard.c` tracer inside the
+sandbox. It follows child processes, refuses file-open calls outside the action input and toolchain
+roots, and returns the first normalized path through the launch result.

@@ -56,6 +56,8 @@ that the table and `liquid --help` name the same commands.
 ## Output and errors
 
 `status`, `log`, `refs`, `ops`, `identity show`, `gc`, `why`, and `cache stats` accept `--json`;
+`status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
+but not present in the local store. Hydration and materialisation reduce the value chunk by chunk.
 `version --json` is also available for scripts. Text output is line-oriented and stable. A library
 error always has this shape and exits with status 1:
 

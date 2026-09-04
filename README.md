@@ -26,8 +26,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
-> structured `slsa_provenance/1`, signed `sbom/1`, and repository redaction are implemented; remote
-> operations remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
+> structured `slsa_provenance/1`, signed `sbom/1`, and repository redaction are implemented; hosted
+> remote operations remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
@@ -62,7 +62,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
 > misses with digest, argv, environment,
 > toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk hit
-> rates and output bytes avoided versus rebuilt. Memory and remote tiers remain separate work;
+> rates and output bytes avoided versus rebuilt. Memory and remote cache tiers remain separate work;
 > macOS needs macFUSE and Windows returns its documented unsupported result.
 > Each result records non-overlapping queued, sandbox, exec, hash, and store phases. Every wrap
 > retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
@@ -76,8 +76,16 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > refuses to execute an uncached probe for a foreign target.
 > Typed retention rules keep matching refs and cost-weighted results through computed reachability;
 > a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
-> names the responsible rule and lease. Memory and remote tiers remain separate work; macOS needs
+> names the responsible rule and lease. Memory and remote cache tiers remain separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
+
+> **Phase 3 build-without-bytes is implemented behind a transport-neutral remote blob source.**
+> Remote result records retain source and instance locations without fetching outputs. Store reads,
+> VFS hydration, and materialisation fetch verified logical chunks only on demand, while `liquid
+> status` reports current-tree bytes that remain remote. Actions carry an opt-in remote-eligibility
+> flag, default off; on Linux, eligible actions refuse and name reads outside their input and
+> toolchain trees before dispatch. The REAPI transport and cost-based scheduling remain separate
+> Phase 3 work.
 
 ## Where this sits
 
@@ -117,6 +125,7 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
+- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, read-time hermeticity, and the remaining Phase 3 design.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.

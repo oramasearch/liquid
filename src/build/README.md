@@ -46,3 +46,7 @@ and operations stay in `include/liquid/build.hpp`.
 journal and action index. It classifies differences strictly from action/result records, manifests,
 stored trees and blobs, and repository history. It also owns the completed-wrap statistics
 projection. `cache.cpp` records lookup result relationships but does not store a guessed cause.
+
+`record_remote_result` stores signed remote action results and their provenance using registered
+version 2 blob records, without reading output content. The executor passes remote eligibility to
+the Linux read guard and returns an unauthorized error containing the first forbidden read path.
