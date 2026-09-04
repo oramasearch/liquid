@@ -591,11 +591,9 @@ auto object_store::read(const sha1& id) -> result<object> {
         auto object = decode(decode, **offset, id);
         if (!object)
             return std::unexpected(object.error());
-        if (object->payload.size() <= 32U * 1024U * 1024U) {
-            if (delta_cache_bytes_ + object->payload.size() > 32U * 1024U * 1024U) {
-                delta_cache_.clear();
-                delta_cache_bytes_ = 0;
-            }
+        constexpr std::uint64_t delta_cache_limit = 32U * 1024U * 1024U;
+        if (object->payload.size() <= delta_cache_limit &&
+            delta_cache_bytes_ + object->payload.size() <= delta_cache_limit) {
             delta_cache_bytes_ += object->payload.size();
             delta_cache_.emplace(hex, *object);
         }
