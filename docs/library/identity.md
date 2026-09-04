@@ -15,6 +15,19 @@ Identity documents are canonical CBOR with `artifact_type = "identity_document"`
 "ccbor"`, and a `signatures` array. A predecessor hash is SHA-512/256 of the predecessor's stored
 canonical CBOR bytes, signatures included, encoded as base64.
 
+## Public wire codecs
+
+`encode_identity_document(document)` returns the complete canonical-CBOR record, including its
+signatures. `decode_identity_document(bytes)` accepts `std::span<const std::byte>`, rejects malformed
+or non-canonical input, and returns `result<identity_document>`. Both the initial document and every
+rotation successor use this same public record type and codec. `decode_signature(bytes)` decodes a
+canonical TAAP/1 signature object into `result<signature>` and rejects unsupported algorithms or
+invalid Ed25519 signature lengths.
+
+The codecs do not verify trust. Call `verify_document` for one decoded document and `verify_chain`
+for an ordered initial-document and rotation-document chain. The tests round-trip the exact initial
+and successor files stored by liquid and decode their signature objects through the public API.
+
 ## Rotation
 
 `signer::rotate(compromise_declaration?)` creates the successor document and moves the local

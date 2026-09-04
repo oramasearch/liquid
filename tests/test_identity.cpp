@@ -56,7 +56,7 @@ auto read_identity_documents(const std::filesystem::path& home, const liquid::ac
         for (char character; input.get(character);) {
             bytes.push_back(std::byte{static_cast<unsigned char>(character)});
         }
-        auto document = liquid::identity_detail::parse_document(bytes);
+        auto document = liquid::decode_identity_document(bytes);
         EXPECT_TRUE(document) << document.error().message;
         if (document) {
             documents.push_back(std::move(*document));
@@ -153,6 +153,45 @@ TEST(Identity, RotationStoresAndVerifiesTheKeyChain) {
     const auto reopened = liquid::runtime::block_on(liquid::identity_detail::local_signer());
     ASSERT_TRUE(reopened) << reopened.error().message;
     EXPECT_EQ(reopened->identity().key_fingerprint, successor->subject.key_fingerprint);
+    std::error_code code;
+    std::filesystem::remove_all(home, code);
+}
+
+TEST(Identity, PublicCodecsRoundTripStoredIdentityAndRotationDocuments) {
+    const auto home = rotation_home("public-codecs");
+    set_identity_home(home);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(signer) << signer.error().message;
+    const auto initial = signer->identity();
+    const auto successor = liquid::runtime::block_on(signer->rotate());
+    ASSERT_TRUE(successor) << successor.error().message;
+
+    const auto directory = home / "identity" / initial.fingerprint / "documents";
+    auto document_count = std::size_t{};
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        auto input = std::ifstream{entry.path(), std::ios::binary};
+        auto stored = std::vector<std::byte>{};
+        for (char character; input.get(character);) {
+            stored.push_back(std::byte{static_cast<unsigned char>(character)});
+        }
+        auto decoded = liquid::decode_identity_document(stored);
+        ASSERT_TRUE(decoded) << decoded.error().message;
+        auto encoded = liquid::encode_identity_document(*decoded);
+        ASSERT_TRUE(encoded) << encoded.error().message;
+        EXPECT_EQ(*encoded, stored);
+        for (const auto& signed_value : decoded->signatures) {
+            auto signature_bytes = liquid::identity_detail::canonical_signature(signed_value);
+            ASSERT_TRUE(signature_bytes) << signature_bytes.error().message;
+            auto decoded_signature = liquid::decode_signature(*signature_bytes);
+            ASSERT_TRUE(decoded_signature) << decoded_signature.error().message;
+            EXPECT_EQ(decoded_signature->bytes, signed_value.bytes);
+            EXPECT_EQ(decoded_signature->signing_key_identifier,
+                      signed_value.signing_key_identifier);
+            EXPECT_EQ(decoded_signature->signature_purpose, signed_value.signature_purpose);
+        }
+        ++document_count;
+    }
+    EXPECT_EQ(document_count, 2U);
     std::error_code code;
     std::filesystem::remove_all(home, code);
 }
