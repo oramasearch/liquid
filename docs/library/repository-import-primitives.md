@@ -14,7 +14,14 @@ sole parent and advances `main`.
 Change metadata is canonical CBOR text-to-text data. It is signed as part of the change body and
 is intended for stable foreign-format identifiers such as a Git object name.
 
+## Repository metadata
+
+`set_metadata`, `metadata`, and `metadata_keys` persist opaque byte values in the repository
+document. Importers use the `git.commit.<sha1>` and `git.change.<change-id>` keys for their
+bidirectional identity mapping. Prefix enumeration is sorted and resumes an interrupted import
+without scanning history.
+
 ## Status
 
-`record(change_input)` is implemented. The remaining importer primitives are documented here as
-they land.
+`record(change_input)` and repository metadata are implemented. The remaining importer primitives
+are documented here as they land.

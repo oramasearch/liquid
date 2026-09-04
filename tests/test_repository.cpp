@@ -254,6 +254,33 @@ TEST(Repository, record_preserves_imported_change_fields) {
     EXPECT_EQ(refs->front().id.value.bytes, id->value.bytes);
 }
 
+TEST(Repository, metadata_persists_and_lists_a_prefix) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.set_metadata("git.commit.0123", content("blake3:change"))));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.set_metadata("git.change.blake3", content("0123"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.set_metadata("other", content("ignored"))));
+
+    const auto keys = liquid::runtime::block_on(repository.metadata_keys("git."));
+    ASSERT_TRUE(keys) << keys.error().message;
+    EXPECT_EQ(*keys, (std::vector<std::string>{"git.change.blake3", "git.commit.0123"}));
+    repository = {};
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    const auto stored = liquid::runtime::block_on(reopened->metadata("git.commit.0123"));
+    ASSERT_TRUE(stored) << stored.error().message;
+    ASSERT_TRUE(*stored);
+    EXPECT_EQ(text(**stored), "blake3:change");
+    const auto absent = liquid::runtime::block_on(reopened->metadata("git.commit.missing"));
+    ASSERT_TRUE(absent) << absent.error().message;
+    EXPECT_FALSE(*absent);
+}
+
 TEST(Repository, write_undo_and_locks_are_recorded) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));

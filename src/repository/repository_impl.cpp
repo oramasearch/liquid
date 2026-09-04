@@ -55,6 +55,7 @@ struct repository_document {
     node_id repository{};
     working_entry root{entry_kind::directory, {}, 0040755, {}, {}};
     std::map<std::string, change_id> refs;
+    std::map<std::string, std::vector<std::byte>> metadata;
     std::map<node_id, digest> dirs;
     std::optional<change_id> head;
     std::vector<stored_operation> operations;
@@ -181,6 +182,9 @@ auto encode_repository_document(const repository_document& value)
     auto refs = cbor::value::array{};
     for (const auto& [name, id] : value.refs)
         refs.push_back(map({{"name", cbor::value{name}}, {"id", digest_value(id.value)}}));
+    auto metadata = cbor::value::map{};
+    for (const auto& [key, value] : value.metadata)
+        metadata.emplace_back(cbor::value{key}, bytes(value));
     auto dirs = cbor::value::array{};
     for (const auto& [node, document] : value.dirs)
         dirs.push_back(map({{"node", bytes(node)}, {"document", digest_value(document)}}));
@@ -221,6 +225,7 @@ auto encode_repository_document(const repository_document& value)
                              {"repo", bytes(value.repository)},
                              {"root", encode_entry(value.root)},
                              {"refs", cbor::value{std::move(refs)}},
+                             {"metadata", cbor::value{std::move(metadata)}},
                              {"dirs", cbor::value{std::move(dirs)}},
                              {"ops", cbor::value{std::move(ops)}},
                              {"head", std::move(head)},
@@ -238,6 +243,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* repo = find(*decoded, "repo");
     const auto* root = find(*decoded, "root");
     const auto* refs = find(*decoded, "refs");
+    const auto* metadata = find(*decoded, "metadata");
     const auto* dirs = find(*decoded, "dirs");
     const auto* ops = find(*decoded, "ops");
     const auto* head = find(*decoded, "head");
@@ -249,6 +255,8 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* title = kind ? std::get_if<std::string>(&kind->data) : nullptr;
     const auto* id = repo ? std::get_if<cbor::value::bytes>(&repo->data) : nullptr;
     const auto* ref_values = refs ? std::get_if<cbor::value::array>(&refs->data) : nullptr;
+    const auto* metadata_values =
+        metadata ? std::get_if<cbor::value::map>(&metadata->data) : nullptr;
     const auto* dir_values = dirs ? std::get_if<cbor::value::array>(&dirs->data) : nullptr;
     const auto* op_values = ops ? std::get_if<cbor::value::array>(&ops->data) : nullptr;
     const auto* lock_values = locks ? std::get_if<cbor::value::array>(&locks->data) : nullptr;
@@ -278,6 +286,15 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         if (!digest)
             return std::unexpected(digest.error());
         output.refs.emplace(*text, change_id{*digest});
+    }
+    if (metadata_values) {
+        for (const auto& [key, value] : *metadata_values) {
+            const auto* name = std::get_if<std::string>(&key.data);
+            const auto* data = std::get_if<cbor::value::bytes>(&value.data);
+            if (!name || !data || !output.metadata.emplace(*name, *data).second)
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid repository metadata", "repository document"));
+        }
     }
     for (const auto& item : *dir_values) {
         const auto* node = find(item, "node");
@@ -1916,6 +1933,34 @@ runtime::task<change_id> repository::record(change_input input) {
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return id;
+}
+runtime::task<void> repository::set_metadata(std::string key, std::vector<std::byte> value) {
+    if (!impl_ || key.empty())
+        co_return std::unexpected(failure(errc::invalid_argument, "invalid metadata key", key));
+    impl_->current.metadata[std::move(key)] = std::move(value);
+    auto saved = co_await impl_->checkpoint_or_journal();
+    if (!saved)
+        co_return std::unexpected(saved.error());
+    co_return result<void>{};
+}
+runtime::task<std::optional<std::vector<std::byte>>> repository::metadata(std::string key) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    const auto found = impl_->current.metadata.find(key);
+    if (found == impl_->current.metadata.end())
+        co_return std::optional<std::vector<std::byte>>{};
+    co_return std::optional<std::vector<std::byte>>{found->second};
+}
+runtime::task<std::vector<std::string>> repository::metadata_keys(std::string prefix) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    std::vector<std::string> keys;
+    for (const auto& [key, value] : impl_->current.metadata) {
+        static_cast<void>(value);
+        if (key.starts_with(prefix))
+            keys.push_back(key);
+    }
+    co_return keys;
 }
 runtime::task<std::vector<ref>> repository::refs() {
     if (!impl_)

@@ -151,6 +151,9 @@ public:
     [[nodiscard]] runtime::task<void> remove(std::string path);
     [[nodiscard]] runtime::task<change_id> cut(std::string message);
     [[nodiscard]] runtime::task<change_id> record(change_input input);
+    [[nodiscard]] runtime::task<void> set_metadata(std::string key, std::vector<std::byte> value);
+    [[nodiscard]] runtime::task<std::optional<std::vector<std::byte>>> metadata(std::string key);
+    [[nodiscard]] runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);
     [[nodiscard]] runtime::task<std::vector<ref>> refs();
     [[nodiscard]] runtime::task<void> set_ref(std::string name, change_id id);
     [[nodiscard]] result<repository_status> status();
