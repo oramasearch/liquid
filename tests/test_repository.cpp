@@ -7,7 +7,6 @@
 #include <string_view>
 
 #include "encoding/cbor.hpp"
-#include "identity/taap.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
@@ -63,6 +62,21 @@ auto field(const liquid::encoding::cbor::value& value, std::string_view name)
         return nullptr;
     }
     for (const auto& [key, item] : *fields) {
+        const auto* text = std::get_if<std::string>(&key.data);
+        if (text && *text == name) {
+            return &item;
+        }
+    }
+    return nullptr;
+}
+
+auto mutable_field(liquid::encoding::cbor::value& value, std::string_view name)
+    -> liquid::encoding::cbor::value* {
+    auto* fields = std::get_if<liquid::encoding::cbor::value::map>(&value.data);
+    if (!fields) {
+        return nullptr;
+    }
+    for (auto& [key, item] : *fields) {
         const auto* text = std::get_if<std::string>(&key.data);
         if (text && *text == name) {
             return &item;
@@ -289,9 +303,13 @@ TEST(Repository, DripAndChangeSignaturesCarryEd25519Tags) {
         ASSERT_NE(signature_value, nullptr);
         const auto* signature_bytes = std::get_if<cbor::value::bytes>(&signature_value->data);
         ASSERT_NE(signature_bytes, nullptr);
-        const auto signature = liquid::identity_detail::parse_signature(*signature_bytes);
+        const auto signature = cbor::decode(*signature_bytes);
         ASSERT_TRUE(signature) << signature.error().message;
-        EXPECT_EQ(signature->algorithm, "ed25519");
+        const auto* algorithm_value = field(*signature, "signature_algorithm");
+        ASSERT_NE(algorithm_value, nullptr);
+        const auto* algorithm = std::get_if<std::string>(&algorithm_value->data);
+        ASSERT_NE(algorithm, nullptr);
+        EXPECT_EQ(*algorithm, "ed25519");
     }
 
     const auto id = liquid::runtime::block_on(repository.cut("signed change"));
@@ -299,9 +317,58 @@ TEST(Repository, DripAndChangeSignaturesCarryEd25519Tags) {
     const auto history = liquid::runtime::block_on(repository.log());
     ASSERT_TRUE(history) << history.error().message;
     ASSERT_EQ(history->size(), 1U);
-    const auto signature = liquid::identity_detail::parse_signature(history->front().sig);
+    const auto signature = cbor::decode(history->front().sig);
     ASSERT_TRUE(signature) << signature.error().message;
-    EXPECT_EQ(signature->algorithm, "ed25519");
+    const auto* algorithm_value = field(*signature, "signature_algorithm");
+    ASSERT_NE(algorithm_value, nullptr);
+    const auto* algorithm = std::get_if<std::string>(&algorithm_value->data);
+    ASSERT_NE(algorithm, nullptr);
+    EXPECT_EQ(*algorithm, "ed25519");
+}
+
+TEST(Repository, RejectsAnUnknownSignatureAlgorithm) {
+    namespace cbor = liquid::encoding::cbor;
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("first", content("first"))));
+
+    auto journal = cbor::decode(read_file(location.path() / "LIQUID_JOURNAL"));
+    ASSERT_TRUE(journal) << journal.error().message;
+    auto* drips_value = mutable_field(*journal, "drips");
+    ASSERT_NE(drips_value, nullptr);
+    auto* drips = std::get_if<cbor::value::array>(&drips_value->data);
+    ASSERT_NE(drips, nullptr);
+    ASSERT_EQ(drips->size(), 1U);
+    auto* signature_value = mutable_field(drips->front(), "sig");
+    ASSERT_NE(signature_value, nullptr);
+    auto* signature_bytes = std::get_if<cbor::value::bytes>(&signature_value->data);
+    ASSERT_NE(signature_bytes, nullptr);
+    auto signature = cbor::decode(*signature_bytes);
+    ASSERT_TRUE(signature) << signature.error().message;
+    auto* algorithm = mutable_field(*signature, "signature_algorithm");
+    ASSERT_NE(algorithm, nullptr);
+    algorithm->data = std::string{"mldsa"};
+    const auto encoded_signature = cbor::encode(*signature);
+    ASSERT_TRUE(encoded_signature) << encoded_signature.error().message;
+    signature_value->data = *encoded_signature;
+    const auto encoded_journal = cbor::encode(*journal);
+    ASSERT_TRUE(encoded_journal) << encoded_journal.error().message;
+    auto output =
+        std::ofstream{location.path() / "LIQUID_JOURNAL", std::ios::binary | std::ios::trunc};
+    ASSERT_TRUE(output.good());
+    output.write(reinterpret_cast<const char*>(encoded_journal->data()),
+                 static_cast<std::streamsize>(encoded_journal->size()));
+    ASSERT_TRUE(output.good());
+    output.close();
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    const auto verified = liquid::repository_detail::testing::verify_history(*reopened);
+    ASSERT_FALSE(verified.has_value());
+    EXPECT_EQ(verified.error().code, liquid::errc::unsupported);
+    EXPECT_EQ(verified.error().context, "mldsa");
 }
 
 TEST(Repository, split_nest_and_combine_are_composable) {

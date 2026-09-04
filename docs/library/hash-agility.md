@@ -56,5 +56,5 @@ an implementation and verification policy are added.
 `tests/test_store.cpp` exercises mixed BLAKE3 and SHA-256 objects before and
 after reopening. `tests/test_repository.cpp` covers a SHA-256 repository round
 trip, alternate-reference resolution after rehashing, and Ed25519 tags on
-written drips and changes. `tests/test_hash.cpp` and `tests/test_identity.cpp`
+written drips and changes. `tests/test_hash.cpp` and `tests/test_repository.cpp`
 cover rejection of unknown digest and signature tags.

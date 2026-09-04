@@ -7,7 +7,6 @@
 #include <fstream>
 #include <iterator>
 
-#include "encoding/cbor.hpp"
 #include "identity/taap.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
