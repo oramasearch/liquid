@@ -73,6 +73,15 @@ auto wait_for_count(const capture_events& events, std::size_t count)
         liquid::error{liquid::errc::unavailable, "capture event was not observed", "scan test"});
 }
 
+auto wait_for_capture(std::chrono::milliseconds duration) -> liquid::runtime::task<void> {
+    auto [delay_error] = co_await liquid::runtime::delay(duration);
+    if (delay_error) {
+        co_return std::unexpected(
+            liquid::error{liquid::errc::internal, delay_error.message(), "scan test"});
+    }
+    co_return {};
+}
+
 void write_text(const std::filesystem::path& path, std::string_view value) {
     auto output = std::ofstream{path, std::ios::trunc};
     ASSERT_TRUE(output.good());
@@ -102,6 +111,8 @@ TEST(InlineScanning, blocked_event_discloses_only_safe_coordinates) {
     write_text(workspace.path() / "settings.env", "key=" + credential + "\n");
     auto waited = liquid::runtime::block_on(wait_for_count(events, 1));
     ASSERT_TRUE(waited) << waited.error().message;
+    auto settled = liquid::runtime::block_on(wait_for_capture(std::chrono::milliseconds{250}));
+    ASSERT_TRUE(settled) << settled.error().message;
     const auto values = events.values();
     ASSERT_EQ(values.size(), 1U);
     ASSERT_TRUE(values.front().block);

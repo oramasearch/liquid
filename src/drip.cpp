@@ -456,6 +456,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
             co_return std::unexpected(scanned.error());
         if (!*scanned)
             co_return std::unexpected(scanned->error());
+        auto next_state = std::move((**scanned).state);
         if (report) {
             std::lock_guard lock(mutex);
             ++recrawls;
@@ -463,9 +464,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         auto appended = co_await append(std::move((**scanned).changes));
         if (!appended)
             co_return std::unexpected(appended.error());
-        if (!*appended)
-            co_return result<void>{};
-        workspace_state = std::move((**scanned).state);
+        workspace_state = std::move(next_state);
         auto saved = co_await runtime::offload([path = control / "state", state = workspace_state] {
             return capture_detail::save_workspace_state(path, state);
         });
@@ -473,6 +472,8 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
             co_return std::unexpected(saved.error());
         if (!*saved)
             co_return std::unexpected(saved->error());
+        if (!*appended)
+            co_return result<void>{};
         co_return {};
     }
 };

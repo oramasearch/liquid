@@ -45,6 +45,11 @@ Events are hints, so overflow and recrawl must be
 visible rather than silently repaired. `pause()` retains the observed window without appending;
 `resume()` reconciles that window and replays it.
 
+A completed blocked scan updates the local filesystem snapshot but does not append a journal
+record or update the accepted chunk list. This records that the exact blocked bytes have already
+been reported, so a delayed watcher hint or periodic reconciliation cannot publish the same block
+again; a later filesystem change remains eligible for scanning.
+
 ## Platform mechanisms
 
 | Platform | Mechanism | Capture behavior |

@@ -46,7 +46,8 @@ line and matched value are never copied.
 Capture compares FastCDC chunk ids with the last accepted chunk list for the path. On the first
 observation or after restart it scans the complete file. On later observations it runs detectors
 only on full lines intersecting changed chunks, preserving line context and line numbers. A
-blocked observation does not replace the accepted chunk list or saved workspace snapshot.
+blocked observation does not replace the accepted chunk list, but its filesystem snapshot is
+saved so repeated watcher hints cannot publish the same block again.
 
 `capture_status::blocked_drips` and `last_block` expose the safe coordinates. The existing
 subscriber callback receives a value whose `block` is set and which is not a journaled drip.
