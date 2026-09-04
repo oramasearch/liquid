@@ -220,7 +220,20 @@ class repository {
   runtime::task<void> undo(op_id);                       // #41: the operation log
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
+  // Import primitives (liquid #43; lake's importers use the same calls)
+  runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
+  runtime::task<void> set_metadata(std::string key, std::vector<std::byte>);   // repository-document metadata map
+  runtime::task<std::optional<std::vector<std::byte>>> metadata(std::string key);
+  runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);
+  runtime::task<tree> tree(digest);                              // a tree record from the store (historical snapshots)
+  runtime::task<std::vector<std::byte>> blob(digest);            // a blob's bytes by digest
+  runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);   // mode-aware
+  runtime::task<void> nest_ref(std::string path, repo_ref);      // a nested-repository placeholder without the repository present
 };
+struct change_input { std::vector<change_ref> parents; actor author; std::chrono::sys_seconds at; std::string message;
+                      std::map<std::string, std::string> metadata; std::optional<std::string> ref; };
+struct write_options { std::uint32_t mode{0100644}; };
+// log_options gains: std::optional<change_id> from; bool first_parent{false};  (full DAG, topological order, by default)
 ```
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
