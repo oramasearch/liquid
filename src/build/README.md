@@ -74,3 +74,13 @@ version 2 blob records, without reading output content. Remote scheduling uses t
 remote eligibility to the Linux read guard and returns an unauthorized error containing the first
 forbidden read path. `wrap.cpp` checks REAPI ActionCache only after disk, imports under the same
 candidate, and passes the imported result through the ordinary signed manifest-validating lookup.
+For liquid's scheduler, `distribution.cpp` passes the prepared native action and exact cost
+decision to `remote_executor::execute_prepared`. The publication path imports and verifies the
+worker's TAAP-signed result, provenance, and SBOMs without replacing that identity.
+For a known wrapped action whose input validation misses, the wrap plan carries that action
+family's recorded timings into a Phase 2 action, replaces captured fixed environment values with
+the executor's deterministic values, maps the captured executable from either its toolchain or
+input snapshot into the Phase 2 `toolchain/bin` layout, and enables the remote read guard. It runs
+the #18 decision through the scheduler executor and marks the returned process as satisfied before
+launching the remaining local plan. Scheduler-backed wraps evaluate those child actions before the
+driver-level outer cache, whose manifest does not contain reads owned by child process trees.

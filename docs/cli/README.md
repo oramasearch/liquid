@@ -50,7 +50,7 @@ that the table and `liquid --help` name the same commands.
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its timing, dependency, and scheduling trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
@@ -63,6 +63,8 @@ that the table and `liquid --help` name the same commands.
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
+| `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
+| `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
 
 ## Output and errors
 
@@ -189,6 +191,9 @@ remote tier counts in text and JSON.
 header, deadline, and publication flags described in [`../library/reapi.md`](../library/reapi.md).
 Remote publication is off unless `--remote-publish` is supplied. `liquid serve reapi --listen
 <address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache.
+`--scheduler <endpoint>` selects liquid's scheduler beside the stock `--remote` REAPI backend and
+preserves the scheduler's signed scheduling record. `liquid scheduler` and `liquid worker` accept
+the flags and environment variables listed in [`../library/workers.md`](../library/workers.md).
 
 `policy check <target>` evaluates the current repository's `config.policy` against a cached action,
 result, or produced path without executing it. It exits non-zero when a `refuse` rule fails.
@@ -253,6 +258,9 @@ liquid policy explain build/output.o
 liquid sbom build/output.o --spdx
 liquid sbom /usr/bin/tool --cyclonedx
 liquid wrap cmake -S . -B build -G Ninja
+liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
+liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081
+liquid wrap --scheduler 127.0.0.1:50051 make -j8
 liquid wrap --jobs 8 --explain cmake --build build
 liquid build --profile cmake --build build
 liquid build trace --chrome > build-trace.json

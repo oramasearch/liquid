@@ -46,7 +46,9 @@ refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling 
 blob interfaces, source and toolchain transfer from the store, recorded local/remote/race cost
 decisions, short-action batching, and race-loser cancellation; private HTTP/2 and gRPC framing are
 implemented. Liquid #16 adds the REAPI client, validated remote cache tier, repository configuration,
-and `liquid serve reapi` CAS and ActionCache; production workers remain a later issue. Liquid #156
+and `liquid serve reapi` CAS and ActionCache. Liquid #63 adds liquid's action-digest scheduler,
+size-class worker fleet, bounded requeue, TAAP-signed remote results, and deployable control
+surfaces. Liquid #156
 adds the dependency-free protobuf codec, REAPI v2.3 message set, native tree/action/result
 conversions, and BLAKE3/SHA-256 capability selection. Liquid #19 adds explicit local replay of recorded actions and results, byte-level
 comparison, and optional verification recording; remote inputs hydrate through the registered

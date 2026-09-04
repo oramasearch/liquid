@@ -15,6 +15,7 @@
 #include "liquid/object.hpp"
 #include "objects/records.hpp"
 #include "reapi/conversion.hpp"
+#include "workers/protocol.hpp"
 
 namespace liquid::reapi {
 namespace {
@@ -285,6 +286,15 @@ runtime::task<void> remote_client::prepare(std::string, std::vector<remote_blob>
 
 runtime::task<std::vector<digest>> remote_client::find_missing(std::string instance_name,
                                                                std::vector<digest> blobs_to_find) {
+    if (rpc_.config().backend == remote_backend::liquid_scheduler) {
+        for (const auto& blob : blobs_to_find) {
+            if (!aliases_.contains(to_string(blob))) {
+                co_return std::unexpected(client_error(
+                    errc::invalid_argument, "remote blob was not prepared", to_string(blob)));
+            }
+        }
+        co_return blobs_to_find;
+    }
     auto request = FindMissingBlobsRequest{.instance_name = std::move(instance_name)};
     auto requested = std::map<std::string, digest>{};
     for (const auto& blob : blobs_to_find) {
@@ -375,8 +385,34 @@ runtime::task<std::uint64_t> remote_client::read_range(std::string,
     }
     const auto alias = aliases_.find(to_string(blob));
     if (alias == aliases_.end()) {
-        co_return std::unexpected(
-            client_error(errc::not_found, "remote digest alias is unavailable", to_string(blob)));
+        if (rpc_.config().backend != remote_backend::liquid_scheduler) {
+            co_return std::unexpected(client_error(
+                errc::not_found, "remote digest alias is unavailable", to_string(blob)));
+        }
+        auto request = workers::encode(workers::read_object_request{to_string(blob)});
+        if (!request) {
+            co_return std::unexpected(request.error());
+        }
+        auto messages = co_await rpc_.call(workers::read_object_method, *request);
+        if (!messages) {
+            co_return std::unexpected(messages.error());
+        }
+        if (messages->size() != 1) {
+            co_return std::unexpected(
+                client_error(errc::corrupt, "ReadObject returned the wrong response count"));
+        }
+        auto response = workers::decode<workers::read_object_response>(messages->front());
+        if (!response) {
+            co_return std::unexpected(response.error());
+        }
+        auto actual = hash(blob.alg, response->contents);
+        if (!actual || actual->bytes != blob.bytes) {
+            co_return std::unexpected(
+                actual ? client_error(errc::corrupt, "ReadObject digest changed", to_string(blob))
+                       : actual.error());
+        }
+        staged_.insert_or_assign(to_string(blob), std::move(response->contents));
+        co_return co_await read_range({}, blob, offset, output);
     }
     auto bytes = co_await read_blob(alias->second);
     if (!bytes) {
@@ -555,6 +591,9 @@ remote_client::native_result(const ActionResult& value, digest action, bool vali
     if (!output) {
         co_return std::unexpected(output.error());
     }
+    if (rpc_.config().backend == remote_backend::liquid_scheduler) {
+        co_return std::move(*output);
+    }
     const auto make_record = [this,
                               action](const Digest& raw,
                                       std::span<const std::byte> inline_bytes) -> result<digest> {
@@ -627,13 +666,9 @@ remote_client::native_result(const ActionResult& value, digest action, bool vali
     co_return std::move(*output);
 }
 
-runtime::task<action_result> remote_client::execute(action_input input) {
-    const auto empty = std::span<const std::byte>{};
-    auto sandbox = hash(input.inputs.alg, empty);
-    if (!sandbox) {
-        co_return std::unexpected(sandbox.error());
-    }
-    auto prepared = co_await prepare_action(input, *sandbox);
+runtime::task<action_result> remote_client::execute_operation(
+    action_input input, digest action, digest sandbox, std::optional<execution_schedule> schedule) {
+    auto prepared = co_await prepare_action(input, sandbox);
     if (!prepared) {
         co_return std::unexpected(prepared.error());
     }
@@ -645,12 +680,41 @@ runtime::task<action_result> remote_client::execute(action_input input) {
     if (!function) {
         co_return std::unexpected(function.error());
     }
-    auto operations = co_await streaming<ExecuteRequest, Operation>(
-        rpc_,
-        execute_method,
-        ExecuteRequest{.instance_name = instance(),
-                       .action_digest = prepared->messages.action_digest,
-                       .digest_function = *function});
+    auto operations = result<std::vector<Operation>>{};
+    if (rpc_.config().backend == remote_backend::liquid_scheduler) {
+        if (!schedule) {
+            co_return std::unexpected(
+                client_error(errc::invalid_argument, "scheduler execution has no cost decision"));
+        }
+        auto request =
+            workers::encode(workers::submit_request{.instance = instance(),
+                                                    .action = prepared->messages.action_digest,
+                                                    .schedule = *schedule,
+                                                    .native_action = action,
+                                                    .remote_eligible = input.remote_eligible});
+        if (!request) {
+            co_return std::unexpected(request.error());
+        }
+        auto response = co_await rpc_.call(workers::submit_method, *request);
+        if (!response) {
+            co_return std::unexpected(response.error());
+        }
+        operations = std::vector<Operation>{};
+        for (const auto& message : *response) {
+            auto decoded = decode_message<Operation>(message);
+            if (!decoded) {
+                co_return std::unexpected(decoded.error());
+            }
+            operations->push_back(std::move(*decoded));
+        }
+    } else {
+        operations = co_await streaming<ExecuteRequest, Operation>(
+            rpc_,
+            execute_method,
+            ExecuteRequest{.instance_name = instance(),
+                           .action_digest = prepared->messages.action_digest,
+                           .digest_function = *function});
+    }
     if (!operations) {
         co_return std::unexpected(operations.error());
     }
@@ -678,15 +742,31 @@ runtime::task<action_result> remote_client::execute(action_input input) {
     if (!response) {
         co_return std::unexpected(response.error());
     }
+    co_return co_await native_result(*response->result, action);
+}
+
+runtime::task<action_result> remote_client::execute(action_input input) {
+    const auto empty = std::span<const std::byte>{};
+    auto sandbox = hash(input.inputs.alg, empty);
+    if (!sandbox) {
+        co_return std::unexpected(sandbox.error());
+    }
     auto native_action = objects::encode(objects::action_record{input, *sandbox});
     if (!native_action) {
         co_return std::unexpected(native_action.error());
     }
-    auto action_id = objects::digest_of(input.inputs.alg, *native_action);
-    if (!action_id) {
-        co_return std::unexpected(action_id.error());
+    auto action = objects::digest_of(input.inputs.alg, *native_action);
+    if (!action) {
+        co_return std::unexpected(action.error());
     }
-    co_return co_await native_result(*response->result, *action_id);
+    co_return co_await execute_operation(std::move(input), *action, *sandbox, std::nullopt);
+}
+
+runtime::task<action_result> remote_client::execute_prepared(action_input input,
+                                                             digest action,
+                                                             digest sandbox,
+                                                             execution_schedule schedule) {
+    co_return co_await execute_operation(std::move(input), action, sandbox, std::move(schedule));
 }
 
 runtime::task<std::vector<action_result>>

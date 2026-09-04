@@ -32,6 +32,8 @@ public:
     [[nodiscard]] std::uint64_t queue_depth() const noexcept override;
     [[nodiscard]] bool supports_batch() const noexcept override;
     [[nodiscard]] runtime::task<action_result> execute(action_input input) override;
+    [[nodiscard]] runtime::task<action_result> execute_prepared(
+        action_input input, digest action, digest sandbox, execution_schedule schedule) override;
     [[nodiscard]] runtime::task<std::vector<action_result>>
     execute_batch(std::vector<action_input> inputs) override;
 
@@ -58,6 +60,11 @@ private:
     [[nodiscard]] runtime::task<std::vector<std::byte>> read_blob(const Digest& blob);
     [[nodiscard]] runtime::task<action_result>
     native_result(const ActionResult& value, digest action, bool validate_action = true);
+    [[nodiscard]] runtime::task<action_result>
+    execute_operation(action_input input,
+                      digest action,
+                      digest sandbox,
+                      std::optional<execution_schedule> schedule);
 };
 
 } // namespace liquid::reapi

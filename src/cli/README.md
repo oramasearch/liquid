@@ -44,5 +44,11 @@ include the private protocol codec.
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 
+`workers.cpp` implements the scheduler and worker daemons with flag-over-environment
+configuration. Long-running entry points run on the guarded process-wide runtime while the command
+thread waits for completion, keeping accept and polling loops live between I/O callbacks.
+`wrap.cpp` selects the scheduler backend with `--scheduler` while `--remote` keeps the stock REAPI
+path.
+
 Repository status includes bytes still remote in both text and JSON. Build explanation renderers
 also name the non-hermetic-read reason and its path for remote-eligibility diagnostics.

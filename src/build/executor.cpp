@@ -482,7 +482,9 @@ prepare_action(repository& source, action_input input, bool lookup_cache) {
 
 runtime::task<result_id>
 finish_action(repository& source, const prepared_action& prepared, action_result value) {
-    auto stored = co_await build_detail::store_result_with_provenance(source, value);
+    auto stored = value.sig.empty()
+                      ? co_await build_detail::store_result_with_provenance(source, value)
+                      : co_await build_detail::import_signed_result(source, value);
     if (!stored) {
         co_return std::unexpected(stored.error());
     }

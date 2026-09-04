@@ -11,6 +11,11 @@ runtime::task<void> remote_blob_source::prepare(std::string, std::vector<remote_
     co_return result<void>{};
 }
 
+runtime::task<action_result>
+remote_executor::execute_prepared(action_input input, digest, digest, execution_schedule) {
+    co_return co_await execute(std::move(input));
+}
+
 struct remote::impl {
     explicit impl(std::shared_ptr<reapi::remote_client> client) : client(std::move(client)) {}
 

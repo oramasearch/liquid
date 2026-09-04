@@ -393,6 +393,10 @@ add_library(libliquid
   src/reapi/messages.cpp
   src/reapi/remote_client.cpp
   src/reapi/server.cpp
+  src/workers/protocol.cpp
+  src/workers/control.cpp
+  src/workers/scheduler.cpp
+  src/workers/worker.cpp
   src/repository/diff.cpp
   src/repository/merge.cpp
   src/remote.cpp
@@ -515,6 +519,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/verify.cpp
     src/cli/vfs.cpp
     src/cli/why.cpp
+    src/cli/workers.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE

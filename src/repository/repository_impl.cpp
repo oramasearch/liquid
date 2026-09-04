@@ -310,6 +310,7 @@ auto encode_repository_document(const repository_document& value)
         add_path("client_key", value.remote->tls.client_key);
         remote = map({{"endpoint", cbor::value{value.remote->endpoint}},
                       {"instance_name", cbor::value{value.remote->instance_name}},
+                      {"backend", cbor::value{static_cast<std::uint64_t>(value.remote->backend)}},
                       {"tls", cbor::value{std::move(tls)}},
                       {"headers", cbor::value{std::move(headers)}},
                       {"deadline_ms",
@@ -549,6 +550,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
             remote && !std::holds_alternative<cbor::null>(remote->data)) {
             const auto* endpoint_value = find(*remote, "endpoint");
             const auto* instance_value = find(*remote, "instance_name");
+            const auto* backend_value = find(*remote, "backend");
             const auto* tls_value = find(*remote, "tls");
             const auto* headers_value = find(*remote, "headers");
             const auto* deadline_value = find(*remote, "deadline_ms");
@@ -558,6 +560,8 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                 endpoint_value ? std::get_if<std::string>(&endpoint_value->data) : nullptr;
             const auto* instance =
                 instance_value ? std::get_if<std::string>(&instance_value->data) : nullptr;
+            const auto* backend =
+                backend_value ? std::get_if<std::uint64_t>(&backend_value->data) : nullptr;
             const auto* headers =
                 headers_value ? std::get_if<cbor::value::array>(&headers_value->data) : nullptr;
             const auto* deadline =
@@ -565,18 +569,22 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
             const auto* limit =
                 limit_value ? std::get_if<std::uint64_t>(&limit_value->data) : nullptr;
             const auto* publish = publish_value ? std::get_if<bool>(&publish_value->data) : nullptr;
-            if (!endpoint || endpoint->empty() || !instance || !tls_value || !headers ||
-                !deadline || *deadline == 0 ||
+            if (!endpoint || endpoint->empty() || !instance ||
+                (backend &&
+                 *backend > static_cast<std::uint64_t>(remote_backend::liquid_scheduler)) ||
+                !tls_value || !headers || !deadline || *deadline == 0 ||
                 *deadline > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
                 !limit || *limit == 0 || !publish) {
                 return std::unexpected(
                     failure(errc::corrupt, "invalid remote config", "repository document"));
             }
-            auto configured = remote_config{.endpoint = *endpoint,
-                                            .instance_name = *instance,
-                                            .deadline = std::chrono::milliseconds{*deadline},
-                                            .batch_blob_limit = *limit,
-                                            .publish = *publish};
+            auto configured = remote_config{
+                .endpoint = *endpoint,
+                .instance_name = *instance,
+                .deadline = std::chrono::milliseconds{*deadline},
+                .batch_blob_limit = *limit,
+                .publish = *publish,
+                .backend = backend ? static_cast<remote_backend>(*backend) : remote_backend::reapi};
             const auto* tls_enabled_value = find(*tls_value, "enabled");
             const auto* verify_peer_value = find(*tls_value, "verify_peer");
             const auto* tls_enabled =

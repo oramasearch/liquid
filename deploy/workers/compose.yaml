@@ -1,0 +1,49 @@
+services:
+  scheduler:
+    build:
+      context: ../..
+      dockerfile: deploy/workers/Dockerfile.scheduler
+    network_mode: host
+    volumes:
+      - scheduler-store:/var/lib/liquid-scheduler
+
+  worker-one:
+    build:
+      context: ../..
+      dockerfile: deploy/workers/Dockerfile.worker
+    command:
+      - --scheduler
+      - 127.0.0.1:50051
+      - --control-listen
+      - 127.0.0.1:8081
+      - --root
+      - /var/lib/liquid-worker
+    network_mode: host
+    privileged: true
+    depends_on:
+      - scheduler
+    volumes:
+      - worker-one-store:/var/lib/liquid-worker
+
+  worker-two:
+    build:
+      context: ../..
+      dockerfile: deploy/workers/Dockerfile.worker
+    command:
+      - --scheduler
+      - 127.0.0.1:50051
+      - --control-listen
+      - 127.0.0.1:8082
+      - --root
+      - /var/lib/liquid-worker
+    network_mode: host
+    privileged: true
+    depends_on:
+      - scheduler
+    volumes:
+      - worker-two-store:/var/lib/liquid-worker
+
+volumes:
+  scheduler-store:
+  worker-one-store:
+  worker-two-store:

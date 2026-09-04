@@ -16,6 +16,8 @@ accepts version 2 and maps version 1's upload duration to store time. Cache hit/
 request state and stay outside those immutable bytes. `build_trace` records preserve action results,
 dependency edges, phase timing, cache outcomes, schedules, and build wall time. Canonical `sbom`
 records hold the unsigned base SPDX or CycloneDX document.
+The scheduling-record encoder and decoder are also reused as one length-delimited field in the
+private worker protocol, keeping the signed result and submitted placement decision byte-identical.
 `action-index-root` records persist sorted candidate/result entries, divergence, and the optional
 verification-attestation digest plus ordered trace digests so the disk projection can be rebuilt
 and collection can traverse every published result, attestation, and trace.

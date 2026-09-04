@@ -1,0 +1,14 @@
+ARG LIQUID_BASE=liquid-linux-ci
+FROM ${LIQUID_BASE}
+
+ARG LIQUID_BINARY=build-linux/liquid
+ARG LIQUID_READ_GUARD=build-linux/liquid-read-guard
+COPY ${LIQUID_BINARY} /usr/local/bin/liquid
+COPY ${LIQUID_READ_GUARD} /usr/local/libexec/liquid/liquid-read-guard
+
+ENV LIQUID_READ_GUARD=/usr/local/libexec/liquid/liquid-read-guard
+
+VOLUME ["/var/lib/liquid-worker"]
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/liquid", "worker"]
+CMD ["--scheduler", "127.0.0.1:50051", "--control-listen", "0.0.0.0:8081", "--root", "/var/lib/liquid-worker"]

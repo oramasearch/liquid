@@ -969,6 +969,10 @@ auto encode(const sbom_record& value) -> result<std::vector<std::byte>> {
                              {"document", byte_string(value.document)}}));
 }
 
+auto encode_execution_schedule(const execution_schedule& value) -> result<std::vector<std::byte>> {
+    return cbor::encode(encode_schedule(value));
+}
+
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
     auto source = decode_versioned(bytes, "blob", 2);
     if (!source)
@@ -1754,6 +1758,14 @@ auto decode_sbom(std::span<const std::byte> bytes) -> result<sbom_record> {
         return std::unexpected(corrupt("invalid SBOM record"));
     }
     return sbom_record{*format, *document};
+}
+
+auto decode_execution_schedule(std::span<const std::byte> bytes) -> result<execution_schedule> {
+    auto decoded = cbor::decode(bytes);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    return decode_schedule(*decoded);
 }
 
 } // namespace liquid::objects

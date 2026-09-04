@@ -129,6 +129,15 @@ auto wrap(int argc, char** argv) -> int {
                 return usage("wrap --remote requires an endpoint");
             }
             remote_options(options).endpoint = argv[index];
+            remote_options(options).backend = liquid::remote_backend::reapi;
+            continue;
+        }
+        if (command.empty() && argument == "--scheduler") {
+            if (++index == argc) {
+                return usage("wrap --scheduler requires an endpoint");
+            }
+            remote_options(options).endpoint = argv[index];
+            remote_options(options).backend = liquid::remote_backend::liquid_scheduler;
             continue;
         }
         if (command.empty() && argument == "--remote-instance") {
@@ -234,7 +243,7 @@ auto wrap(int argc, char** argv) -> int {
     if (command.empty())
         return usage("wrap requires a build command");
     if (options.remote && options.remote->endpoint.empty()) {
-        return usage("wrap remote options require --remote <endpoint>");
+        return usage("wrap remote options require --remote or --scheduler <endpoint>");
     }
     auto result = liquid::runtime::block_on(
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));

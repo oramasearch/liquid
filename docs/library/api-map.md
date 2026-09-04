@@ -70,8 +70,9 @@ owning issue in `error::context`.
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
 | `liquid/daemon.hpp` | #21 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory status, attach, and shutdown |
-| `liquid/remote.hpp` | #16, #17, #18 | implemented | REAPI endpoint, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations; and the move-only negotiated REAPI client handle |
+| `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
+| `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, Phase 6 | implemented | signed metadata items and reports, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
@@ -387,7 +388,8 @@ acknowledgement, and the remote source map. A non-null keyring enables trust-dom
 
 ```cpp
 struct remote_blob_location { std::string source, instance; };
-struct remote_config { /* endpoint, instance, TLS, headers, deadline, batch limit, publish */ };
+enum class remote_backend { reapi, liquid_scheduler };
+struct remote_config { /* endpoint, instance, backend, TLS, headers, deadline, batch limit, publish */ };
 class remote_blob_source {
  public:
   virtual runtime::task<std::vector<digest>> find_missing(std::string, std::vector<digest>) = 0;
@@ -402,6 +404,9 @@ class remote_executor {
   virtual std::uint64_t queue_depth() const noexcept = 0;
   virtual bool supports_batch() const noexcept = 0;
   virtual runtime::task<action_result> execute(action_input) = 0;
+  virtual runtime::task<action_result> execute_prepared(action_input, digest action,
+                                                         digest sandbox,
+                                                         execution_schedule);
   virtual runtime::task<std::vector<action_result>> execute_batch(std::vector<action_input>) = 0;
 };
 class remote {
