@@ -27,7 +27,7 @@ and `.gitattributes` are ordinary files.
 The Git integration tests build a 50-change fixture with branches, a merge, a rename, a tag, and
 packed deltas using the system Git executable when it is installed. They check the bidirectional
 mapping, full history, snapshots, rename node identity, resumable import, corrupt-object refusal,
-and `git fsck` against the export. The private object-reader sources are compiled into that
+and `git fsck` against the export. Delta instructions are size-checked before reconstruction. The private object-reader sources are compiled into that
 fixture too, so this verification also runs with a shared `libliquid`.
 The public-header fixture compiles `liquid/git.hpp` independently.
 

@@ -460,12 +460,12 @@ auto object_store::read(const sha1& id) -> result<object> {
                 return std::unexpected(inflated.error());
             object output{};
             if (type == 6U || type == 7U) {
+                if (inflated->bytes.size() != size)
+                    return std::unexpected(
+                        failure(errc::corrupt, "packed Git delta size mismatch", pack.string()));
                 const auto resolved = apply_delta(base->payload, inflated->bytes);
                 if (!resolved)
                     return std::unexpected(resolved.error());
-                if (resolved->size() != size)
-                    return std::unexpected(
-                        failure(errc::corrupt, "packed Git delta size mismatch", pack.string()));
                 output = {base->kind, expected.value_or(sha1{}), *resolved};
             } else {
                 const auto kind = type == 1U   ? object_kind::commit
