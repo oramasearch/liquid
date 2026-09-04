@@ -13,16 +13,17 @@
 namespace liquid::objects {
 
 struct repo_record {
-  node_id repo_id{};
-  std::string name;
-  std::int64_t created{};
-  std::optional<repo_ref> root_change;
+    node_id repo_id{};
+    std::string name;
+    std::int64_t created{};
+    std::optional<repo_ref> root_change;
 };
 
-[[nodiscard]] auto encode(const blob &value) -> result<std::vector<std::byte>>;
-[[nodiscard]] auto encode(const tree &value) -> result<std::vector<std::byte>>;
-[[nodiscard]] auto encode(const change &value) -> result<std::vector<std::byte>>;
-[[nodiscard]] auto encode(const repo_record &value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const blob& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const tree& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const change& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode_change_body(const change& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const repo_record& value) -> result<std::vector<std::byte>>;
 
 [[nodiscard]] auto decode_blob(std::span<const std::byte> bytes) -> result<blob>;
 [[nodiscard]] auto decode_tree(std::span<const std::byte> bytes) -> result<tree>;

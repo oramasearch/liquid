@@ -14,7 +14,8 @@ and runtime in one program. See [`README.md`](README.md).
 Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
-error and digest APIs plus liquid #1's local chunk store, liquid #7's trust-domain encrypted objects,
+error and digest APIs plus liquid #1's local chunk store, liquid #4's TAAP/1 actor identities and
+signed drips and changes, liquid #7's trust-domain encrypted objects,
 and liquid #55's deterministic crash simulator are implemented, while operations owned by later issues return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec and drip journal
 are implemented. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store) is built inside

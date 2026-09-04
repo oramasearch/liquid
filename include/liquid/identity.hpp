@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/error.hpp"
@@ -19,8 +21,38 @@ namespace store_detail {
 class store_backend;
 }
 
+class keyring;
+class signer;
+
+namespace identity_detail {
+[[nodiscard]] LIQUID_EXPORT runtime::task<signer> local_signer();
+}
+
 struct LIQUID_EXPORT actor {
     std::string taap_id;
+    std::string algorithm;
+    std::string fingerprint;
+    std::vector<std::byte> public_key;
+
+    [[nodiscard]] std::string_view identifier() const noexcept;
+};
+
+struct LIQUID_EXPORT signature {
+    std::string algorithm;
+    std::string signing_key_identifier;
+    std::string signing_key_label;
+    std::string signature_purpose;
+    std::string signed_at;
+    std::vector<std::byte> bytes;
+};
+
+struct LIQUID_EXPORT identity_document {
+    actor subject;
+    std::string key_label;
+    std::string created_at;
+    std::string updated_at;
+    std::optional<std::vector<std::byte>> previous_document_hash;
+    std::vector<signature> signatures;
 };
 
 class LIQUID_EXPORT signer {
@@ -32,16 +64,24 @@ public:
     signer(const signer&) = delete;
     signer& operator=(const signer&) = delete;
 
-    [[nodiscard]] runtime::task<std::vector<std::byte>> sign(std::vector<std::byte> payload);
+    [[nodiscard]] static runtime::task<signer> open(std::string identifier, keyring& keys);
+    [[nodiscard]] runtime::task<signature> sign(std::string artifact_type,
+                                                std::vector<std::byte> canonical_body);
+
+    [[nodiscard]] actor identity() const;
 
 private:
+    friend runtime::task<signer> identity_detail::local_signer();
     struct impl;
     std::unique_ptr<impl> impl_;
 };
 
-[[nodiscard]] LIQUID_EXPORT result<bool> verify(
-    const actor& by, std::span<const std::byte> payload,
-    std::span<const std::byte> signature);
+[[nodiscard]] LIQUID_EXPORT result<bool> verify(const actor& by,
+                                                std::string_view artifact_type,
+                                                std::span<const std::byte> canonical_body,
+                                                const signature& signed_value);
+
+[[nodiscard]] LIQUID_EXPORT result<bool> verify_document(const identity_document& document);
 
 struct LIQUID_EXPORT argon2_parameters {
     std::uint32_t memory_kib{64U * 1024U};
@@ -59,8 +99,8 @@ public:
     key_provider& operator=(const key_provider&) = delete;
 
 protected:
-    [[nodiscard]] virtual result<std::array<std::byte, 32>> derive_kek(
-        std::span<const std::byte> salt, argon2_parameters parameters) const = 0;
+    [[nodiscard]] virtual result<std::array<std::byte, 32>>
+    derive_kek(std::span<const std::byte> salt, argon2_parameters parameters) const = 0;
 
     friend class keyring;
 };
@@ -74,12 +114,12 @@ public:
     passphrase_provider(const passphrase_provider&) = delete;
     passphrase_provider& operator=(const passphrase_provider&) = delete;
 
-    [[nodiscard]] result<std::array<std::byte, 32>> derive(
-        std::span<const std::byte> salt, argon2_parameters parameters = {}) const;
+    [[nodiscard]] result<std::array<std::byte, 32>> derive(std::span<const std::byte> salt,
+                                                           argon2_parameters parameters = {}) const;
 
 protected:
-    [[nodiscard]] result<std::array<std::byte, 32>> derive_kek(
-        std::span<const std::byte> salt, argon2_parameters parameters) const override;
+    [[nodiscard]] result<std::array<std::byte, 32>>
+    derive_kek(std::span<const std::byte> salt, argon2_parameters parameters) const override;
 
 private:
     struct impl;
@@ -88,8 +128,8 @@ private:
 
 class LIQUID_EXPORT key_file_provider final : public key_provider {
 public:
-    [[nodiscard]] static runtime::task<std::shared_ptr<key_file_provider>> open(
-        std::filesystem::path path);
+    [[nodiscard]] static runtime::task<std::shared_ptr<key_file_provider>>
+    open(std::filesystem::path path);
 
     ~key_file_provider() override;
     key_file_provider(key_file_provider&&) noexcept;
@@ -98,8 +138,8 @@ public:
     key_file_provider& operator=(const key_file_provider&) = delete;
 
 protected:
-    [[nodiscard]] result<std::array<std::byte, 32>> derive_kek(
-        std::span<const std::byte> salt, argon2_parameters parameters) const override;
+    [[nodiscard]] result<std::array<std::byte, 32>>
+    derive_kek(std::span<const std::byte> salt, argon2_parameters parameters) const override;
 
 private:
     explicit key_file_provider(std::array<std::byte, 32> key) noexcept;
@@ -119,13 +159,13 @@ public:
     [[nodiscard]] result<void> add(std::string key_id, std::shared_ptr<key_provider> provider);
     [[nodiscard]] result<std::string> default_key_id() const;
     [[nodiscard]] result<void> set_default_key_id(std::string key_id);
-    [[nodiscard]] runtime::task<void> rewrap(
-        std::string key_id, std::shared_ptr<key_provider> new_provider);
+    [[nodiscard]] runtime::task<void> rewrap(std::string key_id,
+                                             std::shared_ptr<key_provider> new_provider);
 
 private:
     [[nodiscard]] runtime::task<void> attach(std::filesystem::path keys_path);
-    [[nodiscard]] runtime::task<std::array<std::byte, 32>> data_key(
-        std::string key_id, bool create_if_missing);
+    [[nodiscard]] runtime::task<std::array<std::byte, 32>> data_key(std::string key_id,
+                                                                    bool create_if_missing);
 
     struct impl;
     std::unique_ptr<impl> impl_;
@@ -133,4 +173,4 @@ private:
     friend class store_detail::store_backend;
 };
 
-}  // namespace liquid
+} // namespace liquid

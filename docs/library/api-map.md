@@ -60,7 +60,7 @@ owning issue in `error::context`.
 | `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
-| `liquid/identity.hpp` | #4, #7, #51 | implemented (#7); declared (#4, #51) | TAAP `actor`, `signer`, `verify`, keyring and custody providers |
+| `liquid/identity.hpp` | #4, #7, #51 | implemented (#4, #7); declared (#51) | TAAP `actor`, `signer`, `verify`, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | declared | `mount`: the virtual filesystem over a repository |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 

@@ -11,8 +11,11 @@ add_executable(liquid-tests
   test_version.cpp
   test_vfs.cpp
 )
-target_link_libraries(liquid-tests PRIVATE liquid::liquid GTest::gtest_main)
-target_include_directories(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
+target_include_directories(liquid-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/src
+  ${monocypher_source_SOURCE_DIR}/src
+  ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
 
@@ -109,4 +112,5 @@ target_link_libraries(liquid-record-tests PRIVATE liquid::liquid GTest::gtest_ma
 gtest_discover_tests(liquid-record-tests)
 
 add_executable(liquid-repository-scenario repository/scenario.cpp)
+target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)

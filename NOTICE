@@ -12,6 +12,7 @@ Monocypher
   Version: 4.0.3
   Licence: BSD-2-Clause or CC0-1.0
   The source tarball is SHA-256 pinned during configuration and compiled as a private static target.
+  TAAP/1 uses its optional monocypher-ed25519.c source for RFC 8032 Ed25519 and SHA-512.
 
 SHA-256 implementation
   Author: Brad Conte
