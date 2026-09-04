@@ -30,3 +30,16 @@ LIQUID_HTTP2_NATIVE_LINK=1 build/tests/liquid-tests \
 ```
 
 `liquid_echo.proto` is only the grpcurl wire-format fixture; it is not part of liquid's API.
+
+## REAPI client, cache, and server proof
+
+`run-reapi-interop.sh <build-directory>` starts pinned NativeLink and BuildBarn containers and runs
+the negotiated CAS/ActionCache client round trip against both. On Linux it also runs the Phase 2
+Make wrap fixture with its disk index removed before the second run, proving a 100% remote hit rate
+against the 100% local baseline, then runs the read-guard refusal case.
+
+The script next starts `liquid serve reapi` and runs Bazel 8.3.1 twice from clean output bases. The
+first stock-client run uploads the genrule result and the second must report one remote cache hit.
+The fixture uses an empty WORKSPACE with module resolution disabled, keeping this server proof
+independent of registry downloads. Docker absence is an explicit skip; any available peer or
+stock-client failure is fatal.
