@@ -225,12 +225,8 @@ TEST(Repository, write_undo_and_locks_are_recorded) {
     ASSERT_TRUE(created);
     auto repository = std::move(*created);
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("value"))));
-    auto root = liquid::runtime::block_on(repository.root());
-    ASSERT_TRUE(root);
-    auto operation_digest =
-        liquid::hash(liquid::algorithm::blake3, root->entries.front().ref.bytes);
-    ASSERT_TRUE(operation_digest);
-    ASSERT_TRUE(liquid::runtime::block_on(repository.undo({*operation_digest})));
+    auto operation = liquid::repository_detail::testing::last_operation(repository);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.undo(operation)));
     auto missing = liquid::runtime::block_on(repository.read("file"));
     EXPECT_FALSE(missing);
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("value"))));
@@ -256,6 +252,68 @@ TEST(Repository, journal_replays_a_write_before_the_next_checkpoint) {
     auto value = liquid::runtime::block_on(reopened->read("pending.txt"));
     ASSERT_TRUE(value) << value.error().message;
     EXPECT_EQ(text(*value), "journal");
+}
+
+TEST(Repository, journal_replay_restores_a_working_tree_for_mutation) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("first.txt", content("first"))));
+    repository = {};
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto restored = liquid::runtime::block_on(reopened->root());
+    ASSERT_TRUE(restored);
+    EXPECT_TRUE(std::ranges::any_of(restored->entries, [](const liquid::tree_entry& entry) {
+        return entry.name == "first.txt";
+    }));
+    auto moved = liquid::runtime::block_on(reopened->move("first.txt", "moved.txt"));
+    ASSERT_TRUE(moved) << moved.error().message << " (" << moved.error().context << ")";
+    auto root = liquid::runtime::block_on(reopened->root());
+    ASSERT_TRUE(root);
+    EXPECT_TRUE(std::ranges::any_of(
+        root->entries, [](const liquid::tree_entry& entry) { return entry.name == "moved.txt"; }));
+    EXPECT_FALSE(std::ranges::any_of(
+        root->entries, [](const liquid::tree_entry& entry) { return entry.name == "first.txt"; }));
+}
+
+TEST(Repository, collect_retains_checkpointed_content_and_reclaims_orphans) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("cut.txt", content("cut"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.cut("cut")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("pending.txt", content("pending"))));
+
+    auto store = liquid::runtime::block_on(liquid::store::open(location.path() / ".liquid-store"));
+    ASSERT_TRUE(store);
+    const auto orphan = liquid::runtime::block_on(store->put(content("orphan")));
+    ASSERT_TRUE(orphan);
+
+    const auto collected = liquid::runtime::block_on(repository.collect());
+    ASSERT_TRUE(collected) << collected.error().message;
+    EXPECT_EQ(collected->roots, 4U);
+    store = {};
+    store = liquid::runtime::block_on(liquid::store::open(location.path() / ".liquid-store"));
+    ASSERT_TRUE(store);
+    const auto removed = liquid::runtime::block_on(store->get(*orphan));
+    ASSERT_FALSE(removed);
+    EXPECT_EQ(removed.error().code, liquid::errc::not_found);
+
+    repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    const auto cut = liquid::runtime::block_on(reopened->read("cut.txt"));
+    ASSERT_TRUE(cut) << cut.error().message;
+    EXPECT_EQ(text(*cut), "cut");
+    const auto pending = liquid::runtime::block_on(reopened->read("pending.txt"));
+    ASSERT_TRUE(pending) << pending.error().message;
+    EXPECT_EQ(text(*pending), "pending");
+    const auto moved = liquid::runtime::block_on(reopened->move("pending.txt", "moved.txt"));
+    ASSERT_TRUE(moved) << moved.error().message;
 }
 
 TEST(Repository, Sha256StoreRoundTripsRecords) {
@@ -523,6 +581,33 @@ TEST(Repository, undo_move_restores_the_original_node_identity) {
     ASSERT_EQ(restored->entries.size(), 1U);
     EXPECT_EQ(restored->entries.front().name, "before");
     EXPECT_EQ(restored->entries.front().node, identity);
+}
+
+TEST(Repository, operations_are_newest_first_with_their_metadata) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("before", content("value"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("before", "after")));
+    repository = {};
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    if (!reopened) {
+        ADD_FAILURE() << reopened.error().context << ": " << reopened.error().message;
+        return;
+    }
+
+    auto operations = liquid::runtime::block_on(reopened->operations());
+    ASSERT_TRUE(operations);
+    ASSERT_EQ(operations->size(), 2U);
+    EXPECT_NE((*operations)[0].id.value.bytes, (*operations)[1].id.value.bytes);
+    EXPECT_EQ(operations->front().kind, "move");
+    EXPECT_EQ(operations->front().from, "before");
+    EXPECT_EQ(operations->front().to, "after");
+    EXPECT_FALSE(operations->front().by.taap_id.empty());
+    EXPECT_GT(operations->front().at.time_since_epoch().count(), 0);
+    EXPECT_EQ(operations->back().kind, "write");
 }
 
 TEST(Repository, cross_directory_move_is_recovered_before_cut) {

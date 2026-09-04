@@ -32,10 +32,11 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
 > locks, status, and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
-> `liquid version` and `liquid hello` remain unchanged; `liquid gc --explain` reports why retained
-> chunks are live. Repository path rules encrypt selected JSON and `.env` leaf values while leaving
-> their structure visible, with explicit plaintext reads and key-only historical diff. Whole-file
-> encryption remains the fallback, and `find_package(liquid)` works from an install.
+> The `liquid` binary is the documented thin client of the Phase 1 repository, capture, VFS, store,
+> and identity APIs. `liquid gc --explain` reports why retained chunks are live. Repository path
+> rules encrypt selected JSON and `.env` leaf values while leaving their structure visible, with
+> explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
+> and `find_package(liquid)` works from an install.
 
 ## Where this sits
 
@@ -173,7 +174,8 @@ GitHub Actions builds and tests clean checkouts on Linux, macOS, and Windows; se
 git clone --recurse-submodules git@github.com:oramasearch/liquid.git
 cd liquid
 cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
-./build/liquid hello
+mkdir example && printf 'first\n' > example/readme.txt
+(cd example && ../build/liquid init . && ../build/liquid status --json && ../build/liquid cut "import")
 cmake --install build --prefix /opt/liquid        # bin/liquid, lib/libliquid.a, include/liquid/, lib/cmake/liquid/
 ```
 

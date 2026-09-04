@@ -24,7 +24,8 @@ redaction, and liquid #52's JSON/`.env` leaf encryption with structural key diff
 while operations owned by later issues return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
 and drip journal are implemented. Full materialisation works on every platform; lazy VFS mounts use
-libfuse3 on Linux and optional macFUSE on macOS. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store)
+libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
+store, VFS, and identity calls. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store)
 is built inside
 libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
 option is enabled.

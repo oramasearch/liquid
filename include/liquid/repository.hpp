@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -82,6 +83,15 @@ struct LIQUID_EXPORT op_id {
     digest value;
 };
 
+struct LIQUID_EXPORT operation_record {
+    op_id id;
+    std::string kind;
+    std::string from;
+    std::string to;
+    actor by;
+    std::chrono::sys_seconds at;
+};
+
 class LIQUID_EXPORT repository {
 public:
     repository() noexcept;
@@ -122,9 +132,12 @@ public:
     [[nodiscard]] runtime::task<repository> split(std::string path, std::filesystem::path into);
     [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);
     [[nodiscard]] runtime::task<std::vector<conflict>> conflicts();
+    [[nodiscard]] runtime::task<std::vector<operation_record>> operations(log_options options = {});
     [[nodiscard]] runtime::task<void> undo(op_id operation);
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
+    [[nodiscard]] runtime::task<collection_report>
+    collect(collection_options options = {});
 
 private:
     [[nodiscard]] runtime::task<void>

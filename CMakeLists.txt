@@ -304,7 +304,17 @@ endif()
 # The CLI — a thin client of libliquid.
 # -----------------------------------------------------------------------------
 if(LIQUID_BUILD_CLI)
-  add_executable(liquid-cli src/main.cpp)
+  add_executable(liquid-cli
+    src/main.cpp
+    src/cli/capture.cpp
+    src/cli/compose.cpp
+    src/cli/gc.cpp
+    src/cli/history.cpp
+    src/cli/identity.cpp
+    src/cli/locks.cpp
+    src/cli/repo.cpp
+    src/cli/tree.cpp
+    src/cli/vfs.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE liquid::liquid)
 endif()

@@ -161,8 +161,8 @@ are in [gc.md](gc.md).
 `collection_options::compact_below` defaults to `0.5`. A partially dead pack is compacted when
 its live frame-byte fraction is strictly below that value; `0` disables compaction.
 `collection_options::compact_only` uses the committed tombstone manifest without another mark and
-sweep. The CLI exposes that pass as `liquid gc --compact`; `--compact-below <fraction>` changes
-the threshold for either collection mode.
+sweep. Repository collection exposes that pass as `liquid gc --compact`; `--compact-below
+<fraction>` changes the threshold for either collection mode.
 
 For each selected pack, the collector holds its mutation lock, records a pending compaction
 marker, then copies each non-tombstoned physical frame into a new sealed pack. A copied frame is

@@ -2,8 +2,6 @@
 
 The default suite covers the public library surface and the local store. Focused garbage
 collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
-private index and cryptography tests stay in their existing targets.
-
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, and wrong-KEK atomicity. `test_repository.cpp` pins the
 exact readability report for revisions written before and after rotation and its three disclosure
@@ -15,4 +13,7 @@ the strict JSON and `.env` codecs used by structured configuration encryption; `
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
 file writes, and key diffs.
 
-Secret detector, inline capture, attestation, and redaction cases live in `scan/`.
+Repository tests cover persisted operation records and their public newest-first view; private index
+and cryptography tests stay in their existing targets. They also verify that repository collection
+retains checkpointed content while reclaiming an orphan. CLI scenario and command-documentation
+tests live in `cli/`.

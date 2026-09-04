@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <limits>
 #include <map>
 #include <random>
 #include <regex>
@@ -35,13 +36,15 @@ struct working_entry {
     digest object{};
     std::map<std::string, working_entry> entries;
 };
-struct operation_record {
+struct stored_operation {
     op_id id{};
     std::string kind;
     std::string from;
     std::string to;
     node_id node{};
     std::optional<working_entry> prior;
+    actor by;
+    std::chrono::sys_seconds at;
 };
 struct persisted_drip {
     std::vector<std::byte> body;
@@ -53,7 +56,7 @@ struct repository_document {
     std::map<std::string, change_id> refs;
     std::map<node_id, digest> dirs;
     std::optional<change_id> head;
-    std::vector<operation_record> operations;
+    std::vector<stored_operation> operations;
     std::vector<std::string> locks;
     std::vector<conflict> conflict_values;
     std::vector<persisted_drip> drips;
@@ -74,6 +77,13 @@ auto digest_value(const digest& value) -> cbor::value {
     return map({{"alg", cbor::value{static_cast<std::uint64_t>(value.alg)}},
                 {"bytes", bytes(value.bytes)}});
 }
+auto actor_value(const actor& value) -> cbor::value {
+    return map({{"taap_id", cbor::value{value.taap_id}},
+                {"algorithm", cbor::value{value.algorithm}},
+                {"fingerprint", cbor::value{value.fingerprint}},
+                {"public_key", bytes(value.public_key)},
+                {"key_fingerprint", cbor::value{value.key_fingerprint}}});
+}
 auto find(const cbor::value& value, std::string_view key) -> const cbor::value* {
     const auto* fields = std::get_if<cbor::value::map>(&value.data);
     if (!fields)
@@ -93,6 +103,31 @@ auto decode_digest(const cbor::value& value) -> result<digest> {
     digest output{static_cast<algorithm>(*number), {}};
     std::ranges::copy(*data, output.bytes.begin());
     return output;
+}
+auto decode_actor(const cbor::value& value) -> result<actor> {
+    const auto* taap_id = find(value, "taap_id");
+    const auto* algorithm = find(value, "algorithm");
+    const auto* fingerprint = find(value, "fingerprint");
+    const auto* public_key = find(value, "public_key");
+    const auto* key_fingerprint = find(value, "key_fingerprint");
+    const auto* taap_id_text = taap_id ? std::get_if<std::string>(&taap_id->data) : nullptr;
+    const auto* algorithm_text = algorithm ? std::get_if<std::string>(&algorithm->data) : nullptr;
+    const auto* fingerprint_text =
+        fingerprint ? std::get_if<std::string>(&fingerprint->data) : nullptr;
+    const auto* public_key_bytes =
+        public_key ? std::get_if<cbor::value::bytes>(&public_key->data) : nullptr;
+    const auto* key_fingerprint_text =
+        key_fingerprint ? std::get_if<std::string>(&key_fingerprint->data) : nullptr;
+    if (!taap_id_text || !algorithm_text || !fingerprint_text || !public_key_bytes ||
+        !key_fingerprint_text) {
+        return std::unexpected(
+            failure(errc::corrupt, "invalid operation actor", "repository document"));
+    }
+    return actor{*taap_id_text,
+                 *algorithm_text,
+                 *fingerprint_text,
+                 *public_key_bytes,
+                 *key_fingerprint_text};
 }
 auto encode_entry(const working_entry& entry) -> cbor::value {
     auto children = cbor::value::array{};
@@ -154,6 +189,8 @@ auto encode_repository_document(const repository_document& value)
                  {"from", cbor::value{operation.from}},
                  {"to", cbor::value{operation.to}},
                  {"node", bytes(operation.node)},
+                 {"by", actor_value(operation.by)},
+                 {"at", cbor::value{operation.at.time_since_epoch().count()}},
                  {"prior",
                   operation.prior ? encode_entry(*operation.prior) : cbor::value{cbor::null{}}}}));
     auto locks = cbor::value::array{};
@@ -256,6 +293,8 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         const auto* from = find(item, "from");
         const auto* to = find(item, "to");
         const auto* node = find(item, "node");
+        const auto* by = find(item, "by");
+        const auto* at = find(item, "at");
         const auto* prior = find(item, "prior");
         const auto* kind_text =
             operation_kind ? std::get_if<std::string>(&operation_kind->data) : nullptr;
@@ -282,8 +321,41 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     failure(errc::corrupt, "invalid operation node", "repository document"));
             std::ranges::copy(*node_bytes, identity.begin());
         }
-        output.operations.push_back(
-            {op_id{*digest}, *kind_text, *from_text, *to_text, identity, std::move(previous)});
+        auto operation_actor = actor{};
+        auto operation_time = std::chrono::sys_seconds{};
+        if (by || at) {
+            if (!by || !at) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid operation metadata", "repository document"));
+            }
+            auto seconds = std::optional<std::int64_t>{};
+            if (const auto* signed_seconds = std::get_if<std::int64_t>(&at->data)) {
+                seconds = *signed_seconds;
+            } else if (const auto* unsigned_seconds = std::get_if<std::uint64_t>(&at->data);
+                       unsigned_seconds &&
+                       *unsigned_seconds <=
+                           static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+                seconds = static_cast<std::int64_t>(*unsigned_seconds);
+            }
+            if (!seconds) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid operation timestamp", "repository document"));
+            }
+            auto decoded_actor = decode_actor(*by);
+            if (!decoded_actor) {
+                return std::unexpected(decoded_actor.error());
+            }
+            operation_actor = std::move(*decoded_actor);
+            operation_time = std::chrono::sys_seconds{std::chrono::seconds{*seconds}};
+        }
+        output.operations.push_back({op_id{*digest},
+                                     *kind_text,
+                                     *from_text,
+                                     *to_text,
+                                     identity,
+                                     std::move(previous),
+                                     std::move(operation_actor),
+                                     operation_time});
     }
     if (!std::holds_alternative<cbor::null>(head->data)) {
         auto digest = decode_digest(*head);
@@ -347,6 +419,14 @@ auto random_id() -> node_id {
     std::ranges::generate(result, [&] { return std::byte{static_cast<unsigned char>(random())}; });
     return result;
 }
+auto random_operation_id(algorithm hash_algorithm) -> result<op_id> {
+    auto value = random_id();
+    auto hashed = hash(hash_algorithm, std::span<const std::byte>{value});
+    if (!hashed) {
+        return std::unexpected(hashed.error());
+    }
+    return op_id{*hashed};
+}
 auto split_path(std::string_view path) -> result<std::vector<std::string>> {
     if (path.empty() || path.front() == '/' || path.back() == '/')
         return std::unexpected(failure(
@@ -401,6 +481,25 @@ auto lookup(working_entry& root, const std::vector<std::string>& path) -> workin
         current = &found->second;
     }
     return current;
+}
+auto directory_entry(const working_entry& value) -> crdt::entry {
+    const auto kind = value.kind == entry_kind::file        ? "blob"
+                      : value.kind == entry_kind::directory ? "tree"
+                                                            : "repo";
+    return {kind, value.node, value.mode, to_string(value.object)};
+}
+auto directory_with_node(working_entry& root, const node_id& node) -> working_entry* {
+    if (root.node == node) {
+        return &root;
+    }
+    for (auto& [name, child] : root.entries) {
+        if (child.kind != entry_kind::file) {
+            if (auto* found = directory_with_node(child, node)) {
+                return found;
+            }
+        }
+    }
+    return nullptr;
 }
 auto same_path_or_descendant(std::string_view path, std::string_view root) -> bool {
     return path == root ||
@@ -486,6 +585,13 @@ auto string_bytes(std::string_view input) -> std::vector<std::byte> {
 } // namespace
 
 struct repository::impl {
+    struct retained_lease {
+        digest id;
+        lease value;
+    };
+
+    static constexpr auto lease_ttl = std::chrono::days{30};
+
     std::filesystem::path root_path;
     store objects;
     repository_document current;
@@ -493,6 +599,10 @@ struct repository::impl {
     algorithm hash_algorithm;
     std::uint64_t directory_load_count{};
     std::map<node_id, crdt::directory_document> directory_cache;
+    std::optional<retained_lease> working_tree_lease;
+    std::optional<retained_lease> checkpoint_lease;
+    std::map<std::string, retained_lease> ref_leases;
+    std::map<node_id, retained_lease> directory_leases;
     signer signing_key;
     std::shared_ptr<keyring> keys;
     impl(std::filesystem::path path,
@@ -512,6 +622,47 @@ struct repository::impl {
     auto journal_marker() const -> std::filesystem::path {
         return root_path / "LIQUID_JOURNAL";
     }
+    runtime::task<void> restore_directory_document(node_id id, crdt::directory_document& document) {
+        auto* working_directory = directory_with_node(current.root, id);
+        if (!working_directory) {
+            co_return std::unexpected(failure(
+                errc::corrupt, "directory is missing from working tree", "repository document"));
+        }
+        auto actual = document.entries();
+        if (!actual) {
+            co_return std::unexpected(actual.error());
+        }
+        for (const auto& [name, child] : working_directory->entries) {
+            const auto expected = directory_entry(child);
+            auto existing = document.entry_at(name);
+            if (!existing) {
+                co_return std::unexpected(existing.error());
+            }
+            if (*existing && **existing == expected) {
+                continue;
+            }
+            if (*existing) {
+                auto removed = document.remove_entry(name);
+                if (!removed) {
+                    co_return std::unexpected(removed.error());
+                }
+            }
+            auto inserted = document.put_entry(name, expected);
+            if (!inserted) {
+                co_return std::unexpected(inserted.error());
+            }
+        }
+        for (const auto& entry : *actual) {
+            if (working_directory->entries.contains(entry.name)) {
+                continue;
+            }
+            auto removed = document.remove_entry(entry.name);
+            if (!removed) {
+                co_return std::unexpected(removed.error());
+            }
+        }
+        co_return result<void>{};
+    }
     runtime::task<crdt::directory_document*> directory(node_id id) {
         auto found = directory_cache.find(id);
         if (found != directory_cache.end())
@@ -525,6 +676,9 @@ struct repository::impl {
                 co_return std::unexpected(loaded.error());
             auto inserted = directory_cache.emplace(id, std::move(*loaded));
             ++directory_load_count;
+            auto restored = co_await restore_directory_document(id, inserted.first->second);
+            if (!restored)
+                co_return std::unexpected(restored.error());
             co_return &inserted.first->second;
         }
         crdt::repo_id repository{};
@@ -533,9 +687,12 @@ struct repository::impl {
         if (!created)
             co_return std::unexpected(created.error());
         auto inserted = directory_cache.emplace(id, std::move(*created));
+        auto restored = co_await restore_directory_document(id, inserted.first->second);
+        if (!restored)
+            co_return std::unexpected(restored.error());
         co_return &inserted.first->second;
     }
-    runtime::task<void> persist() {
+    runtime::task<digest> persist() {
         for (auto& [node, document] : directory_cache) {
             auto saved_document = document.save();
             if (!saved_document)
@@ -571,11 +728,138 @@ struct repository::impl {
         }
         if (code)
             co_return std::unexpected(failure(errc::io, code.message(), marker().string()));
+        co_return *stored;
+    }
+    runtime::task<void> retain(std::optional<retained_lease>& retained, digest id) {
+        if (retained && retained->id.alg == id.alg && retained->id.bytes == id.bytes) {
+            co_return co_await retained->value.renew(lease_ttl);
+        }
+        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        if (!replacement) {
+            co_return std::unexpected(replacement.error());
+        }
+        if (retained) {
+            auto released = co_await retained->value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+        }
+        retained.emplace(retained_lease{id, std::move(*replacement)});
+        co_return result<void>{};
+    }
+    runtime::task<void> retain_ref(std::string_view name, digest id) {
+        auto existing = ref_leases.find(std::string{name});
+        if (existing != ref_leases.end() && existing->second.id.alg == id.alg &&
+            existing->second.id.bytes == id.bytes) {
+            co_return co_await existing->second.value.renew(lease_ttl);
+        }
+        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        if (!replacement) {
+            co_return std::unexpected(replacement.error());
+        }
+        if (existing != ref_leases.end()) {
+            auto released = co_await existing->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            existing->second = retained_lease{id, std::move(*replacement)};
+        } else {
+            ref_leases.emplace(std::string{name}, retained_lease{id, std::move(*replacement)});
+        }
+        co_return result<void>{};
+    }
+    runtime::task<void> retain_directory(const node_id& node, digest id) {
+        auto existing = directory_leases.find(node);
+        if (existing != directory_leases.end() && existing->second.id.alg == id.alg &&
+            existing->second.id.bytes == id.bytes) {
+            co_return co_await existing->second.value.renew(lease_ttl);
+        }
+        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        if (!replacement) {
+            co_return std::unexpected(replacement.error());
+        }
+        if (existing != directory_leases.end()) {
+            auto released = co_await existing->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            existing->second = retained_lease{id, std::move(*replacement)};
+        } else {
+            directory_leases.emplace(node, retained_lease{id, std::move(*replacement)});
+        }
+        co_return result<void>{};
+    }
+    runtime::task<void> retain_checkpoint_roots(digest root, digest document) {
+        auto retained_tree = co_await retain(working_tree_lease, root);
+        if (!retained_tree) {
+            co_return std::unexpected(retained_tree.error());
+        }
+        auto retained_document = co_await retain(checkpoint_lease, document);
+        if (!retained_document) {
+            co_return std::unexpected(retained_document.error());
+        }
+        for (const auto& [name, head] : current.refs) {
+            auto retained_ref = co_await retain_ref(name, head.value);
+            if (!retained_ref) {
+                co_return std::unexpected(retained_ref.error());
+            }
+        }
+        for (const auto& [node, directory] : current.dirs) {
+            auto retained_directory = co_await retain_directory(node, directory);
+            if (!retained_directory) {
+                co_return std::unexpected(retained_directory.error());
+            }
+        }
+        for (auto found = ref_leases.begin(); found != ref_leases.end();) {
+            if (current.refs.contains(found->first)) {
+                ++found;
+                continue;
+            }
+            auto released = co_await found->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            found = ref_leases.erase(found);
+        }
+        for (auto found = directory_leases.begin(); found != directory_leases.end();) {
+            if (current.dirs.contains(found->first)) {
+                ++found;
+                continue;
+            }
+            auto released = co_await found->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            found = directory_leases.erase(found);
+        }
+        co_return result<void>{};
+    }
+    runtime::task<void> checkpoint(std::optional<digest> root = {}) {
+        auto working_tree = root;
+        if (!working_tree) {
+            auto snapshot_id = co_await snapshot(current.root);
+            if (!snapshot_id) {
+                co_return std::unexpected(snapshot_id.error());
+            }
+            working_tree = *snapshot_id;
+        }
+        current.pending_drips = 0;
+        auto document = co_await persist();
+        if (!document) {
+            co_return std::unexpected(document.error());
+        }
+        auto retained = co_await retain_checkpoint_roots(*working_tree, *document);
+        if (!retained) {
+            co_return std::unexpected(retained.error());
+        }
+        std::error_code cleanup;
+        std::filesystem::remove(journal_marker(), cleanup);
         co_return result<void>{};
     }
     runtime::task<void> checkpoint_or_journal() {
-        if (current.pending_drips >= checkpoint_interval)
-            co_return co_await persist();
+        if (current.pending_drips >= checkpoint_interval) {
+            co_return co_await checkpoint();
+        }
         auto encoded = encode_repository_document(current);
         if (!encoded)
             co_return std::unexpected(encoded.error());
@@ -627,6 +911,22 @@ struct repository::impl {
         current.drips.push_back({std::move(*body), std::move(*encoded_signature)});
         co_return result<void>{};
     }
+    void record_operation(op_id id,
+                          std::string kind,
+                          std::string from,
+                          std::string to,
+                          node_id node,
+                          std::optional<working_entry> prior) {
+        current.operations.push_back(
+            {std::move(id),
+             std::move(kind),
+             std::move(from),
+             std::move(to),
+             node,
+             std::move(prior),
+             signing_key.identity(),
+             std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())});
+    }
     runtime::task<digest> snapshot(working_entry& entry) {
         tree value{};
         for (auto& [name, child] : entry.entries) {
@@ -647,7 +947,12 @@ struct repository::impl {
         auto encoded = objects::encode(value);
         if (!encoded)
             co_return std::unexpected(encoded.error());
-        co_return co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+        auto stored =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+        if (!stored)
+            co_return std::unexpected(stored.error());
+        entry.object = *stored;
+        co_return *stored;
     }
     runtime::task<tree> root_tree() {
         auto snapshot_id = co_await snapshot(current.root);
@@ -936,11 +1241,10 @@ struct repository::impl {
         }
         std::erase_if(current.conflict_values,
                       [&](const conflict& value) { return value.path == path; });
-        auto operation_hash = hash(hash_algorithm, std::span<const std::byte>{reference->bytes});
-        if (!operation_hash)
-            co_return std::unexpected(operation_hash.error());
-        current.operations.push_back(
-            {op_id{*operation_hash}, "write", path, {}, found->second.node, prior});
+        auto operation = random_operation_id(hash_algorithm);
+        if (!operation)
+            co_return std::unexpected(operation.error());
+        record_operation(*operation, "write", path, {}, found->second.node, std::move(prior));
         auto signed_drip = co_await append_drip("write", found->second.node);
         if (!signed_drip)
             co_return std::unexpected(signed_drip.error());
@@ -989,7 +1293,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
                                           std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
-    auto saved = co_await output.impl_->persist();
+    auto saved = co_await output.impl_->checkpoint();
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return output;
@@ -1038,6 +1342,9 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
                                           std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
+    auto checkpointed = co_await output.impl_->checkpoint();
+    if (!checkpointed)
+        co_return std::unexpected(checkpointed.error());
     co_return output;
 }
 runtime::task<tree> repository::root() {
@@ -1475,12 +1782,10 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     const auto moved_node = moved.node;
     (*source_parent)->entries.erase(found);
     (*destination_parent)->entries.emplace(destination->back(), std::move(moved));
-    auto hash_value =
-        hash(impl_->hash_algorithm, std::span<const std::byte>{impl_->current.root.node});
-    if (!hash_value)
-        co_return std::unexpected(hash_value.error());
-    impl_->current.operations.push_back(
-        {op_id{*hash_value}, "move", from, to, moved_node, std::nullopt});
+    auto operation = random_operation_id(impl_->hash_algorithm);
+    if (!operation)
+        co_return std::unexpected(operation.error());
+    impl_->record_operation(*operation, "move", from, to, moved_node, std::nullopt);
     auto signed_drip = co_await impl_->append_drip("move", moved_node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
@@ -1512,11 +1817,10 @@ runtime::task<void> repository::remove(std::string path) {
         co_return std::unexpected(recorded.error());
     auto prior = found->second;
     (*parent)->entries.erase(found);
-    auto hash_value = hash(impl_->hash_algorithm, std::span<const std::byte>{prior.node});
-    if (!hash_value)
-        co_return std::unexpected(hash_value.error());
-    impl_->current.operations.push_back(
-        {op_id{*hash_value}, "remove", path, {}, prior.node, prior});
+    auto operation = random_operation_id(impl_->hash_algorithm);
+    if (!operation)
+        co_return std::unexpected(operation.error());
+    impl_->record_operation(*operation, "remove", path, {}, prior.node, std::move(prior));
     auto signed_drip = co_await impl_->append_drip("remove", prior.node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
@@ -1560,12 +1864,9 @@ runtime::task<change_id> repository::cut(std::string message) {
     change_id id{*stored};
     impl_->current.head = id;
     impl_->current.refs["main"] = id;
-    impl_->current.pending_drips = 0;
-    auto saved = co_await impl_->persist();
+    auto saved = co_await impl_->checkpoint(*root);
     if (!saved)
         co_return std::unexpected(saved.error());
-    std::error_code cleanup;
-    std::filesystem::remove(impl_->journal_marker(), cleanup);
     co_return id;
 }
 runtime::task<std::vector<ref>> repository::refs() {
@@ -1581,7 +1882,7 @@ runtime::task<void> repository::set_ref(std::string name, change_id id) {
         co_return std::unexpected(
             failure(errc::invalid_argument, "invalid repository reference", name));
     impl_->current.refs[std::move(name)] = id;
-    auto saved = co_await impl_->checkpoint_or_journal();
+    auto saved = co_await impl_->checkpoint();
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return result<void>{};
@@ -1814,6 +2115,23 @@ runtime::task<std::vector<conflict>> repository::conflicts() {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return impl_->current.conflict_values;
 }
+runtime::task<std::vector<operation_record>> repository::operations(log_options) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto output = std::vector<operation_record>{};
+    output.reserve(impl_->current.operations.size());
+    for (auto operation = impl_->current.operations.rbegin();
+         operation != impl_->current.operations.rend();
+         ++operation) {
+        output.push_back({operation->id,
+                          operation->kind,
+                          operation->from,
+                          operation->to,
+                          operation->by,
+                          operation->at});
+    }
+    co_return output;
+}
 runtime::task<void> repository::undo(op_id operation) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -1879,6 +2197,17 @@ runtime::task<void> repository::unlock(std::string path) {
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return result<void>{};
+}
+
+runtime::task<collection_report> repository::collect(collection_options options) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto checkpointed = co_await impl_->checkpoint();
+    if (!checkpointed) {
+        co_return std::unexpected(checkpointed.error());
+    }
+    co_return co_await impl_->objects.collect(options);
 }
 
 runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry(repository& source,
@@ -1992,11 +2321,10 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
         co_return std::unexpected(recorded.error());
     (*parent)->entries.emplace(parts->back(),
                                working_entry{entry_kind::directory, identity, mode, reference, {}});
-    auto operation_hash = hash(source.impl_->hash_algorithm, std::span<const std::byte>{identity});
-    if (!operation_hash)
-        co_return std::unexpected(operation_hash.error());
-    source.impl_->current.operations.push_back(
-        {op_id{*operation_hash}, "mkdir", path, {}, identity, std::nullopt});
+    auto operation = random_operation_id(source.impl_->hash_algorithm);
+    if (!operation)
+        co_return std::unexpected(operation.error());
+    source.impl_->record_operation(*operation, "mkdir", path, {}, identity, std::nullopt);
     auto signed_drip = co_await source.impl_->append_drip("mkdir", identity);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
