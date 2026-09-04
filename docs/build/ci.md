@@ -96,3 +96,7 @@ queues that continuation. A successful named run reports one passed test.
 As of this change `main` compiles on Linux, and both the mount and drip restart scenarios pass
 there. To change the toolchain, edit the Dockerfile and the workflow together; they must agree on
 the compiler version.
+
+The CLI documentation check extracts the backticked command cell from each Markdown table row.
+It must not split table rows into CMake lists: CMake policy CMP0007 differs on whether the leading
+empty field before a Markdown row's first `|` is retained.
