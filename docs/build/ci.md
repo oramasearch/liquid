@@ -10,10 +10,10 @@ on each desktop platform.
 
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
-| Linux | `ubuntu-24.04` | Clang 19 from apt.llvm.org, `libstdc++-14-dev`, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
+| Linux | `ubuntu-24.04` | Clang 19 from apt.llvm.org, `libstdc++-14-dev`, libfuse3, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount scenario, `liquid version` |
 | macOS | `macos-15` | Homebrew LLVM, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, current Chocolatey CMake and Ninja | Configure, build, CTest, `liquid version` |
-| Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer | Debug configure, build, CTest |
+| Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 
 `CMakeLists.txt` selects Homebrew LLVM on macOS, a versioned `clang++` on Linux, and `clang-cl`
 for both C and C++ on Windows before `project()`. GoogleTest enables C when FetchContent adds it;
@@ -34,3 +34,10 @@ repository at no cost. Linux arm64 verification is deferred until a suitable run
 
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
 `-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
+
+The Linux jobs install both `libfuse3-dev` and `fuse3`. Configuration requires the `fuse3`
+pkg-config package on Linux, and the mount test exercises a 64 MiB repository through libfuse3
+when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device, the test reports
+that FUSE is unavailable and is skipped rather than silently substituting the materialisation
+path. The private submodule token remains an earlier gate: without `ORAMA_SUBMODULES_TOKEN`, CI
+stops at checkout before any FUSE proof can run.
