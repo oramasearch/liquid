@@ -48,6 +48,12 @@ TEST(Hash, DigestTextRoundTrips) {
         EXPECT_EQ(parsed->alg, hashed->alg);
         EXPECT_EQ(parsed->bytes, hashed->bytes);
     }
+    liquid::digest keyed{liquid::algorithm::blake3_keyed, {}};
+    keyed.bytes[0] = std::byte{0xab};
+    const auto parsed = liquid::parse_digest(liquid::to_string(keyed));
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->alg, liquid::algorithm::blake3_keyed);
+    EXPECT_EQ(parsed->bytes, keyed.bytes);
 }
 
 TEST(Hash, RejectsInvalidTextAndAlgorithm) {

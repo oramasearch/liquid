@@ -26,10 +26,27 @@ add_executable(liquid-index-tests
   test_index.cpp
   ${PROJECT_SOURCE_DIR}/src/store/index.cpp
   ${PROJECT_SOURCE_DIR}/src/store/mapped_file.cpp
-  ${PROJECT_SOURCE_DIR}/src/store/pack.cpp)
-target_include_directories(liquid-index-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/store)
-target_link_libraries(liquid-index-tests PRIVATE liquid::liquid GTest::gtest_main Boost::corosio libzstd_static)
+  ${PROJECT_SOURCE_DIR}/src/store/pack.cpp
+  ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp)
+target_include_directories(liquid-index-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/store
+  ${PROJECT_SOURCE_DIR}/src/crypto
+  ${blake3_source_SOURCE_DIR}/c
+  ${monocypher_source_SOURCE_DIR}/src)
+target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main Boost::corosio libzstd_static)
 gtest_discover_tests(liquid-index-tests)
+
+add_executable(liquid-crypto-tests
+  crypto/test_aead.cpp
+  ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp)
+target_include_directories(liquid-crypto-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_BINARY_DIR}/include
+  ${PROJECT_SOURCE_DIR}/src/crypto
+  ${blake3_source_SOURCE_DIR}/c
+  ${monocypher_source_SOURCE_DIR}/src)
+target_link_libraries(liquid-crypto-tests PRIVATE liquid_blake3 liquid_monocypher GTest::gtest_main)
+gtest_discover_tests(liquid-crypto-tests)
 
 add_executable(liquid-header-tests
   headers/drip.cpp

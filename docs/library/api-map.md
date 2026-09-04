@@ -27,7 +27,8 @@ concurrency rule are all cheap now and expensive to retrofit. The map also says 
    have"): its `task` and `io_result` reach clients through `liquid/runtime.hpp`, the one header
    that names Capy, so a substrate change is a change there and nowhere else (Zetta's pattern).
 5. **Every reference carries its algorithm.** A `digest` is `(algorithm, bytes)`; its text form is
-   `blake3:<hex>` or `sha256:<hex>`. Nothing in the API takes bare bytes as an identity.
+   `blake3:<hex>`, `sha256:<hex>`, or private-store `blake3k:<hex>`. Nothing in the API takes bare
+   bytes as an identity.
 6. **Coroutine-native.** Every function that performs I/O or may wait returns
    `liquid::runtime::task<T>` (`boost::capy::task<liquid::result<T>>`) and is `co_await`ed; pure computation
    (hashing, chunking, encoding, parsing) is synchronous and returns `result<T>` directly. liquid
@@ -54,12 +55,12 @@ owning issue in `error::context`.
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
-| `liquid/hash.hpp` | #39 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, text round trip |
-| `liquid/store.hpp` | #1, #8 | implemented (#1); declared (#8) | `store`: content in, digests out; leases and collection |
+| `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
+| `liquid/store.hpp` | #1, #7, #8 | implemented (#1, #7); declared (#8) | `store`: content in, digests out; encrypted trust domains; leases and collection |
 | `liquid/object.hpp` | #2 | declared | node kinds and their records; `blob`, `tree`, `change`, and the reserved shapes |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | declared | `repository`: open, read, write, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared | `drip`, `capture`: the journal as a subscription, pause and resume |
-| `liquid/identity.hpp` | #4, #51 | declared | TAAP `actor`, `signer`, `verify`, `key_provider` |
+| `liquid/identity.hpp` | #4, #7, #51 | implemented (#7); declared (#4, #51) | TAAP `actor`, `signer`, `verify`, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | declared | `mount`: the virtual filesystem over a repository |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
@@ -100,15 +101,17 @@ capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard
 ### `liquid/hash.hpp`
 
 ```cpp
-enum class algorithm : std::uint8_t { blake3 = 1, sha256 = 2 };
+enum class algorithm : std::uint8_t { blake3 = 1, sha256 = 2, blake3_keyed = 3 };
 struct digest { algorithm alg; std::array<std::byte, 32> bytes; };   // fixed width; both are 256-bit
 result<digest> hash(algorithm, std::span<const std::byte>);
-std::string to_string(const digest&);                 // "blake3:9f86d0..."
+std::string to_string(const digest&);                 // "blake3:9f86d0..." / "blake3k:..."
 result<digest> parse_digest(std::string_view);
 ```
 
-BLAKE3 is the default everywhere; SHA-256 exists for OCI and REAPI interop. Adding an algorithm
-is adding an enumerator; a repository may hold both (liquid #44).
+BLAKE3 is the default everywhere; SHA-256 exists for OCI and REAPI interop. `blake3_keyed` is
+reserved for store-generated trust-domain MAC identifiers: callers can parse and display it, while
+`hash(blake3_keyed, ...)` rejects input because the key remains inside the store. Adding an
+algorithm is adding an enumerator; a repository may hold multiple algorithms (liquid #44).
 
 The BLAKE3 implementation is the official C implementation, fetched privately at release tag
 `1.8.7` and compiled in portable mode. Its headers do not enter `include/liquid/`. SHA-256 is the
@@ -123,6 +126,12 @@ are checked against the official implementation.
 ### `liquid/store.hpp`
 
 ```cpp
+struct store_options {
+  algorithm hash_algorithm{algorithm::blake3};
+  std::uint64_t pack_size{};
+  std::shared_ptr<keyring> keys;       // null preserves plaintext-store behaviour
+  std::string write_key;               // empty selects keyring::default_key_id()
+};
 class store {                          // the chunk store: chunks, packs, liquid's own index
  public:
   static runtime::task<store> open(std::filesystem::path, store_options = {});
@@ -137,7 +146,9 @@ class store {                          // the chunk store: chunks, packs, liquid
 
 Chunking (FastCDC), packs, compression, the index and its tuning are internal; none of them
 appears in a signature. File I/O is Corosio's `random_access_file` and `stream_file` on the
-io_context's worker pool, behind the private boundary. `store_options` names the algorithm and the pack size only.
+io_context's worker pool, behind the private boundary. `store_options` names the plaintext hash
+algorithm, pack size, optional keyring, and optional write key id. A non-null keyring enables
+trust-domain encrypted objects; see [encryption.md](encryption.md).
 
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 
@@ -194,11 +205,18 @@ class capture {                        // the journal, as a subscription
 struct actor { std::string taap_id; };                   // TAAP/1 subject
 class signer { public: runtime::task<std::vector<std::byte>> sign(std::vector<std::byte>); };   // custody may be remote
 result<bool> verify(const actor&, std::span<const std::byte> payload, std::span<const std::byte> signature);
-class key_provider { /* pluggable custody: file, age, passphrase, later KMS/TPM (liquid #51) */ };
+struct argon2_parameters { std::uint32_t memory_kib; std::uint32_t iterations; std::uint32_t lanes; };
+class key_provider { protected: virtual result<std::array<std::byte, 32>> derive_kek(span, argon2_parameters) const = 0; };
+class passphrase_provider final : public key_provider { public: result<std::array<std::byte, 32>> derive(span, argon2_parameters = {}) const; };
+class key_file_provider final : public key_provider { public: static runtime::task<std::shared_ptr<key_file_provider>> open(std::filesystem::path); };
+class keyring { public: result<void> add(std::string, std::shared_ptr<key_provider>); result<std::string> default_key_id() const; result<void> set_default_key_id(std::string); runtime::task<void> rewrap(std::string, std::shared_ptr<key_provider>); };
 ```
 
 Object subjects (attestations *about* a drip or artifact) wait on the TAAP spec change
 (liquid-bridge #1); the `actor` type is written so an object-subject form can be added beside it.
+`passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
+objects. Recipient, KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains
+liquid #4 work.
 
 ## Deliberately internal
 

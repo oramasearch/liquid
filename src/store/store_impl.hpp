@@ -3,11 +3,14 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include <boost/capy/ex/async_mutex.hpp>
 
 #include "index.hpp"
+#include "../crypto/crypto.hpp"
 #include "liquid/store.hpp"
 
 namespace liquid::store_detail {
@@ -15,6 +18,7 @@ namespace liquid::store_detail {
 struct stored_object {
   digest id{};
   std::uint64_t size{};
+  std::string key_id;
   std::vector<digest> chunks;
 };
 
@@ -34,8 +38,11 @@ private:
   [[nodiscard]] runtime::task<void> load_objects();
   [[nodiscard]] runtime::task<void> save_objects();
   [[nodiscard]] runtime::task<void> index_packs(bool rebuild);
-  [[nodiscard]] runtime::task<pack_entry> store_chunk(digest id, std::vector<std::byte> raw);
-  [[nodiscard]] runtime::task<std::vector<std::byte>> load_chunk(digest id);
+  [[nodiscard]] runtime::task<pack_entry> store_chunk(
+      digest id, std::vector<std::byte> raw,
+      std::optional<crypto_detail::domain_keys> encryption = std::nullopt);
+  [[nodiscard]] runtime::task<std::vector<std::byte>> load_chunk(
+      digest id, std::optional<crypto_detail::domain_keys> encryption = std::nullopt);
   [[nodiscard]] runtime::task<void> add_object(stored_object object);
 
   std::filesystem::path root_;

@@ -10,6 +10,7 @@
 
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -17,6 +18,8 @@ namespace liquid {
 struct LIQUID_EXPORT store_options {
     algorithm hash_algorithm{algorithm::blake3};
     std::uint64_t pack_size{};
+    std::shared_ptr<keyring> keys;
+    std::string write_key;
 };
 
 struct LIQUID_EXPORT collection_options {};

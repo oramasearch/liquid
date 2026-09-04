@@ -71,7 +71,15 @@ std::uint64_t checksum(std::span<const std::byte> bytes) {
 }
 bool valid_algorithm(unsigned char value) {
   return value == static_cast<unsigned char>(algorithm::blake3) ||
-         value == static_cast<unsigned char>(algorithm::sha256);
+         value == static_cast<unsigned char>(algorithm::sha256) ||
+         value == static_cast<unsigned char>(algorithm::blake3_keyed);
+}
+
+std::array<std::byte, 33> chunk_ad(digest id) {
+  std::array<std::byte, 33> output{};
+  output[0] = std::byte{static_cast<unsigned char>(id.alg)};
+  std::copy(id.bytes.begin(), id.bytes.end(), output.begin() + 1);
+  return output;
 }
 
 runtime::task<void> write_at(std::filesystem::path path, std::uint64_t offset,
@@ -277,7 +285,8 @@ runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t
 }
 
 runtime::task<pack_entry> append_pack_entry(std::filesystem::path path, pack_contents contents,
-                                            digest id, std::vector<std::byte> raw) {
+                                            digest id, std::vector<std::byte> raw,
+                                            std::optional<crypto_detail::key> encryption_key) {
   if (contents.data_end < pack_header_size) {
     co_return std::unexpected(error{errc::internal, "invalid pack write position", path.string()});
   }
@@ -303,6 +312,18 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path, pack_con
     co_return std::unexpected(error{errc::internal, "zstd compression failed", path.string()});
   }
   compressed.resize(compressed_size);
+  std::uint64_t flags = 0;
+  if (encryption_key) {
+    const auto ad = chunk_ad(id);
+    auto boxed = crypto_detail::seal(*encryption_key, ad, compressed);
+    if (!boxed)
+      co_return std::unexpected(boxed.error());
+    compressed = std::move(*boxed);
+    flags = 1;
+  }
+  if (compressed.size() > std::numeric_limits<std::uint32_t>::max()) {
+    co_return std::unexpected(error{errc::internal, "encrypted chunk is too large", path.string()});
+  }
   pack_entry entry{id,
                    {contents.id, contents.data_end, static_cast<std::uint32_t>(compressed.size())},
                    static_cast<std::uint32_t>(raw.size())};
@@ -312,7 +333,7 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path, pack_con
   physical.insert(physical.end(), id.bytes.begin(), id.bytes.end());
   put_u32(physical, entry.raw_length);
   put_u32(physical, entry.location.length);
-  put_u64(physical, 0);
+  put_u64(physical, flags);
   physical.insert(physical.end(), compressed.begin(), compressed.end());
   auto data_written = co_await write_at(path, contents.data_end, std::move(physical), false);
   if (!data_written)
@@ -332,7 +353,8 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path, pack_con
 }
 
 runtime::task<std::vector<std::byte>> read_pack_entry(std::filesystem::path path,
-                                                      chunk_location location, digest expected) {
+                                                      chunk_location location, digest expected,
+                                                      std::optional<crypto_detail::key> encryption_key) {
   auto header = co_await read_file_range(path, location.offset, physical_header_size);
   if (!header)
     co_return std::unexpected(header.error());
@@ -343,22 +365,33 @@ runtime::task<std::vector<std::byte>> read_pack_entry(std::filesystem::path path
   }
   const auto raw_size = get_u32(bytes, 33);
   const auto compressed_size = get_u32(bytes, 37);
+  const auto flags = get_u64(bytes, 41);
   if (compressed_size != location.length)
     co_return std::unexpected(corrupt_error("chunk length differs from index", path));
   auto compressed =
       co_await read_file_range(path, location.offset + physical_header_size, compressed_size);
   if (!compressed)
     co_return std::unexpected(compressed.error());
+  if (flags > 1) {
+    co_return std::unexpected(corrupt_error("unknown encrypted chunk flags", path));
+  }
+  if (flags == 1) {
+    if (!encryption_key) {
+      co_return std::unexpected(error{errc::unauthorized, "encrypted chunk key is unavailable",
+                                      to_string(expected)});
+    }
+    const auto ad = chunk_ad(expected);
+    auto opened = crypto_detail::open(*encryption_key, ad, *compressed);
+    if (!opened) {
+      co_return std::unexpected(corrupt_error("authenticated chunk decryption failed", path));
+    }
+    compressed = std::move(*opened);
+  }
   std::vector<std::byte> raw(raw_size);
   const auto produced =
-      ZSTD_decompress(raw.data(), raw.size(), compressed->data(), compressed_size);
+      ZSTD_decompress(raw.data(), raw.size(), compressed->data(), compressed->size());
   if (ZSTD_isError(produced) || produced != raw.size())
     co_return std::unexpected(corrupt_error("chunk decompression failed", path));
-  const auto actual = hash(expected.alg, raw);
-  if (!actual || actual->bytes != expected.bytes) {
-    co_return std::unexpected(
-        error{errc::corrupt, "chunk digest verification failed", to_string(expected)});
-  }
   co_return raw;
 }
 

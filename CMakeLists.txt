@@ -81,6 +81,13 @@ FetchContent_Declare(blake3_source
   SOURCE_SUBDIR  c/liquid-no-upstream-cmake)
 FetchContent_MakeAvailable(blake3_source)
 
+# Monocypher is a private, pinned single-file C crypto dependency. It supplies
+# XChaCha20-Poly1305 and Argon2i; BLAKE3 remains the identity implementation.
+FetchContent_Declare(monocypher_source
+  URL      https://monocypher.org/download/monocypher-4.0.3.tar.gz
+  URL_HASH SHA256=8cc9bc341a66249016db9bd70e9142d8d0aef9945973744b1ac05dbc55d8ee66)
+FetchContent_MakeAvailable(monocypher_source)
+
 # Compression is a private codec dependency of the pack format.  Do not expose
 # its headers or targets through libliquid's public interface.
 set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
@@ -121,12 +128,27 @@ set_target_properties(liquid_blake3 PROPERTIES
   C_VISIBILITY_PRESET hidden
   POSITION_INDEPENDENT_CODE ON)
 
+add_library(liquid_monocypher_objects OBJECT
+  ${monocypher_source_SOURCE_DIR}/src/monocypher.c)
+target_include_directories(liquid_monocypher_objects SYSTEM PRIVATE
+  ${monocypher_source_SOURCE_DIR}/src)
+set_target_properties(liquid_monocypher_objects PROPERTIES
+  C_EXTENSIONS OFF
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+target_compile_features(liquid_monocypher_objects PRIVATE c_std_99)
+add_library(liquid_monocypher STATIC $<TARGET_OBJECTS:liquid_monocypher_objects>)
+set_target_properties(liquid_monocypher PROPERTIES
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+
 add_library(libliquid
   src/drip.cpp
   src/error.cpp
   src/hash.cpp
   src/hash/sha256.c
   src/identity.cpp
+  src/crypto/crypto.cpp
   src/object.cpp
   src/remote.cpp
   src/repository.cpp
@@ -151,15 +173,19 @@ target_include_directories(libliquid PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  PRIVATE ${blake3_source_SOURCE_DIR}/c)
+  PRIVATE ${blake3_source_SOURCE_DIR}/c ${monocypher_source_SOURCE_DIR}/src)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio libzstd_static)
 if(BUILD_SHARED_LIBS)
-  target_link_libraries(libliquid PRIVATE liquid_blake3)
+  target_link_libraries(libliquid PRIVATE liquid_blake3 liquid_monocypher)
 else()
-  target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_blake3_objects>)
+  target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_blake3_objects>
+                            $<TARGET_OBJECTS:liquid_monocypher_objects>)
+endif()
+if(WIN32)
+  target_link_libraries(libliquid PRIVATE bcrypt)
 endif()
 include(GenerateExportHeader)
 generate_export_header(libliquid
