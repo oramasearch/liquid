@@ -17,6 +17,10 @@ public:
         stop();
     }
 
+    [[nodiscard]] auto name() const noexcept -> std::string_view override {
+        return "FSEvents";
+    }
+
     auto start(watch_callback callback) -> result<void> override {
         std::lock_guard lock(mutex_);
         if (stream_)
@@ -31,19 +35,23 @@ public:
         CFRelease(root);
         FSEventStreamContext context{};
         context.info = this;
+        queue_ = dispatch_queue_create("live.liquid.capture.fsevents", DISPATCH_QUEUE_SERIAL);
         stream_ = FSEventStreamCreate(kCFAllocatorDefault,
                                       &fsevents_watcher::receive,
                                       &context,
                                       paths,
                                       kFSEventStreamEventIdSinceNow,
-                                      static_cast<CFTimeInterval>(latency_.count()) / 1000.0,
+                                      0.05,
                                       kFSEventStreamCreateFlagFileEvents |
+                                          kFSEventStreamCreateFlagNoDefer |
                                           kFSEventStreamCreateFlagWatchRoot);
         CFRelease(paths);
-        if (!stream_)
+        if (!stream_) {
+            dispatch_release(queue_);
+            queue_ = nullptr;
             return std::unexpected(
                 error{errc::unavailable, "cannot create FSEvents stream", workspace_.string()});
-        queue_ = dispatch_queue_create("live.liquid.capture.fsevents", DISPATCH_QUEUE_SERIAL);
+        }
         FSEventStreamSetDispatchQueue(stream_, queue_);
         if (!FSEventStreamStart(stream_)) {
             FSEventStreamInvalidate(stream_);
@@ -65,6 +73,7 @@ public:
         FSEventStreamInvalidate(stream_);
         FSEventStreamRelease(stream_);
         stream_ = nullptr;
+        dispatch_sync_f(queue_, nullptr, [](void*) {});
         dispatch_release(queue_);
         queue_ = nullptr;
     }

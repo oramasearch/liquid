@@ -52,7 +52,7 @@ auto open_capture(const std::filesystem::path& path, liquid::capture_options opt
 }
 
 void wait() {
-    auto completed = liquid::runtime::block_on(wait_for_capture(std::chrono::seconds{3}));
+    auto completed = liquid::runtime::block_on(wait_for_capture(std::chrono::seconds{1}));
     EXPECT_TRUE(completed.has_value()) << (completed ? "" : completed.error().message);
 }
 

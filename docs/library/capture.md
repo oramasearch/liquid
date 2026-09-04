@@ -14,7 +14,12 @@ application's path through the runtime's blocking-work adapter.
 
 ## Operation
 
-Capture recognizes a temporary-file rename by reconciling its final target, so the temporary
+Before `open` returns, capture writes an excluded `.liquid-capture-cookie-<n>` in the workspace
+and waits up to 100 ms for the watcher to report it, then removes it. It retries with a new cookie
+for up to five seconds; if arming still fails, `open` returns `errc::unavailable` with the watcher
+and workspace. Events before a reported cookie precede its report, so callers cannot write into
+the interval before the watcher is armed. Capture recognizes a
+temporary-file rename by reconciling its final target, so the temporary
 path does not appear in history. File identity is derived from the target path and remains stable
 across this form of save. A batch of paths found in one configured coalescing window is one drip
 with multiple operations. Before append, every batch crosses the private `drip_filter` stage. Its
@@ -34,7 +39,7 @@ visible rather than silently repaired. `pause()` retains the observed window wit
 
 | Platform | Mechanism | Capture behavior |
 |---|---|---|
-| macOS | FSEvents with file events and configured latency | `MustScanSubDirs`, kernel/user drops, and root changes trigger reconciliation. |
+| macOS | FSEvents file events, `NoDefer`, 50 ms latency | `MustScanSubDirs`, kernel/user drops, and root changes trigger reconciliation; close stops, invalidates, releases, then drains its serial queue. |
 | Linux | recursive inotify watches | New directories are watched; directory moves and `IN_Q_OVERFLOW` trigger reconciliation. |
 | Windows | `ReadDirectoryChangesW` on the root with subtree | A zero-byte successful completion is an overflow and triggers enumeration. |
 
@@ -42,8 +47,9 @@ The platform callback only adds a hint to the mutex-protected capture queue, the
 wake coroutine on the shared runtime context. That runtime-side coroutine sets the async event;
 OS threads never touch Capy primitives or await work. The capture coroutine waits without polling
 while the workspace is idle; after its first hint, it starts the configured coalescing delay and
-processes that batch. The coroutine-owned capture path performs reconcile, filtering, storage,
-metadata transaction, append, delivery, and cursor persistence.
+processes that batch. It drains queued hints, clears the event, then drains again before waiting,
+so a wake arriving during the handoff is retained. The coroutine-owned capture path performs
+reconcile, filtering, storage, metadata transaction, append, delivery, and cursor persistence.
 macOS uses the system FSEvents dispatch queue; Linux and Windows use runtime blocking work for
 their required wait. No platform type appears in a public header.
 

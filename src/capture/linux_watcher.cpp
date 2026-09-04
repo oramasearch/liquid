@@ -22,6 +22,10 @@ public:
         stop();
     }
 
+    [[nodiscard]] auto name() const noexcept -> std::string_view override {
+        return "inotify";
+    }
+
     auto start(watch_callback callback) -> result<void> override {
         fd_ = inotify_init1(IN_CLOEXEC);
         if (fd_ < 0)

@@ -128,6 +128,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
     std::uint64_t recrawls{0};
     bool paused{false};
     bool closed{false};
+    bool cookie_seen{false};
     std::atomic<bool> stopped{false};
     std::atomic<bool> wake_pending{false};
     std::atomic<std::uint64_t> last_append_ns{0};
@@ -135,6 +136,13 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
     impl() : executor(runtime::default_context().executor()) {}
 
     static runtime::task<void> wake(std::shared_ptr<impl> state) {
+        {
+            std::lock_guard lock(state->mutex);
+            state->cookie_seen =
+                state->cookie_seen || std::ranges::any_of(state->events, [](const auto& event) {
+                    return event.kind == capture_detail::watch_event_kind::cookie;
+                });
+        }
         state->events_ready.set();
         co_return {};
     }
@@ -149,7 +157,9 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         const auto relative = event.path.lexically_relative(workspace).empty()
                                   ? event.path
                                   : event.path.lexically_relative(workspace);
-        if (excluded(relative))
+        if (relative.generic_string().starts_with(".liquid-capture-cookie-"))
+            event.kind = capture_detail::watch_event_kind::cookie;
+        else if (excluded(relative))
             return;
         {
             std::lock_guard lock(mutex);
@@ -162,7 +172,8 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
 
     [[nodiscard]] auto excluded(const std::filesystem::path& path) const -> bool {
         const auto text = path.generic_string();
-        if (text == ".liquid" || text.starts_with(".liquid/"))
+        if (text.starts_with(".liquid-capture-cookie-") || text == ".liquid" ||
+            text.starts_with(".liquid/"))
             return true;
         for (const auto& pattern : options.exclude) {
             auto regex = std::string{"^"};
@@ -428,6 +439,48 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
             });
         if (!started)
             co_return std::unexpected(started.error());
+        auto armed = false;
+        for (auto attempt = 0U; attempt < 50 && !armed; ++attempt) {
+            {
+                std::lock_guard lock(state->mutex);
+                state->cookie_seen = false;
+            }
+            const auto cookie =
+                state->workspace / (".liquid-capture-cookie-" + std::to_string(attempt));
+            auto written = co_await runtime::offload([cookie] {
+                auto output = std::ofstream{cookie, std::ios::trunc};
+                if (!output)
+                    throw std::system_error(errno, std::generic_category(), "write capture cookie");
+                output << "armed\n";
+                output.flush();
+                if (!output)
+                    throw std::system_error(errno, std::generic_category(), "flush capture cookie");
+            });
+            if (!written)
+                co_return std::unexpected(written.error());
+            for (auto elapsed = std::chrono::milliseconds{};
+                 elapsed < std::chrono::milliseconds{100};
+                 elapsed += std::chrono::milliseconds{1}) {
+                {
+                    std::lock_guard lock(state->mutex);
+                    armed = state->cookie_seen;
+                }
+                if (armed)
+                    break;
+                auto [wait_error] = co_await runtime::delay(std::chrono::milliseconds{1});
+                if (wait_error)
+                    co_return std::unexpected(
+                        error{errc::internal, wait_error.message(), "capture watcher arming"});
+            }
+            auto removed = co_await runtime::offload([cookie] { std::filesystem::remove(cookie); });
+            if (!removed)
+                co_return std::unexpected(removed.error());
+        }
+        if (!armed)
+            co_return std::unexpected(
+                capture_error(errc::unavailable,
+                              std::string{state->watcher->name()} + " did not arm for workspace",
+                              state->workspace));
         auto output = capture{std::make_unique<impl>()};
         output.impl_->shared = std::move(state);
         boost::capy::run_async(output.impl_->shared->executor,
@@ -456,13 +509,22 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
                 auto batch = std::vector<capture_detail::watch_event>{};
                 {
                     std::lock_guard lock(state->mutex);
-                    state->events_ready.clear();
                     batch.swap(state->events);
+                }
+                state->events_ready.clear();
+                {
+                    std::lock_guard lock(state->mutex);
+                    batch.insert(batch.end(),
+                                 std::make_move_iterator(state->events.begin()),
+                                 std::make_move_iterator(state->events.end()));
+                    state->events.clear();
                     state->wake_pending.store(false, std::memory_order_release);
                 }
                 auto coalesced = capture_detail::coalescer{};
                 auto needs_recrawl = false;
                 for (auto& event : batch) {
+                    if (event.kind == capture_detail::watch_event_kind::cookie)
+                        continue;
                     const auto relative = event.path.lexically_relative(state->workspace).empty()
                                               ? event.path
                                               : event.path.lexically_relative(state->workspace);

@@ -21,6 +21,10 @@ public:
         stop();
     }
 
+    [[nodiscard]] auto name() const noexcept -> std::string_view override {
+        return "ReadDirectoryChangesW";
+    }
+
     auto start(watch_callback callback) -> result<void> override {
         handle_ = CreateFileW(workspace_.c_str(),
                               FILE_LIST_DIRECTORY,

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <string_view>
 
 #include "liquid/error.hpp"
 
@@ -14,7 +15,7 @@ class capture;
 
 namespace liquid::capture_detail {
 
-enum class watch_event_kind { write, remove, reconcile };
+enum class watch_event_kind { write, remove, reconcile, cookie };
 
 struct watch_event {
     watch_event_kind kind{watch_event_kind::write};
@@ -27,6 +28,7 @@ using watch_callback = std::function<void(watch_event)>;
 class watcher {
 public:
     virtual ~watcher() = default;
+    [[nodiscard]] virtual auto name() const noexcept -> std::string_view = 0;
     virtual auto start(watch_callback callback) -> result<void> = 0;
     virtual void stop() noexcept = 0;
     virtual void inject_overflow_for_test() = 0;
