@@ -682,43 +682,57 @@ TEST(BuildReplay, remote_input_is_fetched_through_the_blob_source) {
     temporary_repository remote_location;
     auto remote_store = liquid::runtime::block_on(liquid::store::open(remote_location.path()));
     ASSERT_TRUE(remote_store) << remote_store.error().message;
-    auto remote = std::make_shared<liquid::test_support::on_disk_remote_source>(
-        std::move(*remote_store));
+    auto remote =
+        std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*remote_store));
     action_fixture fixture{true, 20, true, remote};
 
-    auto input = remote->put(bytes("input"));
+    auto input = remote->put(bytes("remote-input"));
     ASSERT_TRUE(input) << input.error().message;
     input->remote = liquid::remote_blob_location{"disk", "worker-a"};
-    ASSERT_TRUE(liquid::runtime::block_on(fixture.repository.write_remote("input.txt", *input)));
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.repository.write_remote("other.txt", *input)));
     fixture.cut("remote replay input");
 
-    auto output = remote->put(bytes("input-derived"));
+    auto output = remote->put(bytes("recorded failure output\n"));
     ASSERT_TRUE(output) << output.error().message;
     output->remote = liquid::remote_blob_location{"disk", "worker-a"};
     auto output_record = liquid::runtime::block_on(fixture.repository.store_remote_blob(*output));
     ASSERT_TRUE(output_record) << output_record.error().message;
-    auto empty = remote->put({});
-    ASSERT_TRUE(empty) << empty.error().message;
-    empty->remote = liquid::remote_blob_location{"disk", "worker-a"};
-    auto empty_record = liquid::runtime::block_on(fixture.repository.store_remote_blob(*empty));
-    ASSERT_TRUE(empty_record) << empty_record.error().message;
+    auto stdout = remote->put(bytes("recorded failure stdout\n"));
+    ASSERT_TRUE(stdout) << stdout.error().message;
+    stdout->remote = liquid::remote_blob_location{"disk", "worker-a"};
+    auto stdout_record = liquid::runtime::block_on(fixture.repository.store_remote_blob(*stdout));
+    ASSERT_TRUE(stdout_record) << stdout_record.error().message;
+    auto stderr = remote->put(bytes("recorded failure stderr\n"));
+    ASSERT_TRUE(stderr) << stderr.error().message;
+    stderr->remote = liquid::remote_blob_location{"disk", "worker-a"};
+    auto stderr_record = liquid::runtime::block_on(fixture.repository.store_remote_blob(*stderr));
+    ASSERT_TRUE(stderr_record) << stderr_record.error().message;
 
-    const auto action = fixture.input(
-        {"fixture", "copy-tagged", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
-    const auto expected = liquid::action_result{.exit = 0,
-                                                .outputs = {{"out/copy.txt", 0100644, *output_record}},
-                                                .stdout_output = *empty_record,
-                                                .stderr_output = *empty_record};
+    const auto action = fixture.input({"fixture", "fail", "out/copy.txt"}, {"out/copy.txt"});
+    const auto expected =
+        liquid::action_result{.exit = 37,
+                              .outputs = {{"out/copy.txt", 0100644, *output_record}},
+                              .stdout_output = *stdout_record,
+                              .stderr_output = *stderr_record};
     auto recorded = liquid::runtime::block_on(
         liquid::build::record_remote_result(fixture.repository, action, expected));
     ASSERT_TRUE(recorded) << recorded.error().message << ": " << recorded.error().context;
+    auto status = fixture.repository.status();
+    ASSERT_TRUE(status) << status.error().message;
+    EXPECT_EQ(status->remote_bytes, input->size);
     EXPECT_EQ(remote->reads(), 0U);
 
-    auto replayed = liquid::runtime::block_on(liquid::build::replay(fixture.repository, *recorded));
+    auto replayed =
+        liquid::runtime::block_on(liquid::build::replay(fixture.repository, recorded->value));
     ASSERT_TRUE(replayed) << replayed.error().message << ": " << replayed.error().context;
-    EXPECT_TRUE(replayed->agreement);
+    ASSERT_TRUE(replayed->agreement)
+        << (replayed->differences.empty() ? "no reported difference"
+                                          : replayed->differences.front().output)
+        << " recorded=" << replayed->recorded_exit << " reexecuted=" << replayed->reexecuted_exit;
     EXPECT_GT(remote->reads(), 0U);
-    EXPECT_NE(std::ranges::find(remote->read_blobs(), input->content), remote->read_blobs().end());
+    EXPECT_TRUE(std::ranges::any_of(remote->read_blobs(), [&input](const liquid::digest& value) {
+        return liquid::to_string(value) == liquid::to_string(input->content);
+    }));
     auto hydrated = liquid::runtime::block_on(
         liquid::repository_detail::build_access::contains(fixture.repository, input->content));
     ASSERT_TRUE(hydrated) << hydrated.error().message;

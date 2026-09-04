@@ -37,8 +37,8 @@ public:
         return read_blobs_;
     }
 
-    runtime::task<std::vector<digest>>
-    find_missing(std::string instance, std::vector<digest> blobs) override {
+    runtime::task<std::vector<digest>> find_missing(std::string instance,
+                                                    std::vector<digest> blobs) override {
         if (instance != "worker-a") {
             co_return std::unexpected(
                 error{errc::invalid_argument, "unknown remote instance", std::move(instance)});

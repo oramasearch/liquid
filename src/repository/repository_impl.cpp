@@ -3112,6 +3112,8 @@ runtime::task<repository_detail::vfs_entry> snapshot_vfs_entry(store& objects,
     output.size = record->size;
     output.chunks = std::move(record->chunks);
     output.chunk_sizes = std::move(record->chunk_sizes);
+    output.content = record->content;
+    output.remote = std::move(record->remote);
     co_return output;
 }
 

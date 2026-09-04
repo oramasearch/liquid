@@ -20,4 +20,5 @@ second VFS path; full materialisation uses the same store-backed content identit
 Read-only observed mounts resolve entries from the action's recorded input-tree digest, while
 mutable capture mounts continue to use the live repository tree. Recorded declared outputs receive
 virtual file and directory placeholders only for read-only execution so bind targets exist without
-altering the captured input snapshot.
+altering the captured input snapshot. Snapshot entries retain remote blob metadata so replay uses
+the configured source when it reads a recorded remote input.

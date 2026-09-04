@@ -77,8 +77,8 @@ struct remote_fixture {
         auto remote_store =
             liquid::runtime::block_on(liquid::store::open(location.path() / "remote"));
         EXPECT_TRUE(remote_store) << remote_store.error().message;
-        remote = std::make_shared<liquid::test_support::on_disk_remote_source>(
-            std::move(*remote_store));
+        remote =
+            std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*remote_store));
         auto stored = remote->put(contents);
         EXPECT_TRUE(stored) << stored.error().message;
         value = *stored;
@@ -220,8 +220,8 @@ TEST(RemoteOutputs, sha256_remote_chunks_hydrate_into_default_store) {
     auto remote_store = liquid::runtime::block_on(
         liquid::store::open(location.path() / "sha-remote", std::move(remote_options)));
     ASSERT_TRUE(remote_store) << remote_store.error().message;
-    auto source = std::make_shared<liquid::test_support::on_disk_remote_source>(
-        std::move(*remote_store));
+    auto source =
+        std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*remote_store));
     const auto expected = make_bytes(512U * 1024U);
     auto value = source->put(expected);
     ASSERT_TRUE(value) << value.error().message;

@@ -27,6 +27,90 @@ auto same_digest(const digest& left, const digest& right) -> bool {
     return left.alg == right.alg && left.bytes == right.bytes;
 }
 
+runtime::task<void> hydrate_blob(repository& source, digest id, std::set<std::string>& seen) {
+    if (!seen.insert(to_string(id)).second) {
+        co_return liquid::result<void>{};
+    }
+    auto bytes = co_await repository_detail::build_access::get(source, id);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto value = objects::decode_blob(*bytes);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    if (value->content.alg == algorithm::blake3 || value->content.alg == algorithm::sha256 ||
+        value->content.alg == algorithm::blake3_keyed) {
+        auto contents = co_await repository_detail::build_access::get(source, value->content);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        co_return liquid::result<void>{};
+    }
+    for (const auto& chunk : value->chunks) {
+        auto contents = co_await repository_detail::build_access::get(source, chunk);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<void> hydrate_tree(repository& source, digest id, std::set<std::string>& seen) {
+    if (!seen.insert(to_string(id)).second) {
+        co_return liquid::result<void>{};
+    }
+    auto bytes = co_await repository_detail::build_access::get(source, id);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto value = objects::decode_tree(*bytes);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    for (const auto& entry : value->entries) {
+        auto hydrated = liquid::result<void>{};
+        if (entry.kind == node_kind::blob) {
+            hydrated = co_await hydrate_blob(source, entry.ref, seen);
+        } else if (entry.kind == node_kind::tree || entry.kind == node_kind::repo) {
+            hydrated = co_await hydrate_tree(source, entry.ref, seen);
+        }
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<void> hydrate_replay_graph(repository& source,
+                                         const action_result& recorded,
+                                         const objects::action_record& action) {
+    auto seen = std::set<std::string>{};
+    auto inputs = co_await hydrate_tree(source, action.input.inputs, seen);
+    if (!inputs) {
+        co_return std::unexpected(inputs.error());
+    }
+    auto toolchain = co_await hydrate_tree(source, action.input.toolchain, seen);
+    if (!toolchain) {
+        co_return std::unexpected(toolchain.error());
+    }
+    for (const auto& output : recorded.outputs) {
+        auto hydrated = co_await hydrate_blob(source, output.blob, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    auto stdout_output = co_await hydrate_blob(source, recorded.stdout_output, seen);
+    if (!stdout_output) {
+        co_return std::unexpected(stdout_output.error());
+    }
+    auto stderr_output = co_await hydrate_blob(source, recorded.stderr_output, seen);
+    if (!stderr_output) {
+        co_return std::unexpected(stderr_output.error());
+    }
+    co_return liquid::result<void>{};
+}
+
 runtime::task<std::vector<std::byte>> read_blob(repository& source, const blob& value) {
     if (value.size > std::numeric_limits<std::size_t>::max()) {
         co_return std::unexpected(
@@ -108,10 +192,18 @@ runtime::task<void> add_digest_difference(repository& source,
     }
     auto difference = reproducibility_difference{
         .output = std::move(output), .cached = cached, .reexecuted = replayed};
-    if (explain) {
+    if (cached && replayed) {
         auto explained = co_await add_byte_difference(source, difference);
         if (!explained) {
             co_return std::unexpected(explained.error());
+        }
+        if (!difference.byte_offset) {
+            co_return liquid::result<void>{};
+        }
+        if (!explain) {
+            difference.byte_offset = {};
+            difference.cached_byte = {};
+            difference.reexecuted_byte = {};
         }
     }
     differences.push_back(std::move(difference));
@@ -189,10 +281,8 @@ auto selected(const objects::action_index_entry& entry,
     return false;
 }
 
-runtime::task<replay_report> reexecute_one(repository& source,
-                                           digest result,
-                                           const action_result& recorded,
-                                           bool explain) {
+runtime::task<replay_report>
+reexecute_one(repository& source, digest result, const action_result& recorded, bool explain) {
     auto action_bytes = co_await repository_detail::build_access::get(source, recorded.action);
     if (!action_bytes) {
         co_return std::unexpected(action_bytes.error());
@@ -204,6 +294,10 @@ runtime::task<replay_report> reexecute_one(repository& source,
     auto sandbox_bytes = co_await repository_detail::build_access::get(source, action->sandbox);
     if (!sandbox_bytes) {
         co_return std::unexpected(sandbox_bytes.error());
+    }
+    auto hydrated = co_await hydrate_replay_graph(source, recorded, *action);
+    if (!hydrated) {
+        co_return std::unexpected(hydrated.error());
     }
     auto expected_wrap_sandbox = objects::encode(wrap_sandbox_definition());
     if (!expected_wrap_sandbox) {
@@ -330,9 +424,7 @@ struct replay_target {
 };
 
 runtime::task<replay_target>
-resolve_replay_target(repository& source,
-                      build_detail::disk_cache& cache,
-                      digest target) {
+resolve_replay_target(repository& source, build_detail::disk_cache& cache, digest target) {
     auto target_bytes = co_await repository_detail::build_access::get(source, target);
     if (!target_bytes) {
         co_return std::unexpected(target_bytes.error());
