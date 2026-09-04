@@ -13,6 +13,9 @@
 
 namespace liquid {
 
+struct action_input;
+struct action_result;
+
 struct LIQUID_EXPORT remote_blob_location {
     std::string source;
     std::string instance;
@@ -32,6 +35,19 @@ public:
                                                                   std::span<std::byte> output) = 0;
     [[nodiscard]] virtual runtime::task<void>
     write(std::string instance, digest blob, std::vector<std::byte> contents) = 0;
+};
+
+class LIQUID_EXPORT remote_executor {
+public:
+    virtual ~remote_executor() = default;
+
+    [[nodiscard]] virtual remote_blob_source& blobs() noexcept = 0;
+    [[nodiscard]] virtual std::string instance() const = 0;
+    [[nodiscard]] virtual std::uint64_t queue_depth() const noexcept = 0;
+    [[nodiscard]] virtual bool supports_batch() const noexcept = 0;
+    [[nodiscard]] virtual runtime::task<action_result> execute(action_input input) = 0;
+    [[nodiscard]] virtual runtime::task<std::vector<action_result>>
+    execute_batch(std::vector<action_input> inputs) = 0;
 };
 
 class LIQUID_EXPORT remote {

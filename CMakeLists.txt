@@ -227,6 +227,7 @@ add_library(libliquid
   src/attestation/registry.cpp
   src/build/cache.cpp
   src/build/executor.cpp
+  src/build/distribution.cpp
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp

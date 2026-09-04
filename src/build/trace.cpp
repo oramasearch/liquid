@@ -21,6 +21,34 @@ auto duration(const action_timing& timing) -> std::chrono::milliseconds {
     return timing.queued + timing.sandbox + timing.exec + timing.hash + timing.store;
 }
 
+auto decision_name(execution_decision value) -> std::string_view {
+    switch (value) {
+    case execution_decision::local:
+        return "local";
+    case execution_decision::remote:
+        return "remote";
+    case execution_decision::race:
+        return "race";
+    }
+    return "local";
+}
+
+auto size_class_name(action_size_class value) -> std::string_view {
+    switch (value) {
+    case action_size_class::unknown:
+        return "unknown";
+    case action_size_class::tiny:
+        return "tiny";
+    case action_size_class::short_action:
+        return "short";
+    case action_size_class::medium:
+        return "medium";
+    case action_size_class::long_action:
+        return "long";
+    }
+    return "unknown";
+}
+
 auto action_index(const build_trace& trace, const digest& action) -> std::optional<std::size_t> {
     for (auto index = std::size_t{}; index != trace.actions.size(); ++index) {
         if (same_digest(trace.actions[index].action, action)) {
@@ -77,7 +105,8 @@ auto critical_path_to(const build_trace& trace, std::size_t target)
                           duration(action.timing),
                           action.timing,
                           action.cache,
-                          action.outputs});
+                          action.outputs,
+                          action.schedule});
     }
     return output;
 }
@@ -124,6 +153,18 @@ auto json_string(std::string_view input) -> std::string {
         }
     }
     output.push_back('"');
+    return output;
+}
+
+auto history_json(const std::vector<action_timing>& history) -> std::string {
+    auto output = std::string{"["};
+    for (auto index = std::size_t{}; index != history.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += std::to_string(duration(history[index]).count());
+    }
+    output.push_back(']');
     return output;
 }
 
@@ -290,24 +331,49 @@ liquid::result<std::string> chrome_trace(const build_trace& trace) {
                                   std::size_t thread,
                                   std::chrono::milliseconds start,
                                   std::chrono::milliseconds elapsed,
-                                  const digest& action) {
+                                  const build_trace_action& action) {
         if (!first) {
             output.push_back(',');
         }
         first = false;
         output += std::format("{{\"name\":{},\"cat\":\"build\",\"ph\":\"X\",\"ts\":{},\"dur\":{},"
-                              "\"pid\":1,\"tid\":{},\"args\":{{\"action\":{}}}}}",
+                              "\"pid\":1,\"tid\":{},\"args\":{{\"action\":{}",
                               json_string(name),
                               start.count() * 1000,
                               elapsed.count() * 1000,
                               thread,
-                              json_string(to_string(action)));
+                              json_string(to_string(action.action)));
+        if (action.schedule) {
+            const auto& schedule = *action.schedule;
+            const auto& inputs = schedule.inputs;
+            output +=
+                std::format(",\"execution_decision\":{},\"history_ms\":{},\"size_class\":{},"
+                            "\"input_bytes\":{},\"remote_state_queried\":{},"
+                            "\"remote_missing_bytes\":{},\"remote_queue_depth\":{},"
+                            "\"remote_cache_locality_permille\":{},\"batch_supported\":{},"
+                            "\"batch_size\":{},\"local_estimate_ms\":{},\"remote_estimate_ms\":{},"
+                            "\"decision_reason\":{}",
+                            json_string(decision_name(schedule.decision)),
+                            history_json(inputs.history),
+                            json_string(size_class_name(inputs.size_class)),
+                            inputs.input_bytes,
+                            inputs.remote_state_queried,
+                            inputs.remote_missing_bytes,
+                            inputs.remote_queue_depth,
+                            inputs.remote_cache_locality_permille,
+                            inputs.batch_supported,
+                            inputs.batch_size,
+                            schedule.local_estimate.count(),
+                            schedule.remote_estimate.count(),
+                            json_string(schedule.reason));
+        }
+        output += "}}";
     };
     for (auto index = std::size_t{}; index != trace.actions.size(); ++index) {
         const auto& action = trace.actions[index];
         auto offset = action.start_offset;
         const auto phase = [&](std::string_view name, std::chrono::milliseconds elapsed) {
-            append_event(name, index + 1, offset, elapsed, action.action);
+            append_event(name, index + 1, offset, elapsed, action);
             offset += elapsed;
         };
         phase("queued", action.timing.queued);

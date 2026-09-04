@@ -487,6 +487,101 @@ auto decode_action_timing(const cbor::value& value) -> result<action_timing> {
     return action_timing{*queued, *sandbox, *exec, *hash, *store};
 }
 
+auto encode_action_timing(const action_timing& value) -> cbor::value {
+    return map({{"queued_ms", cbor::value{static_cast<std::uint64_t>(value.queued.count())}},
+                {"sandbox_ms", cbor::value{static_cast<std::uint64_t>(value.sandbox.count())}},
+                {"exec_ms", cbor::value{static_cast<std::uint64_t>(value.exec.count())}},
+                {"hash_ms", cbor::value{static_cast<std::uint64_t>(value.hash.count())}},
+                {"store_ms", cbor::value{static_cast<std::uint64_t>(value.store.count())}}});
+}
+
+auto encode_schedule(const execution_schedule& value) -> cbor::value {
+    auto history = cbor::value::array{};
+    for (const auto& timing : value.inputs.history) {
+        history.push_back(encode_action_timing(timing));
+    }
+    return map(
+        {{"decision", cbor::value{static_cast<std::uint64_t>(value.decision)}},
+         {"history", cbor::value{std::move(history)}},
+         {"size_class", cbor::value{static_cast<std::uint64_t>(value.inputs.size_class)}},
+         {"input_bytes", cbor::value{value.inputs.input_bytes}},
+         {"remote_state_queried", cbor::value{value.inputs.remote_state_queried}},
+         {"remote_missing_bytes", cbor::value{value.inputs.remote_missing_bytes}},
+         {"remote_queue_depth", cbor::value{value.inputs.remote_queue_depth}},
+         {"remote_cache_locality_permille",
+          cbor::value{static_cast<std::uint64_t>(value.inputs.remote_cache_locality_permille)}},
+         {"batch_supported", cbor::value{value.inputs.batch_supported}},
+         {"batch_size", cbor::value{value.inputs.batch_size}},
+         {"local_estimate_ms",
+          cbor::value{static_cast<std::uint64_t>(value.local_estimate.count())}},
+         {"remote_estimate_ms",
+          cbor::value{static_cast<std::uint64_t>(value.remote_estimate.count())}},
+         {"reason", cbor::value{value.reason}}});
+}
+
+auto decode_schedule(const cbor::value& value) -> result<execution_schedule> {
+    const auto unsigned_field = [&](std::string_view name) -> const std::uint64_t* {
+        const auto* field = find(value, name);
+        return field ? std::get_if<std::uint64_t>(&field->data) : nullptr;
+    };
+    const auto bool_field = [&](std::string_view name) -> const bool* {
+        const auto* field = find(value, name);
+        return field ? std::get_if<bool>(&field->data) : nullptr;
+    };
+    const auto* decision = unsigned_field("decision");
+    const auto* size_class = unsigned_field("size_class");
+    const auto* input_bytes = unsigned_field("input_bytes");
+    const auto* remote_state_queried = bool_field("remote_state_queried");
+    const auto* remote_missing_bytes = unsigned_field("remote_missing_bytes");
+    const auto* remote_queue_depth = unsigned_field("remote_queue_depth");
+    const auto* locality = unsigned_field("remote_cache_locality_permille");
+    const auto* batch_supported = bool_field("batch_supported");
+    const auto* batch_size = unsigned_field("batch_size");
+    const auto* local_estimate_value = find(value, "local_estimate_ms");
+    const auto* remote_estimate_value = find(value, "remote_estimate_ms");
+    const auto* reason_value = find(value, "reason");
+    const auto* reason = reason_value ? std::get_if<std::string>(&reason_value->data) : nullptr;
+    const auto* history_value = find(value, "history");
+    const auto* history =
+        history_value ? std::get_if<cbor::value::array>(&history_value->data) : nullptr;
+    auto local_estimate = local_estimate_value ? milliseconds_value(*local_estimate_value)
+                                               : result<std::chrono::milliseconds>{std::unexpected(
+                                                     corrupt("schedule local estimate missing"))};
+    auto remote_estimate = remote_estimate_value
+                               ? milliseconds_value(*remote_estimate_value)
+                               : result<std::chrono::milliseconds>{
+                                     std::unexpected(corrupt("schedule remote estimate missing"))};
+    if (!decision || *decision > static_cast<std::uint64_t>(execution_decision::race) ||
+        !size_class || *size_class > static_cast<std::uint64_t>(action_size_class::long_action) ||
+        !input_bytes || !remote_state_queried || !remote_missing_bytes || !remote_queue_depth ||
+        !locality || *locality > 1000 || !batch_supported || !batch_size || !local_estimate ||
+        !remote_estimate || !reason || !history) {
+        return std::unexpected(corrupt("invalid result schedule"));
+    }
+    auto inputs =
+        scheduling_inputs{.size_class = static_cast<action_size_class>(*size_class),
+                          .input_bytes = *input_bytes,
+                          .remote_state_queried = *remote_state_queried,
+                          .remote_missing_bytes = *remote_missing_bytes,
+                          .remote_queue_depth = *remote_queue_depth,
+                          .remote_cache_locality_permille = static_cast<std::uint32_t>(*locality),
+                          .batch_supported = *batch_supported,
+                          .batch_size = *batch_size};
+    inputs.history.reserve(history->size());
+    for (const auto& item : *history) {
+        auto timing = decode_action_timing(item);
+        if (!timing) {
+            return std::unexpected(timing.error());
+        }
+        inputs.history.push_back(*timing);
+    }
+    return execution_schedule{static_cast<execution_decision>(*decision),
+                              std::move(inputs),
+                              *local_estimate,
+                              *remote_estimate,
+                              *reason};
+}
+
 } // namespace
 
 auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes) -> result<digest> {
@@ -729,7 +824,7 @@ auto encode_result_value(const action_result& value, bool include_signature)
     }
     const auto exit_value = value.exit < 0 ? cbor::value{static_cast<std::int64_t>(value.exit)}
                                            : cbor::value{static_cast<std::uint64_t>(value.exit)};
-    if (value.record_version != 1 && value.record_version != 2) {
+    if (value.record_version < 1 || value.record_version > 3) {
         return std::unexpected(corrupt("unsupported result record version"));
     }
     auto timing = cbor::value{};
@@ -777,6 +872,9 @@ auto encode_result_value(const action_result& value, bool include_signature)
     }
     if (!value.sboms.empty()) {
         fields.emplace_back("sboms", cbor::value{std::move(sboms)});
+    }
+    if (value.schedule) {
+        fields.emplace_back("schedule", encode_schedule(*value.schedule));
     }
     if (include_signature) {
         fields.emplace_back("sig", byte_string(value.sig));
@@ -842,15 +940,8 @@ auto encode(const build_trace& value) -> result<std::vector<std::byte>> {
              {"outputs", cbor::value{std::move(outputs)}},
              {"cache", cbor::value{static_cast<std::uint64_t>(action.cache)}},
              {"start_ms", cbor::value{static_cast<std::uint64_t>(action.start_offset.count())}},
-             {"timing",
-              map({{"queued_ms",
-                    cbor::value{static_cast<std::uint64_t>(action.timing.queued.count())}},
-                   {"sandbox_ms",
-                    cbor::value{static_cast<std::uint64_t>(action.timing.sandbox.count())}},
-                   {"exec_ms", cbor::value{static_cast<std::uint64_t>(action.timing.exec.count())}},
-                   {"hash_ms", cbor::value{static_cast<std::uint64_t>(action.timing.hash.count())}},
-                   {"store_ms",
-                    cbor::value{static_cast<std::uint64_t>(action.timing.store.count())}}})}}));
+             {"timing", encode_action_timing(action.timing)},
+             {"schedule", action.schedule ? encode_schedule(*action.schedule) : cbor::value{}}}));
     }
     auto edges = cbor::value::array{};
     for (const auto& edge : value.edges) {
@@ -1303,7 +1394,7 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* version =
         version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
     const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
-    if (!version || (*version != 1 && *version != 2) || !kind || *kind != "result") {
+    if (!version || *version < 1 || *version > 3 || !kind || *kind != "result") {
         return std::unexpected(corrupt("unsupported result record version"));
     }
     const auto* action_value = find(*source, "action");
@@ -1341,6 +1432,7 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* finished_value = find(*source, "finished_at");
     const auto* provenance_value = find(*source, "provenance");
     const auto* sboms_value = find(*source, "sboms");
+    const auto* schedule_value = find(*source, "schedule");
     const auto* outputs =
         output_values ? std::get_if<cbor::value::array>(&output_values->data) : nullptr;
     const auto* manifest =
@@ -1417,6 +1509,13 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
             output.sboms.push_back(*sbom);
         }
     }
+    if (schedule_value) {
+        auto schedule = decode_schedule(*schedule_value);
+        if (!schedule) {
+            return std::unexpected(schedule.error());
+        }
+        output.schedule = std::move(*schedule);
+    }
     for (const auto& item : *outputs) {
         const auto* path_value = find(item, "path");
         const auto* mode_value = find(item, "mode");
@@ -1468,8 +1567,8 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     if (!queued || !sandbox_timing || !exec || !hash || !store) {
         return std::unexpected(corrupt("invalid result timing"));
     }
-    if (*version == 2 && (!hash_value || !store_value)) {
-        return std::unexpected(corrupt("version 2 result timing is incomplete"));
+    if (*version >= 2 && (!hash_value || !store_value)) {
+        return std::unexpected(corrupt("result timing is incomplete"));
     }
     output.timing = {*queued, *sandbox_timing, *exec, *hash, *store};
     output.record_version = *version;
@@ -1565,6 +1664,7 @@ auto decode_build_trace(std::span<const std::byte> bytes) -> result<build_trace>
         const auto* timing_value = find(item, "timing");
         const auto* cache_status_value = find(item, "cache");
         const auto* start_value = find(item, "start_ms");
+        const auto* schedule_value = find(item, "schedule");
         auto result_digest = result_value
                                  ? decode_digest(*result_value)
                                  : result<digest>{std::unexpected(corrupt("trace result missing"))};
@@ -1584,12 +1684,21 @@ auto decode_build_trace(std::span<const std::byte> bytes) -> result<build_trace>
             *status > static_cast<std::uint64_t>(cache_status::divergent) || !start) {
             return std::unexpected(corrupt("invalid build trace action"));
         }
+        auto schedule = std::optional<execution_schedule>{};
+        if (schedule_value && !std::holds_alternative<cbor::null>(schedule_value->data)) {
+            auto decoded = decode_schedule(*schedule_value);
+            if (!decoded) {
+                return std::unexpected(decoded.error());
+            }
+            schedule = std::move(*decoded);
+        }
         output.actions.push_back({result_id{*result_digest},
                                   *action,
                                   std::move(*outputs),
                                   *timing,
                                   static_cast<cache_status>(*status),
-                                  *start});
+                                  *start,
+                                  std::move(schedule)});
     }
     output.edges.reserve(edges->size());
     for (const auto& item : *edges) {

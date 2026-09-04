@@ -5,8 +5,9 @@
 > [`features/06-distributed-execution.md`](../features/06-distributed-execution.md),
 > [`features/05-caching.md`](../features/05-caching.md) (the remote tier),
 > [`features/09-artifact-service.md`](../features/09-artifact-service.md) (deltas). This page is the
-> design the Phase 3 issues implement. The build-without-bytes slice described below is now
-> implemented; transport and scheduling remain later work.
+> design the Phase 3 issues implement. The build-without-bytes, replay, and delta slices are
+> implemented. Issue #18 adds cost-model scheduling, batching, and racing through the shared
+> transport-neutral remote interfaces; later issues provide network transports and production workers.
 
 Phase 2 built the local action path: records for actions and results
 ([`build-engine.md`](build-engine.md)), observation by the mount, the signed disk cache, `liquid
@@ -79,18 +80,79 @@ containing the first output without a client read. In the privileged Linux sandb
 
 ## The toolchain is an input; racing by cost (#18)
 
-The toolchain tree is materialised on a remote worker from the CAS like any other input; there is
-no image to bake. For stock backends this is only a size question (a toolchain is hundreds of
-megabytes once, then a cache hit); for liquid's own workers (#63) the CAS is co-located so it is a
-local hydration.
+Issue #18 adds `remote_executor` beside #17's remote blob contract in `liquid/remote.hpp`:
 
-Scheduling races local against remote when the cost model is uncertain. The inputs of the model
-are all recorded already: the action's own history (`result.timing` across previous runs, the
-size class it fell into), the bytes the remote side lacks (`FindMissingBlobs` before dispatch),
-queue depth reported by the backend, and cache locality. The model's output is a decision
-(`local`, `remote`, `race`) and its inputs are recorded on the result so `liquid why` explains the
-choice. Tiny actions never leave the machine; very short work is batched into one remote action
-when the backend supports it.
+```cpp
+struct remote_blob_location {
+  std::string source;
+  std::string instance;
+};
+class remote_blob_source {
+  runtime::task<std::vector<digest>> find_missing(std::string instance, std::vector<digest>);
+  runtime::task<std::uint64_t> read_range(std::string instance, digest, std::uint64_t,
+                                          std::span<std::byte> into);
+  runtime::task<void> write(std::string instance, digest, std::vector<std::byte> contents);
+};
+class remote_executor {
+  remote_blob_source& blobs();
+  std::string instance() const;
+  std::uint64_t queue_depth() const;
+  bool supports_batch() const;
+  runtime::task<action_result> execute(action_input);
+  runtime::task<std::vector<action_result>> execute_batch(std::vector<action_input>);
+};
+```
+
+The client walks both `action_input.inputs` and `action_input.toolchain`, including tree records,
+blob records, and chunks. One `find_missing` call determines the absent objects, and only those
+objects are written. The test executor uses a second liquid store as the remote CAS, reconstructs
+the source and toolchain into a new directory for every execution, and invokes the tool from that
+reconstructed toolchain. No worker image supplies the compiler or test tool. A remote result's
+output, stdout, and stderr blob graphs are read back through `read_range` before the signed result
+is published locally. Issues #16 and #63 implement network and production-worker versions of these
+interfaces without changing the scheduler.
+
+### Cost model
+
+The model is deterministic and every input is preserved in `action_result::schedule`:
+
+- Up to eight earlier results for the candidate supply their five-phase total timings. Their median
+  is the local estimate and classifies the action as tiny (at most 25 ms), short (at most 250 ms),
+  medium, or long (at least 2,000 ms). No history means a local measurement; no remote object query
+  is made.
+- Before medium, long, or batched-short dispatch, `find_missing` measures total input bytes, absent
+  bytes, and cache locality in permille. The executor reports queue depth and batch support.
+- The remote estimate is `20 ms dispatch + 50 ms * queue depth + absent bytes / 100 MiB/s +
+  0.75 * median recorded total`.
+- Tiny actions always stay local. Short actions stay local unless at least four short actions can be
+  sent through one `execute_batch` call. That batch shares one missing-object query and upload.
+- With at least three samples, an action is uncertain when the range is greater than half the
+  median. Uncertain medium or long work races unless the queue depth exceeds eight, or a queried
+  remote is below 250 permille locality while missing more than 64 MiB. Stable work uses the lower
+  estimate.
+
+The mixed calibration workload in `BuildDistribution.mixed_workload_selects_local_remote_and_race`
+feeds `action_timing` records in the same form produced by the wrap fixtures into the model:
+
+| Work | Recorded totals (ms) | Missing / locality | Queue | Batch | Local estimate | Remote estimate | Decision |
+|---|---:|---:|---:|---:|---:|---:|---|
+| tiny | 12, 14, 13 | 0 B / 1,000 | 0 | 1 | 13 ms | 29 ms | local |
+| short | 80, 100, 90 | 0 B / 1,000 | 0 | 8 | 90 ms | 87 ms | remote batch |
+| long | 3,200, 3,400, 3,600 | 8 MiB / 875 | 1 | 1 | 3,400 ms | 2,700 ms | remote |
+| uncertain | 400, 900, 2,400 | 4 MiB / 750 | 0 | 1 | 900 ms | 735 ms | race |
+
+`local`, `remote`, and `race`, the timing history, size class, input and missing bytes, query flag,
+queue depth, locality, batch capability and size, both estimates, and the reason are stored in
+version-3 result records. `liquid why`, `liquid build trace`, `liquid why-slow`, and Chrome trace
+events expose those recorded fields.
+
+For a race, missing objects are staged first and local and remote execution then start together.
+When either branch produces a result, it is the only value passed to the signing and
+cache-publication path.
+Capy cancellation reaches the losing task; a losing local sandbox kills its process group, and a
+losing remote task receives its stop token. The test double delays the remote side, observes that
+cancellation, and proves the action index gains exactly one published row whose output equals an
+ordinary local execution.
 
 ## Replay (#19)
 
@@ -235,8 +297,6 @@ skip when macFUSE is unavailable.
 
 ## How to change
 
-Keep this page synchronized with each Phase 3 implementation. A change to remote record identity,
-hydration, or eligibility must update the corresponding section and its verification evidence.
 This page tracks design and implementation status together. A Phase 3 issue that finds the design
 wrong changes this page in the same commit as the code and says why in the commit body, as the Phase
 2 issues did for `build-engine.md`.

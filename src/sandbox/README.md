@@ -9,6 +9,9 @@ The hook also records monotonic entry and exit values used for each wrapped acti
 phase and Chrome trace offset. A validated hit records its exit value before terminating early.
 Verification launches the recorded working directory in a newly materialised input snapshot and
 captures stdout and stderr separately for digest comparison.
+Local action launch also carries the coroutine stop token. A cancelled local/remote race kills the
+Linux sandbox process group, waits for it, unmounts its input view, and removes the run directory;
+only the scheduler's winner can reach result publication.
 
 Windows deliberately returns `errc::unsupported` until its Phase 6 launcher exists.
 

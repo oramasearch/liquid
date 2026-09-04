@@ -33,6 +33,72 @@ auto status_name(liquid::cache_status status) -> std::string_view {
     return "miss";
 }
 
+auto decision_name(liquid::execution_decision decision) -> std::string_view {
+    switch (decision) {
+    case liquid::execution_decision::local:
+        return "local";
+    case liquid::execution_decision::remote:
+        return "remote";
+    case liquid::execution_decision::race:
+        return "race";
+    }
+    return "local";
+}
+
+auto size_class_name(liquid::action_size_class value) -> std::string_view {
+    switch (value) {
+    case liquid::action_size_class::unknown:
+        return "unknown";
+    case liquid::action_size_class::tiny:
+        return "tiny";
+    case liquid::action_size_class::short_action:
+        return "short";
+    case liquid::action_size_class::medium:
+        return "medium";
+    case liquid::action_size_class::long_action:
+        return "long";
+    }
+    return "unknown";
+}
+
+auto history_text(const std::vector<liquid::action_timing>& history) -> std::string {
+    auto output = std::string{"["};
+    for (auto index = std::size_t{}; index != history.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const auto& timing = history[index];
+        output += std::to_string(
+            (timing.queued + timing.sandbox + timing.exec + timing.hash + timing.store).count());
+    }
+    output.push_back(']');
+    return output;
+}
+
+void print_schedule(const std::optional<liquid::execution_schedule>& schedule) {
+    if (!schedule) {
+        return;
+    }
+    const auto& inputs = schedule->inputs;
+    std::println("  decision={} history_ms={} size_class={} input_bytes={} "
+                 "remote_state_queried={} remote_missing_bytes={} remote_queue_depth={} "
+                 "remote_cache_locality_permille={} batch_supported={} batch_size={} "
+                 "local_estimate_ms={} remote_estimate_ms={} reason={}",
+                 decision_name(schedule->decision),
+                 history_text(inputs.history),
+                 size_class_name(inputs.size_class),
+                 inputs.input_bytes,
+                 inputs.remote_state_queried,
+                 inputs.remote_missing_bytes,
+                 inputs.remote_queue_depth,
+                 inputs.remote_cache_locality_permille,
+                 inputs.batch_supported,
+                 inputs.batch_size,
+                 schedule->local_estimate.count(),
+                 schedule->remote_estimate.count(),
+                 schedule->reason);
+}
+
 void print_action(const liquid::critical_action& action) {
     std::println("action={} result={} cache={} duration_ms={} queued_ms={} sandbox_ms={} "
                  "exec_ms={} hash_ms={} store_ms={}",
@@ -48,6 +114,7 @@ void print_action(const liquid::critical_action& action) {
     for (const auto& output : action.outputs) {
         std::println("  output={}", output);
     }
+    print_schedule(action.schedule);
 }
 
 } // namespace
@@ -88,6 +155,10 @@ auto build(int argc, char** argv) -> int {
                  trace->cache.misses,
                  trace->cache.disk.bytes_avoided,
                  trace->cache.bytes_rebuilt);
+    for (const auto& action : trace->actions) {
+        std::println("action={}", liquid::to_string(action.action));
+        print_schedule(action.schedule);
+    }
     return 0;
 }
 

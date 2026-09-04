@@ -237,6 +237,10 @@ runtime::task<action_result> run_action(repository& source,
                                         digest action,
                                         digest sandbox,
                                         std::chrono::sys_seconds observed_at) {
+    const auto stop = co_await boost::capy::this_coro::stop_token;
+    if (stop.stop_requested()) {
+        co_return std::unexpected(failure(errc::unavailable, "action execution was cancelled"));
+    }
     const auto sandbox_started = std::chrono::steady_clock::now();
     const auto wall_started =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
@@ -317,7 +321,8 @@ runtime::task<action_result> run_action(repository& source,
                                                   .environment = environment->values,
                                                   .outputs = input.outputs,
                                                   .timeout = input.timeout,
-                                                  .remote_eligible = input.remote_eligible};
+                                                  .remote_eligible = input.remote_eligible,
+                                                  .stop = stop};
     build_detail::testing::record_sandbox_spawn();
     const auto execution_started = std::chrono::steady_clock::now();
     auto launched = co_await runtime::offload(
@@ -346,6 +351,10 @@ runtime::task<action_result> run_action(repository& source,
         co_return std::unexpected(failure(errc::unauthorized,
                                           "remote-eligible action read outside its inputs",
                                           *(*launched)->forbidden_read));
+    }
+    if ((*launched)->cancelled) {
+        static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
+        co_return std::unexpected(failure(errc::unavailable, "action execution was cancelled"));
     }
     if (auto violation = denied_write(observed)) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
@@ -393,11 +402,6 @@ runtime::task<action_result> run_action(repository& source,
         .observed_at = observed_at};
     output.started_at = wall_started;
     output.finished_at = wall_finished;
-    auto signed_result = co_await repository_detail::build_access::sign_result(source, output);
-    if (!signed_result) {
-        static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
-        co_return std::unexpected(signed_result.error());
-    }
     auto removed = co_await runtime::offload([paths] { return remove_run(paths); });
     if (!removed) {
         co_return std::unexpected(removed.error());
@@ -408,6 +412,89 @@ runtime::task<action_result> run_action(repository& source,
     co_return output;
 }
 
+runtime::task<prepared_action> prepare_action(repository& source, action_input input) {
+    auto valid = validate(input);
+    if (!valid) {
+        co_return std::unexpected(valid.error());
+    }
+    auto policy = co_await build_detail::enforce_policy(source, input);
+    if (!policy) {
+        co_return std::unexpected(policy.error());
+    }
+    if (!policy->allowed) {
+        co_return std::unexpected(build_detail::policy_refusal(*policy));
+    }
+    auto source_time = co_await repository_detail::build_access::change_time(source, input.inputs);
+    if (!source_time) {
+        co_return std::unexpected(source_time.error());
+    }
+    auto sandbox = sandbox_detail::definition(input.platform);
+    if (!sandbox) {
+        co_return std::unexpected(sandbox.error());
+    }
+    auto sandbox_bytes = objects::encode(*sandbox);
+    if (!sandbox_bytes) {
+        co_return std::unexpected(sandbox_bytes.error());
+    }
+    auto sandbox_id =
+        co_await repository_detail::build_access::put_record(source, std::move(*sandbox_bytes));
+    if (!sandbox_id) {
+        co_return std::unexpected(sandbox_id.error());
+    }
+    auto action_bytes = objects::encode(objects::action_record{input, *sandbox_id});
+    if (!action_bytes) {
+        co_return std::unexpected(action_bytes.error());
+    }
+    auto action_id =
+        co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
+    if (!action_id) {
+        co_return std::unexpected(action_id.error());
+    }
+    auto cache = build_detail::disk_cache{source};
+    auto cache_opened = co_await cache.open();
+    if (!cache_opened) {
+        co_return std::unexpected(cache_opened.error());
+    }
+    auto candidate = cache.candidate_key(input, *sandbox_id);
+    if (!candidate) {
+        co_return std::unexpected(candidate.error());
+    }
+    auto cached = co_await cache.lookup(input, *sandbox_id);
+    if (!cached) {
+        co_return std::unexpected(cached.error());
+    }
+    co_return prepared_action{std::move(input),
+                              *action_id,
+                              *sandbox_id,
+                              *candidate,
+                              *source_time,
+                              cached->hit,
+                              cached->why,
+                              cached->bytes_served};
+}
+
+runtime::task<result_id>
+finish_action(repository& source, const prepared_action& prepared, action_result value) {
+    auto stored = co_await build_detail::store_result_with_provenance(source, value);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    repository_detail::build_access::record_cache_lookup(
+        source, stored->value, cache_status::miss, prepared.why, 0);
+    if (repository_detail::build_access::cache_publish_enabled(source)) {
+        auto cache = build_detail::disk_cache{source};
+        auto cache_opened = co_await cache.open();
+        if (!cache_opened) {
+            co_return std::unexpected(cache_opened.error());
+        }
+        auto published = co_await cache.publish(prepared.candidate, *stored, value);
+        if (!published) {
+            co_return std::unexpected(published.error());
+        }
+    }
+    co_return *stored;
+}
+
 runtime::task<result_id> execute(repository& source, action_input input) {
 #if defined(_WIN32)
     co_return std::unexpected(
@@ -415,64 +502,22 @@ runtime::task<result_id> execute(repository& source, action_input input) {
                 "sandboxed actions are unavailable on Windows until Cloud Files and job objects",
                 "liquid Phase 6"));
 #else
-    auto valid = validate(input);
-    if (!valid)
-        co_return std::unexpected(valid.error());
-    auto policy = co_await build_detail::enforce_policy(source, input);
-    if (!policy)
-        co_return std::unexpected(policy.error());
-    if (!policy->allowed)
-        co_return std::unexpected(build_detail::policy_refusal(*policy));
-    auto source_time = co_await repository_detail::build_access::change_time(source, input.inputs);
-    if (!source_time)
-        co_return std::unexpected(source_time.error());
-    auto sandbox = sandbox_detail::definition(input.platform);
-    if (!sandbox)
-        co_return std::unexpected(sandbox.error());
-    auto sandbox_bytes = objects::encode(*sandbox);
-    if (!sandbox_bytes)
-        co_return std::unexpected(sandbox_bytes.error());
-    auto sandbox_id =
-        co_await repository_detail::build_access::put_record(source, std::move(*sandbox_bytes));
-    if (!sandbox_id)
-        co_return std::unexpected(sandbox_id.error());
-    auto action_bytes = objects::encode(objects::action_record{input, *sandbox_id});
-    if (!action_bytes)
-        co_return std::unexpected(action_bytes.error());
-    auto action_id =
-        co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
-    if (!action_id)
-        co_return std::unexpected(action_id.error());
-    auto cache = build_detail::disk_cache{source};
-    auto cache_opened = co_await cache.open();
-    if (!cache_opened)
-        co_return std::unexpected(cache_opened.error());
-    auto candidate = cache.candidate_key(input, *sandbox_id);
-    if (!candidate)
-        co_return std::unexpected(candidate.error());
-    auto cached = co_await cache.lookup(input, *sandbox_id);
-    if (!cached)
-        co_return std::unexpected(cached.error());
-    if (cached->hit) {
-        repository_detail::build_access::record_cache_lookup(
-            source, cached->hit->value, cache_status::hit, {}, cached->bytes_served);
-        co_return *cached->hit;
+    auto prepared = co_await prepare_action(source, std::move(input));
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
     }
-    auto action_result_value =
-        co_await run_action(source, input, *action_id, *sandbox_id, *source_time);
+    if (prepared->hit) {
+        repository_detail::build_access::record_cache_lookup(
+            source, prepared->hit->value, cache_status::hit, {}, prepared->bytes_served);
+        co_return *prepared->hit;
+    }
+    auto action_result_value = co_await run_action(
+        source, prepared->input, prepared->action, prepared->sandbox, prepared->observed_at);
     if (!action_result_value)
         co_return std::unexpected(action_result_value.error());
-    auto stored = co_await build_detail::store_result_with_provenance(source, *action_result_value);
-    if (!stored)
-        co_return std::unexpected(stored.error());
-    repository_detail::build_access::record_cache_lookup(
-        source, stored->value, cache_status::miss, cached->why, 0);
-    if (repository_detail::build_access::cache_publish_enabled(source)) {
-        auto published = co_await cache.publish(*candidate, *stored, *action_result_value);
-        if (!published)
-            co_return std::unexpected(published.error());
-    }
-    co_return *stored;
+    action_result_value->schedule = execution_schedule{.decision = execution_decision::local,
+                                                       .reason = "no remote executor configured"};
+    co_return co_await finish_action(source, *prepared, std::move(*action_result_value));
 #endif
 }
 

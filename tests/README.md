@@ -47,9 +47,12 @@ cases cover signed agreement and disagreement, random-byte detection, permanent 
 rate-one sampling, and CLI verification of every wrapped action.
 Portable build
 diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
-statistics, and the JSON forms of `why` and `cache stats`.
+statistics, recorded scheduling decisions and inputs, and the JSON forms of `why` and `cache stats`.
 Mount-backed observability coverage constructs a two-action sleeping dependency chain and verifies
-result timing, durable trace edges, critical-path queries, and Chrome trace-event JSON.
+result timing, durable trace edges, critical-path queries, scheduling metadata, and Chrome
+trace-event JSON. Distribution coverage uses a second store to materialise source and toolchain
+trees, compares remote and local output, measures a mixed cost-model workload, batches short work,
+and verifies that racing cancels its loser and publishes one result.
 Input-policy cases cover refusal and warning reports, verified approved identities, invalid
 signatures, registered profiles, independent-builder quorums, toolchain inputs, subject-index
 recovery, and cache isolation after a policy change.
