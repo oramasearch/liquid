@@ -14,7 +14,8 @@ liquid change identifier, and `git.change.<change-id>` stores the Git name. A ch
 `git_commit` in its signed metadata. Git files retain regular, executable, and symbolic-link
 modes. Git submodules become nested-repository placeholders. Loose, packed, and symbolic refs are
 resolved before the reachable graph is walked. Pack offset-to-object lookups use a bounded 32 MiB
-index cache; larger indexes are scanned without retaining their entries.
+index cache; the same cache resolves known object names without reopening an index file. Larger
+indexes are scanned without retaining their entries.
 
 ## Import design
 

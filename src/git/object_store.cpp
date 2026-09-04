@@ -297,6 +297,14 @@ auto pack_id_at_offset(const std::filesystem::path& index,
     return scan_pack_id_at_offset(index, wanted);
 }
 
+auto cached_pack_offset(std::span<const pack_index_entry> entries, const sha1& id)
+    -> std::optional<std::uint64_t> {
+    const auto found = std::ranges::lower_bound(entries, id, {}, &pack_index_entry::id);
+    if (found == entries.end() || found->id != id)
+        return {};
+    return found->offset;
+}
+
 struct inflated_pack {
     std::vector<std::byte> bytes;
 };
@@ -446,13 +454,6 @@ auto object_store::read(const sha1& id) -> result<object> {
          it.increment(code)) {
         if (it->path().extension() != ".idx")
             continue;
-        const auto offset = pack_offset(it->path(), id);
-        if (!offset)
-            return std::unexpected(offset.error());
-        if (!*offset)
-            continue;
-        auto pack = it->path();
-        pack.replace_extension(".pack");
         if (indexed_pack_ != it->path()) {
             const auto entries = pack_index_entries(it->path());
             if (!entries)
@@ -460,6 +461,16 @@ auto object_store::read(const sha1& id) -> result<object> {
             indexed_pack_ = it->path();
             indexed_objects_ = *entries;
         }
+        const auto offset =
+            indexed_objects_.empty()
+                ? pack_offset(it->path(), id)
+                : result<std::optional<std::uint64_t>>{cached_pack_offset(indexed_objects_, id)};
+        if (!offset)
+            return std::unexpected(offset.error());
+        if (!*offset)
+            continue;
+        auto pack = it->path();
+        pack.replace_extension(".pack");
         auto decode = [&](auto&& self,
                           std::uint64_t position,
                           std::optional<sha1> expected) -> result<object> {
