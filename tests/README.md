@@ -60,3 +60,6 @@ recovery, and cache isolation after a policy change.
 Remote-output coverage uses an on-disk counting source to distinguish registration from transfer,
 prove chunk-exact hydration and materialisation, and exercise local/remote/absent store status.
 The privileged Linux build suite also proves eligible actions reject and name a host-path read.
+
+`reapi/` covers the dependency-free protobuf wire forms, pinned REAPI message fixtures, and
+unknown-field retention.
