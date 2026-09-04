@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include "git/object_store.hpp"
+#include "liquid/git.hpp"
 
 namespace {
 
@@ -85,6 +86,48 @@ TEST(GitObjectStore, reads_packed_objects_and_deltas) {
     ASSERT_TRUE(blob) << blob.error().message;
     EXPECT_EQ(blob->kind, liquid::git_detail::object_kind::blob);
     EXPECT_EQ(blob->payload.size(), 4098U);
+}
+
+TEST(GitInteroperability, imports_a_local_history_and_preserves_mappings) {
+    if (!run("git --version >/dev/null 2>&1"))
+        GTEST_SKIP() << "git is not installed";
+    temporary_directory source;
+    temporary_directory destination;
+    ASSERT_TRUE(run("git -C " + source.path().string() + " init -q"));
+    ASSERT_TRUE(run("git -C " + source.path().string() + " config user.name Test"));
+    ASSERT_TRUE(run("git -C " + source.path().string() + " config user.email test@example.test"));
+    for (unsigned index = 0; index < 3; ++index) {
+        auto output = std::ofstream{source.path() / "file.txt", std::ios::binary | std::ios::trunc};
+        output << "value " << index << '\n';
+        output.close();
+        ASSERT_TRUE(run("git -C " + source.path().string() + " add file.txt"));
+        ASSERT_TRUE(run("git -C " + source.path().string() + " commit -qm update"));
+    }
+    auto created = liquid::runtime::block_on(liquid::repository::create(destination.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    const auto imported = liquid::runtime::block_on(liquid::import_git(repository, source.path()));
+    ASSERT_TRUE(imported) << imported.error().message;
+    EXPECT_EQ(imported->commits, 3U);
+    const auto refs = liquid::runtime::block_on(repository.refs());
+    ASSERT_TRUE(refs) << refs.error().message;
+    ASSERT_EQ(refs->size(), 1U);
+    const auto history = liquid::runtime::block_on(repository.log({.from = refs->front().id}));
+    ASSERT_TRUE(history) << history.error().message;
+    EXPECT_EQ(history->size(), 3U);
+    const auto mapped = liquid::runtime::block_on(repository.metadata("git.commit."));
+    ASSERT_TRUE(mapped) << mapped.error().message;
+    const auto contents = liquid::runtime::block_on(repository.read("file.txt"));
+    ASSERT_TRUE(contents) << contents.error().message;
+    EXPECT_EQ((std::string{reinterpret_cast<const char*>(contents->data()), contents->size()}),
+              "value 2\n");
+
+    temporary_directory exported;
+    const auto report = liquid::runtime::block_on(
+        liquid::export_git(repository, exported.path(), refs->front().name));
+    ASSERT_TRUE(report) << report.error().message;
+    EXPECT_EQ(report->commits, 3U);
+    ASSERT_TRUE(run("git -C " + exported.path().string() + " fsck --no-dangling"));
 }
 
 } // namespace

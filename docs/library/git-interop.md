@@ -4,8 +4,8 @@
 identity mapping. `liquid::export_git` writes a standalone Git repository from a liquid ref.
 
 **Status.** The verified loose-object and packfile reader (including index v2, OFS_DELTA, and
-REF_DELTA) and loose-object writer are implemented. Importer/exporter traversal, command-line
-integration, and fixtures follow in this issue.
+REF_DELTA), importer, loose-object exporter, and command-line integration are implemented.
+Complete fixture coverage follows in this issue.
 
 ## Mapping
 
@@ -26,3 +26,7 @@ and `.gitattributes` are ordinary files.
 The Git integration tests build a fixture with branches, a merge, a rename, a tag, and packed
 deltas using the system Git executable when it is installed. They verify imported history and
 snapshots, then run `git fsck` against the export.
+
+`liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid
+repository when needed. `liquid export git <path> [ref]` exports the repository rooted at the
+current directory.
