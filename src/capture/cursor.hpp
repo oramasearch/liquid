@@ -12,8 +12,8 @@ struct capture_cursor {
     std::uint64_t platform_token{0};
 };
 
-[[nodiscard]] auto load_cursor(const std::filesystem::path &path) -> result<capture_cursor>;
-[[nodiscard]] auto save_cursor(const std::filesystem::path &path, capture_cursor value)
+[[nodiscard]] auto load_cursor(const std::filesystem::path& path) -> result<capture_cursor>;
+[[nodiscard]] auto save_cursor(const std::filesystem::path& path, capture_cursor value)
     -> result<void>;
 
 } // namespace liquid::capture_detail

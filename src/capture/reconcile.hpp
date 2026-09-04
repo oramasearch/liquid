@@ -21,12 +21,13 @@ struct reconcile_result {
     std::vector<watch_event> changes;
 };
 
-[[nodiscard]] auto load_workspace_state(const std::filesystem::path &path) -> result<workspace_state>;
-[[nodiscard]] auto save_workspace_state(const std::filesystem::path &path,
-                                        const workspace_state &state) -> result<void>;
-[[nodiscard]] auto reconcile(const std::filesystem::path &workspace,
-                             const workspace_state &previous,
-                             const std::function<bool(const std::filesystem::path &)> &excluded)
+[[nodiscard]] auto load_workspace_state(const std::filesystem::path& path)
+    -> result<workspace_state>;
+[[nodiscard]] auto save_workspace_state(const std::filesystem::path& path,
+                                        const workspace_state& state) -> result<void>;
+[[nodiscard]] auto reconcile(const std::filesystem::path& workspace,
+                             const workspace_state& previous,
+                             const std::function<bool(const std::filesystem::path&)>& excluded)
     -> result<reconcile_result>;
 
 } // namespace liquid::capture_detail

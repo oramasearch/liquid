@@ -6,13 +6,13 @@
 namespace liquid::capture_detail {
 namespace {
 
-auto io_error(std::string message, const std::filesystem::path &path) -> error {
+auto io_error(std::string message, const std::filesystem::path& path) -> error {
     return {errc::io, std::move(message), path.string()};
 }
 
 } // namespace
 
-auto load_cursor(const std::filesystem::path &path) -> result<capture_cursor> {
+auto load_cursor(const std::filesystem::path& path) -> result<capture_cursor> {
     auto input = std::ifstream{path};
     if (!input) {
         if (!std::filesystem::exists(path))
@@ -26,7 +26,7 @@ auto load_cursor(const std::filesystem::path &path) -> result<capture_cursor> {
     return value;
 }
 
-auto save_cursor(const std::filesystem::path &path, capture_cursor value) -> result<void> {
+auto save_cursor(const std::filesystem::path& path, capture_cursor value) -> result<void> {
     auto temporary = path;
     temporary += ".tmp";
     {

@@ -54,6 +54,7 @@ target_link_libraries(liquid-vfs-queue-tests PRIVATE liquid::liquid GTest::gtest
 gtest_discover_tests(liquid-vfs-queue-tests)
 
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
+target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
 
 add_executable(liquid-store-large-tests test_store_large.cpp)

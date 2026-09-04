@@ -8,7 +8,7 @@
 namespace liquid::capture_detail {
 namespace {
 
-auto io_error(std::string message, const std::filesystem::path &path) -> error {
+auto io_error(std::string message, const std::filesystem::path& path) -> error {
     return {errc::io, std::move(message), path.string()};
 }
 
@@ -22,7 +22,7 @@ auto from_ticks(std::int64_t value) -> std::filesystem::file_time_type {
 
 } // namespace
 
-auto load_workspace_state(const std::filesystem::path &path) -> result<workspace_state> {
+auto load_workspace_state(const std::filesystem::path& path) -> result<workspace_state> {
     auto input = std::ifstream{path};
     if (!input) {
         if (!std::filesystem::exists(path))
@@ -40,7 +40,7 @@ auto load_workspace_state(const std::filesystem::path &path) -> result<workspace
     return output;
 }
 
-auto save_workspace_state(const std::filesystem::path &path, const workspace_state &state)
+auto save_workspace_state(const std::filesystem::path& path, const workspace_state& state)
     -> result<void> {
     auto temporary = path;
     temporary += ".tmp";
@@ -48,7 +48,7 @@ auto save_workspace_state(const std::filesystem::path &path, const workspace_sta
         auto output = std::ofstream{temporary, std::ios::trunc};
         if (!output)
             return std::unexpected(io_error("cannot write capture state", temporary));
-        for (const auto &[file, value] : state)
+        for (const auto& [file, value] : state)
             output << std::quoted(file.generic_string()) << ' ' << value.size << ' '
                    << ticks(value.modified) << '\n';
         output.flush();
@@ -67,16 +67,18 @@ auto save_workspace_state(const std::filesystem::path &path, const workspace_sta
     return {};
 }
 
-auto reconcile(const std::filesystem::path &workspace, const workspace_state &previous,
-               const std::function<bool(const std::filesystem::path &)> &excluded)
+auto reconcile(const std::filesystem::path& workspace,
+               const workspace_state& previous,
+               const std::function<bool(const std::filesystem::path&)>& excluded)
     -> result<reconcile_result> {
     auto output = reconcile_result{};
     auto code = std::error_code{};
-    for (std::filesystem::recursive_directory_iterator it(workspace,
-                                                           std::filesystem::directory_options::skip_permission_denied,
-                                                           code), end;
-         !code && it != end; it.increment(code)) {
-        const auto &entry = *it;
+    for (std::filesystem::recursive_directory_iterator
+             it(workspace, std::filesystem::directory_options::skip_permission_denied, code),
+         end;
+         !code && it != end;
+         it.increment(code)) {
+        const auto& entry = *it;
         const auto relative = entry.path().lexically_relative(workspace);
         if (excluded(relative)) {
             if (entry.is_directory(code))
@@ -97,12 +99,13 @@ auto reconcile(const std::filesystem::path &workspace, const workspace_state &pr
         const auto current = file_state{size, modified};
         output.state.emplace(relative, current);
         const auto old = previous.find(relative);
-        if (old == previous.end() || old->second.size != current.size || old->second.modified != current.modified)
+        if (old == previous.end() || old->second.size != current.size ||
+            old->second.modified != current.modified)
             output.changes.push_back({watch_event_kind::write, relative, 0});
     }
     if (code)
         return std::unexpected(io_error(code.message(), workspace));
-    for (const auto &[file, value] : previous) {
+    for (const auto& [file, value] : previous) {
         if (!output.state.contains(file))
             output.changes.push_back({watch_event_kind::remove, file, 0});
     }

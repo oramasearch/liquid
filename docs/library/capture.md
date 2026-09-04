@@ -38,16 +38,22 @@ visible rather than silently repaired. `pause()` retains the observed window wit
 | Linux | recursive inotify watches | New directories are watched; directory moves and `IN_Q_OVERFLOW` trigger reconciliation. |
 | Windows | `ReadDirectoryChangesW` on the root with subtree | A zero-byte successful completion is an overflow and triggers enumeration. |
 
-The platform callback only adds a hint to the capture queue. The coroutine-owned capture path
-performs reconcile, filtering, storage, metadata transaction, append, delivery, and cursor
-persistence. macOS uses the system FSEvents dispatch queue; Linux and Windows use runtime
-blocking work for their required wait. No platform type appears in a public header.
+The platform callback only adds a hint to the mutex-protected capture queue, then posts a tiny
+wake coroutine on the shared runtime context. That runtime-side coroutine sets the async event;
+OS threads never touch Capy primitives or await work. The capture coroutine waits without polling
+while the workspace is idle; after its first hint, it starts the configured coalescing delay and
+processes that batch. The coroutine-owned capture path performs reconcile, filtering, storage,
+metadata transaction, append, delivery, and cursor persistence.
+macOS uses the system FSEvents dispatch queue; Linux and Windows use runtime blocking work for
+their required wait. No platform type appears in a public header.
 
 ## Verification
 
 `tests/test_drip.cpp` covers atomic rename, a forty-file batch, declared exclusions,
-pause/resume, and restart replay. `tests/crdt/test_journal.cpp` covers cursor reads. Run the
-static and shared commands from the root:
+pause/resume, restart replay, and injected watcher overflow recovery. The overflow test confirms
+the counter increments, a recrawl occurs, and changes made while events were unavailable are
+found. `tests/crdt/test_journal.cpp` covers cursor reads. Run the static and shared commands from
+the root:
 
 ```sh
 cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build --output-on-failure
@@ -56,17 +62,18 @@ cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON && cmake --build buil
 
 ## Measurement
 
-Measured on this workspace's macOS host with a 100-file workspace and the default options,
-across 18 runs:
+Measured on this workspace's macOS host with a 100-file workspace, one run per window. The
+journal-append figures time only the durable `journal::append(record)` call. The visibility
+figures include filesystem delivery, the selected coalescing window, reading, storage, metadata,
+and notification:
 
-| Metric | Result |
+| Window | Journal append p50 / p99 | Save to drip visible p50 / p99 |
 |---|---:|
-| save to drip visible, p50 | 219 ms |
-| save to drip visible, p99 | 239 ms |
+| 200 ms | 329 / 329 µs | 304 / 304 ms |
+| 20 ms | 245 / 245 µs | 37 / 37 ms |
 
-The default coalescing window dominates this measurement, so it does not meet the single-digit
-capture-path budget. Reducing that delay without splitting editor saves needs a separate
-coalescing-policy decision.
+The single-digit capture-path budget applies to the journal append, not save-to-drip-visible.
+The latter intentionally includes the coalescing policy and is reported separately.
 
 ## Open questions
 

@@ -87,9 +87,11 @@ template <class T> using task = boost::capy::task<result<T>>;   // every I/O fun
 using boost::capy::io_result;  using boost::capy::when_all;  using boost::capy::timeout;  using boost::capy::delay;
 template <class T> boost::capy::io_task<result<T>> as_io(task<T>); // adapt a liquid task for Capy composition
 class context;                        // owns a Corosio io_context and its threads; opaque
+boost::capy::any_executor context::executor() const;
+context& default_context();           // process-wide shared context for spawned I/O work
 template <class T> result<T> block_on(task<T>);                // run to completion on a private context (CLI, tests)
-void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared pool
-template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking work on the pool; resumes on the caller's executor
+void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared runtime context
+template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking CPU work on the compute pool; resumes on the caller's executor
 }
 ```
 
@@ -97,6 +99,13 @@ Corosio never appears here; `src/runtime/net.hpp` is the private adapter TUs inc
 sockets, timers and files. Coroutine functions take their parameters **by value** and are never
 capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard]]`; after
 `offload` the continuation is back on the caller's executor before any Corosio object is touched.
+`block_on` is for synchronous entry points only and must not be called from a coroutine.
+
+| Entry point | Intended use | Executor / ownership |
+|---|---|---|
+| `block_on` | CLI and tests | a new private context, run to task completion |
+| `spawn` | long-lived I/O work | the process-wide shared runtime context |
+| `offload` | blocking CPU work | the compute pool; resumes on the caller executor |
 
 ### `liquid/hash.hpp`
 

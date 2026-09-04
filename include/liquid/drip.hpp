@@ -3,9 +3,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -15,6 +15,13 @@
 #include "liquid/runtime.hpp"
 
 namespace liquid {
+
+class capture;
+namespace capture_detail {
+void inject_overflow_for_test(capture& handle);
+[[nodiscard]] auto last_journal_append_duration_for_test(const capture& handle)
+    -> std::chrono::nanoseconds;
+} // namespace capture_detail
 
 struct LIQUID_EXPORT drip_id {
     digest value;
@@ -75,7 +82,7 @@ public:
     capture& operator=(const capture&) = delete;
 
     [[nodiscard]] static runtime::task<capture> open(std::filesystem::path workspace,
-                                                      capture_options options = {});
+                                                     capture_options options = {});
     [[nodiscard]] runtime::task<void> close();
     [[nodiscard]] result<subscription> subscribe(std::function<void(const drip&)> callback);
     [[nodiscard]] runtime::task<void> pause();
@@ -87,6 +94,9 @@ private:
     explicit capture(std::unique_ptr<impl> implementation) noexcept;
     std::unique_ptr<impl> impl_;
     friend class subscription;
+    friend void capture_detail::inject_overflow_for_test(capture& handle);
+    friend auto capture_detail::last_journal_append_duration_for_test(const capture& handle)
+        -> std::chrono::nanoseconds;
 };
 
-}  // namespace liquid
+} // namespace liquid

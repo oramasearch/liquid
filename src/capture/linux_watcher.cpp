@@ -16,14 +16,17 @@ namespace liquid::capture_detail {
 namespace {
 
 class inotify_watcher final : public watcher {
-  public:
+public:
     explicit inotify_watcher(std::filesystem::path workspace) : workspace_(std::move(workspace)) {}
-    ~inotify_watcher() override { stop(); }
+    ~inotify_watcher() override {
+        stop();
+    }
 
     auto start(watch_callback callback) -> result<void> override {
         fd_ = inotify_init1(IN_CLOEXEC);
         if (fd_ < 0)
-            return std::unexpected(error{errc::unavailable, "cannot initialize inotify", workspace_.string()});
+            return std::unexpected(
+                error{errc::unavailable, "cannot initialize inotify", workspace_.string()});
         callback_ = std::move(callback);
         auto added = add_tree(workspace_);
         if (!added) {
@@ -32,7 +35,8 @@ class inotify_watcher final : public watcher {
             return std::unexpected(added.error());
         }
         running_ = std::make_shared<std::atomic_bool>(true);
-        runtime::spawn(read_loop(running_, fd_, workspace_, callback_, watches_), [](result<void>) {});
+        runtime::spawn(read_loop(running_, fd_, workspace_, callback_, watches_),
+                       [](result<void>) {});
         return {};
     }
 
@@ -45,14 +49,22 @@ class inotify_watcher final : public watcher {
         }
     }
 
-  private:
-    auto add_tree(const std::filesystem::path &root) -> result<void> {
-        auto add = [this](const std::filesystem::path &directory) -> result<void> {
-            const auto descriptor = inotify_add_watch(
-                fd_, directory.c_str(), IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_CREATE |
-                                     IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF);
+    void inject_overflow_for_test() override {
+        if (callback_)
+            callback_({watch_event_kind::reconcile, workspace_, 0});
+    }
+
+private:
+    auto add_tree(const std::filesystem::path& root) -> result<void> {
+        auto add = [this](const std::filesystem::path& directory) -> result<void> {
+            const auto descriptor =
+                inotify_add_watch(fd_,
+                                  directory.c_str(),
+                                  IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_CREATE |
+                                      IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF);
             if (descriptor < 0)
-                return std::unexpected(error{errc::io, "cannot add inotify watch", directory.string()});
+                return std::unexpected(
+                    error{errc::io, "cannot add inotify watch", directory.string()});
             watches_[descriptor] = directory;
             return {};
         };
@@ -69,8 +81,10 @@ class inotify_watcher final : public watcher {
         return {};
     }
 
-    static runtime::task<void> read_loop(std::shared_ptr<std::atomic_bool> running, int fd,
-                                         std::filesystem::path workspace, watch_callback callback,
+    static runtime::task<void> read_loop(std::shared_ptr<std::atomic_bool> running,
+                                         int fd,
+                                         std::filesystem::path workspace,
+                                         watch_callback callback,
                                          std::unordered_map<int, std::filesystem::path> watches) {
         while (running->load(std::memory_order_acquire)) {
             auto bytes = co_await runtime::offload([fd] {
@@ -86,15 +100,17 @@ class inotify_watcher final : public watcher {
                 co_return std::unexpected(bytes.error());
             }
             for (std::size_t offset = 0; offset < bytes->size();) {
-                const auto *event = reinterpret_cast<const inotify_event *>(bytes->data() + offset);
+                const auto* event = reinterpret_cast<const inotify_event*>(bytes->data() + offset);
                 if (event->mask & IN_Q_OVERFLOW) {
                     callback({watch_event_kind::reconcile, workspace, 0});
                 } else if (const auto found = watches.find(event->wd); found != watches.end()) {
                     const auto path = found->second / std::string{event->name};
                     if ((event->mask & IN_ISDIR) && (event->mask & (IN_CREATE | IN_MOVED_TO))) {
                         const auto descriptor = inotify_add_watch(
-                            fd, path.c_str(), IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_CREATE |
-                                              IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF);
+                            fd,
+                            path.c_str(),
+                            IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_CREATE | IN_DELETE |
+                                IN_DELETE_SELF | IN_MOVE_SELF);
                         if (descriptor >= 0)
                             watches[descriptor] = path;
                         else
@@ -122,7 +138,7 @@ class inotify_watcher final : public watcher {
 
 } // namespace
 
-auto make_watcher(const std::filesystem::path &workspace, std::chrono::milliseconds)
+auto make_watcher(const std::filesystem::path& workspace, std::chrono::milliseconds)
     -> std::unique_ptr<watcher> {
     return std::make_unique<inotify_watcher>(workspace);
 }
