@@ -55,9 +55,10 @@ owning issue in `error::context`.
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
+| `liquid/attestation.hpp` | #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
-| `liquid/object.hpp` | #2, #50 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, `scan_result/1` attestation, repository references, conflicts, and reserved symbols |
+| `liquid/object.hpp` | #2, #50, #62 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #40, #41, #42, #50, #52, #53, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
@@ -182,6 +183,30 @@ The records' shapes and the metadata document are designed in [`object-model.md`
 Lease destruction has no storage effect; expiry is the authority. Collection reports are plain
 values, and [gc.md](gc.md) defines their epoch and crash semantics.
 
+### `liquid/attestation.hpp`
+
+```cpp
+enum class attestation_subject_kind : std::uint8_t { actor, drip, change, artifact, model, library };
+enum class attestation_field_type : std::uint8_t { text, unsigned_integer, boolean, text_list };
+enum class attestation_status_kind : std::uint8_t { none, max_age, revocable };
+using attestation_value = std::variant<std::string, std::uint64_t, bool, std::vector<std::string>>;
+struct attestation_attribute { std::string name; attestation_value value; };
+struct attribute_disclosure_commitment { std::string name; std::vector<std::byte> value; };
+struct attestation { digest subject; std::string profile; /* legacy scan fields and generic attributes */ };
+class attestation_profile_registry { public: static const attestation_profile_registry& global();
+  const std::vector<attestation_profile>& profiles() const; const attestation_profile* find(std::string_view) const;
+  result<void> validate(const attestation&) const; };
+result<std::vector<std::byte>> attribute_commitment(const attestation_attribute&, std::span<const std::byte> salt);
+result<std::vector<std::byte>> encode_attestation_signature(const signature&);
+result<std::vector<std::byte>> encode_attestation(const attestation&);
+result<attestation> decode_attestation(std::span<const std::byte>);
+result<attestation_verification> verify_attestation(const attestation&, const attestation_verification_options& = {});
+```
+
+`verify_attestation` rejects unknown profiles and validates the issuer signature, exact profile
+schema, subject kind, registered freshness rule, revocation status evidence, and disclosed
+commitments. [attestations.md](attestations.md) is the complete schema and wire-format guide.
+
 ### `liquid/object.hpp`
 
 ```cpp
@@ -193,18 +218,14 @@ struct tree   { std::vector<tree_entry> entries; };                   // sorted 
 struct change { change_id id; std::vector<change_id> parents; actor author;
                 std::string message; std::chrono::sys_seconds at; digest root; };
 struct change_id { digest value; };    // stable across rebase and transplant (features/02)
-struct scan_allowance { std::string path, detector; std::uint64_t line; std::string reason; };
-struct attestation { digest subject; std::string profile; std::vector<std::string> detectors;
-                     std::uint64_t findings_count; std::chrono::sys_seconds at; actor issuer;
-                     std::vector<scan_allowance> allowances; std::vector<std::byte> signature; };
-result<bool> verify(const attestation&);
 ```
 
 `chunk_sizes` is appended to the blob value and canonical record so a range reader can locate the
 covering logical chunks without reading every preceding chunk. The decoder accepts the earlier
 single-chunk record and derives its one size, preserving repositories written before liquid #6.
 
-`attestation` has its first concrete record and `scan_result/1` profile in Phase 1. `action` and
+Attestation values and every registered profile are exposed by `liquid/attestation.hpp`.
+`action` and
 `result_` remain reserved for Phase 2; `repo` is implemented in Phase 1. Two fields are reserved
 from the first commit because they
 cannot be added later: an optional `symbols` reference on built artifacts (liquid #47) and an

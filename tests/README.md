@@ -7,7 +7,8 @@ versions, exact-version revocation failures, and wrong-KEK atomicity. `test_repo
 exact readability report for revisions written before and after rotation and its three disclosure
 statements.
 
-Secret detector, inline capture, attestation, and redaction cases live in `scan/`.
+Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
+Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
 The `formats/` cases cover
 the strict JSON and `.env` codecs used by structured configuration encryption; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,

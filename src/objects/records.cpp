@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <type_traits>
 #include <utility>
 
 #include "encoding/cbor.hpp"
+#include "liquid/attestation.hpp"
 
 namespace liquid::objects {
 namespace {
@@ -136,6 +138,70 @@ auto decode_actor(const cbor::value& value) -> result<actor> {
     return actor{*identifier, *algorithm_text, *fingerprint_text, *key, *key_fingerprint_text};
 }
 
+auto encode_attribute_value(const attestation_value& value) -> cbor::value {
+    return std::visit(
+        [](const auto& item) -> cbor::value {
+            using value_type = std::decay_t<decltype(item)>;
+            if constexpr (std::is_same_v<value_type, std::vector<std::string>>) {
+                auto output = cbor::value::array{};
+                for (const auto& entry : item) {
+                    output.emplace_back(entry);
+                }
+                return cbor::value{std::move(output)};
+            } else {
+                return cbor::value{item};
+            }
+        },
+        value);
+}
+
+auto decode_attribute_value(const cbor::value& value) -> result<attestation_value> {
+    if (const auto* text = std::get_if<std::string>(&value.data)) {
+        return *text;
+    }
+    if (const auto* integer = std::get_if<std::uint64_t>(&value.data)) {
+        return *integer;
+    }
+    if (const auto* boolean = std::get_if<bool>(&value.data)) {
+        return *boolean;
+    }
+    const auto* list = std::get_if<cbor::value::array>(&value.data);
+    if (!list) {
+        return std::unexpected(corrupt("invalid attestation attribute value"));
+    }
+    auto output = std::vector<std::string>{};
+    for (const auto& entry : *list) {
+        const auto* text = std::get_if<std::string>(&entry.data);
+        if (!text) {
+            return std::unexpected(corrupt("invalid attestation attribute list"));
+        }
+        output.push_back(*text);
+    }
+    return attestation_value{std::move(output)};
+}
+
+auto parse_subject_kind(std::string_view value) -> result<attestation_subject_kind> {
+    if (value == "actor") {
+        return attestation_subject_kind::actor;
+    }
+    if (value == "drip") {
+        return attestation_subject_kind::drip;
+    }
+    if (value == "change") {
+        return attestation_subject_kind::change;
+    }
+    if (value == "artifact") {
+        return attestation_subject_kind::artifact;
+    }
+    if (value == "model") {
+        return attestation_subject_kind::model;
+    }
+    if (value == "library") {
+        return attestation_subject_kind::library;
+    }
+    return std::unexpected(corrupt("invalid attestation subject kind"));
+}
+
 } // namespace
 
 auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes) -> result<digest> {
@@ -229,8 +295,15 @@ auto encode(const repo_record& value) -> result<std::vector<std::byte>> {
                              {"root_change", std::move(root)}}));
 }
 
-auto encode_attestation_value(const attestation& value, bool include_signature)
-    -> result<std::vector<std::byte>> {
+auto encode_attestation_value(const attestation& value,
+                              bool include_signature,
+                              bool validate_schema) -> result<std::vector<std::byte>> {
+    if (validate_schema) {
+        auto schema = attestation_profile_registry::global().validate(value);
+        if (!schema) {
+            return std::unexpected(schema.error());
+        }
+    }
     auto detectors = cbor::value::array{};
     for (const auto& detector : value.detectors) {
         detectors.push_back(cbor::value{detector});
@@ -254,15 +327,33 @@ auto encode_attestation_value(const attestation& value, bool include_signature)
     if (include_signature) {
         fields.emplace_back("sig", cbor::value{value.signature});
     }
+    if (value.profile != "scan_result/1") {
+        auto attributes = cbor::value::map{};
+        for (const auto& attribute : value.attributes) {
+            attributes.emplace_back(attribute.name, encode_attribute_value(attribute.value));
+        }
+        auto commitments = cbor::value::map{};
+        for (const auto& commitment : value.disclosure_commitments) {
+            commitments.emplace_back(commitment.name, byte_string(commitment.value));
+        }
+        fields.emplace_back("subject_kind", std::string{to_string(value.subject_kind)});
+        fields.emplace_back("attributes", cbor::value{std::move(attributes)});
+        fields.emplace_back("attribute_disclosure_commitments",
+                            cbor::value{std::move(commitments)});
+    }
     return cbor::encode(cbor::value{std::move(fields)});
 }
 
 auto encode_attestation_body(const attestation& value) -> result<std::vector<std::byte>> {
-    return encode_attestation_value(value, false);
+    return encode_attestation_value(value, false, true);
+}
+
+auto encode_attestation_body_unchecked(const attestation& value) -> result<std::vector<std::byte>> {
+    return encode_attestation_value(value, false, false);
 }
 
 auto encode(const attestation& value) -> result<std::vector<std::byte>> {
-    return encode_attestation_value(value, true);
+    return encode_attestation_value(value, true, true);
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
@@ -449,19 +540,10 @@ auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>
     }
     const auto* subject_value = find(*source, "subject");
     const auto* profile_value = find(*source, "profile");
-    const auto* detectors_value = find(*source, "detectors");
-    const auto* findings_value = find(*source, "findings");
     const auto* at_value = find(*source, "at");
     const auto* issuer_value = find(*source, "issuer");
-    const auto* allowances_value = find(*source, "allowances");
     const auto* signature_value = find(*source, "sig");
     const auto* profile = profile_value ? std::get_if<std::string>(&profile_value->data) : nullptr;
-    const auto* detectors =
-        detectors_value ? std::get_if<cbor::value::array>(&detectors_value->data) : nullptr;
-    const auto* findings =
-        findings_value ? std::get_if<std::uint64_t>(&findings_value->data) : nullptr;
-    const auto* allowances =
-        allowances_value ? std::get_if<cbor::value::array>(&allowances_value->data) : nullptr;
     const auto* signature =
         signature_value ? std::get_if<cbor::value::bytes>(&signature_value->data) : nullptr;
     auto at = std::int64_t{};
@@ -475,8 +557,7 @@ auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>
     } else {
         return std::unexpected(corrupt("invalid attestation timestamp"));
     }
-    if (!subject_value || !profile || !detectors || !findings || !issuer_value || !allowances ||
-        !signature) {
+    if (!subject_value || !profile || !issuer_value || !signature) {
         return std::unexpected(corrupt("invalid attestation record"));
     }
     auto subject = decode_digest(*subject_value);
@@ -486,12 +567,61 @@ auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>
     }
     attestation output{.subject = *subject,
                        .profile = *profile,
-                       .detectors = {},
-                       .findings_count = *findings,
                        .at = std::chrono::sys_seconds{std::chrono::seconds{at}},
                        .issuer = std::move(*issuer),
-                       .allowances = {},
                        .signature = *signature};
+    if (output.profile != "scan_result/1") {
+        const auto* subject_kind_value = find(*source, "subject_kind");
+        const auto* attributes_value = find(*source, "attributes");
+        const auto* commitments_value = find(*source, "attribute_disclosure_commitments");
+        const auto* subject_kind =
+            subject_kind_value ? std::get_if<std::string>(&subject_kind_value->data) : nullptr;
+        const auto* attributes =
+            attributes_value ? std::get_if<cbor::value::map>(&attributes_value->data) : nullptr;
+        const auto* commitments =
+            commitments_value ? std::get_if<cbor::value::map>(&commitments_value->data) : nullptr;
+        if (!subject_kind || !attributes || !commitments) {
+            return std::unexpected(corrupt("invalid generic attestation record"));
+        }
+        auto parsed_kind = parse_subject_kind(*subject_kind);
+        if (!parsed_kind) {
+            return std::unexpected(parsed_kind.error());
+        }
+        output.subject_kind = *parsed_kind;
+        for (const auto& [key, attribute_value] : *attributes) {
+            const auto* name = std::get_if<std::string>(&key.data);
+            if (!name) {
+                return std::unexpected(corrupt("invalid attestation attribute name"));
+            }
+            auto decoded = decode_attribute_value(attribute_value);
+            if (!decoded) {
+                return std::unexpected(decoded.error());
+            }
+            output.attributes.push_back({*name, std::move(*decoded)});
+        }
+        for (const auto& [key, commitment_value] : *commitments) {
+            const auto* name = std::get_if<std::string>(&key.data);
+            const auto* commitment = std::get_if<cbor::value::bytes>(&commitment_value.data);
+            if (!name || !commitment) {
+                return std::unexpected(corrupt("invalid attestation commitment"));
+            }
+            output.disclosure_commitments.push_back({*name, *commitment});
+        }
+        return output;
+    }
+    const auto* detectors_value = find(*source, "detectors");
+    const auto* findings_value = find(*source, "findings");
+    const auto* allowances_value = find(*source, "allowances");
+    const auto* detectors =
+        detectors_value ? std::get_if<cbor::value::array>(&detectors_value->data) : nullptr;
+    const auto* findings =
+        findings_value ? std::get_if<std::uint64_t>(&findings_value->data) : nullptr;
+    const auto* allowances =
+        allowances_value ? std::get_if<cbor::value::array>(&allowances_value->data) : nullptr;
+    if (!detectors || !findings || !allowances) {
+        return std::unexpected(corrupt("invalid scan attestation record"));
+    }
+    output.findings_count = *findings;
     for (const auto& detector : *detectors) {
         const auto* id = std::get_if<std::string>(&detector.data);
         if (!id) {

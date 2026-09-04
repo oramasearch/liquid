@@ -25,7 +25,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
-> secret scanning, `scan_result/1`, and repository redaction are implemented; remote operations remain
+> secret scanning, the TAAP attestation profile registry with `scan_result/1`, and repository redaction are implemented; remote operations remain
 > `unsupported` until their owning issues land. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
@@ -73,6 +73,7 @@ and Zetta's.
 - [`docs/library/vfs.md`](docs/library/vfs.md) — lazy chunk hydration, FUSE mounts, full materialisation, and platform support.
 - [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, cursor delivery, coalescing, recovery, and telemetry.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
+- [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 | | |
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |
