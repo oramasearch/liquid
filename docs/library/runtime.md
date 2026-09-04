@@ -12,16 +12,20 @@ Errors remain values at both entry points.
 
 ## Executor model
 
-`runtime::block_on` creates an opaque `runtime::context`. The context owns a Corosio
-`io_context`, configures four blocking-I/O workers, launches the task with Capy's `run_async`,
-and runs the event loop on at least four threads until the task completes. A task awaited by an
-existing Capy coroutine inherits that coroutine's executor instead.
+`context::executor()` exposes a Capy executor without exposing Corosio. The process-wide
+`default_context()` is created on first use, keeps its Corosio `io_context` alive with a work
+guard, and runs it on `max(2, hardware_concurrency / 2)` threads. It configures four blocking-I/O
+workers. At process exit it stops the context, joins those threads, then destroys the context.
 
-`runtime::spawn` launches a `task<void>` on one shared Capy thread pool and reports its
-`result<void>` to a completion callback. `runtime::offload` is for a dependency that only offers
-a blocking call. It moves the callable into a coroutine frame, launches that coroutine on the
-shared pool, and signals a Capy async event. The awaiting continuation is posted back to the
-executor from which it called `offload`.
+| Entry point | Intended use | Executor / ownership |
+|---|---|---|
+| `block_on` | CLI and tests | a new private context, run until its task completes |
+| `spawn` | long-lived I/O work | the process-wide shared runtime context |
+| `offload` | blocking CPU work | the compute thread pool; resumes on the caller executor |
+
+`spawn` reports its `result<void>` to a completion callback. `offload` moves the blocking
+callable into a coroutine frame, launches it on the compute pool, and signals a Capy async event.
+The awaiting continuation is posted back to the executor from which it called `offload`.
 
 Use `runtime::as_io` when a liquid task must participate in Capy's `when_all` or `timeout`.
 The adapter preserves the liquid `result<T>` as the I/O payload; Capy's outer error code remains
@@ -31,12 +35,17 @@ available for cancellation and scheduling failures.
 
 - A task is lazy and `[[nodiscard]]`. Creating it does no work; await it or pass it to
   `block_on`, `spawn`, or a composition primitive.
+- Never call `block_on` from inside a coroutine. It creates a nested context and blocks the
+  coroutine's executor thread; await the task instead.
 - Coroutine functions take parameters by value because execution begins after the call returns.
 - Do not write a capturing-lambda coroutine. Use a named coroutine function whose frame owns its
   inputs. Ordinary non-coroutine callbacks and blocking callables may capture values.
 - Use `offload` only for blocking work. After it completes, touch executor-affine Corosio objects
   only from the resumed caller coroutine.
 - Do not create raw threads outside `src/runtime/runtime.cpp`.
+- OS callback threads may enqueue work under a mutex and use
+  `run_async(default_context().executor())` to schedule a runtime-side wake. They never call
+  `async_event::set()` and never `co_await`.
 - Corosio types stay under `src/runtime/`; public headers other than `liquid/runtime.hpp` do not
   name Boost.Capy.
 
@@ -52,9 +61,9 @@ cmake --build build-shared && ctest --test-dir build-shared --output-on-failure
 ```
 
 `tests/test_runtime.cpp` verifies value and error return, laziness, executor return after
-offloading, spawn completion, and two liquid tasks composed with `when_all`. The install-consumer
-proof in [`libliquid.md`](libliquid.md) verifies that an installed consumer receives Capy
-transitively.
+offloading, completion, concurrent spawned tasks, the singleton shared context, a spawned store
+round trip, and two liquid tasks composed with `when_all`. The install-consumer proof in
+[`libliquid.md`](libliquid.md) verifies that an installed consumer receives Capy transitively.
 
 ## How to change
 

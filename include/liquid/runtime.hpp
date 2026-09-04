@@ -72,7 +72,7 @@ boost::capy::task<> run_blocking(Callable callable, std::shared_ptr<offload_stat
 
 LIQUID_EXPORT void run_on_pool(boost::capy::task<> coroutine);
 
-}  // namespace detail
+} // namespace detail
 
 class LIQUID_EXPORT context {
 public:
@@ -83,14 +83,20 @@ public:
     context(const context&) = delete;
     context& operator=(const context&) = delete;
 
+    [[nodiscard]] auto executor() const -> boost::capy::any_executor;
+
 private:
     struct impl;
     std::unique_ptr<impl> impl_;
 
+    context(unsigned runners, bool keep_alive);
     void run(boost::capy::task<> coroutine);
 
     template <class T> friend result<T> block_on(task<T> coroutine);
+    friend context& default_context();
 };
+
+[[nodiscard]] LIQUID_EXPORT auto default_context() -> context&;
 
 template <class T> result<T> block_on(task<T> coroutine) {
     try {
@@ -143,4 +149,4 @@ template <class T> boost::capy::io_task<result<T>> as_io(task<T> coroutine) {
     }
 }
 
-}  // namespace liquid::runtime
+} // namespace liquid::runtime
