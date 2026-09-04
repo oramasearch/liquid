@@ -247,7 +247,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    feasible, of third-party types (Boost stays behind the boundary). The CLI never carries
    behaviour the library lacks. **The surface is `docs/library/api-map.md`** (2026-09-03):
    `result<T>` errors everywhere, opaque handles, plain value records, digests that carry their
-   algorithm, synchronous in Phase 1; a header not on the map is not public.
+   algorithm, synchronous in Phase 1; a header not on the map is not public. **The object model
+   is `docs/library/object-model.md`**: canonical-CBOR records in the store, one automerge
+   document per repository, liquid's own `node_id` (survives moves) and `change_id` (the digest
+   of the change record, never automerge's `ChangeHash`), conflicts and symbols reserved in the
+   change record from the first commit.
 8. **The chunk index is RocksDB** (2026-09-03, from the benchmark in
    `docs/library/chunk-index-benchmark.md`, liquid #45 / PR #88). At 10M entries on macOS,
    RocksDB tuned (bloom filter, sized block cache) inserts at 1.16M/s against LMDB's 55k/s
