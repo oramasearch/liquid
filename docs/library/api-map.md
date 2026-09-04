@@ -193,7 +193,7 @@ optional `conflict` record on a change (liquid #40).
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
-  static runtime::task<repository> open(std::filesystem::path);
+  static runtime::task<repository> open(std::filesystem::path, repository_options = {});
   runtime::task<tree> root();                            // the working copy is a change
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
@@ -218,6 +218,9 @@ class repository {
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
+`repository_options` is a plain record with `checkpoint_interval` and `store`; its `store_options`
+member selects the object-store hash algorithm and, when configured, its key custody. Pass the
+same options to `create` and `open` so later writes and reads use the intended store settings.
 
 ### `liquid/vfs.hpp`
 

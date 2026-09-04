@@ -12,61 +12,61 @@ namespace {
 constexpr char hex_digits[] = "0123456789abcdef";
 
 int hex_value(char value) noexcept {
-    if (value >= '0' && value <= '9') return value - '0';
-    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
-    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    if (value >= '0' && value <= '9')
+        return value - '0';
+    if (value >= 'a' && value <= 'f')
+        return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F')
+        return value - 'A' + 10;
     return -1;
 }
 
-result<digest> parse_error(std::string message) {
-    return std::unexpected(error{errc::invalid_argument, std::move(message), "parse_digest"});
+result<digest> parse_error(errc code, std::string message, std::string context = "parse_digest") {
+    return std::unexpected(error{code, std::move(message), std::move(context)});
 }
 
-}  // namespace
+} // namespace
 
 result<digest> hash(algorithm alg, std::span<const std::byte> input) {
     digest output{alg, {}};
     switch (alg) {
-        case algorithm::blake3: {
-            blake3_hasher hasher;
-            blake3_hasher_init(&hasher);
-            blake3_hasher_update(&hasher, input.data(), input.size());
-            blake3_hasher_finalize(
-                &hasher, reinterpret_cast<std::uint8_t*>(output.bytes.data()),
-                output.bytes.size());
-            return output;
-        }
-        case algorithm::sha256: {
-            SHA256_CTX context;
-            sha256_init(&context);
-            sha256_update(
-                &context, reinterpret_cast<const BYTE*>(input.data()), input.size());
-            sha256_final(&context, reinterpret_cast<BYTE*>(output.bytes.data()));
-            return output;
-        }
-        case algorithm::blake3_keyed:
-            return std::unexpected(error{errc::invalid_argument,
-                                         "keyed BLAKE3 requires a private store key", "hash"});
+    case algorithm::blake3: {
+        blake3_hasher hasher;
+        blake3_hasher_init(&hasher);
+        blake3_hasher_update(&hasher, input.data(), input.size());
+        blake3_hasher_finalize(
+            &hasher, reinterpret_cast<std::uint8_t*>(output.bytes.data()), output.bytes.size());
+        return output;
     }
-    return std::unexpected(
-        error{errc::invalid_argument, "unknown digest algorithm", "hash"});
+    case algorithm::sha256: {
+        SHA256_CTX context;
+        sha256_init(&context);
+        sha256_update(&context, reinterpret_cast<const BYTE*>(input.data()), input.size());
+        sha256_final(&context, reinterpret_cast<BYTE*>(output.bytes.data()));
+        return output;
+    }
+    case algorithm::blake3_keyed:
+        return std::unexpected(
+            error{errc::invalid_argument, "keyed BLAKE3 requires a private store key", "hash"});
+    }
+    return std::unexpected(error{errc::invalid_argument, "unknown digest algorithm", "hash"});
 }
 
 std::string to_string(const digest& value) {
     std::string output;
     switch (value.alg) {
-        case algorithm::blake3:
-            output = "blake3:";
-            break;
-        case algorithm::sha256:
-            output = "sha256:";
-            break;
-        case algorithm::blake3_keyed:
-            output = "blake3k:";
-            break;
-        default:
-            output = "unknown:";
-            break;
+    case algorithm::blake3:
+        output = "blake3:";
+        break;
+    case algorithm::sha256:
+        output = "sha256:";
+        break;
+    case algorithm::blake3_keyed:
+        output = "blake3k:";
+        break;
+    default:
+        output = "unknown:";
+        break;
     }
     output.reserve(output.size() + value.bytes.size() * 2);
     for (const auto byte : value.bytes) {
@@ -91,16 +91,23 @@ result<digest> parse_digest(std::string_view text) {
             alg = algorithm::blake3_keyed;
             hex = text.substr(8);
         } else {
-            return parse_error("unknown digest algorithm");
+            return parse_error(errc::unsupported,
+                               "unknown digest algorithm",
+                               std::string{text.substr(0, text.find(':'))});
         }
 
-        if (hex.size() != 64) return parse_error("digest must contain 64 hexadecimal digits");
+        if (hex.size() != 64) {
+            return parse_error(errc::invalid_argument, "digest must contain 64 hexadecimal digits");
+        }
 
         digest output{alg, {}};
         for (std::size_t i = 0; i < output.bytes.size(); ++i) {
             const int high = hex_value(hex[i * 2]);
             const int low = hex_value(hex[i * 2 + 1]);
-            if (high < 0 || low < 0) return parse_error("digest contains a non-hexadecimal digit");
+            if (high < 0 || low < 0) {
+                return parse_error(errc::invalid_argument,
+                                   "digest contains a non-hexadecimal digit");
+            }
             output.bytes[i] = std::byte{static_cast<unsigned char>((high << 4) | low)};
         }
         return output;
@@ -111,4 +118,4 @@ result<digest> parse_digest(std::string_view text) {
     }
 }
 
-}  // namespace liquid
+} // namespace liquid

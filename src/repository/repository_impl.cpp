@@ -519,7 +519,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (std::filesystem::exists(path / "LIQUID_REPO"))
         co_return std::unexpected(
             failure(errc::already_exists, "repository already exists", path.string()));
-    auto objects = co_await store::open(path / ".liquid-store");
+    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
     if (!objects)
         co_return std::unexpected(objects.error());
     repository_document document{};
@@ -539,7 +539,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
         co_return std::unexpected(saved.error());
     co_return output;
 }
-runtime::task<repository> repository::open(std::filesystem::path path) {
+runtime::task<repository> repository::open(std::filesystem::path path, repository_options options) {
     auto marker = co_await store_detail::read_file(path / "LIQUID_REPO");
     if (!marker)
         co_return std::unexpected(marker.error());
@@ -549,7 +549,7 @@ runtime::task<repository> repository::open(std::filesystem::path path) {
     auto document_id = parse_digest(text);
     if (!document_id)
         co_return std::unexpected(document_id.error());
-    auto objects = co_await store::open(path / ".liquid-store");
+    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
     if (!objects)
         co_return std::unexpected(objects.error());
     auto saved = co_await objects->get(*document_id);
@@ -571,8 +571,11 @@ runtime::task<repository> repository::open(std::filesystem::path path) {
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
     repository output;
-    output.impl_ = std::make_unique<impl>(
-        std::move(path), std::move(*objects), std::move(*document), std::move(*signing_key));
+    output.impl_ = std::make_unique<impl>(std::move(path),
+                                          std::move(*objects),
+                                          std::move(*document),
+                                          std::move(*signing_key),
+                                          options.checkpoint_interval);
     co_return output;
 }
 runtime::task<tree> repository::root() {

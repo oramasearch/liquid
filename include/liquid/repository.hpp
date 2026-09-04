@@ -12,6 +12,7 @@
 #include "liquid/export.hpp"
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/store.hpp"
 
 namespace liquid {
 
@@ -22,6 +23,7 @@ struct vfs_access;
 
 struct LIQUID_EXPORT repository_options {
     std::uint64_t checkpoint_interval{64};
+    store_options store{};
 };
 
 struct LIQUID_EXPORT log_options {};
@@ -59,7 +61,8 @@ public:
 
     [[nodiscard]] static runtime::task<repository> create(std::filesystem::path path,
                                                           repository_options options = {});
-    [[nodiscard]] static runtime::task<repository> open(std::filesystem::path path);
+    [[nodiscard]] static runtime::task<repository> open(std::filesystem::path path,
+                                                        repository_options options = {});
     [[nodiscard]] runtime::task<tree> root();
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
