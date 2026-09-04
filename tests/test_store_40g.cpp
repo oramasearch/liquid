@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <unistd.h>
 #include <fstream>
 #include <iostream>
 #include <span>
@@ -28,7 +29,9 @@ namespace {
 
 class large_tree {
 public:
-    large_tree() : path_(std::filesystem::temp_directory_path() / "liquid-large-40g") {
+    large_tree()
+        : path_(std::filesystem::temp_directory_path() /
+                ("liquid-large-40g-" + std::to_string(::getpid()))) {   // one directory per process: parallel runs never collide
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
         std::filesystem::create_directories(path_, code);

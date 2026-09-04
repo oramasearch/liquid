@@ -128,7 +128,7 @@ instead. That mode creates about 40 GiB of packs and is opt-in because it needs 
 disk capacity. For example:
 
 ```sh
-LIQUID_40G_RANDOM=1 ctest --test-dir build -L large-40g --output-on-failure
+LIQUID_40G_RANDOM=1 cmake -S . -B build -G Ninja -DLIQUID_LARGE_TESTS=ON && cmake --build build && ctest --test-dir build -L large-40g --output-on-failure
 ```
 
 Recorded on an Apple M3 Max with 64 GiB RAM and macOS 14.6.1:

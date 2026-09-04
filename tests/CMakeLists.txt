@@ -63,10 +63,15 @@ target_include_directories(liquid-store-large-tests PRIVATE ${PROJECT_SOURCE_DIR
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
 gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large)
 
-add_executable(liquid-store-40g-tests test_store_40g.cpp)
-target_include_directories(liquid-store-40g-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_link_libraries(liquid-store-40g-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-store-40g-tests PROPERTIES LABELS large-40g)
+# The 40 GiB run takes about ten minutes and 40 GiB of disk: it is registered only when
+# LIQUID_LARGE_TESTS=ON (configure with it, then `ctest -L large-40g`).
+option(LIQUID_LARGE_TESTS "Register the 40 GiB streaming test" OFF)
+if(LIQUID_LARGE_TESTS)
+  add_executable(liquid-store-40g-tests test_store_40g.cpp)
+  target_include_directories(liquid-store-40g-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(liquid-store-40g-tests PRIVATE liquid::liquid GTest::gtest_main)
+  gtest_discover_tests(liquid-store-40g-tests PROPERTIES LABELS large-40g)
+endif()
 
 # The index is private implementation code.  Compile its two private sources
 # into this test target so the same assertions work for static and shared
