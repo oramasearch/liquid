@@ -15,10 +15,10 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, and #56 implement the
-local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
-provenance, cache diagnostics, build observability, build-input attestation policy, and configure
-facts:
+**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, and #61 implement
+the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
+provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
+cost-aware retention, and graph-derived SBOMs:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -30,12 +30,11 @@ result's TAAP signature and persists its action index. `wrap` discovers a projec
 pins their content tree in `config.wrap.toolchain`, splits the mount stream at output-producing leaf
 processes, publishes the inner and outer actions, and serves valid results through the sandbox-only
 exec hook. Verification re-executes sampled cached actions, emits signed attestations, and
-quarantines divergent results. Each result references a verified, device-signed
-`slsa_provenance/1` attestation derived from its action and manifest. Before execution, repository
-policy can require verified registered-profile attestations for source and toolchain blobs. Memory
-caching and remote caching and execution remain their own issues. Configure checks additionally
-populate a shared content-addressed fact base and can be answered across projects without starting
-the probe.
+quarantines divergent results. Each result references verified, device-signed `slsa_provenance/1`
+and `sbom/1` attestations derived from its action and manifest. Before execution, repository policy
+can require verified registered-profile attestations for source and toolchain blobs. Memory caching
+and remote caching and execution remain their own issues. Configure checks additionally populate a
+shared content-addressed fact base and can be answered across projects without starting the probe.
 
 ## Records in the store
 
@@ -50,6 +49,7 @@ result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, 
           stdout: digest, stderr: digest, manifest: [ { path, digest } … ],   # everything the action read, with content hashes
           timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
           started_at: time, finished_at: time, provenance: digest(attestation),
+          sboms: [ digest(attestation) … ],
           producer: actor, sig: TAAP-signature }
 build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outputs, cache,
               start_ms, timing } … ], edges: [ { dependency, dependent } … ],
@@ -115,7 +115,7 @@ Issue #11 implements both stages through `src/build/cache.{hpp,cpp}`. Validation
 manifest path from the action's current input-tree record and compares the referenced blob digest;
 it never hashes a checkout path. Missing paths have no actual digest. Results are tried newest
 first. A candidate is served only when its result and action records decode, the action derives the
-same candidate key, the producer's TAAP `result` signature and referenced provenance verify, every
+same candidate key, the producer's TAAP `result` signature and referenced provenance and SBOMs verify, every
 manifest entry matches, and every output and stream blob record still exists.
 `action_result::cache` and `why` describe the current execution request and are not part of the
 immutable producer-signed result bytes.
@@ -201,7 +201,7 @@ The Action Cache and the CAS are the two halves the object model already separat
 (records versus chunks), and their lifetimes are coupled by the collector (#8): a result
 whose output chunks were collected is never returned, because the result record is reachable
 only through the roots that keep its outputs. The same reference graph keeps the result's
-provenance attestation.
+provenance and per-output SPDX/CycloneDX SBOM attestations plus their canonical SBOM records.
 
 ### Disk action-index format
 
@@ -401,6 +401,8 @@ stored local trace and its Chrome trace-event projection do not invent either me
   same fact directory starts zero feature probes. Exact-key tests change toolchain, sysroot, and target
   independently and observe misses. A foreign target's uncached probe is refused before a compiler
   wrapper can execute.
+- Every output carries signed SPDX and CycloneDX SBOM attestations derived from the action graph;
+  the wrapped fixture's manifest and toolchain digests all appear in its component model.
 
 ## How to change
 

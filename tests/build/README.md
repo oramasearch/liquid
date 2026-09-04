@@ -3,8 +3,9 @@
 `test_executor.cpp` exercises public action execution and the private disk-cache invariants. Tests
 that require observation and sandbox enforcement run only when FUSE is configured; the prescribed
 privileged Linux container runs them for real. Portable tests cover action-index persistence,
-rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA provenance derivation and verification, tamper
-rejection, and DSSE/in-toto shape plus digest round-trip.
+rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA provenance derivation
+and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
+SPDX/CycloneDX structure, and fully marked system-binary inference.
 
 `test_why.cpp` builds signed action/result histories without a mount and proves input digests and
 line ranges, drip attribution, argv, environment, toolchain, sandbox, never-built, imported-index,
@@ -27,9 +28,10 @@ removes only the lower execution-cost-per-byte result.
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
-compiler entry,
-parallel compilation-database seeding, and sandbox-only hook variables. The Linux CLI case runs
+compiler entry, parallel compilation-database seeding, and sandbox-only hook variables. The Linux CLI case runs
 `liquid verify --all` and checks that every wrapped action agrees.
+The CMake fixture also compares its generated SBOM components with every target manifest digest
+and toolchain-tree leaf.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.

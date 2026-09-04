@@ -27,6 +27,7 @@ add_executable(liquid-tests
   build/test_facts.cpp
   build/test_provenance.cpp
   build/test_why.cpp
+  build/test_sbom.cpp
   build/test_wrap.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
@@ -106,6 +107,14 @@ if(LIQUID_BUILD_CLI)
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI_SOURCE=${PROJECT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/public-includes.cmake)
+  add_test(NAME cli-sbom-spdx
+    COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --spdx)
+  set_tests_properties(cli-sbom-spdx PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"spdxVersion\"[^\n]*\"SPDX-2.3\"")
+  add_test(NAME cli-sbom-cyclonedx
+    COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --cyclonedx)
+  set_tests_properties(cli-sbom-cyclonedx PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"bomFormat\"[^\n]*\"CycloneDX\"")
 endif()
 
 add_executable(liquid-vfs-queue-tests

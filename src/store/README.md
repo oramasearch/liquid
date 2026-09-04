@@ -17,15 +17,13 @@ frames, rebuilds the index, and compacts only affected packs. It is separate fro
 reachability collection so unrelated repository objects remain available.
 
 Build-cache collection roots are canonical `action-index-root` records plus named result leases
-under the same store. The reference registry traverses result to
-action/output/stdout/stderr/provenance and action to input/toolchain/sandbox. The index root retains
-verification attestations but does not pin results, so result expiry and cost-aware eviction can
+under the same store. The reference registry traverses root to verification attestations and traces,
+result to action/output/stdout/stderr/provenance/SBOM attestations, each `sbom/1` attestation to its
+canonical SBOM record, and action to input/toolchain/sandbox. The index root retains verification
+attestations and trace digests but does not pin results, so result expiry and cost-aware eviction can
 release one usable graph without weakening the collector's manifest/index/pack-removal ordering.
+Each trace retains its named results, including results from wraps that did not publish cache entries.
 Collector explanations carry object-level reasons and count live policy roots by rule name.
-
-Build observability adds `build_trace` to the reference registry. The action-index root retains each
-trace digest, and each trace retains its named results, including results from wraps that did not
-publish cache entries.
 `subject_index.cpp` maps an attestation's signed subject digest to its canonical attestation record
 digest. The map updates when records are stored and rebuilds from attestation objects when the store
 opens; build-input policy still loads and verifies every indexed record before counting it.

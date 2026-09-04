@@ -35,6 +35,7 @@ auto attestation(int argc, char** argv) -> int;
 auto verify(int argc, char** argv) -> int;
 auto provenance(int argc, char** argv) -> int;
 auto policy(int argc, char** argv) -> int;
+auto sbom(int argc, char** argv) -> int;
 auto wrap(int argc, char** argv) -> int;
 auto why(int argc, char** argv) -> int;
 auto cache(int argc, char** argv) -> int;
@@ -153,6 +154,11 @@ constexpr auto commands = std::to_array<command>({
      "check or explain build-input policy",
      "available",
      liquid_cli::policy},
+    {"sbom",
+     "sbom <target> <--spdx|--cyclonedx>",
+     "print a derived or explicitly inferred SBOM",
+     "available",
+     liquid_cli::sbom},
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> "
      "[args...]",

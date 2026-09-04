@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "build/provenance.hpp"
+#include "build/repository_access.hpp"
 #include "formats/json.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
@@ -122,18 +123,30 @@ struct stored_provenance {
     liquid::repository repository;
     liquid::result_id result;
     liquid::action_result value;
+    liquid::digest input_tree;
+    liquid::digest toolchain_tree;
 
     stored_provenance() {
         auto opened = liquid::runtime::block_on(liquid::repository::create(location.path()));
         EXPECT_TRUE(opened) << opened.error().message;
         repository = std::move(*opened);
+        auto tree = liquid::objects::encode(liquid::tree{});
+        EXPECT_TRUE(tree) << tree.error().message;
+        auto input = liquid::runtime::block_on(
+            liquid::repository_detail::build_access::put_record(repository, *tree));
+        EXPECT_TRUE(input) << input.error().message;
+        auto toolchain = liquid::runtime::block_on(
+            liquid::repository_detail::build_access::put_record(repository, *tree));
+        EXPECT_TRUE(toolchain) << toolchain.error().message;
+        input_tree = *input;
+        toolchain_tree = *toolchain;
         const auto action =
             liquid::objects::action_record{.input = {.command = {"clang", "-c", "hello.c"},
                                                      .cwd = "src",
                                                      .env = {{"LANG", "C.UTF-8"}},
                                                      .outputs = {"out/hello.o"},
-                                                     .inputs = example_digest(1),
-                                                     .toolchain = example_digest(2),
+                                                     .inputs = input_tree,
+                                                     .toolchain = toolchain_tree,
                                                      .platform = {"linux", "x86_64"}},
                                            .sandbox = example_digest(3)};
         value = {.exit = 0,
@@ -167,7 +180,7 @@ TEST(BuildProvenance, stores_and_verifies_the_slsa_mapping) {
     EXPECT_EQ(predicate.build_definition.external_parameters.cwd, "src");
     EXPECT_EQ(predicate.build_definition.external_parameters.environment.at("LANG"), "C.UTF-8");
     EXPECT_EQ(predicate.build_definition.internal_parameters.toolchain.uri,
-              "liquid:tree:" + liquid::to_string(example_digest(2)));
+              "liquid:tree:" + liquid::to_string(fixture.toolchain_tree));
     EXPECT_EQ(predicate.build_definition.internal_parameters.sandbox.uri,
               "liquid:sandbox:" + liquid::to_string(example_digest(3)));
     ASSERT_EQ(predicate.build_definition.resolved_dependencies.size(),

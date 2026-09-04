@@ -22,12 +22,10 @@ deterministic crash simulator, liquid #116's bounded-memory file and repository 
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
 verified redaction, liquid #52's JSON/`.env` leaf encryption with structural key diff, and liquid
 #43's local Git import/export with identity mapping are implemented;
-liquid #10 provides local sandboxed action execution through `liquid::build` on Linux, and liquid
-#11 provides its signed, manifest-validated persistent disk cache with read-only publication by
-default, and liquid #58 adds typed ref/result retention, computed reachability, cost-aware
-size-capped eviction, and retention explanations. Liquid #12 provides `liquid wrap` for
-configuration-free CMake, Autotools, Make, and `compile_commands.json` builds on Linux with FUSE
-and macOS with macFUSE. Liquid #13 provides
+liquid #10 provides local sandboxed action execution through `liquid::build` on Linux. Liquid #11
+provides its signed, manifest-validated persistent disk cache with read-only publication by default.
+Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and
+`compile_commands.json` builds on Linux with FUSE and macOS with macFUSE. Liquid #13 provides
 sampled local re-execution, signed `reproducibility/1` attestations, critical divergence alerts,
 permanent divergent-result quarantine, and result-bound `slsa_provenance/1` attestations that
 verify on cache lookup and publication and export as in-toto/DSSE; operations owned by later issues
@@ -36,21 +34,18 @@ disk-tier hit rates, miss reasons, and output-byte statistics. Liquid #57 provid
 phase timings, retained build traces, dependency-aware critical paths, Chrome trace export, and
 `liquid why-slow`. Liquid #60 adds fail-closed source and toolchain input policy over verified
 registered-profile attestations, approved-builder identity quorums, policy-bound cache candidates,
-and policy check/explain commands. The repository object model, internal CRDT metadata document,
-canonical CBOR codec and drip journal are implemented. Directory documents use compact shallow
-checkpoints, upstream sync framing, checked external application, and patch-based remote observation.
 and policy check/explain commands. Liquid #56 adds content-keyed Autotools and CMake configure
-facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`. The
-repository object model, internal CRDT metadata document, canonical CBOR codec and drip journal are
-implemented. Directory documents use compact shallow checkpoints, upstream sync framing, checked
-external application, and patch-based remote observation. Full materialisation works on every
-platform; lazy VFS mounts use
+facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`.
+Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
+and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
+SPDX/CycloneDX documents or distinctly marked binary inference. The repository object model,
+internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
+documents use compact shallow checkpoints, upstream sync framing, checked external application, and
+patch-based remote observation. Full materialisation works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
-GoogleTest. Phase 1 (the store)
-is built inside
-libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
-option is enabled.
+and GoogleTest are used. Phase 1 (the store) is built inside libliquid. Optional developer
+benchmarks live under `bench/` and are excluded unless their build option is enabled.
 
 ### Vocabulary — use these words exactly
 

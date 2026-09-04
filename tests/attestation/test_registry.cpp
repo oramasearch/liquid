@@ -53,6 +53,10 @@ auto example(std::string_view profile) -> liquid::attestation {
                 .byproducts = {dependency}}};
     } else if (profile == "sbom/1") {
         value.attributes = {{"format", "SPDX-2.3"},
+                            {"output", "build/output.o"},
+                            {"document", "blake3:document"},
+                            {"derived", true},
+                            {"inferred", false},
                             {"components", std::vector<std::string>{"pkg:cpp/liquid"}}};
     } else if (profile == "model_provenance/1") {
         value.subject_kind = liquid::attestation_subject_kind::model;
@@ -159,7 +163,11 @@ TEST(AttestationRegistry, verifies_selective_disclosure_commitments) {
     ASSERT_TRUE(commitment) << commitment.error().message;
 
     auto value = example("sbom/1");
-    value.attributes = {{"format", "SPDX-2.3"}};
+    value.attributes = {{"format", "SPDX-2.3"},
+                        {"output", "build/output.o"},
+                        {"document", "blake3:document"},
+                        {"derived", true},
+                        {"inferred", false}};
     value.disclosure_commitments = {{"components", *commitment}};
     value = sign(std::move(value));
     auto verified =

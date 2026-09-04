@@ -48,6 +48,7 @@ that the table and `liquid --help` name the same commands.
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
 | `policy` | `policy <check\|explain> [target]` | Check or explain build-input policy. | available |
+| `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -143,6 +144,11 @@ current project's wrap repository.
 `retain explain` applies persisted `config.retention` rules, evaluates reachability without
 deleting data, and prints the matching rule, lease ID, and expiry for a retained digest. A digest
 outside every live root is reported as due for eviction by the next collection.
+`sbom` accepts a produced path and exactly one output-format flag. In a liquid repository or
+wrapped project it verifies and prints the result-bound `sbom/1` attestation and its graph-derived
+SPDX 2.3 or CycloneDX 1.5 document. A regular file with no producing result uses local ELF,
+Mach-O, or PE composition analysis instead. The claim and every component then carry
+`inferred=true` and `derived=false`; the command never presents inferred components as graph facts.
 
 ## Examples
 
@@ -177,6 +183,8 @@ liquid provenance blake3:<result-digest>
 liquid provenance --dsse build/output.o
 liquid policy check build/output.o
 liquid policy explain build/output.o
+liquid sbom build/output.o --spdx
+liquid sbom /usr/bin/tool --cyclonedx
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --jobs 8 --explain cmake --build build
 liquid build --profile cmake --build build

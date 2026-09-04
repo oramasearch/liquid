@@ -25,10 +25,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
-> Secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
-> and structured `slsa_provenance/1`, and repository redaction are implemented; remote operations
-> remain
-> `unsupported` until their owning issues land. VFS full materialisation works on every platform;
+> secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
+> structured `slsa_provenance/1`, signed `sbom/1`, and repository redaction are implemented; remote
+> operations remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
@@ -46,8 +45,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
-> dependency-aware build observability, build-input policy, a cross-project configure fact base, and
-> cost-aware retention.**
+> dependency-aware build observability, build-input policy, a cross-project configure fact base,
+> cost-aware retention, and graph-derived SPDX and CycloneDX SBOMs for every output.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -59,8 +58,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and every output digest, signs a `reproducibility/1` attestation, and permanently quarantines a
 > divergent result. `wrap` schedules a one-in-20 local sample on the shared runtime by default.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
-> in-toto Statement. `liquid why` explains output, action, and result misses with digest, argv,
-> environment,
+> in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
+> use distinctly marked local composition analysis. `liquid why` explains output, action, and result
+> misses with digest, argv, environment,
 > toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk hit
 > rates and output bytes avoided versus rebuilt. Memory and remote tiers remain separate work;
 > macOS needs macFUSE and Windows returns its documented unsupported result.
@@ -119,6 +119,7 @@ and Zetta's.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
+- [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
 
 | | |
 |---|---|

@@ -17,6 +17,8 @@ attestation outcomes and critical output differences, and returns failure on div
 
 `provenance.cpp` implements both `provenance` and the artifact-oriented `verify` alias entirely
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
+`sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
+API, and uses the public foreign-binary path only when no producing result exists.
 
 `policy.cpp` implements `policy check` and `policy explain` through public build APIs. It prints
 canonical rule configuration and per-input verified-identity counts without reading the store
