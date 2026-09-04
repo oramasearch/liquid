@@ -104,14 +104,14 @@ auto import_tree(repository& destination,
             const auto blob_key = git_detail::sha1_hex(item.id);
             auto stored = blobs.get(blob_key);
             if (!stored) {
-                const auto object = store.read(item.id);
+                auto object = store.read(item.id);
                 if (!object)
                     co_return std::unexpected(object.error());
                 if (object->kind != git_detail::object_kind::blob)
                     co_return std::unexpected(
                         error{errc::corrupt, "Git tree entry is not a blob", item.name});
-                const auto written =
-                    co_await repository_detail::git_access::put_blob(destination, object->payload);
+                const auto written = co_await repository_detail::git_access::put_blob(
+                    destination, std::move(object->payload));
                 if (!written)
                     co_return std::unexpected(written.error());
                 blobs.put(blob_key, *written);

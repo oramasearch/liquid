@@ -52,7 +52,7 @@ The public-header fixture compiles `liquid/git.hpp` independently.
 The real-world check is excluded from ordinary `ctest` runs. Configure with
 `-DLIQUID_REALWORLD_TESTS=ON -DLIQUID_REALWORLD_GIT_DIRECTORY=/path/to/checkout` and run
 `ctest -L realworld --output-on-failure`. It imports the supplied checkout, requires a reported
-peak RSS below 1 GiB, compares the `.liquid` store to three times the `.git` size, exports its
+peak RSS below 1 GiB, compares the `.liquid-store` store to three times the `.git` size, exports its
 head ref, and runs `git fsck`.
 
 `liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid

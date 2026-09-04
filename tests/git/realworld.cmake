@@ -51,7 +51,7 @@ if(NOT fsck_result EQUAL 0)
 endif()
 
 execute_process(
-  COMMAND du -sk "${LIQUID_REALWORLD_GIT_DIRECTORY}/.git" "${LIQUID_REALWORLD_GIT_DIRECTORY}/.liquid"
+  COMMAND du -sk "${LIQUID_REALWORLD_GIT_DIRECTORY}/.git" "${LIQUID_REALWORLD_GIT_DIRECTORY}/.liquid-store"
   RESULT_VARIABLE size_result
   OUTPUT_VARIABLE size_output
   ERROR_VARIABLE size_error)
