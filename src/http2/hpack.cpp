@@ -489,7 +489,7 @@ auto hpack_decoder::decode(std::span<const std::byte> block) -> result<std::vect
             allow_size_update = false;
             continue;
         }
-        if ((first & 0x20U) != 0) {
+        if ((first & 0xe0U) == 0x20U) {
             if (!allow_size_update) {
                 return std::unexpected(fail("dynamic table size update follows a header"));
             }

@@ -49,6 +49,10 @@ target_include_directories(liquid-tests PRIVATE
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
 
+add_executable(liquid-http2-test-server http2/test_server.cpp)
+target_link_libraries(liquid-http2-test-server PRIVATE liquid::liquid Boost::corosio)
+target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 add_executable(liquid-build-fixture build/fixture.c)
 if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)

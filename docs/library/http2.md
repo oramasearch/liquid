@@ -58,7 +58,10 @@ Huffman and dynamic-table state:
 build/tests/liquid-tests --gtest_filter='Http2*:*Grpc*'
 ```
 
-`tools/reapi-peers/nativelink.json5` is the Docker peer configuration. Run it from the Linux CI
-container with host networking, then use `grpcurl -plaintext` for server direction. The dedicated
-REAPI codec test added by #16 drives `GetCapabilities` against the same peer with pre-encoded
-protobuf bytes.
+`tools/reapi-peers/run-h2c-interop.sh build-linux` is the Docker proof for the Linux CI container.
+It starts the NativeLink configuration with host networking, then runs
+`Http2Interop.GetsCapabilitiesFromNativeLinkOverH2c`. The test sends the empty protobuf
+`GetCapabilitiesRequest` through this layer and requires a gRPC response and `grpc-status: 0`.
+The same script starts a one-request private HTTP/2 test server and invokes it through
+`grpcurl -plaintext`, proving the server direction. It prints a skip diagnostic when Docker is
+unavailable. TLS peer coverage waits for Corosio #3.

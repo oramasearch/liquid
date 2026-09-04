@@ -15,6 +15,8 @@ namespace liquid::http2 {
 namespace {
 
 constexpr auto client_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+constexpr auto flag_padded = std::uint8_t{0x8};
+constexpr auto flag_priority = std::uint8_t{0x20};
 
 auto byte_value(std::byte value) -> std::uint32_t {
     return std::to_integer<std::uint8_t>(value);
@@ -470,7 +472,28 @@ auto connection::receive_headers(std::uint32_t stream_id)
     if (first->type != frame_type::headers) {
         co_return std::unexpected(protocol_error("expected HEADERS frame"));
     }
-    auto block = std::move(first->payload);
+    auto offset = std::size_t{};
+    auto padding = std::size_t{};
+    if ((first->flags & flag_padded) != 0) {
+        if (first->payload.empty()) {
+            co_return std::unexpected(protocol_error("padded HEADERS has no pad length"));
+        }
+        padding = byte_value(first->payload.front());
+        offset = 1;
+    }
+    if ((first->flags & flag_priority) != 0) {
+        constexpr auto priority_size = std::size_t{5};
+        if (first->payload.size() < offset + priority_size) {
+            co_return std::unexpected(protocol_error("HEADERS priority is truncated"));
+        }
+        offset += priority_size;
+    }
+    if (first->payload.size() < offset + padding) {
+        co_return std::unexpected(protocol_error("HEADERS padding exceeds payload"));
+    }
+    auto block =
+        std::vector<std::byte>(first->payload.begin() + static_cast<std::ptrdiff_t>(offset),
+                               first->payload.end() - static_cast<std::ptrdiff_t>(padding));
     while ((first->flags & flag_end_headers) == 0) {
         auto continuation = co_await next_for_stream(stream_id);
         if (!continuation) {
@@ -479,6 +502,9 @@ auto connection::receive_headers(std::uint32_t stream_id)
         if (continuation->type != frame_type::continuation) {
             co_return std::unexpected(
                 protocol_error("HEADERS block is not followed by CONTINUATION"));
+        }
+        if ((continuation->flags & (flag_padded | flag_priority)) != 0) {
+            co_return std::unexpected(protocol_error("CONTINUATION has HEADERS-only flags"));
         }
         block.insert(block.end(), continuation->payload.begin(), continuation->payload.end());
         first = std::move(continuation);
