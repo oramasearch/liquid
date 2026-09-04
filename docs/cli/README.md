@@ -6,8 +6,11 @@ tree into its project cache. One-shot commands run library operations through `r
 `serve sync` awaits them on its listener executor. The CLI does not read repository storage directly.
 
 `init` imports regular files already present in its target directory through
-`repository::write_file`. Subsequent external edits need the watcher-backed capture service from
-liquid #5. `status` opens capture while it gathers its report, and includes capture telemetry.
+`repository::write_file`. `status`, `pause`, and `resume` attach to the checkout daemon, starting
+it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
+its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
+available, but daemon attachment returns the documented unsupported result because the current
+Corosio revision has no named-pipe transport.
 
 ## Commands
 
@@ -19,6 +22,7 @@ that the table and `liquid --help` name the same commands.
 | `version` | `version [--json]` | Print the library version. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `status` | `status [--json]` | Show repository status. | available |
+| `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `log` | `log [--json]` | Show change history. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
@@ -54,6 +58,7 @@ that the table and `liquid --help` name the same commands.
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
 | `policy` | `policy <check\|explain> [target]` | Check or explain build-input policy. | available |
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
+| `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -63,7 +68,9 @@ that the table and `liquid --help` name the same commands.
 `status`, `log`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache stats` accept
 `--json`; `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
 remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
-chunk.
+chunk. Its `daemon` object reports availability, process id, the last triggered drip, and graph
+memory counts. Text status adds one `daemon_target` line per ordered target with its cursor,
+distance behind capture, and successful delivery count.
 `push` and `pull` print metadata item, object, byte, and cursor counts. They use `LIQUID_TOKEN` as
 an optional bearer credential and never print it. A URL must use HTTP or HTTPS and identify one
 lake repository.
@@ -200,6 +207,8 @@ Mach-O, or PE composition analysis instead. The claim and every component then c
 liquid version --json
 liquid init .
 liquid status --json
+liquid daemon
+liquid daemon --shutdown
 liquid log --json
 liquid cut "import existing files"
 liquid refs --json
@@ -249,6 +258,7 @@ liquid wrap --target aarch64-unknown-linux-gnu ./configure
 liquid facts list
 liquid facts show blake3:<fact-digest>
 liquid facts export
+liquid serve reapi --listen 127.0.0.1:8980
 liquid pause
 liquid resume
 liquid watch
@@ -262,6 +272,8 @@ combines it, reads JSON history and operations, undoes the move, verifies a lock
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.
+`tests/test_daemon.cpp` runs start-on-first-status through the built CLI and verifies that a library
+client attaches to the same process.
 The privileged Linux build fixtures also invoke `replay --json` for an indexed action and require
 agreement without recording a verification sample.
 

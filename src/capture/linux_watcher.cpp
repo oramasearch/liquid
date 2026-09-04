@@ -1,5 +1,6 @@
 #include "capture/watcher.hpp"
 
+#include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
 
@@ -39,15 +40,22 @@ public:
             return std::unexpected(added.error());
         }
         running_ = std::make_shared<std::atomic_bool>(true);
+        stopped_ = std::make_shared<std::atomic_bool>(false);
         runtime::spawn(read_loop(running_, fd_, workspace_, callback_, watches_),
-                       [](result<void>) {});
+                       [stopped = stopped_](result<void>) {
+                           stopped->store(true, std::memory_order_release);
+                       });
         return {};
+    }
+
+    [[nodiscard]] auto stopped() const noexcept -> bool override {
+        return stopped_->load(std::memory_order_acquire);
     }
 
     void stop() noexcept override {
         if (running_)
             running_->store(false, std::memory_order_release);
-        if (fd_ >= 0) {
+        if (stopped() && fd_ >= 0) {
             ::close(fd_);
             fd_ = -1;
         }
@@ -92,6 +100,12 @@ private:
                                          std::unordered_map<int, std::filesystem::path> watches) {
         while (running->load(std::memory_order_acquire)) {
             auto bytes = co_await runtime::offload([fd] {
+                auto descriptor = pollfd{.fd = fd, .events = POLLIN, .revents = 0};
+                const auto ready = ::poll(&descriptor, 1, 50);
+                if (ready < 0 && errno != EINTR)
+                    throw std::system_error(errno, std::generic_category(), "inotify poll");
+                if (ready <= 0)
+                    return std::vector<char>{};
                 auto buffer = std::array<char, 64 * 1024>{};
                 const auto count = ::read(fd, buffer.data(), buffer.size());
                 if (count < 0)
@@ -103,6 +117,8 @@ private:
                     break;
                 co_return std::unexpected(bytes.error());
             }
+            if (bytes->empty())
+                continue;
             for (std::size_t offset = 0; offset < bytes->size();) {
                 const auto* event = reinterpret_cast<const inotify_event*>(bytes->data() + offset);
                 if (event->mask & IN_Q_OVERFLOW) {
@@ -137,6 +153,7 @@ private:
     watch_callback callback_;
     int fd_{-1};
     std::shared_ptr<std::atomic_bool> running_;
+    std::shared_ptr<std::atomic_bool> stopped_{std::make_shared<std::atomic_bool>(true)};
     std::unordered_map<int, std::filesystem::path> watches_;
 };
 

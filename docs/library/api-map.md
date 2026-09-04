@@ -57,7 +57,7 @@ owning issue in `error::context`.
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
-| `liquid/graph.hpp` | #20 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, statistics, and the #23 comparison hook |
+| `liquid/graph.hpp` | #20, #21 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, and the #23 comparison hook |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
@@ -67,6 +67,7 @@ owning issue in `error::context`.
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/daemon.hpp` | #21 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory status, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18 | implemented | REAPI endpoint, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations; and the move-only negotiated REAPI client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/sync.hpp` | #160, #165, Phase 6 | implemented | signed metadata items and reports, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
@@ -157,6 +158,7 @@ struct recorded_query {
 struct graph_statistics {
   std::uint64_t demands, hits, executions, dependency_reads, fingerprint_reads;
   std::uint64_t invalidation_walks, discarded_computations;
+  std::uint64_t keys, resident_values, resident_value_bytes, memory_ceiling;
 };
 using query_argument_encoder =
   std::function<result<std::vector<std::byte>>(std::span<const std::byte>)>;
@@ -174,7 +176,7 @@ class query_registry {
   result<void> add(query_kind);
   result<query_key> key(std::string, std::span<const std::byte>) const;
 };
-struct graph_options { std::filesystem::path working_tree; };
+struct graph_options { std::filesystem::path working_tree; std::uint64_t memory_ceiling; };
 class graph {
  public:
   graph() noexcept; ~graph();
@@ -209,9 +211,12 @@ red-green, cuts off unchanged fingerprints, and persists only complete computati
 `mark_changed` overloads return the exact invalidation walk count; the query overload also removes
 its completed value to force recomputation. `set_input` and `clear_input` manage overlay,
 environment, and toolchain leaves; working-tree leaves otherwise read relative to
-`graph_options::working_tree`. `recorded` loads a completed value and returns the comparison
+`graph_options::working_tree`. A nonzero `graph_options::memory_ceiling` evicts resident values in
+least-recently-demanded order while retaining keys, fingerprints, dependencies, and stored value
+identifiers. `recorded` loads a completed value and returns the comparison
 surface for #23; a query with no completed value returns an empty optional. `flush` atomically
-republishes the current graph root, and `statistics` returns counters since open.
+republishes the current graph root, and `statistics` returns counters since open plus the current
+resident-value accounting.
 
 ### `liquid/store.hpp`
 
@@ -845,6 +850,8 @@ class capture {                        // the journal, as a subscription
   static runtime::task<capture> open(std::filesystem::path workspace, capture_options = {});   // starts the watcher
   runtime::task<void> close();
   result<subscription> subscribe(std::function<void(const drip&)>);   // registration is synchronous
+  result<subscription> subscribe_from(journal_cursor,
+      std::function<void(const drip&, const journal_cursor&)>);
   runtime::task<void> pause();  runtime::task<void> resume();  result<capture_status> status();
 };
 struct actor { std::string taap_id; std::string fingerprint; std::vector<std::byte> public_key;
@@ -883,6 +890,53 @@ class keyring {
   runtime::task<void> revoke(std::string, std::uint64_t);
 };
 ```
+
+### `liquid/daemon.hpp`
+
+```cpp
+struct daemon_delivery { drip value; journal_cursor cursor; };
+class daemon_target {
+ public:
+  virtual ~daemon_target() = default;
+  virtual std::string name() const = 0;
+  virtual runtime::task<void> deliver(daemon_delivery) = 0;
+};
+struct daemon_target_status {
+  std::string name; journal_cursor cursor; std::uint64_t behind, deliveries;
+  std::optional<std::string> last_error;
+};
+struct daemon_status {
+  bool running; std::uint64_t process_id; std::string endpoint;
+  std::optional<drip_id> last_drip; std::vector<std::string> invalidated_paths;
+  std::vector<daemon_target_status> targets; capture_status capture;
+  std::uint64_t graph_keys, graph_values, graph_memory_bytes, graph_memory_ceiling;
+};
+struct daemon_options {
+  std::chrono::milliseconds idle_timeout; std::uint64_t graph_memory;
+  capture_options capture; std::vector<std::shared_ptr<daemon_target>> targets;
+};
+class daemon {
+ public:
+  daemon() noexcept; ~daemon();
+  daemon(daemon&&) noexcept; daemon& operator=(daemon&&) noexcept;
+  daemon(const daemon&) = delete; daemon& operator=(const daemon&) = delete;
+  static runtime::task<daemon> start(std::filesystem::path, daemon_options = {});
+  static runtime::task<daemon> attach(std::filesystem::path);
+  runtime::task<daemon_status> status();
+  runtime::task<void> pause_capture();
+  runtime::task<void> resume_capture();
+  runtime::task<void> shutdown();
+  runtime::task<void> wait();
+};
+```
+
+The opaque handle is either the host returned by `start` or a local client returned by `attach`.
+All waiting operations are Capy tasks. A host owns capture, persists the graph on idle or explicit
+shutdown, and processes targets in vector order. Cursor publication follows successful target
+delivery. `daemon_status` contains capture telemetry, the last invalidated paths, every target's
+cursor distance and error, plus graph key, resident-value, byte-use, and ceiling counts. The local
+wire payload is canonical CBOR in the sync protocol's five-byte frame. Windows entry points return
+`errc::unsupported` while Corosio lacks named-pipe transport.
 
 `capture_status` makes overflow and recrawl visible because watcher events are hints, not a
 complete account of workspace state. The `drip_filter` insertion point between coalescing and
@@ -923,7 +977,7 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 `src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/crdt/` (checked automerge-cpp
 access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
 `src/sync/` (canonical metadata and pack wire codecs plus the Corosio/Boost.HTTP client),
-`src/capture/` (the journal, OS watchers, coalescing), `src/vfs/` (Cloud
+`src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
 

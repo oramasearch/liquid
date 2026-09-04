@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <fstream>
 #include <map>
@@ -40,6 +41,30 @@ auto capture_error(errc code, std::string message, const std::filesystem::path& 
 
 auto token(capture_detail::capture_cursor cursor) -> std::string {
     return std::to_string(cursor.journal.offset) + ":" + std::to_string(cursor.platform_token);
+}
+
+auto parse_token(std::string_view value) -> result<capture_detail::capture_cursor> {
+    if (value.empty()) {
+        return capture_detail::capture_cursor{};
+    }
+    const auto separator = value.find(':');
+    if (separator == std::string_view::npos) {
+        return std::unexpected(
+            error{errc::invalid_argument, "invalid journal cursor", std::string{value}});
+    }
+    auto output = capture_detail::capture_cursor{};
+    const auto offset = value.substr(0, separator);
+    const auto platform = value.substr(separator + 1);
+    const auto [offset_end, offset_error] =
+        std::from_chars(offset.data(), offset.data() + offset.size(), output.journal.offset);
+    const auto [platform_end, platform_error] =
+        std::from_chars(platform.data(), platform.data() + platform.size(), output.platform_token);
+    if (offset_error != std::errc{} || offset_end != offset.data() + offset.size() ||
+        platform_error != std::errc{} || platform_end != platform.data() + platform.size()) {
+        return std::unexpected(
+            error{errc::invalid_argument, "invalid journal cursor", std::string{value}});
+    }
+    return output;
 }
 
 auto path_id(const std::filesystem::path& path) -> crdt::node_id {
@@ -109,7 +134,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
 
     struct subscriber {
         std::uint64_t id;
-        std::function<void(const drip&)> callback;
+        capture::cursor_callback callback;
     };
 
     std::filesystem::path workspace;
@@ -249,8 +274,8 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         return false;
     }
 
-    void notify(const drip& value) {
-        auto callbacks = std::vector<std::function<void(const drip&)>>{};
+    void notify(const drip& value, const journal_cursor& cursor_value) {
+        auto callbacks = std::vector<capture::cursor_callback>{};
         {
             std::lock_guard lock(mutex);
             for (const auto& subscriber : subscribers)
@@ -258,7 +283,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         }
         for (const auto& callback : callbacks) {
             try {
-                callback(value);
+                callback(value, cursor_value);
             } catch (...) {
             }
         }
@@ -346,7 +371,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
                         ++blocked_drips;
                         last_block = block;
                     }
-                    notify(drip{.block = std::move(block)});
+                    notify(drip{.block = std::move(block)}, {token(cursor)});
                     last_scan_ns.store(scan_duration.count(), std::memory_order_release);
                     co_return false;
                 }
@@ -440,7 +465,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
             co_return std::unexpected(persisted.error());
         if (!*persisted)
             co_return std::unexpected(persisted->error());
-        notify(public_drip(record));
+        notify(public_drip(record), {token(cursor)});
         for (auto& [path, chunks] : scanned_updates)
             scanned_chunks[path] = std::move(chunks);
         for (const auto& path : removed_paths)
@@ -712,28 +737,45 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
 }
 
 result<subscription> capture::subscribe(std::function<void(const drip&)> callback) {
+    return subscribe_from(
+        {}, [callback = std::move(callback)](const drip& value, const journal_cursor&) {
+            callback(value);
+        });
+}
+
+result<subscription> capture::subscribe_from(journal_cursor cursor_value,
+                                             cursor_callback callback) {
     if (!impl_ || !impl_->shared)
         return std::unexpected(
-            error{errc::invalid_argument, "capture is not open", "capture::subscribe"});
+            error{errc::invalid_argument, "capture is not open", "capture::subscribe_from"});
+    auto start = parse_token(cursor_value.token);
+    if (!start) {
+        return std::unexpected(start.error());
+    }
     auto state = impl_->shared;
-    const auto id = [&] {
-        std::lock_guard lock(state->mutex);
-        const auto next = state->next_subscription++;
-        state->subscribers.push_back({next, callback});
-        return next;
-    }();
-    std::vector<crdt::drip_record> records;
+    auto id = std::uint64_t{};
     {
         std::lock_guard lock(state->journal_mutex);
-        auto replay = state->journal->read({}, static_cast<std::size_t>(-1));
-        if (!replay)
-            return std::unexpected(replay.error());
-        records = std::move(replay->first);
-    }
-    for (const auto& record : records) {
-        try {
-            callback(public_drip(record));
-        } catch (...) {
+        auto next = start->journal;
+        while (true) {
+            auto replay = state->journal->read(next, 1);
+            if (!replay) {
+                return std::unexpected(replay.error());
+            }
+            if (replay->first.empty()) {
+                break;
+            }
+            next = replay->second;
+            try {
+                callback(public_drip(replay->first.front()),
+                         {token({next, state->cursor.platform_token})});
+            } catch (...) {
+            }
+        }
+        {
+            std::lock_guard subscriber_lock(state->mutex);
+            id = state->next_subscription++;
+            state->subscribers.push_back({id, std::move(callback)});
         }
     }
     subscription output;
@@ -754,12 +796,13 @@ runtime::task<void> capture::close() {
     state->ticker_stopped.store(true, std::memory_order_release);
     state->watcher->stop();
     state->schedule_wake();
-    while (!state->stopped.load(std::memory_order_acquire)) {
+    while (!state->stopped.load(std::memory_order_acquire) || !state->watcher->stopped()) {
         auto [wait_error] = co_await runtime::delay(std::chrono::milliseconds{1});
         if (wait_error)
             co_return std::unexpected(
                 error{errc::internal, wait_error.message(), "capture::close"});
     }
+    state->watcher->stop();
     co_return {};
 }
 

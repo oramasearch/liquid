@@ -103,6 +103,8 @@ private:
 
 class LIQUID_EXPORT capture {
 public:
+    using cursor_callback = std::function<void(const drip&, const journal_cursor&)>;
+
     ~capture();
     capture(capture&&) noexcept;
     capture& operator=(capture&&) noexcept;
@@ -113,6 +115,8 @@ public:
                                                      capture_options options = {});
     [[nodiscard]] runtime::task<void> close();
     [[nodiscard]] result<subscription> subscribe(std::function<void(const drip&)> callback);
+    [[nodiscard]] result<subscription> subscribe_from(journal_cursor cursor,
+                                                      cursor_callback callback);
     [[nodiscard]] runtime::task<void> pause();
     [[nodiscard]] runtime::task<void> resume();
     [[nodiscard]] result<capture_status> status();

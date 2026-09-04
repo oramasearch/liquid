@@ -262,6 +262,7 @@ struct graph::impl {
         std::optional<std::vector<std::byte>> value;
         bool stale{true};
         std::uint64_t generation{};
+        std::uint64_t last_demand{};
         std::shared_ptr<std::stop_source> running;
     };
 
@@ -279,6 +280,8 @@ struct graph::impl {
     std::map<std::string, input_override> inputs;
     std::map<std::string, std::set<std::string>> reverse;
     graph_statistics counters;
+    std::uint64_t resident_value_bytes{};
+    std::uint64_t demand_sequence{};
 
     [[nodiscard]] runtime::task<graph_value> demand(query_key key, std::vector<std::string> stack);
     [[nodiscard]] runtime::task<graph_value> read_input(graph_input_key key);
@@ -290,6 +293,9 @@ struct graph::impl {
     void replace_reverse_edges(const std::string& token,
                                std::span<const recorded_dependency> before,
                                std::span<const recorded_dependency> after);
+    void cache_value(node& target, std::vector<std::byte> value);
+    void discard_value(node& target);
+    void evict_values();
 };
 
 struct query_context::impl {
@@ -409,6 +415,41 @@ void graph::impl::replace_reverse_edges(const std::string& token,
     }
 }
 
+void graph::impl::cache_value(node& target, std::vector<std::byte> value) {
+    discard_value(target);
+    resident_value_bytes += value.size();
+    target.value = std::move(value);
+    target.last_demand = ++demand_sequence;
+    evict_values();
+}
+
+void graph::impl::discard_value(node& target) {
+    if (!target.value) {
+        return;
+    }
+    resident_value_bytes -= target.value->size();
+    target.value.reset();
+}
+
+void graph::impl::evict_values() {
+    while (options.memory_ceiling != 0 && resident_value_bytes > options.memory_ceiling) {
+        auto candidate = nodes.end();
+        for (auto iterator = nodes.begin(); iterator != nodes.end(); ++iterator) {
+            if (!iterator->second.value) {
+                continue;
+            }
+            if (candidate == nodes.end() ||
+                iterator->second.last_demand < candidate->second.last_demand) {
+                candidate = iterator;
+            }
+        }
+        if (candidate == nodes.end()) {
+            break;
+        }
+        discard_value(candidate->second);
+    }
+}
+
 result<std::uint64_t>
 graph::impl::invalidate(std::string token, durability changed_tier, bool include_token) {
     auto pending = std::vector<std::string>{};
@@ -476,8 +517,15 @@ runtime::task<graph_value> graph::impl::demand(query_key key, std::vector<std::s
             }
             value = std::move(*loaded);
             auto lock = std::scoped_lock{mutex};
-            if (const auto found = nodes.find(*token); found != nodes.end()) {
-                found->second.value = *value;
+            if (const auto found = nodes.find(*token);
+                found != nodes.end() && found->second.generation == snapshot.generation) {
+                cache_value(found->second, *value);
+            }
+        } else {
+            auto lock = std::scoped_lock{mutex};
+            if (const auto found = nodes.find(*token);
+                found != nodes.end() && found->second.generation == snapshot.generation) {
+                found->second.last_demand = ++demand_sequence;
             }
         }
         {
@@ -516,7 +564,7 @@ runtime::task<graph_value> graph::impl::demand(query_key key, std::vector<std::s
                 const auto found = nodes.find(*token);
                 if (found != nodes.end() && found->second.generation == snapshot.generation) {
                     found->second.stale = false;
-                    found->second.value = *value;
+                    cache_value(found->second, *value);
                 }
                 ++counters.hits;
             }
@@ -582,7 +630,7 @@ runtime::task<graph_value> graph::impl::demand(query_key key, std::vector<std::s
             found->second.dependencies = context.impl_->dependencies;
             found->second.tier = context.impl_->tier;
             found->second.value_id = *stored_value;
-            found->second.value = *computed;
+            cache_value(found->second, *computed);
             found->second.stale = false;
             found->second.running.reset();
             replace_reverse_edges(*token, before, found->second.dependencies);
@@ -941,7 +989,7 @@ result<std::uint64_t> graph::mark_changed(query_key key) {
     }
     const auto found = impl_->nodes.find(*token);
     if (found != impl_->nodes.end()) {
-        found->second.value.reset();
+        impl_->discard_value(found->second);
         found->second.value_id.reset();
         found->second.record_id.reset();
     }
@@ -995,7 +1043,13 @@ graph_statistics graph::statistics() const {
         return {};
     }
     auto lock = std::scoped_lock{impl_->mutex};
-    return impl_->counters;
+    auto output = impl_->counters;
+    output.keys = impl_->nodes.size();
+    output.resident_values = static_cast<std::uint64_t>(std::ranges::count_if(
+        impl_->nodes, [](const auto& item) { return item.second.value.has_value(); }));
+    output.resident_value_bytes = impl_->resident_value_bytes;
+    output.memory_ceiling = impl_->options.memory_ceiling;
+    return output;
 }
 
 } // namespace liquid

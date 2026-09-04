@@ -10,10 +10,11 @@
 > Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
 > a retained GPU text layer inside Dear ImGui.
 
-**Status:** the demand-driven query graph in #20 is implemented, including persisted red-green
-validation, durability-filtered invalidation, cancellation, and the action-query integration.
-The daemon, clean-rebuild scheduler, frontend granularity, symbols, and planner remain with their
-listed issues.
+**Status:** the demand-driven query graph in #20 and the per-checkout daemon in #21 are
+implemented, including persisted red-green validation, durability-filtered invalidation,
+cancellation, action-query integration, ordered cursor fan-out, and bounded resident graph values.
+The clean-rebuild scheduler, frontend granularity, symbols, and planner remain with their listed
+issues.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -96,25 +97,48 @@ forces the action query to recompute.
 
 ## The daemon (#21)
 
+**Implementation status: implemented by liquid #21 on macOS and Linux.** `daemon::start` hosts the
+capture owner and public `liquid::graph` in the current process; `daemon::attach` connects another
+client.
+The CLI starts a detached host on its first daemon-backed command. The current Corosio revision has
+Unix local streams but no Windows named-pipe transport, so every daemon entry point returns the
+documented `errc::unsupported` result on Windows. The daemon opens #20's graph with the checkout as
+its working tree and feeds changed paths into `graph::mark_changed` at low durability.
+
 One long-lived process per checkout: started on first use by the CLI or liquify, single instance
-enforced by a lock in `LIQUID_REPO/daemon/`, idle exit after a configured period, shutdown that
-persists the graph. It owns the capture subscription ([`capture.md`](capture.md)): a drip arrives
-as a journal cursor advance; the daemon maps changed paths to inputs, marks the minimum stale, and
-fans out to pluggable targets in order: the build graph (demand what the last build demanded), the
-local search index (#22), collaborators and lake (the sync client from
+enforced by an advisory lock in `.liquid/daemon/`, idle exit after a configured period, shutdown
+that persists the graph. The earlier `LIQUID_REPO/daemon/` design path cannot be used because
+`LIQUID_REPO` is the repository checkpoint file, not a directory. It owns the capture subscription
+([`capture.md`](capture.md)): a drip arrives as a journal cursor advance; the daemon maps changed
+paths to inputs, marks the minimum stale, and fans out to pluggable targets in order: the build
+graph (demand what the last build demanded), the local search index (#22), collaborators and lake
+(the sync client from
 [`sync.md`](sync.md)), each with its own cursor, at-least-once and idempotent, as
 `features/22` requires. `liquid status` shows what the last drip triggered and how far each target
 is behind.
 
-**Memory.** The graph has a ceiling (`config.build.graph_memory`); values are evicted least
-recently demanded first (they are recomputable, and results are in the store anyway); keys,
-fingerprints and dependency lists are the working set and are what the ceiling protects.
+**Memory.** The graph has a ceiling (`config.build.graph_memory`); resident values are evicted
+least recently demanded first (they are recomputable, and results are in the store anyway). Keys,
+fingerprints, dependency lists, and stale state remain after eviction. The public graph accounts
+resident value bytes and reports the key count, resident value count, use, and ceiling in status.
 
-**Clients** talk to the daemon over one local endpoint: the CLI over a Unix socket (named pipe on
-Windows) with the same framed canonical-CBOR request shape the sync protocol uses; liquify links
-libliquid and hosts the graph in-process (the daemon becomes a thread in liquify's process when
-liquify is the first client, and the CLI attaches to it), which is the whole point of the
+**Clients** talk to the daemon over one local endpoint: the CLI over a Unix socket with the same
+one-byte type, four-byte big-endian length, and canonical-CBOR payload shape the sync protocol
+uses. The socket has a deterministic checkout-derived name in the platform temporary directory so
+macOS's short Unix-socket path limit does not reject deep checkouts; its lock, cursor state, and
+graph remain under `.liquid/daemon/`. Windows returns `errc::unsupported` until Corosio supplies
+named pipes. liquify links libliquid and hosts the graph in-process (liquify hosts the daemon
+service when it is the first client, and the CLI attaches to it), which is the whole point of the
 architecture and is the only way to avoid a serialisation boundary.
+
+The built-in target order is build, search, collaborators, then lake. The build target marks only
+working-tree inputs named by the drip operations changed through #20's public graph. The remaining
+built-ins are idempotent acceptance hooks until #22 and the collaborator work bind their
+implementations.
+Callers can instead pass ordered `daemon_target` implementations. Every target persists its own
+journal cursor only after successful delivery. Replayed or duplicate cursor values are ignored;
+a failed target keeps its old cursor and error, so restart retries it. `liquid status` reports the
+last drip, changed paths, delivery count, cursor, error, and cursor distance for each target.
 
 ## Continuous clean-rebuild validation (#23)
 

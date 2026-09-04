@@ -78,6 +78,11 @@ public:
         queue_ = nullptr;
     }
 
+    [[nodiscard]] auto stopped() const noexcept -> bool override {
+        std::lock_guard lock(mutex_);
+        return stream_ == nullptr;
+    }
+
     void inject_overflow_for_test() override {
         if (callback_)
             callback_({watch_event_kind::reconcile, workspace_, 0});
@@ -107,7 +112,7 @@ private:
     std::filesystem::path workspace_;
     std::chrono::milliseconds latency_;
     watch_callback callback_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     FSEventStreamRef stream_{nullptr};
     dispatch_queue_t queue_{nullptr};
 };

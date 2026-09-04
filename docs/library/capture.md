@@ -7,6 +7,15 @@ records its tail plus a platform token, and `state` is the most recent filesyste
 Subscribers read the journal from a cursor and can receive an already appended drip again after
 a restart.
 
+`subscribe_from(cursor, callback)` replays journal records after that cursor in order and supplies
+the cursor after each callback. Registration and replay share the journal lock, so an append cannot
+fall between them. `subscribe(callback)` remains the from-origin convenience overload. Consumers
+persist a cursor only after their own side effect succeeds; duplicate delivery is therefore valid
+and expected.
+
+`close()` cancels the platform watcher and waits for both the capture task and the watcher's
+outstanding read to finish. No watcher offload remains after the close task completes.
+
 **Why.** Filesystem notifications can be coalesced, lost, or delayed. They are prompts to
 reconcile the workspace against the saved snapshot, never the authority for history. The journal
 append is the durable point; reading, digest work, storage, and rescans run outside the writing
@@ -71,7 +80,7 @@ their required wait. No platform type appears in a public header.
 ## Verification
 
 `tests/test_drip.cpp` covers atomic rename, a forty-file batch, declared exclusions,
-pause/resume, restart replay, and injected watcher overflow recovery. The overflow test confirms
+pause/resume, cursor-aware restart replay, and injected watcher overflow recovery. The overflow test confirms
 the counter increments, a recrawl occurs, and changes made while events were unavailable are
 found. `tests/crdt/test_journal.cpp` covers cursor reads. Run the static and shared commands from
 the root:
