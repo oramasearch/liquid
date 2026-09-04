@@ -30,6 +30,7 @@ auto identity(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
+auto retain(int argc, char** argv) -> int;
 auto attestation(int argc, char** argv) -> int;
 auto verify(int argc, char** argv) -> int;
 auto provenance(int argc, char** argv) -> int;
@@ -122,6 +123,11 @@ constexpr auto commands = std::to_array<command>({
      "export as a Git repository",
      "available",
      liquid_cli::git_export},
+    {"retain",
+     "retain explain <digest>",
+     "explain retention for an object",
+     "available",
+     liquid_cli::retain},
     {"identity",
      "identity [show|rotate] [--json]",
      "show or rotate the device identity",

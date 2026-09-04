@@ -51,6 +51,7 @@ public:
     publish(digest candidate, result_id id, const action_result& value);
     [[nodiscard]] runtime::task<void>
     record_verification(digest result, digest attestation, bool divergent);
+    [[nodiscard]] runtime::task<void> apply_retention(bool enforce_size_cap);
     [[nodiscard]] const std::vector<objects::action_index_entry>& entries() const noexcept;
     [[nodiscard]] const std::vector<digest>& traces() const noexcept;
     [[nodiscard]] bool divergent(digest result) const noexcept;

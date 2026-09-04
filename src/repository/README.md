@@ -11,9 +11,9 @@ Each checkout path contributes the device component of its automerge actor ID, p
 repositories from authoring contradictory concurrent sequences under one actor.
 
 The build adapter uses the repository's device signer for result records and reproducibility
-attestations, reads the persisted `cache.publish` and `verify.rate` policy, retains the action-index
-root with a repository lease, and owns per-handle cache counters and critical alerts exposed by
-`repository::cache_stats`.
+attestations. It reads persisted cache, verification, and retention policy, synchronizes named ref
+and result leases across reopen, retains the action-index root, and owns per-handle cache counters
+and critical alerts exposed by `repository::cache_stats`.
 
 For build diagnostics, the same adapter resolves a path's current content to the newest matching
 write operation and signed drip. Content, node, actor, and timestamp must all agree; otherwise the
@@ -24,3 +24,8 @@ validates the complete replacement before checkpointing it, while the build adap
 current policy and the store's subject-attestation index to the policy evaluator.
 `repository::store_attestation` imports canonical signed evidence without granting it trust;
 evaluation verifies the stored record independently.
+
+Retention rules are canonical repository-document configuration. Repository collection checkpoints
+first, applies ref and result policy, releases results selected by the physical size cap, and only
+then delegates byte reclamation to the store collector. `repository::retain_explain` uses a dry
+collector pass so the CLI does not inspect repository internals.

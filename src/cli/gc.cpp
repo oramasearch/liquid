@@ -94,6 +94,9 @@ auto garbage_collect(int argc, char** argv) -> int {
     std::println("compaction_bytes_reclaimed={} compaction_bytes_written={}",
                  report->bytes_reclaimed_by_compaction,
                  report->bytes_written_by_compaction);
+    for (const auto& [rule, count] : report->retained_by_rule) {
+        std::println("retained_by_rule={} count={}", rule, count);
+    }
     if (options.explain) {
         for (const auto& retained : report->retained_chunks) {
             std::println("{} retained: {}", liquid::to_string(retained.id), retained.reason);

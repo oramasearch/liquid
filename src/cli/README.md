@@ -9,6 +9,9 @@ through the public build API, including policy-refusal causes and their JSON for
 parses `--target`, prints the probe-start count, and exposes foreign-target errors from the library.
 `facts.cpp` implements list, show, and bundle export entirely through public build APIs. The commands
 never read the private action cache directly.
+
+`retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
+`repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
 `verify.cpp` parses action, all, and changed selectors, calls the public verification API, prints
 attestation outcomes and critical output differences, and returns failure on divergence.
 

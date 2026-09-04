@@ -3,7 +3,9 @@
 `executor.cpp` owns action validation, sandbox launch, observed-read capture, output collection, and
 signed result creation. `cache.cpp` owns candidate-key derivation, current-tree manifest validation,
 signature and referenced-object checks, the sorted disk action index, and its store-backed recovery
-root. Divergence and the signed verification reference are durable index fields, and lookup never
+root. It also computes the median execution cost, synchronizes cost-weighted result leases, and
+ranks size-cap eviction by execution cost per result-graph byte. Divergence and the signed
+verification reference are durable index fields, and lookup never
 serves a divergent row. `materialise.cpp` reconstructs toolchain and replay trees from store
 records. `verify.cpp` owns sampling, fresh-sandbox replay, digest comparison, attestations, alerts,
 and background scheduling. `provenance.cpp` derives the SLSA predicate from each action/result pair,
@@ -25,7 +27,6 @@ validates saved actions, launches one writable observed mount, derives child act
 reads and writes, publishes the driver's outer action, and materialises hits back into the checkout.
 Action boundaries are output-producing leaf processes from the discovered toolchain, not executable
 names. Completed output snapshots make each recorded action independently replayable.
-
 `trace.cpp` derives dependency edges when a result manifest reads another action's output, stores a
 `build_trace` record for every wrap, computes longest paths, loads the latest retained trace, and
 exports Chrome trace-event JSON. The wrap hook records monotonic process entry and exit values;

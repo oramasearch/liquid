@@ -1,10 +1,10 @@
 # Store garbage collection
 
-**Status: implemented for single-process local stores (liquid #8, #46).** Leased roots, epoch
+**Status: implemented for single-process local stores (liquid #8, #46, #58).** Leased roots, epoch
 marking, chunk-list reference extraction, whole-pack deletion, sparse-pack compaction, dry runs,
-retained-chunk explanations, and build-cache action/result traversal are available through
-`liquid/store.hpp`. Repositories retain their
-own checkpoint roots through `liquid/repository.hpp`, and `liquid gc` uses that repository API.
+retained-chunk explanations, rule-driven retention, and cost-aware build-result eviction are
+available through `liquid/store.hpp`. Repositories retain their own checkpoint roots through
+`liquid/repository.hpp`, and `liquid gc` uses that repository API.
 
 ## What and why
 
@@ -35,10 +35,11 @@ kind to a byte extractor returning referenced digests. The built-in `chunk-list`
 an object's chunks coupled to the object; the built-in tree extractor retains each entry's object
 and reference digest; the change extractor retains its root, parents, conflict references, and
 optional symbols. Unknown kinds are safe leaves and are listed in `collection_report::unknown_kinds`.
-The build cache adds three registered kinds: an `action-index-root` reaches each indexed result, a
-`result` reaches its action plus output/stdout/stderr blob records, and an `action` reaches its input
-tree, toolchain tree, and sandbox definition. The action-index root uses a persisted repository
-lease, so expiry or explicit release makes the complete cached result graph collectible together.
+The build cache adds three registered kinds. An `action-index-root` retains its verification
+attestations, a `result` reaches its action plus output/stdout/stderr blob records and provenance,
+and an `action` reaches its input tree, toolchain tree, and sandbox definition. The index root uses
+a persisted repository lease, while each result is a separate retention root. This keeps every
+usable result graph coupled without allowing the index itself to defeat result expiry or eviction.
 
 Each pack gets a bitmap indexed by physical frame position for the epoch. A set bit is live. This
 bitmap is working state only: it is never consulted by recovery or index reconstruction. Any frame
@@ -80,10 +81,11 @@ manifests, leases, the index, or packs. `collection_report` returns root, object
 pack, and epoch counts. Setting `collection_options::explain` also returns each retained chunk
 with either its lease path or the epoch high-water rule as the reason.
 
-Repository collection first checkpoints its working tree and leases that tree, every current ref
-head, the repository checkpoint document, and lazy directory documents for 30 days. It renews
-those leases at every open and checkpoint, and releases superseded checkpoint, ref, and directory
-leases while the repository remains open. Call `repository::collect` for a repository; calling
+Repository collection first checkpoints its working tree and leases that tree, every ref selected
+by retention policy, the repository checkpoint document, and lazy directory documents. Working
+tree, checkpoint, and directory leases use 30 days; ref leases use their matching rule. It renews
+the renewable leases at every open and checkpoint and releases superseded roots. Call
+`repository::collect` for a repository; calling
 `store::collect` directly on its store can discard live repository objects.
 
 The CLI opens the supplied repository path, or the current directory when omitted:
@@ -94,6 +96,43 @@ liquid gc [--explain] [--compact] [--compact-below <fraction>] [repository-path]
 
 `--explain` prints lines such as `blake3:… retained: lease … for root blake3:…` and identifies
 chunks protected because they were written after the epoch began.
+
+## Retention
+
+Repository `config.retention.rules` is an ordered list of three typed rule values:
+
+```text
+refs <glob> -> forever | <duration>
+results -> <base duration> weighted by cost
+size cap -> <bytes>
+```
+
+The first matching ref rule wins. A matching ref becomes a named lease root, so the existing
+reference registry computes everything reachable from the change; callers never enumerate the
+objects themselves. A missing match creates no ref-policy lease. The default policy keeps every ref
+and every result for 30 days. `forever` is represented as the maximum store lease expiry and is
+handled without expiry arithmetic.
+
+Result leases are anchored to the result's recorded `observed_at`, not extended on every
+collection. For the present indexed result set, liquid takes the median positive `timing.exec`
+cost and computes:
+
+```text
+ttl = base * clamp(max(exec, 1 ms) / median_cost, 1, 64)
+```
+
+The store-size cap measures physical pack bytes. When it is exceeded, liquid orders live results by
+recorded execution cost per logical result-graph byte, releases enough of the lowest-valued result
+leases to cover the excess, and then invokes the ordinary epoch collector. Eviction does not erase
+objects, edit tombstones, rebuild the chunk index, or remove packs itself. Only the collector's
+manifest commit can make bytes dead, which preserves its crash rule.
+
+`repository::retain_explain` and `liquid retain explain <digest>` run the retention pass and a dry
+reachability collection. A retained object names its rule, lease ID, and numeric expiry (or
+`forever`); an unretained object says that no live lease reaches it and that the next collection
+will evict it. `collection_report::retained_by_rule` counts live policy roots by rule name, and
+`retained_objects` carries object-level explanations alongside the existing chunk explanations.
+Remote-tier policy remains outside this local implementation.
 
 ## How to verify
 

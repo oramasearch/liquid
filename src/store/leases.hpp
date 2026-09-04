@@ -29,6 +29,11 @@ struct lease_state {
 
 [[nodiscard]] runtime::task<std::shared_ptr<lease_state>>
 create_lease(std::filesystem::path directory, digest root, std::chrono::seconds ttl);
+[[nodiscard]] runtime::task<std::shared_ptr<lease_state>>
+create_lease_until(std::filesystem::path directory,
+                   digest root,
+                   std::optional<std::chrono::sys_seconds> expiry,
+                   std::string owner);
 [[nodiscard]] runtime::task<void> renew_lease(std::shared_ptr<lease_state> state,
                                               std::chrono::seconds ttl);
 [[nodiscard]] runtime::task<void> release_lease(std::shared_ptr<lease_state> state);

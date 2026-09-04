@@ -208,14 +208,14 @@ provenance attestation.
 The disk tier lives under `.liquid-store/actions/`. `ROOT` contains the text digest of a canonical
 `action-index-root` record in the store. That record contains every candidate/result pair, its
 monotonic sequence, permanent divergence flag, and optional verification-attestation digest. It is
-both the recovery source and the collector root. The repository keeps it
-with the same 30-day persisted lease used for repository refs, replacing or renewing that lease on
-every publish or verification. The collector's `action-index-root` extractor reaches results and
-verification attestations; the `result` extractor
-reaches its action, output blob records, stdout, and stderr; the `action` extractor reaches inputs,
-toolchain, and sandbox. Once the cache-root lease is no longer live, collection can remove the
-result and its outputs together. A stale on-disk candidate then misses because lookup requires all
-referenced records to exist.
+both the recovery source and a collector root. The repository keeps it with a persisted lease,
+replacing or renewing that lease on every publish, verification, and cache open. The collector's
+`action-index-root` extractor reaches verification attestations, while each result has its own
+cost-weighted retention lease. The `result` extractor reaches its action, output blob records,
+stdout, stderr, and provenance; the `action` extractor reaches inputs, toolchain, and sandbox.
+Expiring or releasing one result lease makes that complete usable graph collectible without
+forcing unrelated cache entries to share its lifetime. A stale on-disk candidate then misses
+because lookup requires all referenced records to exist.
 
 `INDEX` is a checksummed sorted projection rebuilt from `ROOT` when absent, corrupt, or for a
 different root:

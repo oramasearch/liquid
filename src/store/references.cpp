@@ -135,8 +135,6 @@ std::vector<digest> extract_action_index_root(std::span<const std::byte> bytes) 
         return {};
     auto output = std::vector<digest>{};
     output.reserve(root->entries.size());
-    for (const auto& entry : root->entries)
-        append_once(output, entry.result);
     for (const auto& entry : root->entries) {
         if (entry.verification) {
             append_once(output, *entry.verification);

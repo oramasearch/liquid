@@ -66,6 +66,12 @@ if(LIQUID_BUILD_CLI)
   set_tests_properties(gc-cli-explain PROPERTIES
     FIXTURES_REQUIRED gc_cli
     PASS_REGULAR_EXPRESSION "retained: lease")
+  add_test(NAME retain-cli-explain
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_RETAIN_REPOSITORY=${LIQUID_GC_CLI_REPOSITORY}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/retain-explain.cmake)
+  set_tests_properties(retain-cli-explain PROPERTIES FIXTURES_REQUIRED gc_cli)
   add_test(NAME gc-cli-compact
     COMMAND $<TARGET_FILE:liquid-cli> gc --compact --compact-below 0.5 ${LIQUID_GC_CLI_REPOSITORY})
   set_tests_properties(gc-cli-compact PROPERTIES

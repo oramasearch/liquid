@@ -347,6 +347,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/provenance.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
+    src/cli/retain.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp

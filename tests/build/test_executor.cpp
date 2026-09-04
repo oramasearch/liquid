@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "liquid/attestation.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
+#include "liquid/store.hpp"
 #include "objects/records.hpp"
 #include "vfs/repository_access.hpp"
 
@@ -75,10 +77,17 @@ struct action_fixture {
     liquid::repository repository;
     liquid::digest root;
 
-    explicit action_fixture(bool publish = true, std::uint32_t verification_rate = 20) {
+    explicit action_fixture(bool publish = true,
+                            std::uint32_t verification_rate = 20,
+                            bool retain_results = true) {
         auto options = liquid::repository_options{};
         options.cache.publish = publish;
         options.verify.rate = verification_rate;
+        if (!retain_results) {
+            std::erase_if(options.retention.rules, [](const auto& rule) {
+                return std::holds_alternative<liquid::result_retention_rule>(rule);
+            });
+        }
         auto opened =
             liquid::runtime::block_on(liquid::repository::create(location.path(), options));
         EXPECT_TRUE(opened) << opened.error().message;
@@ -188,6 +197,93 @@ TEST(BuildCache, unsigned_publish_is_refused_when_writes_are_enabled) {
     ASSERT_FALSE(published);
     EXPECT_EQ(published.error().code, liquid::errc::unauthorized);
     EXPECT_EQ(published.error().message, "cache result signature is invalid");
+}
+
+TEST(BuildCache, size_cap_evicts_a_cheap_large_result_before_an_expensive_small_result) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.retention.rules = {
+        liquid::result_retention_rule{"cost weighted results", std::chrono::days{1}},
+        liquid::size_cap_retention_rule{"local cache cap", 1024U * 1024U}};
+    auto opened = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(opened) << opened.error().message;
+    *opened = {};
+    auto object_store =
+        liquid::runtime::block_on(liquid::store::open(location.path() / ".liquid-store"));
+    ASSERT_TRUE(object_store) << object_store.error().message;
+
+    const auto put_blob = [&](std::size_t size, unsigned char seed) -> liquid::digest {
+        auto payload = std::vector<std::byte>(size);
+        auto random = std::mt19937_64{seed};
+        for (auto& byte : payload) {
+            byte = std::byte{static_cast<unsigned char>(random())};
+        }
+        auto payload_id = liquid::runtime::block_on(object_store->put(std::move(payload)));
+        EXPECT_TRUE(payload_id) << payload_id.error().message;
+        auto encoded = liquid::objects::encode(
+            liquid::blob{{*payload_id}, static_cast<std::uint64_t>(size), {size}});
+        EXPECT_TRUE(encoded) << encoded.error().message;
+        auto blob_id = liquid::runtime::block_on(object_store->put(std::move(*encoded)));
+        EXPECT_TRUE(blob_id) << blob_id.error().message;
+        return *blob_id;
+    };
+    const auto empty_blob = put_blob(0, 0);
+    const auto cheap_blob = put_blob(2U * 1024U * 1024U, 11);
+    const auto expensive_blob = put_blob(16U * 1024U, 29);
+    const auto put_result = [&](liquid::digest output,
+                                std::chrono::milliseconds cost,
+                                unsigned char action_byte) -> liquid::digest {
+        auto value = liquid::action_result{};
+        value.action = example_digest(action_byte);
+        value.outputs.push_back({"output.bin", 0100644, output});
+        value.stdout_output = empty_blob;
+        value.stderr_output = empty_blob;
+        value.timing.exec = cost;
+        value.observed_at =
+            std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        auto encoded = liquid::objects::encode(value);
+        EXPECT_TRUE(encoded) << encoded.error().message;
+        auto id = liquid::runtime::block_on(object_store->put(std::move(*encoded)));
+        EXPECT_TRUE(id) << id.error().message;
+        return *id;
+    };
+    const auto cheap_result = put_result(cheap_blob, std::chrono::milliseconds{1}, 41);
+    const auto expensive_result = put_result(expensive_blob, std::chrono::minutes{40}, 42);
+
+    const auto action_directory = location.path() / ".liquid-store" / "actions";
+    auto index = liquid::build_detail::action_index{action_directory};
+    ASSERT_TRUE(liquid::runtime::block_on(index.open()));
+    ASSERT_TRUE(index.insert(example_digest(51), cheap_result));
+    ASSERT_TRUE(index.insert(example_digest(52), expensive_result));
+    auto root_record = liquid::objects::encode(liquid::objects::action_index_root{index.entries()});
+    ASSERT_TRUE(root_record) << root_record.error().message;
+    auto root = liquid::runtime::block_on(object_store->put(std::move(*root_record)));
+    ASSERT_TRUE(root) << root.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(index.persist(*root)));
+    std::ofstream pointer(action_directory / "ROOT", std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(pointer.is_open());
+    pointer << liquid::to_string(*root) << '\n';
+    pointer.close();
+    *object_store = {};
+
+    opened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    auto cache = liquid::build_detail::disk_cache{*opened};
+    ASSERT_TRUE(liquid::runtime::block_on(cache.open()));
+
+    auto report = liquid::runtime::block_on(opened->collect());
+    ASSERT_TRUE(report) << report.error().message;
+    *opened = {};
+    object_store =
+        liquid::runtime::block_on(liquid::store::open(location.path() / ".liquid-store"));
+    ASSERT_TRUE(object_store) << object_store.error().message;
+    auto cheap_present = liquid::runtime::block_on(object_store->contains(cheap_result));
+    auto expensive_present = liquid::runtime::block_on(object_store->contains(expensive_result));
+    ASSERT_TRUE(cheap_present);
+    ASSERT_TRUE(expensive_present);
+    EXPECT_FALSE(*cheap_present);
+    EXPECT_TRUE(*expensive_present);
+    EXPECT_EQ(report->retained_by_rule["cost weighted results"], 1U);
 }
 
 #if LIQUID_BUILD_HAS_FUSE
@@ -386,7 +482,7 @@ TEST(BuildCache, changing_an_unread_input_remains_a_hit) {
 }
 
 TEST(BuildCache, collected_output_is_not_served) {
-    action_fixture fixture;
+    action_fixture fixture{true, 20, false};
     const auto input =
         fixture.input({"fixture", "copy-tagged", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
     auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));

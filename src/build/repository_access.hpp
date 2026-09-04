@@ -9,6 +9,12 @@
 
 namespace liquid::repository_detail {
 
+struct retention_root {
+    std::string owner;
+    digest root;
+    std::optional<std::chrono::sys_seconds> expiry;
+};
+
 struct LIQUID_EXPORT build_access {
     [[nodiscard]] static auto get(repository& source, digest id)
         -> runtime::task<std::vector<std::byte>>;
@@ -38,6 +44,11 @@ struct LIQUID_EXPORT build_access {
     [[nodiscard]] static bool cache_publish_enabled(repository& source) noexcept;
     [[nodiscard]] static std::uint32_t verification_rate(repository& source) noexcept;
     [[nodiscard]] static auto policy(repository& source) -> result<policy_config>;
+    [[nodiscard]] static retention_config retention_policy(repository& source);
+    [[nodiscard]] static auto sync_retention_roots(repository& source,
+                                                   std::string owner_prefix,
+                                                   std::vector<retention_root> roots)
+        -> runtime::task<void>;
     static void record_cache_lookup(repository& source,
                                     digest result,
                                     cache_status status,

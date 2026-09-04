@@ -7,6 +7,10 @@ versions, exact-version revocation failures, and wrong-KEK atomicity. `test_repo
 exact readability report for revisions written before and after rotation and its three disclosure
 statements.
 
+Retention coverage spans `store/`, `build/`, and `cli/`: persisted forever-ref reachability,
+mixed-cost size-cap eviction, rule counts, and rule/lease/expiry explanations all run in the default
+portable suite.
+
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
 The `formats/` cases cover
