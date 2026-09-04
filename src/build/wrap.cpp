@@ -20,7 +20,10 @@
 #endif
 
 #include "build/cache.hpp"
+#include "build/materialise.hpp"
 #include "build/repository_access.hpp"
+#include "build/verify.hpp"
+#include "build/wrap.hpp"
 #include "formats/json.hpp"
 #include "objects/records.hpp"
 #include "sandbox/sandbox.hpp"
@@ -848,15 +851,7 @@ auto write_toolchain(const std::filesystem::path& path, digest value) -> liquid:
 }
 
 runtime::task<digest> store_sandbox(repository& source) {
-    auto value = objects::sandbox_record{
-        .mechanism = "wrap user+mount+net namespaces with exec-time hook v1",
-        .work_root = "/liquid/work/",
-        .toolchain_root = "/usr/",
-        .home_root = "/tmp/home/",
-        .temporary_root = "/tmp/",
-        .fixed_environment = {"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"},
-        .network = false};
-    auto encoded = objects::encode(value);
+    auto encoded = objects::encode(wrap_sandbox_definition());
     if (!encoded)
         co_return std::unexpected(encoded.error());
     co_return co_await repository_detail::build_access::put_record(source, std::move(*encoded));
@@ -877,7 +872,8 @@ runtime::task<objects::action_record> load_action(repository& source, digest id)
 }
 
 auto remove_run(const std::filesystem::path& path) -> liquid::result<void> {
-    if (path.filename().empty() || path.parent_path().filename() != "runs")
+    const auto parent = path.parent_path().filename();
+    if (path.filename().empty() || (parent != "runs" && parent != "verify"))
         return std::unexpected(wrap_error(errc::internal, "invalid wrap run path", path));
     auto code = std::error_code{};
     std::filesystem::remove_all(path, code);
@@ -1161,7 +1157,6 @@ runtime::task<void> publish_observed_run(repository& source,
                                          const std::filesystem::path& working_tree,
                                          const std::vector<std::string>& command,
                                          const std::map<std::string, std::string>& environment,
-                                         digest input_tree,
                                          digest sandbox,
                                          std::optional<digest>& toolchain,
                                          cache_plan& plan,
@@ -1170,6 +1165,18 @@ runtime::task<void> publish_observed_run(repository& source,
                                          bool outer_miss_recorded,
                                          wrap_report& report) {
     report.exit = run.launch.exit;
+    auto cut = co_await source.cut("wrap output snapshot");
+    if (!cut) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(cut.error());
+    }
+    auto log = co_await source.log();
+    if (!log || log->empty()) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(log ? wrap_error(errc::internal, "wrap output is missing")
+                                      : log.error());
+    }
+    const auto replay_tree = log->front().root;
     if (!toolchain) {
         for (const auto& process : run.processes)
             state.tools.insert(process.executable);
@@ -1212,7 +1219,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                                  cache,
                                                  process,
                                                  environment,
-                                                 input_tree,
+                                                 replay_tree,
                                                  *toolchain,
                                                  sandbox,
                                                  *run.observations,
@@ -1237,7 +1244,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                                cache,
                                                driver,
                                                environment,
-                                               input_tree,
+                                               replay_tree,
                                                *toolchain,
                                                sandbox,
                                                *run.observations,
@@ -1271,6 +1278,173 @@ runtime::task<void> publish_observed_run(repository& source,
 
 } // namespace
 
+objects::sandbox_record wrap_sandbox_definition() {
+    return {.mechanism = "wrap user+mount+net namespaces with exec-time hook v1",
+            .work_root = "/liquid/work/",
+            .toolchain_root = "/usr/",
+            .home_root = "/tmp/home/",
+            .temporary_root = "/tmp/",
+            .fixed_environment = {"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"},
+            .network = false};
+}
+
+liquid::result<std::filesystem::path>
+wrap_cache_directory(const std::filesystem::path& working_tree) {
+    return default_cache_directory(working_tree);
+}
+
+runtime::task<action_result> run_wrapped_action(repository& source,
+                                                const objects::action_record& action,
+                                                const action_result& expected,
+                                                std::chrono::sys_seconds observed_at) {
+    static std::atomic_uint64_t verification_sequence{};
+    auto repository_root = repository_detail::build_access::root_path(source);
+    if (!repository_root) {
+        co_return std::unexpected(repository_root.error());
+    }
+    const auto run = *repository_root / ".liquid-build" / "verify" /
+                     std::to_string(verification_sequence.fetch_add(1));
+    const auto mount = run / "mount";
+    const auto sandbox_root = run / "root";
+    const auto trace = run / "trace";
+    const auto plan = run / "plan";
+    const auto stdout_path = run / "stdout";
+    const auto stderr_path = run / "stderr";
+    auto code = std::error_code{};
+    std::filesystem::create_directories(run, code);
+    if (code) {
+        co_return std::unexpected(wrap_error(errc::io, code.message(), run));
+    }
+    auto materialised = co_await build_detail::materialise_tree(source, action.input.inputs, mount);
+    if (!materialised) {
+        static_cast<void>(remove_run(run));
+        co_return std::unexpected(materialised.error());
+    }
+    for (const auto& output : expected.outputs) {
+        std::filesystem::remove_all(mount / output.path, code);
+        if (code) {
+            static_cast<void>(remove_run(run));
+            co_return std::unexpected(wrap_error(errc::io, code.message(), mount / output.path));
+        }
+    }
+    {
+        auto trace_output = std::ofstream{trace, std::ios::trunc};
+        auto plan_output = std::ofstream{plan, std::ios::trunc};
+        if (!trace_output || !plan_output) {
+            static_cast<void>(remove_run(run));
+            co_return std::unexpected(
+                wrap_error(errc::io, "cannot prepare verification hook files", run));
+        }
+    }
+    auto hook = wrap_hook_path();
+    if (!hook) {
+        static_cast<void>(remove_run(run));
+        co_return std::unexpected(hook.error());
+    }
+    auto environment = action.input.env;
+#if defined(__linux__)
+    environment["LD_PRELOAD"] = "/liquid/wrap-hook.so";
+    environment["LIQUID_WRAP_TRACE"] = "/liquid/trace";
+    environment["LIQUID_WRAP_PLAN"] = "/liquid/plan";
+#elif defined(__APPLE__)
+    environment["DYLD_INSERT_LIBRARIES"] = hook->string();
+    environment["LIQUID_WRAP_ROOT"] = mount.string();
+    environment["LIQUID_WRAP_TRACE"] = trace.string();
+    environment["LIQUID_WRAP_PLAN"] = plan.string();
+#endif
+    environment["LIQUID_WRAP_ACTIVE"] = "1";
+    const auto cwd =
+        action.input.cwd.empty() ? std::string{"/liquid/work"} : "/liquid/work/" + action.input.cwd;
+    auto request = sandbox_detail::wrap_launch_request{.sandbox_root = sandbox_root,
+                                                       .input_mount = mount,
+                                                       .hook = *hook,
+                                                       .trace = trace,
+                                                       .plan = plan,
+                                                       .stdout_path = stdout_path,
+                                                       .stderr_path = stderr_path,
+                                                       .cwd = cwd,
+                                                       .command = action.input.command,
+                                                       .environment = std::move(environment)};
+    build_detail::testing::record_sandbox_spawn();
+    auto launched = co_await runtime::offload(
+        [request = std::move(request)] { return sandbox_detail::launch_wrap(request); });
+    if (!launched || !*launched) {
+        static_cast<void>(remove_run(run));
+        if (!launched) {
+            co_return std::unexpected(launched.error());
+        }
+        co_return std::unexpected(launched->error());
+    }
+    auto output_values = std::vector<action_output>{};
+    for (const auto& declared : expected.outputs) {
+        const auto relative = declared.path;
+        const auto path = mount / relative;
+        if (!std::filesystem::exists(path, code)) {
+            continue;
+        }
+        const auto directory = std::filesystem::is_directory(path, code);
+        if (code) {
+            static_cast<void>(remove_run(run));
+            co_return std::unexpected(wrap_error(errc::io, code.message(), path));
+        }
+        auto files = std::vector<std::filesystem::path>{};
+        if (directory) {
+            for (auto iterator = std::filesystem::recursive_directory_iterator{path, code};
+                 !code && iterator != std::filesystem::recursive_directory_iterator{};
+                 ++iterator) {
+                if (iterator->is_regular_file()) {
+                    files.push_back(iterator->path());
+                }
+            }
+        } else {
+            files.push_back(path);
+        }
+        if (code) {
+            static_cast<void>(remove_run(run));
+            co_return std::unexpected(wrap_error(errc::io, code.message(), path));
+        }
+        for (const auto& file : files) {
+            auto stored = co_await repository_detail::build_access::put_file(source, file);
+            if (!stored) {
+                static_cast<void>(remove_run(run));
+                co_return std::unexpected(stored.error());
+            }
+            const auto status = std::filesystem::status(file, code);
+            if (code) {
+                static_cast<void>(remove_run(run));
+                co_return std::unexpected(wrap_error(errc::io, code.message(), file));
+            }
+            output_values.push_back({std::filesystem::relative(file, mount).generic_string(),
+                                     static_cast<std::uint32_t>(status.permissions()) & 0777U,
+                                     *stored});
+        }
+    }
+    std::ranges::sort(output_values, {}, &action_output::path);
+    auto stdout_id = co_await repository_detail::build_access::put_file(source, stdout_path);
+    auto stderr_id = co_await repository_detail::build_access::put_file(source, stderr_path);
+    if (!stdout_id || !stderr_id) {
+        static_cast<void>(remove_run(run));
+        co_return std::unexpected(!stdout_id ? stdout_id.error() : stderr_id.error());
+    }
+    auto result =
+        action_result{.action = expected.action,
+                      .exit = (*launched)->exit,
+                      .outputs = std::move(output_values),
+                      .stdout_output = *stdout_id,
+                      .stderr_output = *stderr_id,
+                      .worker = action.input.platform.os + "/" + action.input.platform.arch,
+                      .observed_at = observed_at};
+    auto signed_result = co_await repository_detail::build_access::sign_result(source, result);
+    auto removed = remove_run(run);
+    if (!signed_result) {
+        co_return std::unexpected(signed_result.error());
+    }
+    if (!removed) {
+        co_return std::unexpected(removed.error());
+    }
+    co_return result;
+}
+
 runtime::task<wrap_report>
 wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_options options) {
 #if defined(_WIN32)
@@ -1286,7 +1460,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
             errc::invalid_argument, "wrap working tree is not a directory", working_tree));
     auto cache_directory = options.cache_directory
                                ? liquid::result<std::filesystem::path>{*options.cache_directory}
-                               : default_cache_directory(working_tree);
+                               : wrap_cache_directory(working_tree);
     if (!cache_directory)
         co_return std::unexpected(cache_directory.error());
     std::filesystem::create_directories(*cache_directory, code);
@@ -1376,8 +1550,13 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                   report);
         if (!served)
             co_return std::unexpected(served.error());
-        if (*served)
+        if (*served) {
+            if (options.verify) {
+                build_detail::schedule_verification(std::move(*source));
+                report.verification_scheduled = true;
+            }
             co_return report;
+        }
         outer_miss_recorded = true;
     }
 
@@ -1400,7 +1579,6 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    working_tree,
                                                    command,
                                                    action_environment,
-                                                   input_tree,
                                                    *sandbox,
                                                    *toolchain,
                                                    plan,
@@ -1410,6 +1588,10 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    report);
     if (!published)
         co_return std::unexpected(published.error());
+    if (options.verify) {
+        build_detail::schedule_verification(std::move(*source));
+        report.verification_scheduled = true;
+    }
     co_return report;
 #endif
 }

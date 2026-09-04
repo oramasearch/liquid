@@ -31,10 +31,12 @@ system reduces to.
 | This model was trained on this dataset with this code | the training run | **the checkpoint** | `model_provenance/1` |
 | This library's ABI is compatible with that one | liquid | **the library** | `abi_compatibility/1` |
 | This drip passed secret scanning | the scanner | **the drip** | `scan_result/1` |
-| Two builders independently produced identical bytes | the verifier | **the artifact** | `reproducibility/1` |
+| A sampled re-execution produced identical bytes | the verifier | **the artifact** | `reproducibility/1` |
 
 `scan_result/1` is implemented for local capture in Phase 1; its canonical record and verification
 rules are in [`../library/secret-scanning.md`](../library/secret-scanning.md#scan_result1).
+`reproducibility/1` is emitted by Phase 2 verification for agreement and disagreement; its subject
+is the cached result and its required fields identify the verifier, sandbox, and outcome.
 
 **Users, agents, documents, artifacts, drips, changes — all subjects.** That is the whole
 point, and it is why TAAP is the security model rather than a signing library.

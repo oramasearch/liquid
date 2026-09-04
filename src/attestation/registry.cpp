@@ -153,9 +153,10 @@ attestation_profile_registry::attestation_profile_registry()
                         attestation_status_kind::max_age,
                         std::chrono::hours{24}),
                 profile("reproducibility/1",
-                        {field("builder_one", attestation_field_type::text, true),
-                         field("builder_two", attestation_field_type::text, true),
-                         field("environment", attestation_field_type::text, false)},
+                        {field("verified_by", attestation_field_type::text, true),
+                         field("sandbox", attestation_field_type::text, true),
+                         field("agreement", attestation_field_type::boolean, true),
+                         field("differing_outputs", attestation_field_type::text_list, false)},
                         {attestation_subject_kind::artifact},
                         attestation_status_kind::none)} {}
 

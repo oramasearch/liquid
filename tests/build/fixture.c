@@ -3,6 +3,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#if defined(__linux__)
+#include <sys/random.h>
+#endif
+
 extern char** environ;
 
 static int copy_file(const char* source, const char* destination) {
@@ -58,6 +62,30 @@ static int print_environment(const char* destination) {
     return 0;
 }
 
+static int print_random(const char* destination) {
+    unsigned char value[32];
+    int output;
+#if defined(__linux__)
+    if (getrandom(&value, sizeof(value), 0) != (ssize_t)sizeof(value)) {
+        return 2;
+    }
+#else
+    for (size_t index = 0; index != sizeof(value); ++index) {
+        value[index] = (unsigned char)arc4random();
+    }
+#endif
+    output = open(destination, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (output < 0) {
+        return 3;
+    }
+    if (write(output, &value, sizeof(value)) != (ssize_t)sizeof(value)) {
+        close(output);
+        return 4;
+    }
+    close(output);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         return 64;
@@ -70,6 +98,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "env") == 0 && argc == 3) {
         return print_environment(argv[2]);
+    }
+    if (strcmp(argv[1], "random") == 0 && argc == 3) {
+        return print_random(argv[2]);
     }
     if (strcmp(argv[1], "outside-read") == 0) {
         return open("/etc/passwd", O_RDONLY) < 0 ? 0 : 1;

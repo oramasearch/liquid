@@ -60,10 +60,10 @@ remotely" — is a diagnostic, not a mystery.
 
 ## Divergence detection
 
-Sampled actions are re-executed on a different worker and compared. Divergence
-means one of: a non-hermetic action, a compromised worker, or a genuinely
-non-deterministic tool. All three are critical, and all three are currently invisible
-in every deployed system.
+Phase 2 samples actions onto idle local runtime capacity and compares exit status and every output
+digest from a fresh sandbox. Divergence means one of: a non-hermetic action, a compromised worker,
+or a genuinely non-deterministic tool. All three are critical. Phase 3 schedules the same replay on
+a different worker without changing the comparison or attestation format.
 
 This is the same infrastructure as incremental validation
 ([04](04-build-engine.md)) and reproducibility verification
@@ -104,4 +104,5 @@ cache, more slowly. This is an axiom, not a fallback.
   granularity and observed dependencies do not have REAPI expressions.
 - **Sandbox technology per platform** — namespaces/seccomp, gVisor, or microVMs, and
   what the equivalent is on macOS and Windows.
-- **Who pays for divergence sampling**, and at what rate it is worth running.
+- **Remote sampling economics.** Local verification defaults to one in 20 actions; Phase 3 must
+  decide how remote capacity changes that policy.

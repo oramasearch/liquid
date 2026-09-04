@@ -33,6 +33,10 @@ auto wrap(int argc, char** argv) -> int {
             options.cache = false;
             continue;
         }
+        if (command.empty() && argument == "--no-verify") {
+            options.verify = false;
+            continue;
+        }
         if (command.empty() && argument == "--explain") {
             options.explain = true;
             continue;

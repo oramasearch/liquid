@@ -490,9 +490,14 @@ auto encode(const sandbox_record& value) -> result<std::vector<std::byte>> {
 auto encode(const action_index_root& value) -> result<std::vector<std::byte>> {
     auto entries = cbor::value::array{};
     for (const auto& entry : value.entries) {
-        entries.push_back(map({{"candidate", encode_digest(entry.candidate)},
-                               {"result", encode_digest(entry.result)},
-                               {"sequence", cbor::value{entry.sequence}}}));
+        auto fields = cbor::value::map{{"candidate", encode_digest(entry.candidate)},
+                                       {"result", encode_digest(entry.result)},
+                                       {"sequence", cbor::value{entry.sequence}},
+                                       {"divergent", cbor::value{entry.divergent}}};
+        if (entry.verification) {
+            fields.emplace_back("verification", encode_digest(*entry.verification));
+        }
+        entries.push_back(cbor::value{std::move(fields)});
     }
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "action-index-root"},
@@ -977,6 +982,8 @@ auto decode_action_index_root(std::span<const std::byte> bytes) -> result<action
         const auto* candidate_value = find(item, "candidate");
         const auto* result_value = find(item, "result");
         const auto* sequence_value = find(item, "sequence");
+        const auto* divergent_value = find(item, "divergent");
+        const auto* verification_value = find(item, "verification");
         auto candidate = candidate_value
                              ? decode_digest(*candidate_value)
                              : result<digest>{std::unexpected(corrupt("candidate missing"))};
@@ -984,10 +991,24 @@ auto decode_action_index_root(std::span<const std::byte> bytes) -> result<action
                                       : result<digest>{std::unexpected(corrupt("result missing"))};
         const auto* sequence =
             sequence_value ? std::get_if<std::uint64_t>(&sequence_value->data) : nullptr;
+        const auto* divergent =
+            divergent_value ? std::get_if<bool>(&divergent_value->data) : nullptr;
+        if (divergent_value && !divergent) {
+            return std::unexpected(corrupt("invalid action divergence flag"));
+        }
+        auto verification = std::optional<digest>{};
+        if (verification_value) {
+            auto decoded = decode_digest(*verification_value);
+            if (!decoded) {
+                return std::unexpected(decoded.error());
+            }
+            verification = *decoded;
+        }
         if (!candidate || !result_id || !sequence || *sequence == 0) {
             return std::unexpected(corrupt("invalid action index entry"));
         }
-        output.entries.push_back({*candidate, *result_id, *sequence});
+        output.entries.push_back(
+            {*candidate, *result_id, *sequence, divergent ? *divergent : false, verification});
     }
     return output;
 }

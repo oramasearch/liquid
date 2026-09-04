@@ -25,16 +25,21 @@ struct build_access {
     [[nodiscard]] static auto contains(repository& source, digest id) -> runtime::task<bool>;
     [[nodiscard]] static auto sign_result(repository& source, action_result& value)
         -> runtime::task<void>;
+    [[nodiscard]] static auto sign_attestation(repository& source, attestation& value)
+        -> runtime::task<void>;
+    [[nodiscard]] static auto signer(repository& source) -> result<actor>;
     [[nodiscard]] static auto retain_cache_root(repository& source, digest root)
         -> runtime::task<void>;
     [[nodiscard]] static auto release_cache_root(repository& source) -> runtime::task<void>;
     [[nodiscard]] static bool cache_publish_enabled(repository& source) noexcept;
+    [[nodiscard]] static std::uint32_t verification_rate(repository& source) noexcept;
     static void record_cache_lookup(repository& source,
                                     digest result,
                                     cache_status status,
                                     std::optional<cache_miss> why,
                                     std::uint64_t bytes_served);
     static void record_cache_store(repository& source, std::uint64_t bytes);
+    static void record_critical_alert(repository& source, critical_cache_alert alert);
     static void apply_cache_lookup(repository& source, digest result, action_result& value);
 };
 

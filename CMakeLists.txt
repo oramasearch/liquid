@@ -220,6 +220,7 @@ add_library(libliquid
   src/attestation/registry.cpp
   src/build/cache.cpp
   src/build/executor.cpp
+  src/build/verify.cpp
   src/build/materialise.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
@@ -331,6 +332,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/locks.cpp
     src/cli/repo.cpp
     src/cli/tree.cpp
+    src/cli/verify.cpp
     src/cli/vfs.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)

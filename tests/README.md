@@ -25,4 +25,6 @@ privileged Linux environment they also prove a second identical execution launch
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
-`compile_commands.json` projects and cache reuse from a different checkout path.
+`compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
+cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,
+rate-one sampling, and CLI verification of every wrapped action.

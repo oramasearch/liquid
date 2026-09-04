@@ -40,6 +40,9 @@ struct wrap_launch_request {
     std::filesystem::path hook;
     std::filesystem::path trace;
     std::filesystem::path plan;
+    std::filesystem::path stdout_path;
+    std::filesystem::path stderr_path;
+    std::string cwd{"/liquid/work"};
     std::vector<std::string> command;
     std::map<std::string, std::string> environment;
 };

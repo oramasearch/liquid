@@ -124,7 +124,7 @@ auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesys
     stream << "/usr/bin/mkdir -p " << quote(rooted("/tmp/home").string()) << "\n";
     stream << "/usr/bin/mount --rbind /proc " << quote(rooted("/proc").string()) << "\n";
     stream << "exec /usr/bin/unshare --root=" << quote(request.sandbox_root.string())
-           << " --wd=/liquid/work -- /usr/bin/env -i";
+           << " --wd=" << quote(request.cwd) << " -- /usr/bin/env -i";
     for (const auto& [name, value] : request.environment)
         stream << ' ' << quote(name + "=" + value);
     for (const auto& argument : request.command)
@@ -270,6 +270,31 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
     auto actions = posix_spawn_file_actions_t{};
     auto attributes = posix_spawnattr_t{};
     posix_spawn_file_actions_init(&actions);
+    auto stdout_descriptor = -1;
+    auto stderr_descriptor = -1;
+    if (!request.stdout_path.empty()) {
+        stdout_descriptor = ::open(request.stdout_path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        if (stdout_descriptor < 0) {
+            posix_spawn_file_actions_destroy(&actions);
+            return std::unexpected(
+                error{errc::io, std::strerror(errno), request.stdout_path.string()});
+        }
+        posix_spawn_file_actions_adddup2(&actions, stdout_descriptor, STDOUT_FILENO);
+        posix_spawn_file_actions_addclose(&actions, stdout_descriptor);
+    }
+    if (!request.stderr_path.empty()) {
+        stderr_descriptor = ::open(request.stderr_path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        if (stderr_descriptor < 0) {
+            if (stdout_descriptor >= 0) {
+                ::close(stdout_descriptor);
+            }
+            posix_spawn_file_actions_destroy(&actions);
+            return std::unexpected(
+                error{errc::io, std::strerror(errno), request.stderr_path.string()});
+        }
+        posix_spawn_file_actions_adddup2(&actions, stderr_descriptor, STDERR_FILENO);
+        posix_spawn_file_actions_addclose(&actions, stderr_descriptor);
+    }
     posix_spawnattr_init(&attributes);
     posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
     posix_spawnattr_setpgroup(&attributes, 0);
@@ -282,6 +307,12 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
                                      environment_pointers.data());
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
+    if (stdout_descriptor >= 0) {
+        ::close(stdout_descriptor);
+    }
+    if (stderr_descriptor >= 0) {
+        ::close(stderr_descriptor);
+    }
     if (spawned != 0)
         return std::unexpected(error{errc::io, std::strerror(spawned), "posix_spawn wrap"});
     auto status = int{};

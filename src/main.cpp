@@ -31,6 +31,7 @@ auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
 auto attestation(int argc, char** argv) -> int;
+auto verify(int argc, char** argv) -> int;
 auto wrap(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
@@ -112,8 +113,13 @@ constexpr auto commands = std::to_array<command>({
      "show or verify an attestation",
      "available",
      liquid_cli::attestation},
+    {"verify",
+     "verify <action|--all|--changed> [--explain]",
+     "re-execute and compare cached actions",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::verify},
     {"wrap",
-     "wrap [--jobs <count>] [--no-cache] [--explain] <command> [args...]",
+     "wrap [--jobs <count>] [--no-cache] [--no-verify] [--explain] <command> [args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},

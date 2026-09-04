@@ -54,8 +54,9 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.subject_kind = liquid::attestation_subject_kind::drip;
         value.detectors = {"aws-access-key"};
     } else if (profile == "reproducibility/1") {
-        value.attributes = {{"builder_one", "taap:1:ed25519:first"},
-                            {"builder_two", "taap:1:ed25519:second"}};
+        value.attributes = {{"verified_by", "taap:1:ed25519:verifier"},
+                            {"sandbox", "blake3:sandbox"},
+                            {"agreement", true}};
     }
     return value;
 }

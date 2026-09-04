@@ -15,8 +15,8 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, and #12 implement the local action path, disk cache,
-and `liquid wrap`:
+**Implementation status.** Issues #10, #11, #12, and #13 implement the local action path, disk
+cache, `liquid wrap`, and reproducibility verification:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -27,7 +27,9 @@ unsupported until Phase 6. The disk cache validates observed manifests before a 
 result's TAAP signature and persists its action index. `wrap` discovers a project's invoked tools,
 pins their content tree in `config.wrap.toolchain`, splits the mount stream at output-producing leaf
 processes, publishes the inner and outer actions, and serves valid results through the sandbox-only
-exec hook. Memory caching, remote caching and execution, and provenance remain their own issues.
+exec hook. Verification re-executes sampled cached actions, emits signed attestations, and
+quarantines divergent results. Memory caching, remote caching and execution, and provenance remain
+their own issues.
 
 ## Records in the store
 
@@ -117,10 +119,12 @@ only through the roots that keep its outputs.
 ### Disk action-index format
 
 The disk tier lives under `.liquid-store/actions/`. `ROOT` contains the text digest of a canonical
-`action-index-root` record in the store. That record contains every candidate/result pair and its
-monotonic sequence and is both the recovery source and the collector root. The repository keeps it
+`action-index-root` record in the store. That record contains every candidate/result pair, its
+monotonic sequence, permanent divergence flag, and optional verification-attestation digest. It is
+both the recovery source and the collector root. The repository keeps it
 with the same 30-day persisted lease used for repository refs, replacing or renewing that lease on
-every publish. The collector's `action-index-root` extractor reaches results; the `result` extractor
+every publish or verification. The collector's `action-index-root` extractor reaches results and
+verification attestations; the `result` extractor
 reaches its action, output blob records, stdout, and stderr; the `action` extractor reaches inputs,
 toolchain, and sandbox. Once the cache-root lease is no longer live, collection can remove the
 result and its outputs together. A stale on-disk candidate then misses because lookup requires all
@@ -131,36 +135,59 @@ different root:
 
 | Offset | Bytes | Field |
 |---:|---:|---|
-| 0 | 8 | `LQACT`, version byte `1`, two zero bytes |
+| 0 | 8 | `LQACT`, version byte `2`, two zero bytes |
 | 8 | 8 | record count, little-endian |
 | 16 | 8 | next sequence, little-endian |
 | 24 | 1 + 7 | root digest algorithm and reserved zero bytes |
 | 32 | 32 | root digest bytes |
-| 64 | 80 × count | fixed records described below |
+| 64 | 114 × count | fixed records described below |
 | end | 8 | FNV-1a checksum of every preceding byte |
 
-Each 80-byte record is candidate algorithm plus 32 digest bytes, result algorithm plus 32 digest
-bytes, an eight-byte sequence, and six reserved zero bytes. Records sort by candidate algorithm and
-digest ascending, then sequence descending, so candidate lookup returns newest results first.
-`ROOT` is replaced before `INDEX`; a crash between them is recovered from the store record.
+Each 114-byte record is candidate algorithm plus 32 digest bytes, result algorithm plus 32 digest
+bytes, an eight-byte sequence, a one-byte divergence flag, a 33-byte attestation digest or zeros,
+and six reserved zero bytes. Records sort by candidate algorithm and digest ascending, then sequence
+descending, so candidate lookup returns newest non-divergent results first. Version 1 indexes are
+accepted and rewritten as version 2 on the next mutation. `ROOT` is replaced before `INDEX`; a crash
+between them is recovered from the store record.
 
 This index deliberately uses one sorted file rather than the chunk index's mapped run set. A chunk
-run pays 256 KiB for its 65,537-entry fanout before storing one record; at 80 bytes per action row,
-3,276 action rows occupy less than that fanout alone. Local repositories are expected to have far
+run pays 256 KiB for its 65,537-entry fanout before storing one record; at 114 bytes per action row,
+2,299 action rows occupy less than that fanout alone. Local repositories are expected to have far
 fewer action candidates than chunks, and publication is explicitly opt-in, so atomic rewrite is the
 smaller disk and implementation cost for this phase. The root record preserves a migration path to
 runs without changing candidate keys or collector reachability.
 
 Trust (features/05): developer machines read; only signed writers publish (the signature is
 the producer's TAAP identity on the result record, the same `sig` field as changes); CI and
-verified-reproducible builds are the trust anchors; sampled re-execution (#13) compares
-two results for one action digest and treats divergence as a critical alert.
+verified-reproducible builds are the trust anchors. Sampled re-execution compares two results for
+one action digest and treats divergence as a critical alert.
 
 `repository_options::cache.publish` is persisted in the repository document and defaults to
 `false`. Execution still produces a signed result when publication is disabled, but `publish`
 returns `errc::unauthorized` and no action-index entry is added. CI or another trusted producer must
 create the repository with publication enabled. Lookup verifies signatures even though this phase
 has no shared tier, keeping unsigned data out when the remote tier arrives.
+
+### Reproducibility verification
+
+`repository_options::verify.rate` is persisted and defaults to 20: sampling selects the first and
+then every twentieth unverified cache entry. `wrap` schedules that local sample after the user's
+command completes on the shared runtime and returns without waiting; `--no-verify` suppresses it.
+The on-demand forms are `liquid verify <action>`, `liquid verify --all`, and `liquid verify
+--changed`.
+
+Each selected action is reconstructed from its content-addressed input and re-executed in a fresh
+instance of the exact recorded sandbox definition. Verification compares exit status, stdout,
+stderr, and every declared output by digest. Agreement writes a device-signed
+`reproducibility/1` attestation whose subject is the cached result and whose attributes name the
+verifier, sandbox digest, and agreement. Disagreement adds the differing output and digest pairs,
+marks every index row for that result permanently divergent, and appends a critical alert to
+`cache_report`. Lookup skips divergent rows before any bytes can be served. The CLI names the action
+and outputs and exits non-zero; `--explain` reports the first differing byte because Phase 2 has no
+structured output codecs.
+
+Local replay is the Phase 2 trust check. Re-execution on a different worker remains Phase 3 work;
+it uses the same comparison and attestation records.
 
 ## `liquid wrap`: an existing build becomes actions
 
@@ -181,6 +208,11 @@ the sandbox only; macOS: `DYLD_INSERT_LIBRARIES` inside the sandbox only), which
 executor "is there a valid result for this command?" and materialises the outputs instead.
 The driver's own reads (Makefiles, `compile_commands.json`, configure results) are one
 outer action whose manifest explains a full re-run.
+
+After an observed run, `wrap` snapshots the completed working tree as the replay input. A verifier
+materialises that tree in a fresh directory, removes the cached outputs, and launches the recorded
+command with the same wrap sandbox definition. This preserves intermediate inputs for independently
+replaying child and outer actions without consulting the checkout.
 
 `compile_commands.json` is a first-class input: when present, `wrap` seeds the action list
 from it and can run compiles in parallel across the runtime's workers instead of waiting for
@@ -215,7 +247,11 @@ coarse end of the spectrum features/04 describes; the fine end arrives when the 
   different host path reuses every unchanged compile through the fixed virtual root.
 - Under-hashing is caught by construction: a test edits a header that was read but not
   declared and asserts a miss naming that header.
-- Sampled re-execution (#13) detects an injected non-determinism.
+- A pure action receives a signature-valid `reproducibility/1` attestation.
+- An action that writes random bytes is detected, named in the alert, marked divergent, and not
+  served after reopening the repository.
+- A rate of one verifies every action, and `liquid verify --all` verifies every action in a wrapped
+  recursive-Make fixture.
 
 ## How to change
 

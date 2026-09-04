@@ -46,9 +46,10 @@ Not a goal or a badge — a mechanism other things depend on.
 **Enforced by construction:** sandboxed execution, fixed environment, virtualised
 paths, no clock, normalised outputs ([05](05-caching.md)).
 
-**Verified continuously:** sampled actions re-execute on different workers and
-results are compared. A divergence is a critical alert — it means a non-hermetic
-action, a compromised worker, or a non-deterministic tool.
+**Verified continuously:** sampled actions re-execute in fresh local sandboxes in Phase 2, with
+different-worker replay added in Phase 3. Exit status and every output digest are compared. A
+divergence is a critical alert and permanently quarantines the cached result — it means a
+non-hermetic action, a compromised worker, or a non-deterministic tool.
 
 This one mechanism simultaneously validates the cache, detects compromised workers,
 and produces the evidence for high-assurance provenance. It is why reproducibility
