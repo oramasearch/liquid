@@ -8,6 +8,7 @@ add_executable(liquid-tests
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
+  attestation/test_registry.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp
   scan/test_redaction.cpp
@@ -131,6 +132,7 @@ target_link_libraries(liquid-store-sim-tests PRIVATE liquid::liquid GTest::gtest
 gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 
 add_executable(liquid-header-tests
+  headers/attestation.cpp
   headers/drip.cpp
   headers/error.cpp
   headers/export.cpp

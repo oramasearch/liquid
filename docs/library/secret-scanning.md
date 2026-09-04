@@ -68,7 +68,9 @@ The first concrete `attestation` record profile is canonical CBOR:
 The signature is over the same record without `sig`, using the TAAP artifact type
 `attestation`. The record is written to the capture store before the drip journal append, and the
 drip record stores its digest. `verify(attestation)` reconstructs the signed body and verifies it
-against the embedded issuer public key; the focused test exercises that public verifier.
+against the embedded issuer public key, exact registered profile, drip subject kind, and 24-hour
+maximum age; the focused test exercises that public verifier. Its original bytes remain stable
+under the registry. See [`attestations.md`](attestations.md) for the shared verification model.
 
 ## Redaction
 

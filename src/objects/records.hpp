@@ -27,6 +27,8 @@ struct repo_record {
 [[nodiscard]] auto encode(const attestation& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body(const attestation& value)
     -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode_attestation_body_unchecked(const attestation& value)
+    -> result<std::vector<std::byte>>;
 
 [[nodiscard]] auto decode_blob(std::span<const std::byte> bytes) -> result<blob>;
 [[nodiscard]] auto decode_tree(std::span<const std::byte> bytes) -> result<tree>;

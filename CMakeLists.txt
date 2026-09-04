@@ -211,6 +211,7 @@ set_target_properties(liquid_metadata_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
 add_library(libliquid
+  src/attestation/registry.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
@@ -226,7 +227,6 @@ add_library(libliquid
   src/crypto/crypto.cpp
   src/object.cpp
   src/objects/records.cpp
-  src/objects/attestation.cpp
   src/repository/merge.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
@@ -306,6 +306,7 @@ endif()
 if(LIQUID_BUILD_CLI)
   add_executable(liquid-cli
     src/main.cpp
+    src/cli/attestation.cpp
     src/cli/capture.cpp
     src/cli/compose.cpp
     src/cli/gc.cpp

@@ -34,6 +34,7 @@ that the table and `liquid --help` name the same commands.
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -72,6 +73,8 @@ liquid mount /tmp/liquid-mount --read-only
 liquid materialise /tmp/liquid-checkout src
 liquid gc --dry-run .
 liquid identity rotate
+liquid attest show blake3:<attestation-digest>
+liquid attest verify blake3:<attestation-digest>
 liquid pause
 liquid resume
 liquid watch

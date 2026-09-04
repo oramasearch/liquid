@@ -30,6 +30,7 @@ auto identity(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
+auto attestation(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -105,6 +106,11 @@ constexpr auto commands = std::to_array<command>({
      "show or rotate the device identity",
      "available",
      liquid_cli::identity},
+    {"attest",
+     "attest <show|verify> <digest>",
+     "show or verify an attestation",
+     "available",
+     liquid_cli::attestation},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},

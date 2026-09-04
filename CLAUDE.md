@@ -19,7 +19,8 @@ liquid #111's identity-key rotation and chain verification, and signed drips and
 trust-domain encrypted objects, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
 deterministic crash simulator, liquid #116's bounded-memory file and repository streaming, liquid
-#5's local capture, liquid #50's inline secret scanning, `scan_result/1` attestations, verified
+#5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
+verified
 redaction, and liquid #52's JSON/`.env` leaf encryption with structural key diff are implemented,
 while operations owned by later issues return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
