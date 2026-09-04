@@ -14,8 +14,9 @@ Every byte that enters liquid — source file, compiled object, model checkpoint
 defined chunking and stored by content hash.
 
 - Target chunk size **64 KiB**, minimum 8 KiB, maximum 128 KiB.
-- Hash: **BLAKE3**, with the algorithm identifier encoded in every reference so it
-  can be migrated. liquid will not repeat Git's decade-long SHA-1 problem.
+- Hash: **BLAKE3** by default, with the algorithm identifier encoded in every reference.
+  SHA-256 can be selected where an ecosystem requires it, and both forms can coexist in one
+  store. [Hash agility](../library/hash-agility.md) records the current behavior and limits.
 - Chunks are the **deduplication and identity** unit.
 
 There is no "large file mode", no pointer files, and no separate LFS server. A

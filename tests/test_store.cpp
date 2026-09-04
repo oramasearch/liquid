@@ -17,12 +17,17 @@ namespace {
 
 class temporary_store {
 public:
-    temporary_store() : path_(std::filesystem::temp_directory_path() /
-                              ("liquid-store-test-" + std::to_string(++counter_))) {
+    temporary_store()
+        : path_(std::filesystem::temp_directory_path() /
+                ("liquid-store-test-" + std::to_string(++counter_))) {
         std::filesystem::remove_all(path_);
     }
-    ~temporary_store() { std::filesystem::remove_all(path_); }
-    const std::filesystem::path& path() const { return path_; }
+    ~temporary_store() {
+        std::filesystem::remove_all(path_);
+    }
+    const std::filesystem::path& path() const {
+        return path_;
+    }
 
 private:
     inline static unsigned counter_{};
@@ -32,7 +37,8 @@ private:
 std::vector<std::byte> bytes(std::size_t size, std::uint64_t seed = 9) {
     std::vector<std::byte> output(size);
     std::mt19937_64 random(seed);
-    for (auto& byte : output) byte = std::byte{static_cast<unsigned char>(random())};
+    for (auto& byte : output)
+        byte = std::byte{static_cast<unsigned char>(random())};
     return output;
 }
 
@@ -44,7 +50,8 @@ liquid::store open_store(const std::filesystem::path& path, liquid::store_option
 
 std::shared_ptr<liquid::keyring> keys_for(std::string id, std::string passphrase) {
     auto keys = std::make_shared<liquid::keyring>();
-    EXPECT_TRUE(keys->add(id, std::make_shared<liquid::passphrase_provider>(std::move(passphrase))).has_value());
+    EXPECT_TRUE(keys->add(id, std::make_shared<liquid::passphrase_provider>(std::move(passphrase)))
+                    .has_value());
     EXPECT_TRUE(keys->set_default_key_id(id).has_value());
     return keys;
 }
@@ -68,6 +75,41 @@ TEST(Store, ChunkingProducesStableObjectIdentity) {
     ASSERT_TRUE(first.has_value());
     ASSERT_TRUE(second.has_value());
     EXPECT_EQ(liquid::to_string(*first), liquid::to_string(*second));
+}
+
+TEST(Store, HoldsBlake3AndSha256ObjectsAcrossReopen) {
+    temporary_store temporary;
+    const auto blake3_source = bytes(4096, 17);
+    const auto sha256_source = bytes(8192, 18);
+
+    auto store = open_store(temporary.path());
+    const auto blake3_id = liquid::runtime::block_on(store.put(blake3_source));
+    ASSERT_TRUE(blake3_id) << blake3_id.error().message;
+    EXPECT_EQ(blake3_id->alg, liquid::algorithm::blake3);
+    store = {};
+
+    liquid::store_options sha256_store_options;
+    sha256_store_options.hash_algorithm = liquid::algorithm::sha256;
+    store = open_store(temporary.path(), sha256_store_options);
+    const auto sha256_id = liquid::runtime::block_on(store.put(sha256_source));
+    ASSERT_TRUE(sha256_id) << sha256_id.error().message;
+    EXPECT_EQ(sha256_id->alg, liquid::algorithm::sha256);
+
+    auto blake3 = liquid::runtime::block_on(store.get(*blake3_id));
+    auto sha256 = liquid::runtime::block_on(store.get(*sha256_id));
+    ASSERT_TRUE(blake3) << blake3.error().message;
+    ASSERT_TRUE(sha256) << sha256.error().message;
+    EXPECT_EQ(*blake3, blake3_source);
+    EXPECT_EQ(*sha256, sha256_source);
+
+    store = {};
+    auto reopened = open_store(temporary.path(), sha256_store_options);
+    blake3 = liquid::runtime::block_on(reopened.get(*blake3_id));
+    sha256 = liquid::runtime::block_on(reopened.get(*sha256_id));
+    ASSERT_TRUE(blake3) << blake3.error().message;
+    ASSERT_TRUE(sha256) << sha256.error().message;
+    EXPECT_EQ(*blake3, blake3_source);
+    EXPECT_EQ(*sha256, sha256_source);
 }
 
 TEST(Store, PutGetReadDeduplicateAndReopen) {
@@ -148,7 +190,10 @@ TEST(Store, RebuildsIndexAndReportsPackCorruption) {
 TEST(Store, RefusesUnknownFormatAndRebuildsBadRun) {
     temporary_store unknown;
     std::filesystem::create_directories(unknown.path());
-    { std::ofstream marker(unknown.path() / "LIQUID_STORE"); marker << "liquid-store 99\n"; }
+    {
+        std::ofstream marker(unknown.path() / "LIQUID_STORE");
+        marker << "liquid-store 99\n";
+    }
     auto bad = liquid::runtime::block_on(liquid::store::open(unknown.path()));
     ASSERT_FALSE(bad.has_value());
     EXPECT_EQ(bad.error().code, liquid::errc::unsupported);
@@ -162,7 +207,9 @@ TEST(Store, RefusesUnknownFormatAndRebuildsBadRun) {
     const auto run = temporary.path() / "index" / "run-1.idx";
     ASSERT_TRUE(std::filesystem::exists(run));
     std::fstream broken(run, std::ios::in | std::ios::out | std::ios::binary);
-    broken.seekp(0); broken.put('X'); broken.close();
+    broken.seekp(0);
+    broken.put('X');
+    broken.close();
     auto reopened = open_store(temporary.path());
     auto got = liquid::runtime::block_on(reopened.get(*id));
     ASSERT_TRUE(got.has_value()) << got.error().message;
@@ -174,8 +221,9 @@ TEST(Store, EncryptsDeduplicatesAndKeepsPlaintextOutOfPacks) {
     auto keys = keys_for("private", "correct horse battery staple");
     auto store = open_store(temporary.path(), encrypted_options(keys));
     const std::string marker = "liquid encrypted test marker: not pack plaintext";
-    std::vector<std::byte> source(reinterpret_cast<const std::byte*>(marker.data()),
-                                  reinterpret_cast<const std::byte*>(marker.data() + marker.size()));
+    std::vector<std::byte> source(
+        reinterpret_cast<const std::byte*>(marker.data()),
+        reinterpret_cast<const std::byte*>(marker.data() + marker.size()));
     source.resize(256U * 1024U, std::byte{'x'});
     const auto first = liquid::runtime::block_on(store.put(source));
     ASSERT_TRUE(first.has_value()) << first.error().message;
@@ -197,7 +245,8 @@ TEST(Store, EncryptsDeduplicatesAndKeepsPlaintextOutOfPacks) {
 TEST(Store, EncryptsIndependentlyPerTrustDomain) {
     temporary_store temporary;
     auto keys = keys_for("alpha", "alpha passphrase");
-    ASSERT_TRUE(keys->add("beta", std::make_shared<liquid::passphrase_provider>("beta passphrase")).has_value());
+    ASSERT_TRUE(keys->add("beta", std::make_shared<liquid::passphrase_provider>("beta passphrase"))
+                    .has_value());
     auto store = open_store(temporary.path(), encrypted_options(keys, "alpha"));
     const auto source = bytes(512U * 1024U, 81);
     const auto alpha = liquid::runtime::block_on(store.put(source));
@@ -284,4 +333,4 @@ TEST(Store, EncryptedRangeReadsAndKekRewrapDoNotRewritePacks) {
     EXPECT_EQ(*got, source);
 }
 
-}  // namespace
+} // namespace
