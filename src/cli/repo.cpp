@@ -6,11 +6,15 @@
 #include <utility>
 #include <vector>
 
+#include "liquid/daemon.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid_cli {
+
+[[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
+
 namespace {
 
 auto fail(const liquid::error& error) -> int {
@@ -52,6 +56,37 @@ auto json_string(std::string_view value) -> std::string {
         }
     }
     output += '"';
+    return output;
+}
+
+auto daemon_targets_json(const std::optional<liquid::daemon_status>& status) -> std::string {
+    auto output = std::string{"["};
+    if (status) {
+        for (std::size_t index = 0; index != status->targets.size(); ++index) {
+            const auto& target = status->targets[index];
+            output += std::format("{}{{\"name\":{},\"cursor\":{},\"behind\":{},\"deliveries\":{},"
+                                  "\"last_error\":{}}}",
+                                  index == 0 ? "" : ",",
+                                  json_string(target.name),
+                                  json_string(target.cursor.token),
+                                  target.behind,
+                                  target.deliveries,
+                                  target.last_error ? json_string(*target.last_error) : "null");
+        }
+    }
+    output += ']';
+    return output;
+}
+
+auto daemon_paths_json(const std::optional<liquid::daemon_status>& status) -> std::string {
+    auto output = std::string{"["};
+    if (status) {
+        for (std::size_t index = 0; index != status->invalidated_paths.size(); ++index) {
+            output += index == 0 ? "" : ",";
+            output += json_string(status->invalidated_paths[index]);
+        }
+    }
+    output += ']';
     return output;
 }
 
@@ -136,39 +171,59 @@ auto repo_status(int argc, char** argv) -> int {
     if (!current) {
         return fail(current.error());
     }
-    auto opened_capture =
-        liquid::runtime::block_on(liquid::capture::open(std::filesystem::current_path()));
-    if (!opened_capture) {
-        return fail(opened_capture.error());
+    auto daemon_current = std::optional<liquid::daemon_status>{};
+    auto ready = ensure_daemon(std::filesystem::current_path());
+    if (!ready && ready.error().code != liquid::errc::unsupported) {
+        return fail(ready.error());
     }
-    auto capture = std::move(*opened_capture);
-    auto capture_current = capture.status();
-    if (!capture_current) {
-        return fail(capture_current.error());
-    }
-    auto closed = liquid::runtime::block_on(capture.close());
-    if (!closed) {
-        return fail(closed.error());
+    if (ready) {
+        auto attached =
+            liquid::runtime::block_on(liquid::daemon::attach(std::filesystem::current_path()));
+        if (!attached) {
+            return fail(attached.error());
+        }
+        auto status = liquid::runtime::block_on(attached->status());
+        if (!status) {
+            return fail(status.error());
+        }
+        daemon_current = std::move(*status);
     }
     const auto head = current->head ? liquid::to_string(current->head->value) : std::string{};
     if (json) {
         std::println(
             "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
-            "directories\":{},\"head\":{},\"capture\":{{\"state\":{},\"pending_drips\":"
-            "{},\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}}}}",
+            "directories\":{},\"head\":{},\"capture\":{{\"state\":{},\"pending_drips\":{},"
+            "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
+            "\"daemon\":{{\"available\":{},\"running\":{},"
+            "\"pid\":{},\"graph_keys\":{},\"graph_values\":{},\"graph_memory\":{},"
+            "\"graph_ceiling\":{},\"last_drip\":{},\"invalidated_paths\":{},"
+            "\"targets\":{}}}}}",
             current->pending_drips,
             current->remote_bytes,
             current->paused ? "true" : "false",
             current->conflicts.size(),
             current->oversized_directories.size(),
             current->head ? json_string(head) : "null",
-            json_string(capture_current->state == liquid::capture_status::state::paused
+            json_string(daemon_current && daemon_current->capture.state ==
+                                              liquid::capture_status::state::paused
                             ? "paused"
                             : "running"),
-            capture_current->pending_drips,
-            capture_current->overflow_count,
-            capture_current->recrawl_count,
-            json_string(capture_current->last_cursor.token));
+            daemon_current ? daemon_current->capture.pending_drips : 0,
+            daemon_current ? daemon_current->capture.overflow_count : 0,
+            daemon_current ? daemon_current->capture.recrawl_count : 0,
+            json_string(daemon_current ? daemon_current->capture.last_cursor.token : ""),
+            daemon_current ? "true" : "false",
+            daemon_current && daemon_current->running ? "true" : "false",
+            daemon_current ? daemon_current->process_id : 0,
+            daemon_current ? daemon_current->graph_keys : 0,
+            daemon_current ? daemon_current->graph_values : 0,
+            daemon_current ? daemon_current->graph_memory_bytes : 0,
+            daemon_current ? daemon_current->graph_memory_ceiling : 0,
+            daemon_current && daemon_current->last_drip
+                ? json_string(liquid::to_string(daemon_current->last_drip->value))
+                : "null",
+            daemon_paths_json(daemon_current),
+            daemon_targets_json(daemon_current));
     } else {
         std::println("pending_drips={}", current->pending_drips);
         std::println("remote_bytes={}", current->remote_bytes);
@@ -176,13 +231,39 @@ auto repo_status(int argc, char** argv) -> int {
         std::println("conflicts={}", current->conflicts.size());
         std::println("oversized_directories={}", current->oversized_directories.size());
         std::println("head={}", head);
+        std::println("daemon_available={}", daemon_current.has_value());
         std::println("capture_state={}",
-                     capture_current->state == liquid::capture_status::state::paused ? "paused"
-                                                                                     : "running");
-        std::println("capture_pending_drips={}", capture_current->pending_drips);
-        std::println("capture_overflow_count={}", capture_current->overflow_count);
-        std::println("capture_recrawl_count={}", capture_current->recrawl_count);
-        std::println("capture_cursor={}", capture_current->last_cursor.token);
+                     daemon_current &&
+                             daemon_current->capture.state == liquid::capture_status::state::paused
+                         ? "paused"
+                         : "running");
+        std::println("capture_pending_drips={}",
+                     daemon_current ? daemon_current->capture.pending_drips : 0);
+        std::println("capture_overflow_count={}",
+                     daemon_current ? daemon_current->capture.overflow_count : 0);
+        std::println("capture_recrawl_count={}",
+                     daemon_current ? daemon_current->capture.recrawl_count : 0);
+        std::println("capture_cursor={}",
+                     daemon_current ? daemon_current->capture.last_cursor.token : "");
+        std::println("daemon_running={}", daemon_current && daemon_current->running);
+        if (daemon_current) {
+            std::println("daemon_pid={}", daemon_current->process_id);
+            std::println("daemon_graph_keys={}", daemon_current->graph_keys);
+            std::println("daemon_graph_values={}", daemon_current->graph_values);
+            std::println("daemon_graph_memory={}", daemon_current->graph_memory_bytes);
+            std::println("daemon_graph_ceiling={}", daemon_current->graph_memory_ceiling);
+            std::println("daemon_last_drip={}",
+                         daemon_current->last_drip
+                             ? liquid::to_string(daemon_current->last_drip->value)
+                             : "");
+            for (const auto& target : daemon_current->targets) {
+                std::println("daemon_target={} cursor={} behind={} deliveries={}",
+                             target.name,
+                             target.cursor.token,
+                             target.behind,
+                             target.deliveries);
+            }
+        }
     }
     return 0;
 }

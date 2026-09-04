@@ -17,7 +17,7 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, and structured JSON/`.env` encryption are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error, digest, identity
 > document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
@@ -72,7 +72,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
 > misses with digest, argv, environment,
 > toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk and
-> remote hit rates and output bytes avoided versus rebuilt. The memory cache tier remains separate work;
+> remote hit rates and output bytes avoided versus rebuilt. The action-result memory cache tier remains separate work;
 > macOS needs macFUSE and Windows returns its documented unsupported result.
 > Each result records non-overlapping queued, sandbox, exec, hash, and store phases. Every wrap
 > retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
@@ -94,7 +94,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > refuses to execute an uncached probe for a foreign target.
 > Typed retention rules keep matching refs and cost-weighted results through computed reachability;
 > a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
-> names the responsible rule and lease. The memory cache tier remains separate work; macOS needs
+> names the responsible rule and lease. The action-result memory cache tier remains separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
 
 > **Phase 3 build-without-bytes is implemented behind a transport-neutral remote blob source.**
@@ -121,6 +121,15 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > store's registered remote blobs when the patch or target remains remote, otherwise falling back
 > to content-defined chunks. The executable-aware algorithm id is reserved because its measured
 > Mach-O candidate was larger than the generic patch.
+
+> **Phase 4 daemon lifecycle and fan-out are implemented on macOS and Linux.** The CLI starts one
+> locked process per checkout on first daemon-backed use and attaches over framed canonical CBOR.
+> The daemon owns capture, maps each drip to the changed graph inputs, processes build, search,
+> collaborator, and lake hooks in order with durable per-target cursors, reports lag through
+> `liquid status`, exits when idle, and persists its graph on shutdown. Resident graph values use a
+> byte ceiling and least-recently-demanded eviction while keys and fingerprints remain. Windows
+> returns a documented unsupported result until Corosio provides named-pipe transport. The daemon
+> uses issue #20's public graph interface for persistence, invalidation, and resident-value bounds.
 
 ## Where this sits
 
@@ -162,6 +171,7 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
+- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented daemon lifecycle, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.
 - [`docs/library/reapi.md`](docs/library/reapi.md) — the REAPI client, remote cache tier, CAS/ActionCache server, configuration, CLI, API map, and peer proof.

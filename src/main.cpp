@@ -1,5 +1,6 @@
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <format>
 #include <print>
 #include <string>
@@ -8,6 +9,8 @@
 #include "liquid/liquid.hpp"
 
 namespace liquid_cli {
+
+auto set_executable(std::filesystem::path path) -> void;
 
 auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
@@ -49,6 +52,7 @@ auto delta(int argc, char** argv) -> int;
 auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
+auto daemon_command(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -72,6 +76,11 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"daemon",
+     "daemon [--shutdown]",
+     "start or stop the checkout daemon",
+     "available on macOS and Linux",
+     liquid_cli::daemon_command},
     {"log", "log [--json]", "show change history", "available", liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
@@ -255,6 +264,7 @@ auto usage_error(std::string_view message) -> int {
 } // namespace
 
 int main(int argc, char** argv) {
+    liquid_cli::set_executable(argv[0]);
     if (argc < 2) {
         print_usage();
         return 2;

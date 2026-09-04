@@ -54,8 +54,12 @@ transport-neutral blob source. Liquid #20 adds the persisted demand-driven query
 query and input fingerprints, red-green validation, early cutoff, durability-filtered invalidation,
 cooperative cancellation, recorded-input retrieval, and `action_result` nodes for direct and
 wrapped builds. Liquid #64 adds signed zstd delta delivery with verified local and
-registered-remote blob fetch plus chunk fallback. The repository object model,
-internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
+registered-remote blob fetch plus chunk fallback. Liquid #21 adds the macOS/Linux per-checkout
+daemon, start-on-first-use CLI attachment, capture
+ownership, ordered cursor fan-out, status reporting, idle shutdown, graph persistence, and bounded
+resident graph values; Windows reports unsupported until Corosio supplies named-pipe transport.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Repositories can use a caller-owned shared store with independent
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,

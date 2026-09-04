@@ -31,6 +31,7 @@ public:
     [[nodiscard]] virtual auto name() const noexcept -> std::string_view = 0;
     virtual auto start(watch_callback callback) -> result<void> = 0;
     virtual void stop() noexcept = 0;
+    [[nodiscard]] virtual auto stopped() const noexcept -> bool = 0;
     virtual void inject_overflow_for_test() = 0;
 };
 

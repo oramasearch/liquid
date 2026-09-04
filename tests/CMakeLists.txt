@@ -5,8 +5,10 @@ set(LIQUID_HTTP2_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
 
 add_executable(liquid-tests
+  ../src/daemon/fanout.cpp
   test_drip.cpp
   test_delta.cpp
+  test_daemon.cpp
   test_error.cpp
   test_hash.cpp
   http2/test_codecs.cpp
@@ -245,6 +247,7 @@ gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 add_executable(liquid-header-tests
   headers/attestation.cpp
   headers/build.cpp
+  headers/daemon.cpp
   headers/drip.cpp
   headers/delta.cpp
   headers/error.cpp

@@ -69,6 +69,10 @@ struct LIQUID_EXPORT graph_statistics {
     std::uint64_t fingerprint_reads{};
     std::uint64_t invalidation_walks{};
     std::uint64_t discarded_computations{};
+    std::uint64_t keys{};
+    std::uint64_t resident_values{};
+    std::uint64_t resident_value_bytes{};
+    std::uint64_t memory_ceiling{};
 };
 
 class query_context;
@@ -106,6 +110,7 @@ private:
 
 struct LIQUID_EXPORT graph_options {
     std::filesystem::path working_tree;
+    std::uint64_t memory_ceiling{};
 };
 
 class LIQUID_EXPORT graph {

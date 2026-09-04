@@ -274,6 +274,8 @@ add_library(libliquid
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
+  src/daemon.cpp
+  src/daemon/fanout.cpp
   src/drip.cpp
   src/delta.cpp
   src/encryption/leaf.cpp
@@ -401,6 +403,7 @@ if(LIQUID_BUILD_CLI)
     src/main.cpp
     src/cli/attestation.cpp
     src/cli/capture.cpp
+    src/cli/daemon.cpp
     src/cli/compose.cpp
     src/cli/delta.cpp
     src/cli/gc.cpp
