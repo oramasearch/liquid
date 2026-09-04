@@ -17,8 +17,8 @@ Errors remain values at both entry points.
 and runs the event loop on at least four threads until the task completes. A task awaited by an
 existing Capy coroutine inherits that coroutine's executor instead.
 
-`runtime::spawn` launches a `task<void>` from one shared Capy thread pool inside a private runtime
-context and reports its `result<void>` to a completion callback. `runtime::offload` is for a dependency that only offers
+`runtime::spawn` launches a `task<void>` on one shared Capy thread pool and reports its
+`result<void>` to a completion callback. `runtime::offload` is for a dependency that only offers
 a blocking call. It moves the callable into a coroutine frame, launches that coroutine on the
 shared pool, and signals a Capy async event. The awaiting continuation is posted back to the
 executor from which it called `offload`.

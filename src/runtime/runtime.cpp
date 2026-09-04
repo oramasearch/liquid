@@ -30,7 +30,13 @@ boost::capy::thread_pool& shared_pool() {
 
 boost::capy::task<> complete_spawn(task<void> coroutine,
                                    std::function<void(result<void>)> on_done) {
-    auto output = block_on(std::move(coroutine));
+    result<void> output;
+    try {
+        output = co_await std::move(coroutine);
+    } catch (...) {
+        output =
+            std::unexpected(detail::exception_error(std::current_exception(), "runtime::spawn"));
+    }
     try {
         if (on_done)
             on_done(std::move(output));
