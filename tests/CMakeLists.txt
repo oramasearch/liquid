@@ -145,6 +145,14 @@ if(LIQUID_BUILD_CLI)
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI_SOURCE=${PROJECT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/public-includes.cmake)
+  add_executable(liquid-identity-codec-fixture cli/identity_codec.cpp)
+  target_link_libraries(liquid-identity-codec-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-identity-codec
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
+      -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
   add_test(NAME cli-sbom-spdx
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --spdx)
   set_tests_properties(cli-sbom-spdx PROPERTIES
@@ -326,3 +334,15 @@ endif()
 add_executable(liquid-repository-scenario repository/scenario.cpp)
 target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)
+
+add_test(NAME consumer-project-build
+  COMMAND ${CMAKE_COMMAND}
+    -DLIQUID_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+    -DLIQUID_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/consumer
+    -DLIQUID_CONSUMER_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/consumer-project
+    -DLIQUID_CONSUMER_GENERATOR=${CMAKE_GENERATOR}
+    -DLIQUID_CONSUMER_C_COMPILER=${CMAKE_C_COMPILER}
+    -DLIQUID_CONSUMER_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+    -DLIQUID_CONSUMER_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    -DLIQUID_CONSUMER_SHARED=${BUILD_SHARED_LIBS}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/consumer/run.cmake)

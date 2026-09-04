@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <utility>
 
+#include "encoding/cbor.hpp"
 #include "identity/taap.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
@@ -56,7 +58,7 @@ auto read_identity_documents(const std::filesystem::path& home, const liquid::ac
         for (char character; input.get(character);) {
             bytes.push_back(std::byte{static_cast<unsigned char>(character)});
         }
-        auto document = liquid::identity_detail::parse_document(bytes);
+        auto document = liquid::decode_identity_document(bytes);
         EXPECT_TRUE(document) << document.error().message;
         if (document) {
             documents.push_back(std::move(*document));
@@ -155,6 +157,55 @@ TEST(Identity, RotationStoresAndVerifiesTheKeyChain) {
     EXPECT_EQ(reopened->identity().key_fingerprint, successor->subject.key_fingerprint);
     std::error_code code;
     std::filesystem::remove_all(home, code);
+}
+
+TEST(Identity, PublicCodecsRoundTripStoredIdentityAndRotationDocuments) {
+    const auto home = rotation_home("public-codecs");
+    set_identity_home(home);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(signer) << signer.error().message;
+    const auto initial = signer->identity();
+    const auto successor = liquid::runtime::block_on(signer->rotate());
+    ASSERT_TRUE(successor) << successor.error().message;
+
+    const auto directory = home / "identity" / initial.fingerprint / "documents";
+    auto document_count = std::size_t{};
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        auto input = std::ifstream{entry.path(), std::ios::binary};
+        auto stored = std::vector<std::byte>{};
+        for (char character; input.get(character);) {
+            stored.push_back(std::byte{static_cast<unsigned char>(character)});
+        }
+        auto decoded = liquid::decode_identity_document(stored);
+        ASSERT_TRUE(decoded) << decoded.error().message;
+        auto encoded = liquid::encode_identity_document(*decoded);
+        ASSERT_TRUE(encoded) << encoded.error().message;
+        EXPECT_EQ(*encoded, stored);
+        ++document_count;
+    }
+    EXPECT_EQ(document_count, 2U);
+    std::error_code code;
+    std::filesystem::remove_all(home, code);
+}
+
+TEST(Identity, PublicSignatureDecoderAcceptsCanonicalSignatureRecord) {
+    namespace cbor = liquid::encoding::cbor;
+    const auto encoded_bytes = std::string(86, 'A') + "==";
+    auto fields = cbor::value::map{
+        {"signature_algorithm", "ed25519"},
+        {"signing_key_identifier", "taap:1:ed25519:TEST#TEST"},
+        {"signing_key_label", "test"},
+        {"signature_purpose", "drip"},
+        {"signed_at", "2026-09-04T00:00:00Z"},
+        {"signature_bytes_base64", encoded_bytes},
+    };
+    const auto encoded = cbor::encode(cbor::value{std::move(fields)});
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    const auto decoded = liquid::decode_signature(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(decoded->algorithm, "ed25519");
+    EXPECT_EQ(decoded->signature_purpose, "drip");
+    EXPECT_EQ(decoded->bytes, std::vector<std::byte>(64));
 }
 
 TEST(Identity, RotationChainRejectsNamedIntegrityFailures) {

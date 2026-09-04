@@ -670,6 +670,9 @@ struct identity_document { actor subject; std::string key_label; std::string cre
                            std::optional<std::vector<std::byte>> previous_document_hash;
                            std::vector<compromise_declaration> compromised_keys; std::vector<signature> signatures; };
 struct verified_identity { actor subject; std::vector<actor> current_keys; bool has_compromised_history; };
+result<std::vector<std::byte>> encode_identity_document(const identity_document&);
+result<identity_document> decode_identity_document(std::span<const std::byte> encoded);
+result<signature> decode_signature(std::span<const std::byte> encoded);
 class signer {
  public:
   runtime::task<signature> sign(std::string artifact_type, std::vector<std::byte> canonical_body);  // TAAP/1 §6.6
@@ -720,7 +723,11 @@ UTC. A successor naming its predecessor key there may carry only the new-key sig
 from that key at or after `declared_at` fail; earlier signatures remain valid and
 `verified_identity` reports compromised history. `signer::rotate` persists the chain under
 `identity/<identity-fingerprint>/documents/NNN.cbor`, replaces the active local private key after
-the successor is signed, and `verify_chain` returns the current key set.
+the successor is signed, and `verify_chain` returns the current key set. Initial and successor
+documents share the `identity_document` type: `encode_identity_document` emits their complete
+canonical CBOR, `decode_identity_document` rejects malformed or non-canonical input, and
+`decode_signature` parses a canonical TAAP/1 signature object. Decoding is separate from
+`verify_document` and `verify_chain` so callers explicitly choose their trust policy.
 `passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
 objects. The keyring retains held data-key versions, rotates future writes, rewraps every held
 version when the KEK changes, and records revocation after deleting a wrapped version. Recipient,

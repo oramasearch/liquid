@@ -424,6 +424,18 @@ auto actor::identifier() const noexcept -> std::string_view {
     return taap_id;
 }
 
+result<std::vector<std::byte>> encode_identity_document(const identity_document& document) {
+    return identity_detail::canonical_document(document, true);
+}
+
+result<identity_document> decode_identity_document(std::span<const std::byte> encoded) {
+    return identity_detail::parse_document(encoded);
+}
+
+result<signature> decode_signature(std::span<const std::byte> encoded) {
+    return identity_detail::parse_signature(encoded);
+}
+
 signer::signer() noexcept = default;
 signer::~signer() = default;
 signer::signer(signer&&) noexcept = default;
