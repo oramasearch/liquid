@@ -113,6 +113,21 @@ Both runs used the recorded Apple M3 Max machine and reported
 `cache_drop=unavailable_without_root_on_macos`. At 10M, liquid meets the required 1.16M inserts/s
 (2.100M), 438k point lookups/s (1.070M), and 589 MB disk limit (494.1 MB).
 
+## Fault-injection check at N = 1,000,000
+
+After adding the disabled fault-injection branch used by the deterministic simulator, the production
+liquid engine was rerun on 2026-09-03 on the recorded machine. The result is above the earlier 1M
+measurement in every throughput column; it therefore shows no regression beyond run-to-run noise.
+
+```text
+config engine=liquid n=1000000 seed=1 batch_size=10000 point_lookups=1000000 range_scans=10000 range_width=64 cold_lookups=100000 tuning=default record_bytes=48 memtable_entries=1048576 bloom_bits_per_key=10 compaction_k=4
+phase=bulk_insert operations=1000000 seconds=0.123784 ops_per_sec=8078583.09 p50_us=0.122 p99_us=0.196
+phase=point_lookup operations=1000000 seconds=0.234464 ops_per_sec=4265037.99 p50_us=0.167 p99_us=0.708
+phase=range_scan_64 operations=10000 seconds=0.394504 ops_per_sec=25348.26 p50_us=38.667 p99_us=64.250
+phase=cold_point_lookup operations=100000 seconds=0.030933 ops_per_sec=3232780.39 p50_us=0.209 p99_us=1.542
+storage on_disk_bytes=49512236 bytes_written=49512380 write_amplification=1.031508 peak_rss_bytes=321585152 cache_drop=unavailable_without_root_on_macos
+```
+
 ## Results at N = 10,000,000
 
 | Engine | Configuration | Phase | ops/s | p50 (us) | p99 (us) |

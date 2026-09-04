@@ -17,7 +17,7 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 chunk store is implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 chunk store and its deterministic crash simulator are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error and digest APIs
 > are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
@@ -53,6 +53,7 @@ and Zetta's.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 - [`docs/library/encryption.md`](docs/library/encryption.md) — trust-domain encrypted store objects, key custody, and failure behavior.
+- [`docs/library/simulation.md`](docs/library/simulation.md) — seeded crash recovery simulation, fault points, invariants, and replay.
 | | |
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |

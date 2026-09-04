@@ -147,8 +147,9 @@ class store {                          // the chunk store: chunks, packs, liquid
 Chunking (FastCDC), packs, compression, the index and its tuning are internal; none of them
 appears in a signature. File I/O is Corosio's `random_access_file` and `stream_file` on the
 io_context's worker pool, behind the private boundary. `store_options` names the plaintext hash
-algorithm, pack size, optional keyring, and optional write key id. A non-null keyring enables
-trust-domain encrypted objects; see [encryption.md](encryption.md).
+algorithm, pack size, optional keyring, optional write key id, and optional durable pack-write
+acknowledgement. A non-null keyring enables trust-domain encrypted objects; see
+[encryption.md](encryption.md).
 
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 
