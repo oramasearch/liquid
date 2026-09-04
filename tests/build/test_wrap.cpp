@@ -50,15 +50,19 @@ public:
         return cache_;
     }
 
-    auto second_checkout() const -> std::filesystem::path {
+    auto second_checkout(std::string_view fixture = "cmake") const -> std::filesystem::path {
         const auto path = root_ / "second-project";
         auto code = std::error_code{};
-        std::filesystem::copy(std::filesystem::path{LIQUID_WRAP_FIXTURES} / "cmake",
+        std::filesystem::copy(std::filesystem::path{LIQUID_WRAP_FIXTURES} / fixture,
                               path,
                               std::filesystem::copy_options::recursive,
                               code);
         EXPECT_FALSE(code) << code.message();
         return path;
+    }
+
+    auto second_cache() const -> std::filesystem::path {
+        return root_ / "second-cache";
     }
 
 private:
@@ -103,7 +107,8 @@ auto run_wrap(const std::filesystem::path& project,
                                                  .cache = true,
                                                  .explain = explain,
                                                  .verify = false,
-                                                 .cache_directory = cache}));
+                                                 .cache_directory = cache,
+                                                 .fact_directory = cache.parent_path() / "facts"}));
 }
 
 auto shell_quote(std::string_view value) -> std::string {
@@ -417,13 +422,61 @@ TEST(BuildWrap, autoconf_probes_are_actions_and_hit_on_the_second_run) {
     ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
     ASSERT_EQ(configured->exit, 0);
     EXPECT_GT(configured->actions, 2U);
-    auto configured_again = run_wrap(autotools_fixture.project(),
-                                     autotools_fixture.cache(),
+    EXPECT_GT(configured->probes_started, 0U);
+    const auto second_project = autotools_fixture.second_checkout("autotools");
+    auto configured_again = run_wrap(second_project,
+                                     autotools_fixture.second_cache(),
                                      {"/bin/sh", "-c", "autoconf && ./configure"},
                                      false,
                                      2);
-    ASSERT_TRUE(configured_again) << configured_again.error().message;
-    EXPECT_EQ(configured_again->outer, liquid::cache_status::hit);
+    ASSERT_TRUE(configured_again) << configured_again.error().message << ": "
+                                  << configured_again.error().context;
+    EXPECT_EQ(configured_again->exit, 0);
+    EXPECT_EQ(configured_again->probes_started, 0U);
+}
+
+TEST(BuildWrap, foreign_target_refuses_an_uncached_probe_before_compiler_entry) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0)
+        GTEST_SKIP() << "FUSE is unavailable";
+    if (!available("autoconf") || !available("clang"))
+        GTEST_SKIP() << "autoconf or clang is absent";
+    wrap_directory fixture{"autotools"};
+    const auto marker = fixture.project() / "compiler-started";
+    const auto compiler = fixture.project() / "probe-compiler";
+    {
+        auto output = std::ofstream{compiler};
+        output << "#!/bin/sh\n";
+        output << "case \"$*\" in *conftest*) touch " << shell_quote(marker.string())
+               << ";; esac\n";
+        output << "exec clang \"$@\"\n";
+    }
+    auto code = std::error_code{};
+    std::filesystem::permissions(compiler,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write |
+                                     std::filesystem::perms::owner_exec,
+                                 std::filesystem::perm_options::replace,
+                                 code);
+    ASSERT_FALSE(code) << code.message();
+    auto compiler_environment = scoped_environment{"CC", compiler.string()};
+    ASSERT_TRUE(compiler_environment.valid());
+#if defined(__aarch64__) || defined(__arm64__)
+    const auto foreign_target = std::string{"x86_64-unknown-linux-gnu"};
+#else
+    const auto foreign_target = std::string{"aarch64-unknown-linux-gnu"};
+#endif
+    auto result = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(),
+                            {"/bin/sh", "-c", "autoconf && ./configure"},
+                            {.jobs = 1,
+                             .cache = true,
+                             .verify = false,
+                             .target = foreign_target,
+                             .cache_directory = fixture.cache(),
+                             .fact_directory = fixture.cache().parent_path() / "facts"}));
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, liquid::errc::unsupported);
+    EXPECT_FALSE(std::filesystem::exists(marker));
 }
 
 #else

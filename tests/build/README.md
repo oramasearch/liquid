@@ -22,8 +22,14 @@ diagnostics.
 `wrap/` holds unchanged CMake, Autotools, recursive Make, and compilation-database projects built
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
+invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
+cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
+compiler entry,
 parallel compilation-database seeding, and sandbox-only hook variables. The Linux CLI case runs
 `liquid verify --all` and checks that every wrapped action agrees.
+
+`test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
+bundles, and exact isolation across changed toolchain, sysroot, and target keys.
 
 The real identical-execution cache test verifies every result's provenance and asserts that a hit
 reuses the original attestation digest.

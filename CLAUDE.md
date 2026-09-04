@@ -37,7 +37,12 @@ registered-profile attestations, approved-builder identity quorums, policy-bound
 and policy check/explain commands. The repository object model, internal CRDT metadata document,
 canonical CBOR codec and drip journal are implemented. Directory documents use compact shallow
 checkpoints, upstream sync framing, checked external application, and patch-based remote observation.
-Full materialisation works on every platform; lazy VFS mounts use
+and policy check/explain commands. Liquid #56 adds content-keyed Autotools and CMake configure
+facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`. The
+repository object model, internal CRDT metadata document, canonical CBOR codec and drip journal are
+implemented. Directory documents use compact shallow checkpoints, upstream sync framing, checked
+external application, and patch-based remote observation. Full materialisation works on every
+platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
 GoogleTest. Phase 1 (the store)

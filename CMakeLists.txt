@@ -221,6 +221,7 @@ add_library(libliquid
   src/attestation/registry.cpp
   src/build/cache.cpp
   src/build/executor.cpp
+  src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
   src/build/provenance.cpp
@@ -337,6 +338,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/capture.cpp
     src/cli/compose.cpp
     src/cli/gc.cpp
+    src/cli/facts.cpp
     src/cli/git.cpp
     src/cli/history.cpp
     src/cli/identity.cpp

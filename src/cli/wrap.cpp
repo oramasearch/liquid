@@ -126,6 +126,17 @@ auto wrap(int argc, char** argv) -> int {
             }
             continue;
         }
+        if (command.empty() && argument == "--target") {
+            if (++index == argc) {
+                return usage("wrap --target requires a target triple");
+            }
+            const auto value = std::string_view{argv[index]};
+            if (value.empty() || value.starts_with('-')) {
+                return usage("wrap --target requires a target triple");
+            }
+            options.target = value;
+            continue;
+        }
         if (command.empty() && argument == "--")
             continue;
         command.emplace_back(argument);
@@ -136,11 +147,12 @@ auto wrap(int argc, char** argv) -> int {
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));
     if (!result)
         return fail(result.error());
-    std::println("actions={} hits={} misses={} processes_started={} outer={}",
+    std::println("actions={} hits={} misses={} processes_started={} probes_started={} outer={}",
                  result->actions,
                  result->hits,
                  result->misses,
                  result->processes_started,
+                 result->probes_started,
                  result->outer == liquid::cache_status::hit ? "hit" : "miss");
     std::println("disk_hit_rate={:.2f}% bytes_transferred={} bytes_avoided={} bytes_rebuilt={}",
                  hit_rate(*result),

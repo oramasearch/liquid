@@ -224,7 +224,9 @@ struct LIQUID_EXPORT wrap_options {
     bool cache{true};
     bool explain{};
     bool verify{true};
+    std::optional<std::string> target;
     std::optional<std::filesystem::path> cache_directory;
+    std::optional<std::filesystem::path> fact_directory;
 };
 
 struct LIQUID_EXPORT critical_action {
@@ -275,6 +277,7 @@ struct LIQUID_EXPORT wrap_report {
     double parallelism{};
     std::vector<critical_action> critical_path;
     std::vector<build_trace_action> trace_actions;
+    std::uint64_t probes_started{};
 };
 
 struct LIQUID_EXPORT why_slow_report {
@@ -282,6 +285,31 @@ struct LIQUID_EXPORT why_slow_report {
     digest trace;
     std::chrono::milliseconds duration{};
     std::vector<critical_action> critical_path;
+};
+
+struct LIQUID_EXPORT fact_key {
+    digest toolchain;
+    digest sysroot;
+    std::string target;
+};
+
+struct LIQUID_EXPORT fact_answer {
+    int exit{};
+    std::vector<action_output> outputs;
+    std::map<std::string, std::string> variables;
+    std::optional<digest> result;
+};
+
+struct LIQUID_EXPORT configure_fact {
+    digest id;
+    std::string probe;
+    fact_key key;
+    fact_answer answer;
+};
+
+struct LIQUID_EXPORT fact_bundle {
+    digest id;
+    std::vector<configure_fact> facts;
 };
 
 enum class verify_selection : std::uint8_t { sample, all, changed, action };
@@ -360,6 +388,12 @@ check_policy(std::filesystem::path working_tree, std::string target);
 [[nodiscard]] LIQUID_EXPORT liquid::result<policy_report> explain_policy(repository& source);
 [[nodiscard]] LIQUID_EXPORT runtime::task<policy_report>
 explain_policy(std::filesystem::path working_tree);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<configure_fact>>
+facts_list(std::optional<std::filesystem::path> directory = std::nullopt);
+[[nodiscard]] LIQUID_EXPORT runtime::task<configure_fact>
+facts_show(digest id, std::optional<std::filesystem::path> directory = std::nullopt);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::string>
+facts_export(std::optional<std::filesystem::path> directory = std::nullopt);
 
 } // namespace build
 

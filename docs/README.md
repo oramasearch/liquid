@@ -10,7 +10,7 @@ notes so that each claim has a clear role.
 | [`standards/`](standards/) | External standards liquid depends on. |
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in the store, compact/shallow CRDT checkpoints, measured open cost, and how composition, conflicts, undo and locks work. Design for liquid #2, #3, and #136. |
-| [`library/build-engine.md`](library/build-engine.md) | Phase 2's design: action and result records, observation by the mount with per-platform enforcement, cache lookup, retained timing traces and critical paths, and how `liquid wrap` splits an existing build into actions. |
+| [`library/build-engine.md`](library/build-engine.md) | Phase 2's design: action and result records, observation by the mount with per-platform enforcement, cache lookup, retained timing traces and critical paths, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
 | [`library/provenance.md`](library/provenance.md) | Automatic result provenance: canonical TAAP storage, the exact SLSA v1 mapping, verification, and in-toto/DSSE export. |
 | [`library/policy.md`](library/policy.md) | Build-input policy: path and toolchain scopes, verified attestation quorums, refusal and warning behavior, and cache isolation. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10's local executor: fixed environment, observed-mount manifest, Linux namespace enforcement, and platform limits. |

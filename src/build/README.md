@@ -6,8 +6,7 @@ signature and referenced-object checks, the sorted disk action index, and its st
 root. Divergence and the signed verification reference are durable index fields, and lookup never
 serves a divergent row. `materialise.cpp` reconstructs toolchain and replay trees from store
 records. `verify.cpp` owns sampling, fresh-sandbox replay, digest comparison, attestations, alerts,
-and background scheduling.
-`provenance.cpp` derives the SLSA predicate from each action/result pair,
+and background scheduling. `provenance.cpp` derives the SLSA predicate from each action/result pair,
 signs and stores its TAAP attestation, binds it to the signed result, verifies that graph, and writes
 native or DSSE/in-toto JSON. `cache.cpp` also verifies result provenance and owns output-path lookup.
 `policy.cpp` validates and digests repository policy, walks source and toolchain input trees, verifies
@@ -17,11 +16,14 @@ reports before cache lookup and execution.
 `why.cpp` re-evaluates that policy for a recorded action before classifying a hit or ordinary miss,
 and reports the first unsatisfied refuse rule as a typed policy cause.
 
+`facts.cpp` owns canonical configure-probe forms, exact toolchain/sysroot/target keys,
+content-addressed fact records, index rebuild, Autotools and CMake cache-variable discovery, and
+`fact-bundle/1` export. It has no remote-service dependency.
+
 `wrap.cpp` snapshots an existing working tree, uses the persistent project cache and toolchain pin,
 validates saved actions, launches one writable observed mount, derives child actions from process
 reads and writes, publishes the driver's outer action, and materialises hits back into the checkout.
 Action boundaries are output-producing leaf processes from the discovered toolchain, not executable
-names. Completed output snapshots make each recorded action independently replayable.
 names. Completed output snapshots make each recorded action independently replayable.
 
 `trace.cpp` derives dependency edges when a result manifest reads another action's output, stores a

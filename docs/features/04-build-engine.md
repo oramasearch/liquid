@@ -146,6 +146,11 @@ they are computed once and shared globally rather than re-probed per project. Th
 also fixes cross-compilation, because the fact base for a target is looked up rather
 than executed.
 
+This path is implemented for Autotools cache variables and common CMake check cache entries.
+Compiler invocations of `conftest.c` and CMake `TryCompile` scratch trees are normalized into probe
+records. A foreign `wrap --target <triple>` uses matching facts and stops with an error before an
+uncached compiler probe can run.
+
 ## Observability
 
 - Critical path analysis.

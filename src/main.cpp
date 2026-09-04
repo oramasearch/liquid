@@ -41,6 +41,7 @@ auto git_import(int argc, char** argv) -> int;
 auto git_export(int argc, char** argv) -> int;
 auto build(int argc, char** argv) -> int;
 auto why_slow(int argc, char** argv) -> int;
+auto facts(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -147,7 +148,8 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::policy},
     {"wrap",
-     "wrap [--jobs <count>] [--no-cache] [--no-verify] [--explain] <command> [args...]",
+     "wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> "
+     "[args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
@@ -171,6 +173,11 @@ constexpr auto commands = std::to_array<command>({
      "show build-cache statistics",
      "available",
      liquid_cli::cache},
+    {"facts",
+     "facts <list|show|export> [digest]",
+     "inspect or export configure facts",
+     "available",
+     liquid_cli::facts},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},
