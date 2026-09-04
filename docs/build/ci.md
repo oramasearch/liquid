@@ -59,8 +59,23 @@ docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-li
            && ctest --test-dir build-linux --output-on-failure -LE "large|sim-long|realworld"'
 ```
 
-`-k 0` keeps building past the first failure so one run lists every portability error. As of this
-change `main` compiles on Linux; the mount test and the drip restart test still fail there and are
-tracked in https://github.com/oramasearch/liquid/issues/130. To change
-the toolchain, edit the Dockerfile and the workflow together; they must agree on the compiler
-version.
+`-k 0` keeps building past the first failure so one run lists every portability error. Run the
+Linux mount scenario by itself, without allowing a missing FUSE device to hide it, with:
+
+```sh
+docker run --rm --memory 2g --privileged --device /dev/fuse \
+  -v "$PWD":/src -w /src liquid-linux-ci \
+  build-linux/tests/liquid-tests \
+  --gtest_filter=VfsMount.hydrates_captures_and_reuses_cache
+```
+
+The mount originally passed `-f` directly to `fuse_new`, which rejects command-line-only options,
+and later asked `fuse_exit` to stop a loop whose worker remained blocked in `/dev/fuse`. The Linux
+path now passes `-f` and the mountpoint through `fuse_parse_cmdline`, gives `fuse_loop_mt` an
+allocated loop configuration, and issues one offloaded root lookup after `fuse_exit` during an
+explicit unmount. That lookup wakes the blocked libfuse worker without blocking the runtime
+executor. A successful named run reports one passed test and no skipped tests.
+
+As of this change `main` compiles on Linux and the mount scenario passes there. The drip restart
+failure remains tracked in https://github.com/oramasearch/liquid/issues/130. To change the
+toolchain, edit the Dockerfile and the workflow together; they must agree on the compiler version.

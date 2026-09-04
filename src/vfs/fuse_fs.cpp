@@ -3,6 +3,7 @@
 #if defined(LIQUID_HAS_FUSE3)
 #define FUSE_USE_VERSION 35
 #include <fuse.h>
+#include <fuse_lowlevel.h>
 #elif defined(LIQUID_HAS_FUSE2)
 #define FUSE_USE_VERSION 29
 #include <fuse.h>
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <cerrno>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
@@ -91,6 +93,16 @@ auto prepare_mountpoint(const std::filesystem::path& path) -> result<void> {
     return {};
 }
 
+runtime::task<void> wake_fuse_loop(std::filesystem::path mountpoint) {
+    auto awakened = co_await runtime::offload([mountpoint = std::move(mountpoint)] {
+        struct stat attributes{};
+        static_cast<void>(::lstat(mountpoint.c_str(), &attributes));
+    });
+    if (!awakened)
+        co_return std::unexpected(awakened.error());
+    co_return {};
+}
+
 class fuse_backend final : public backend {
 public:
     fuse_backend(repository& source,
@@ -103,14 +115,18 @@ public:
           queue_(std::make_shared<request_queue>()) {}
 
     void request_unmount() noexcept override {
-        auto instance = static_cast<struct fuse*>(nullptr);
+        auto wake_loop = false;
         {
             auto lock = std::scoped_lock{lifecycle_mutex_};
             stop_requested_ = true;
-            instance = fuse_;
+            if (fuse_ && !wake_scheduled_) {
+                fuse_exit(fuse_);
+                wake_scheduled_ = true;
+                wake_loop = true;
+            }
         }
-        if (instance)
-            fuse_exit(instance);
+        if (wake_loop)
+            runtime::spawn(wake_fuse_loop(mountpoint_), [](result<void>) {});
     }
 
     runtime::task<void> unmount() override {
@@ -136,20 +152,37 @@ public:
         struct fuse_args arguments = FUSE_ARGS_INIT(0, nullptr);
         const auto timeout = "attr_timeout=" + std::to_string(options_.attr_timeout.count()) +
                              ",entry_timeout=" + std::to_string(options_.attr_timeout.count());
-        if (fuse_opt_add_arg(&arguments, "liquid") != 0 ||
-            fuse_opt_add_arg(&arguments, "-f") != 0 || fuse_opt_add_arg(&arguments, "-o") != 0 ||
-            fuse_opt_add_arg(&arguments, timeout.c_str()) != 0) {
+        auto arguments_valid = fuse_opt_add_arg(&arguments, "liquid") == 0;
+#if defined(LIQUID_HAS_FUSE3)
+        arguments_valid = arguments_valid && fuse_opt_add_arg(&arguments, "-f") == 0;
+        arguments_valid = arguments_valid && fuse_opt_add_arg(&arguments, mountpoint_.c_str()) == 0;
+#endif
+        arguments_valid = arguments_valid && fuse_opt_add_arg(&arguments, "-o") == 0;
+        arguments_valid = arguments_valid && fuse_opt_add_arg(&arguments, timeout.c_str()) == 0;
+        if (!arguments_valid) {
             fuse_opt_free_args(&arguments);
             auto failure = error{errc::io, "cannot build FUSE arguments", mountpoint_.string()};
             set_ready(failure);
             set_stopped(failure);
             return std::unexpected(std::move(failure));
         }
+#if defined(LIQUID_HAS_FUSE3)
+        struct fuse_cmdline_opts command{};
+        if (fuse_parse_cmdline(&arguments, &command) != 0 || !command.foreground) {
+            std::free(command.mountpoint);
+            fuse_opt_free_args(&arguments);
+            auto failure = error{errc::io, "cannot parse FUSE arguments", mountpoint_.string()};
+            set_ready(failure);
+            set_stopped(failure);
+            return std::unexpected(std::move(failure));
+        }
+#endif
         auto operations = make_operations();
 #if defined(LIQUID_HAS_FUSE3)
         auto* instance = fuse_new(&arguments, &operations, sizeof(operations), this);
         fuse_opt_free_args(&arguments);
         if (!instance) {
+            std::free(command.mountpoint);
             auto failure = error{errc::unsupported,
                                  "cannot create FUSE session",
                                  "verify that FUSE is installed and available"};
@@ -181,7 +214,8 @@ public:
         }
 #endif
 #if defined(LIQUID_HAS_FUSE3)
-        if (fuse_mount(instance, mountpoint_.c_str()) != 0) {
+        if (fuse_mount(instance, command.mountpoint) != 0) {
+            std::free(command.mountpoint);
             fuse_destroy(instance);
             auto failure = error{errc::unsupported,
                                  "cannot mount FUSE filesystem",
@@ -190,6 +224,18 @@ public:
             set_stopped(failure);
             return std::unexpected(std::move(failure));
         }
+        std::free(command.mountpoint);
+        auto* loop_config = fuse_loop_cfg_create();
+        if (!loop_config) {
+            fuse_unmount(instance);
+            fuse_destroy(instance);
+            auto failure =
+                error{errc::io, "cannot configure FUSE request loop", mountpoint_.string()};
+            set_ready(failure);
+            set_stopped(failure);
+            return std::unexpected(std::move(failure));
+        }
+        fuse_loop_cfg_set_clone_fd(loop_config, command.clone_fd);
 #endif
         auto stop_now = false;
         {
@@ -200,9 +246,10 @@ public:
         }
         lifecycle_changed_.notify_all();
         if (stop_now)
-            fuse_exit(instance);
+            request_unmount();
 #if defined(LIQUID_HAS_FUSE3)
-        const auto loop_result = fuse_loop_mt(instance, nullptr);
+        const auto loop_result = fuse_loop_mt(instance, loop_config);
+        fuse_loop_cfg_destroy(loop_config);
 #else
         const auto loop_result = fuse_loop_mt(instance);
 #endif
@@ -291,6 +338,7 @@ private:
     bool ready_{};
     bool stopped_{};
     bool stop_requested_{};
+    bool wake_scheduled_{};
     std::optional<error> startup_error_;
     std::optional<error> run_error_;
 };
