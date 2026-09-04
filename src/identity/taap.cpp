@@ -28,6 +28,10 @@ auto failure(errc code, std::string message) -> error {
     return {code, std::move(message), "TAAP/1"};
 }
 
+auto unsupported_signature_algorithm(std::string algorithm) -> error {
+    return {errc::unsupported, "unknown TAAP signature algorithm", std::move(algorithm)};
+}
+
 auto byte_string(std::span<const std::byte> input) -> cbor::value {
     return cbor::value{cbor::value::bytes{input.begin(), input.end()}};
 }
@@ -257,6 +261,9 @@ auto parse_signature(std::span<const std::byte> input) -> result<signature> {
     if (!algorithm_text || !identifier_text || !label_text || !purpose_text || !time_text ||
         !encoded) {
         return std::unexpected(failure(errc::corrupt, "invalid TAAP signature object"));
+    }
+    if (*algorithm_text != "ed25519") {
+        return std::unexpected(unsupported_signature_algorithm(*algorithm_text));
     }
     auto raw = decode_base64(*encoded);
     if (!raw || raw->size() != 64) {

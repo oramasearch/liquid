@@ -72,10 +72,12 @@ id in `error::context`; ciphertext authentication failure or keyed-id mismatch i
 
 FastCDC uses a deterministic xorshift-derived 256-entry gear table seeded with
 `0x9e3779b97f4a7c15`. It cuts at 8 KiB minimum, 64 KiB target, and 128 KiB maximum. The algorithm
-is platform-independent. `put` produces BLAKE3 identities today. The index and pack table retain
-algorithm information for BLAKE3 and SHA-256, allowing a later liquid #44 writer to add SHA-256
-without a format change. Every `get` and `read` rehashes raw chunk bytes; a mismatch returns
-`errc::corrupt` with the digest in `error::context`.
+is platform-independent. `put` produces BLAKE3 identities by default or SHA-256 identities when
+`store_options::hash_algorithm` selects it. The index and pack table retain the algorithm for every
+entry, so one store can resolve both forms. Every `get` and `read` rehashes raw chunk bytes; a
+mismatch returns `errc::corrupt` with the digest in `error::context`. See
+[hash agility](hash-agility.md) for the supported algorithms, rehashing behavior, and signature
+scheme tags.
 
 `read` loads only the chunk headers and compressed byte ranges that overlap the caller's range.
 Pack file reads and writes use Corosio `random_access_file`; synchronous directory creation and

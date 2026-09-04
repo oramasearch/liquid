@@ -111,8 +111,8 @@ auto decode_change_id(const cbor::value& value) -> result<change_id> {
 
 } // namespace
 
-auto digest_of(std::span<const std::byte> bytes) -> result<digest> {
-    return hash(algorithm::blake3, bytes);
+auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes) -> result<digest> {
+    return hash(hash_algorithm, bytes);
 }
 
 auto encode(const blob& value) -> result<std::vector<std::byte>> {
@@ -282,7 +282,8 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
     return output;
 }
 
-auto decode_change(std::span<const std::byte> bytes) -> result<change> {
+auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> hash_algorithm)
+    -> result<change> {
     auto source = decode(bytes, "change");
     if (!source)
         return std::unexpected(source.error());
@@ -352,10 +353,12 @@ auto decode_change(std::span<const std::byte> bytes) -> result<change> {
         output.symbols = *symbol;
     }
     output.sig = *sig;
-    auto digest = digest_of(bytes);
-    if (!digest)
-        return std::unexpected(digest.error());
-    output.id = {*digest};
+    if (hash_algorithm) {
+        auto digest = digest_of(*hash_algorithm, bytes);
+        if (!digest)
+            return std::unexpected(digest.error());
+        output.id = {*digest};
+    }
     return output;
 }
 

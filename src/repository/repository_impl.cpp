@@ -26,7 +26,7 @@ struct working_entry {
     entry_kind kind{entry_kind::file};
     node_id node{};
     std::uint32_t mode{0100644};
-    digest object{algorithm::blake3, {}};
+    digest object{};
     std::map<std::string, working_entry> entries;
 };
 struct operation_record {
@@ -43,7 +43,7 @@ struct persisted_drip {
 };
 struct repository_document {
     node_id repository{};
-    working_entry root{entry_kind::directory, {}, 0040755, {algorithm::blake3, {}}, {}};
+    working_entry root{entry_kind::directory, {}, 0040755, {}, {}};
     std::map<std::string, change_id> refs;
     std::map<node_id, digest> dirs;
     std::optional<change_id> head;
@@ -318,8 +318,10 @@ auto split_path(std::string_view path) -> result<std::vector<std::string>> {
     }
     return result;
 }
-auto parent_for(working_entry& root, const std::vector<std::string>& path, bool create)
-    -> result<working_entry*> {
+auto parent_for(working_entry& root,
+                const std::vector<std::string>& path,
+                bool create,
+                algorithm hash_algorithm) -> result<working_entry*> {
     working_entry* current = &root;
     for (std::size_t i = 0; i + 1 < path.size(); ++i) {
         auto found = current->entries.find(path[i]);
@@ -327,14 +329,13 @@ auto parent_for(working_entry& root, const std::vector<std::string>& path, bool 
             if (!create)
                 return std::unexpected(
                     failure(errc::not_found, "directory does not exist", path[i]));
-            found = current->entries
-                        .emplace(path[i],
-                                 working_entry{entry_kind::directory,
-                                               random_id(),
-                                               0040755,
-                                               {algorithm::blake3, {}},
-                                               {}})
-                        .first;
+            found =
+                current->entries
+                    .emplace(
+                        path[i],
+                        working_entry{
+                            entry_kind::directory, random_id(), 0040755, {hash_algorithm, {}}, {}})
+                    .first;
         }
         if (found->second.kind != entry_kind::directory)
             return std::unexpected(
@@ -364,6 +365,7 @@ struct repository::impl {
     store objects;
     repository_document current;
     std::uint64_t checkpoint_interval{64};
+    algorithm hash_algorithm;
     std::uint64_t directory_load_count{};
     std::map<node_id, crdt::directory_document> directory_cache;
     signer signing_key;
@@ -371,9 +373,11 @@ struct repository::impl {
          store value,
          repository_document document,
          signer key,
-         std::uint64_t interval = 64)
+         std::uint64_t interval,
+         algorithm algorithm_value)
         : root_path(std::move(path)), objects(std::move(value)), current(std::move(document)),
-          checkpoint_interval(std::max(std::uint64_t{1}, interval)), signing_key(std::move(key)) {}
+          checkpoint_interval(std::max(std::uint64_t{1}, interval)),
+          hash_algorithm(algorithm_value), signing_key(std::move(key)) {}
     auto marker() const -> std::filesystem::path {
         return root_path / "LIQUID_REPO";
     }
@@ -519,12 +523,14 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (std::filesystem::exists(path / "LIQUID_REPO"))
         co_return std::unexpected(
             failure(errc::already_exists, "repository already exists", path.string()));
-    auto objects = co_await store::open(path / ".liquid-store");
+    const auto hash_algorithm = options.store.hash_algorithm;
+    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
     if (!objects)
         co_return std::unexpected(objects.error());
     repository_document document{};
     document.repository = random_id();
     document.root.node = random_id();
+    document.root.object.alg = hash_algorithm;
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -533,13 +539,14 @@ runtime::task<repository> repository::create(std::filesystem::path path,
                                           std::move(*objects),
                                           std::move(document),
                                           std::move(*signing_key),
-                                          options.checkpoint_interval);
+                                          options.checkpoint_interval,
+                                          hash_algorithm);
     auto saved = co_await output.impl_->persist();
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return output;
 }
-runtime::task<repository> repository::open(std::filesystem::path path) {
+runtime::task<repository> repository::open(std::filesystem::path path, repository_options options) {
     auto marker = co_await store_detail::read_file(path / "LIQUID_REPO");
     if (!marker)
         co_return std::unexpected(marker.error());
@@ -549,7 +556,8 @@ runtime::task<repository> repository::open(std::filesystem::path path) {
     auto document_id = parse_digest(text);
     if (!document_id)
         co_return std::unexpected(document_id.error());
-    auto objects = co_await store::open(path / ".liquid-store");
+    const auto hash_algorithm = options.store.hash_algorithm;
+    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
     if (!objects)
         co_return std::unexpected(objects.error());
     auto saved = co_await objects->get(*document_id);
@@ -571,8 +579,12 @@ runtime::task<repository> repository::open(std::filesystem::path path) {
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
     repository output;
-    output.impl_ = std::make_unique<impl>(
-        std::move(path), std::move(*objects), std::move(*document), std::move(*signing_key));
+    output.impl_ = std::make_unique<impl>(std::move(path),
+                                          std::move(*objects),
+                                          std::move(*document),
+                                          std::move(*signing_key),
+                                          options.checkpoint_interval,
+                                          hash_algorithm);
     co_return output;
 }
 runtime::task<tree> repository::root() {
@@ -637,7 +649,7 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
     auto reference = co_await impl_->objects.put(std::move(*encoded));
     if (!reference)
         co_return std::unexpected(reference.error());
-    auto parent = parent_for(impl_->current.root, *parts, true);
+    auto parent = parent_for(impl_->current.root, *parts, true, impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     auto found = (*parent)->entries.find(parts->back());
@@ -665,7 +677,7 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
                     .first;
     std::erase_if(impl_->current.conflict_values,
                   [&](const conflict& value) { return value.path == path; });
-    auto operation_hash = hash(algorithm::blake3, std::span<const std::byte>{reference->bytes});
+    auto operation_hash = hash(impl_->hash_algorithm, std::span<const std::byte>{reference->bytes});
     if (!operation_hash)
         co_return std::unexpected(operation_hash.error());
     impl_->current.operations.push_back(
@@ -693,8 +705,9 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     if (to.starts_with(from + "/"))
         co_return std::unexpected(
             failure(errc::invalid_argument, "move destination is below source", to));
-    auto source_parent = parent_for(impl_->current.root, *source, false);
-    auto destination_parent = parent_for(impl_->current.root, *destination, false);
+    auto source_parent = parent_for(impl_->current.root, *source, false, impl_->hash_algorithm);
+    auto destination_parent =
+        parent_for(impl_->current.root, *destination, false, impl_->hash_algorithm);
     if (!source_parent || !destination_parent)
         co_return std::unexpected(failure(errc::not_found, "move parent does not exist", from));
     auto found = (*source_parent)->entries.find(source->back());
@@ -732,7 +745,8 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     const auto moved_node = moved.node;
     (*source_parent)->entries.erase(found);
     (*destination_parent)->entries.emplace(destination->back(), std::move(moved));
-    auto hash_value = hash(algorithm::blake3, std::span<const std::byte>{impl_->current.root.node});
+    auto hash_value =
+        hash(impl_->hash_algorithm, std::span<const std::byte>{impl_->current.root.node});
     if (!hash_value)
         co_return std::unexpected(hash_value.error());
     impl_->current.operations.push_back(
@@ -754,7 +768,7 @@ runtime::task<void> repository::remove(std::string path) {
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
-    auto parent = parent_for(impl_->current.root, *parts, false);
+    auto parent = parent_for(impl_->current.root, *parts, false, impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     auto found = (*parent)->entries.find(parts->back());
@@ -768,7 +782,7 @@ runtime::task<void> repository::remove(std::string path) {
         co_return std::unexpected(recorded.error());
     auto prior = found->second;
     (*parent)->entries.erase(found);
-    auto hash_value = hash(algorithm::blake3, std::span<const std::byte>{prior.node});
+    auto hash_value = hash(impl_->hash_algorithm, std::span<const std::byte>{prior.node});
     if (!hash_value)
         co_return std::unexpected(hash_value.error());
     impl_->current.operations.push_back(
@@ -866,7 +880,7 @@ runtime::task<std::vector<change>> repository::log(log_options) {
         auto bytes = co_await impl_->objects.get(next->value);
         if (!bytes)
             co_return std::unexpected(bytes.error());
-        auto value = objects::decode_change(*bytes);
+        auto value = objects::decode_change(*bytes, impl_->hash_algorithm);
         if (!value)
             co_return std::unexpected(value.error());
         output.push_back(*value);
@@ -881,7 +895,7 @@ runtime::task<snapshot> repository::at(change_id id) {
     auto bytes = co_await impl_->objects.get(id.value);
     if (!bytes)
         co_return std::unexpected(bytes.error());
-    auto change = objects::decode_change(*bytes);
+    auto change = objects::decode_change(*bytes, impl_->hash_algorithm);
     if (!change)
         co_return std::unexpected(change.error());
     auto tree_bytes = co_await impl_->objects.get(change->root);
@@ -898,7 +912,7 @@ runtime::task<void> repository::nest(repository source, std::string path) {
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
-    auto parent = parent_for(impl_->current.root, *parts, true);
+    auto parent = parent_for(impl_->current.root, *parts, true, impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     if ((*parent)->entries.contains(parts->back()))
@@ -921,7 +935,10 @@ runtime::task<repository> repository::split(std::string path, std::filesystem::p
     auto* entry = lookup(impl_->current.root, *parts);
     if (!entry || entry->kind != entry_kind::directory)
         co_return std::unexpected(failure(errc::not_found, "subtree does not exist", path));
-    auto destination = co_await create(std::move(into));
+    repository_options options;
+    options.checkpoint_interval = impl_->checkpoint_interval;
+    options.store.hash_algorithm = impl_->hash_algorithm;
+    auto destination = co_await create(std::move(into), std::move(options));
     if (!destination)
         co_return std::unexpected(destination.error());
     destination->impl_->current.root = *entry;
@@ -943,7 +960,7 @@ runtime::task<void> repository::combine(repository other, std::optional<std::str
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
-    auto parent = parent_for(impl_->current.root, *parts, true);
+    auto parent = parent_for(impl_->current.root, *parts, true, impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     if ((*parent)->entries.contains(parts->back())) {
@@ -985,7 +1002,7 @@ runtime::task<void> repository::undo(op_id operation) {
         auto parts = split_path(found->from);
         if (!parts)
             co_return std::unexpected(parts.error());
-        auto parent = parent_for(impl_->current.root, *parts, true);
+        auto parent = parent_for(impl_->current.root, *parts, true, impl_->hash_algorithm);
         if (!parent)
             co_return std::unexpected(parent.error());
         (*parent)->entries[parts->back()] = *found->prior;
@@ -997,7 +1014,7 @@ runtime::task<void> repository::undo(op_id operation) {
         auto parts = split_path(found->from);
         if (!parts)
             co_return std::unexpected(parts.error());
-        auto parent = parent_for(impl_->current.root, *parts, false);
+        auto parent = parent_for(impl_->current.root, *parts, false, impl_->hash_algorithm);
         if (!parent)
             co_return std::unexpected(parent.error());
         if (found->prior)
@@ -1129,7 +1146,8 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
-    auto parent = parent_for(source.impl_->current.root, *parts, false);
+    auto parent =
+        parent_for(source.impl_->current.root, *parts, false, source.impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     if ((*parent)->entries.contains(parts->back()))
@@ -1138,14 +1156,14 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
     if (!directory)
         co_return std::unexpected(directory.error());
     const auto identity = random_id();
-    const auto reference = digest{algorithm::blake3, {}};
+    const auto reference = digest{source.impl_->hash_algorithm, {}};
     auto recorded =
         (*directory)->put_entry(parts->back(), {"tree", identity, mode, to_string(reference)});
     if (!recorded)
         co_return std::unexpected(recorded.error());
     (*parent)->entries.emplace(parts->back(),
                                working_entry{entry_kind::directory, identity, mode, reference, {}});
-    auto operation_hash = hash(algorithm::blake3, std::span<const std::byte>{identity});
+    auto operation_hash = hash(source.impl_->hash_algorithm, std::span<const std::byte>{identity});
     if (!operation_hash)
         co_return std::unexpected(operation_hash.error());
     source.impl_->current.operations.push_back(
@@ -1167,7 +1185,8 @@ repository_detail::vfs_access::set_mode(repository& source, std::string path, st
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
-    auto parent = parent_for(source.impl_->current.root, *parts, false);
+    auto parent =
+        parent_for(source.impl_->current.root, *parts, false, source.impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     auto found = (*parent)->entries.find(parts->back());
@@ -1223,7 +1242,10 @@ runtime::task<repository> repository_detail::testing::clone(const repository& so
         source.impl_->root_path, destination, std::filesystem::copy_options::recursive, code);
     if (code)
         co_return std::unexpected(failure(errc::io, code.message(), destination.string()));
-    co_return co_await repository::open(std::move(destination));
+    repository_options options;
+    options.checkpoint_interval = source.impl_->checkpoint_interval;
+    options.store.hash_algorithm = source.impl_->hash_algorithm;
+    co_return co_await repository::open(std::move(destination), std::move(options));
 }
 
 runtime::task<void> repository_detail::testing::sync(repository& left, repository& right) {
@@ -1315,7 +1337,7 @@ auto repository_detail::testing::verify_history(repository& value) -> result<std
         if (!bytes) {
             return std::unexpected(bytes.error());
         }
-        auto change = objects::decode_change(*bytes);
+        auto change = objects::decode_change(*bytes, value.impl_->hash_algorithm);
         if (!change) {
             return std::unexpected(change.error());
         }

@@ -30,7 +30,7 @@ TEST(Records, empty_tree_fixture_is_canonical) {
     auto encoded = liquid::objects::encode(*decoded);
     ASSERT_TRUE(encoded);
     EXPECT_EQ(*encoded, fixture);
-    auto digest = liquid::objects::digest_of(*encoded);
+    auto digest = liquid::objects::digest_of(liquid::algorithm::blake3, *encoded);
     ASSERT_TRUE(digest);
     EXPECT_EQ(digest->alg, liquid::algorithm::blake3);
 }

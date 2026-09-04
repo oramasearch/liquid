@@ -2,9 +2,14 @@
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <string_view>
 
+#include "encoding/cbor.hpp"
 #include "liquid/repository.hpp"
+#include "liquid/store.hpp"
+#include "objects/records.hpp"
 #include "repository/testing.hpp"
 
 namespace {
@@ -37,6 +42,59 @@ auto content(std::string value) -> std::vector<std::byte> {
 
 auto text(const std::vector<std::byte>& value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
+auto sha256_options() -> liquid::repository_options {
+    liquid::repository_options options;
+    options.store.hash_algorithm = liquid::algorithm::sha256;
+    return options;
+}
+
+void expect_sha256(const liquid::digest& value) {
+    EXPECT_EQ(value.alg, liquid::algorithm::sha256);
+    EXPECT_TRUE(liquid::to_string(value).starts_with("sha256:"));
+}
+
+auto field(const liquid::encoding::cbor::value& value, std::string_view name)
+    -> const liquid::encoding::cbor::value* {
+    const auto* fields = std::get_if<liquid::encoding::cbor::value::map>(&value.data);
+    if (!fields) {
+        return nullptr;
+    }
+    for (const auto& [key, item] : *fields) {
+        const auto* text = std::get_if<std::string>(&key.data);
+        if (text && *text == name) {
+            return &item;
+        }
+    }
+    return nullptr;
+}
+
+auto mutable_field(liquid::encoding::cbor::value& value, std::string_view name)
+    -> liquid::encoding::cbor::value* {
+    auto* fields = std::get_if<liquid::encoding::cbor::value::map>(&value.data);
+    if (!fields) {
+        return nullptr;
+    }
+    for (auto& [key, item] : *fields) {
+        const auto* text = std::get_if<std::string>(&key.data);
+        if (text && *text == name) {
+            return &item;
+        }
+    }
+    return nullptr;
+}
+
+auto read_file(const std::filesystem::path& path) -> std::vector<std::byte> {
+    auto input = std::ifstream{path, std::ios::binary | std::ios::ate};
+    EXPECT_TRUE(input.good());
+    const auto size = input.tellg();
+    EXPECT_GE(size, 0);
+    auto output = std::vector<std::byte>(static_cast<std::size_t>(size));
+    input.seekg(0);
+    input.read(reinterpret_cast<char*>(output.data()), static_cast<std::streamsize>(output.size()));
+    EXPECT_TRUE(input.good());
+    return output;
 }
 
 TEST(Repository, create_write_move_cut_open_and_time_travel) {
@@ -116,6 +174,201 @@ TEST(Repository, journal_replays_a_write_before_the_next_checkpoint) {
     auto value = liquid::runtime::block_on(reopened->read("pending.txt"));
     ASSERT_TRUE(value) << value.error().message;
     EXPECT_EQ(text(*value), "journal");
+}
+
+TEST(Repository, Sha256StoreRoundTripsRecords) {
+    temporary_repository location;
+    const auto options = sha256_options();
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("value"))));
+    auto written = liquid::runtime::block_on(repository.read("file"));
+    ASSERT_TRUE(written) << written.error().message;
+    EXPECT_EQ(text(*written), "value");
+
+    const auto id = liquid::runtime::block_on(repository.cut("record sha256"));
+    ASSERT_TRUE(id) << id.error().message;
+    expect_sha256(id->value);
+
+    const auto history = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(history) << history.error().message;
+    ASSERT_EQ(history->size(), 1U);
+    expect_sha256(history->front().id.value);
+    expect_sha256(history->front().root);
+
+    const auto snapshot = liquid::runtime::block_on(repository.at(history->front().id));
+    ASSERT_TRUE(snapshot) << snapshot.error().message;
+    expect_sha256(snapshot->id.value);
+    ASSERT_EQ(snapshot->root.entries.size(), 1U);
+    expect_sha256(snapshot->root.entries.front().id);
+    expect_sha256(snapshot->root.entries.front().ref);
+
+    auto store = liquid::runtime::block_on(
+        liquid::store::open(location.path() / ".liquid-store", options.store));
+    ASSERT_TRUE(store) << store.error().message;
+    const auto encoded_blob =
+        liquid::runtime::block_on(store->get(snapshot->root.entries.front().ref));
+    ASSERT_TRUE(encoded_blob) << encoded_blob.error().message;
+    const auto blob = liquid::objects::decode_blob(*encoded_blob);
+    ASSERT_TRUE(blob) << blob.error().message;
+    ASSERT_EQ(blob->chunks.size(), 1U);
+    expect_sha256(blob->chunks.front());
+
+    repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path(), options));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    written = liquid::runtime::block_on(reopened->read("file"));
+    ASSERT_TRUE(written) << written.error().message;
+    EXPECT_EQ(text(*written), "value");
+    const auto reopened_snapshot = liquid::runtime::block_on(reopened->at(history->front().id));
+    ASSERT_TRUE(reopened_snapshot) << reopened_snapshot.error().message;
+    expect_sha256(reopened_snapshot->id.value);
+}
+
+TEST(Repository, RehashesBlake3BlobsForSha256Resolution) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("first", content("first blob"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("second", content("second blob"))));
+
+    const auto root = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(root) << root.error().message;
+    ASSERT_EQ(root->entries.size(), 2U);
+    repository = {};
+
+    auto store = liquid::runtime::block_on(liquid::store::open(location.path() / ".liquid-store"));
+    ASSERT_TRUE(store) << store.error().message;
+    auto blobs = std::vector<std::pair<liquid::digest, std::vector<std::byte>>>{};
+    for (const auto& entry : root->entries) {
+        ASSERT_EQ(entry.kind, liquid::node_kind::blob);
+        EXPECT_EQ(entry.ref.alg, liquid::algorithm::blake3);
+        const auto blob = liquid::runtime::block_on(store->get(entry.ref));
+        ASSERT_TRUE(blob) << blob.error().message;
+        const auto record = liquid::objects::decode_blob(*blob);
+        ASSERT_TRUE(record) << record.error().message;
+        blobs.emplace_back(entry.ref, *blob);
+    }
+    *store = {};
+
+    liquid::store_options sha256_store_options;
+    sha256_store_options.hash_algorithm = liquid::algorithm::sha256;
+    store = liquid::runtime::block_on(
+        liquid::store::open(location.path() / ".liquid-store", sha256_store_options));
+    ASSERT_TRUE(store) << store.error().message;
+    for (const auto& [blake3_id, blob] : blobs) {
+        const auto sha256_id = liquid::hash(liquid::algorithm::sha256, blob);
+        ASSERT_TRUE(sha256_id) << sha256_id.error().message;
+        const auto indexed = liquid::runtime::block_on(store->put(blob));
+        ASSERT_TRUE(indexed) << indexed.error().message;
+        EXPECT_EQ(indexed->alg, sha256_id->alg);
+        EXPECT_EQ(indexed->bytes, sha256_id->bytes);
+
+        const auto parsed_blake3 = liquid::parse_digest(liquid::to_string(blake3_id));
+        const auto parsed_sha256 = liquid::parse_digest(liquid::to_string(*sha256_id));
+        ASSERT_TRUE(parsed_blake3) << parsed_blake3.error().message;
+        ASSERT_TRUE(parsed_sha256) << parsed_sha256.error().message;
+
+        const auto resolved_blake3 = liquid::runtime::block_on(store->get(*parsed_blake3));
+        const auto resolved_sha256 = liquid::runtime::block_on(store->get(*parsed_sha256));
+        ASSERT_TRUE(resolved_blake3) << resolved_blake3.error().message;
+        ASSERT_TRUE(resolved_sha256) << resolved_sha256.error().message;
+        EXPECT_EQ(*resolved_blake3, blob);
+        EXPECT_EQ(*resolved_sha256, blob);
+    }
+}
+
+TEST(Repository, DripAndChangeSignaturesCarryEd25519Tags) {
+    namespace cbor = liquid::encoding::cbor;
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("first", content("first"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("second", content("second"))));
+
+    const auto journal = read_file(location.path() / "LIQUID_JOURNAL");
+    const auto document = cbor::decode(journal);
+    ASSERT_TRUE(document) << document.error().message;
+    const auto* drips_value = field(*document, "drips");
+    ASSERT_NE(drips_value, nullptr);
+    const auto* drips = std::get_if<cbor::value::array>(&drips_value->data);
+    ASSERT_NE(drips, nullptr);
+    ASSERT_EQ(drips->size(), 2U);
+    for (const auto& drip : *drips) {
+        const auto* signature_value = field(drip, "sig");
+        ASSERT_NE(signature_value, nullptr);
+        const auto* signature_bytes = std::get_if<cbor::value::bytes>(&signature_value->data);
+        ASSERT_NE(signature_bytes, nullptr);
+        const auto signature = cbor::decode(*signature_bytes);
+        ASSERT_TRUE(signature) << signature.error().message;
+        const auto* algorithm_value = field(*signature, "signature_algorithm");
+        ASSERT_NE(algorithm_value, nullptr);
+        const auto* algorithm = std::get_if<std::string>(&algorithm_value->data);
+        ASSERT_NE(algorithm, nullptr);
+        EXPECT_EQ(*algorithm, "ed25519");
+    }
+
+    const auto id = liquid::runtime::block_on(repository.cut("signed change"));
+    ASSERT_TRUE(id) << id.error().message;
+    const auto history = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(history) << history.error().message;
+    ASSERT_EQ(history->size(), 1U);
+    const auto signature = cbor::decode(history->front().sig);
+    ASSERT_TRUE(signature) << signature.error().message;
+    const auto* algorithm_value = field(*signature, "signature_algorithm");
+    ASSERT_NE(algorithm_value, nullptr);
+    const auto* algorithm = std::get_if<std::string>(&algorithm_value->data);
+    ASSERT_NE(algorithm, nullptr);
+    EXPECT_EQ(*algorithm, "ed25519");
+}
+
+TEST(Repository, RejectsAnUnknownSignatureAlgorithm) {
+    namespace cbor = liquid::encoding::cbor;
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("first", content("first"))));
+
+    auto journal = cbor::decode(read_file(location.path() / "LIQUID_JOURNAL"));
+    ASSERT_TRUE(journal) << journal.error().message;
+    auto* drips_value = mutable_field(*journal, "drips");
+    ASSERT_NE(drips_value, nullptr);
+    auto* drips = std::get_if<cbor::value::array>(&drips_value->data);
+    ASSERT_NE(drips, nullptr);
+    ASSERT_EQ(drips->size(), 1U);
+    auto* signature_value = mutable_field(drips->front(), "sig");
+    ASSERT_NE(signature_value, nullptr);
+    auto* signature_bytes = std::get_if<cbor::value::bytes>(&signature_value->data);
+    ASSERT_NE(signature_bytes, nullptr);
+    auto signature = cbor::decode(*signature_bytes);
+    ASSERT_TRUE(signature) << signature.error().message;
+    auto* algorithm = mutable_field(*signature, "signature_algorithm");
+    ASSERT_NE(algorithm, nullptr);
+    algorithm->data = std::string{"mldsa"};
+    const auto encoded_signature = cbor::encode(*signature);
+    ASSERT_TRUE(encoded_signature) << encoded_signature.error().message;
+    signature_value->data = *encoded_signature;
+    const auto encoded_journal = cbor::encode(*journal);
+    ASSERT_TRUE(encoded_journal) << encoded_journal.error().message;
+    auto output =
+        std::ofstream{location.path() / "LIQUID_JOURNAL", std::ios::binary | std::ios::trunc};
+    ASSERT_TRUE(output.good());
+    output.write(reinterpret_cast<const char*>(encoded_journal->data()),
+                 static_cast<std::streamsize>(encoded_journal->size()));
+    ASSERT_TRUE(output.good());
+    output.close();
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    const auto verified = liquid::repository_detail::testing::verify_history(*reopened);
+    ASSERT_FALSE(verified.has_value());
+    EXPECT_EQ(verified.error().code, liquid::errc::unsupported);
+    EXPECT_EQ(verified.error().context, "mldsa");
 }
 
 TEST(Repository, split_nest_and_combine_are_composable) {

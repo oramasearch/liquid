@@ -27,8 +27,11 @@ struct repo_record {
 
 [[nodiscard]] auto decode_blob(std::span<const std::byte> bytes) -> result<blob>;
 [[nodiscard]] auto decode_tree(std::span<const std::byte> bytes) -> result<tree>;
-[[nodiscard]] auto decode_change(std::span<const std::byte> bytes) -> result<change>;
+[[nodiscard]] auto decode_change(std::span<const std::byte> bytes,
+                                 std::optional<algorithm> hash_algorithm = std::nullopt)
+    -> result<change>;
 [[nodiscard]] auto decode_repo(std::span<const std::byte> bytes) -> result<repo_record>;
-[[nodiscard]] auto digest_of(std::span<const std::byte> bytes) -> result<digest>;
+[[nodiscard]] auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes)
+    -> result<digest>;
 
 } // namespace liquid::objects
