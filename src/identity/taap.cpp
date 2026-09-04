@@ -87,6 +87,15 @@ auto signature_value(const signature& value) -> cbor::value {
                 {"signature_bytes_base64", base64(value.bytes)}});
 }
 
+auto compromise_value(const compromise_declaration& value) -> cbor::value {
+    auto fields = cbor::value::map{{"key_fingerprint_base32", value.key_fingerprint_base32},
+                                   {"declared_at", value.declared_at}};
+    if (value.reason) {
+        fields.emplace_back("reason", *value.reason);
+    }
+    return cbor::value{std::move(fields)};
+}
+
 auto decode_base64(std::string_view input) -> result<std::vector<std::byte>> {
     if (input.empty() || input.size() % 4 != 0) {
         return std::unexpected(failure(errc::corrupt, "invalid base64"));
@@ -193,6 +202,22 @@ auto base64(std::span<const std::byte> input) -> std::string {
 auto identifier(std::span<const std::byte> public_key,
                 std::string_view created_at,
                 std::string_view key_label) -> result<actor> {
+    auto fingerprint = key_fingerprint(public_key, created_at, key_label);
+    if (!fingerprint) {
+        return std::unexpected(fingerprint.error());
+    }
+    auto output = actor{};
+    output.algorithm = "ed25519";
+    output.fingerprint = *fingerprint;
+    output.key_fingerprint = *fingerprint;
+    output.taap_id = "taap:1:ed25519:" + output.fingerprint;
+    output.public_key.assign(public_key.begin(), public_key.end());
+    return output;
+}
+
+auto key_fingerprint(std::span<const std::byte> public_key,
+                     std::string_view created_at,
+                     std::string_view key_label) -> result<std::string> {
     if (public_key.size() != 32) {
         return std::unexpected(
             failure(errc::invalid_argument, "Ed25519 public key must be 32 bytes"));
@@ -201,13 +226,7 @@ auto identifier(std::span<const std::byte> public_key,
     if (!encoded) {
         return std::unexpected(encoded.error());
     }
-    const auto fingerprint = sha512_256(*encoded);
-    auto output = actor{};
-    output.algorithm = "ed25519";
-    output.fingerprint = base32(fingerprint);
-    output.taap_id = "taap:1:ed25519:" + output.fingerprint;
-    output.public_key.assign(public_key.begin(), public_key.end());
-    return output;
+    return base32(sha512_256(*encoded));
 }
 
 auto canonical_signature(const signature& value) -> result<std::vector<std::byte>> {
@@ -264,6 +283,13 @@ auto canonical_document(const identity_document& document, bool include_signatur
                                         : cbor::value{cbor::null{}}},
                                    {"created_at", document.created_at},
                                    {"updated_at", document.updated_at}};
+    if (!document.compromised_keys.empty()) {
+        auto compromised = cbor::value::array{};
+        for (const auto& declaration : document.compromised_keys) {
+            compromised.push_back(compromise_value(declaration));
+        }
+        fields.emplace_back("compromised_keys", cbor::value{std::move(compromised)});
+    }
     if (include_signatures) {
         auto signatures = cbor::value::array{};
         for (const auto& item : document.signatures) {
@@ -272,6 +298,152 @@ auto canonical_document(const identity_document& document, bool include_signatur
         fields.emplace_back("signatures", cbor::value{std::move(signatures)});
     }
     return cbor::encode(cbor::value{std::move(fields)});
+}
+
+auto parse_document(std::span<const std::byte> input) -> result<identity_document> {
+    auto decoded = cbor::decode(input);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto* artifact_type = field(*decoded, "artifact_type");
+    const auto* protocol_version = field(*decoded, "protocol_version");
+    const auto* encoding = field(*decoded, "encoding");
+    const auto* identifier_value = field(*decoded, "identifier");
+    const auto* keys_value = field(*decoded, "keys");
+    const auto* created_at = field(*decoded, "created_at");
+    const auto* updated_at = field(*decoded, "updated_at");
+    const auto* previous = field(*decoded, "previous_document_hash_base64");
+    const auto* signatures_value = field(*decoded, "signatures");
+    const auto* artifact_text =
+        artifact_type ? std::get_if<std::string>(&artifact_type->data) : nullptr;
+    const auto* protocol_text =
+        protocol_version ? std::get_if<std::string>(&protocol_version->data) : nullptr;
+    const auto* encoding_text = encoding ? std::get_if<std::string>(&encoding->data) : nullptr;
+    const auto* identifier_text =
+        identifier_value ? std::get_if<std::string>(&identifier_value->data) : nullptr;
+    const auto* keys = keys_value ? std::get_if<cbor::value::array>(&keys_value->data) : nullptr;
+    const auto* created_text = created_at ? std::get_if<std::string>(&created_at->data) : nullptr;
+    const auto* updated_text = updated_at ? std::get_if<std::string>(&updated_at->data) : nullptr;
+    const auto* signatures =
+        signatures_value ? std::get_if<cbor::value::array>(&signatures_value->data) : nullptr;
+    if (!artifact_text || *artifact_text != "identity_document" || !protocol_text ||
+        *protocol_text != "TAAP/1" || !encoding_text || *encoding_text != "ccbor" ||
+        !identifier_text || !keys || keys->size() != 1 || !created_text || !updated_text ||
+        !previous || !signatures) {
+        return std::unexpected(failure(errc::corrupt, "invalid identity document"));
+    }
+    const auto* key = std::get_if<cbor::value::map>(&keys->front().data);
+    if (!key) {
+        return std::unexpected(failure(errc::corrupt, "invalid identity document key"));
+    }
+    const auto key_field = [&](std::string_view name) -> const cbor::value* {
+        for (const auto& [candidate, value] : *key) {
+            const auto* text = std::get_if<std::string>(&candidate.data);
+            if (text && *text == name) {
+                return &value;
+            }
+        }
+        return nullptr;
+    };
+    const auto* key_algorithm = key_field("key_algorithm");
+    const auto* key_label = key_field("key_label");
+    const auto* encoded_public_key = key_field("public_key_bytes_base64");
+    const auto* key_algorithm_text =
+        key_algorithm ? std::get_if<std::string>(&key_algorithm->data) : nullptr;
+    const auto* key_label_text = key_label ? std::get_if<std::string>(&key_label->data) : nullptr;
+    const auto* encoded_public_key_text =
+        encoded_public_key ? std::get_if<std::string>(&encoded_public_key->data) : nullptr;
+    if (!key_algorithm_text || *key_algorithm_text != "ed25519" || !key_label_text ||
+        !encoded_public_key_text) {
+        return std::unexpected(failure(errc::corrupt, "invalid identity document key"));
+    }
+    auto public_key = decode_base64(*encoded_public_key_text);
+    if (!public_key || public_key->size() != 32) {
+        return std::unexpected(failure(errc::corrupt, "invalid identity document public key"));
+    }
+    auto subject = actor{};
+    auto parsed_identifier = parse_actor_identifier(*identifier_text, subject);
+    if (!parsed_identifier) {
+        return std::unexpected(parsed_identifier.error());
+    }
+    subject.public_key = std::move(*public_key);
+    auto fingerprint = key_fingerprint(subject.public_key, *created_text, *key_label_text);
+    if (!fingerprint) {
+        return std::unexpected(fingerprint.error());
+    }
+    subject.key_fingerprint = std::move(*fingerprint);
+    auto output = identity_document{
+        subject, *key_label_text, *created_text, *updated_text, std::nullopt, {}, {}};
+    if (std::holds_alternative<cbor::null>(previous->data)) {
+        output.previous_document_hash = std::nullopt;
+    } else {
+        const auto* previous_text = std::get_if<std::string>(&previous->data);
+        if (!previous_text) {
+            return std::unexpected(failure(errc::corrupt, "invalid predecessor hash"));
+        }
+        auto previous_hash = decode_base64(*previous_text);
+        if (!previous_hash || previous_hash->size() != 32) {
+            return std::unexpected(failure(errc::corrupt, "invalid predecessor hash"));
+        }
+        output.previous_document_hash = std::move(*previous_hash);
+    }
+    if (const auto* compromised_value = field(*decoded, "compromised_keys")) {
+        const auto* compromised = std::get_if<cbor::value::array>(&compromised_value->data);
+        if (!compromised) {
+            return std::unexpected(failure(errc::corrupt, "invalid compromised keys"));
+        }
+        for (const auto& declaration_value : *compromised) {
+            const auto* declaration = std::get_if<cbor::value::map>(&declaration_value.data);
+            if (!declaration) {
+                return std::unexpected(failure(errc::corrupt, "invalid compromised key"));
+            }
+            const auto declaration_field = [&](std::string_view name) -> const cbor::value* {
+                for (const auto& [candidate, value] : *declaration) {
+                    const auto* text = std::get_if<std::string>(&candidate.data);
+                    if (text && *text == name) {
+                        return &value;
+                    }
+                }
+                return nullptr;
+            };
+            const auto* fingerprint_value = declaration_field("key_fingerprint_base32");
+            const auto* declared_at_value = declaration_field("declared_at");
+            const auto* reason_value = declaration_field("reason");
+            const auto* fingerprint_text =
+                fingerprint_value ? std::get_if<std::string>(&fingerprint_value->data) : nullptr;
+            const auto* declared_at_text =
+                declared_at_value ? std::get_if<std::string>(&declared_at_value->data) : nullptr;
+            if (!fingerprint_text || !declared_at_text) {
+                return std::unexpected(failure(errc::corrupt, "invalid compromised key"));
+            }
+            auto reason = std::optional<std::string>{};
+            if (reason_value) {
+                const auto* reason_text = std::get_if<std::string>(&reason_value->data);
+                if (!reason_text) {
+                    return std::unexpected(failure(errc::corrupt, "invalid compromised key"));
+                }
+                reason = *reason_text;
+            }
+            output.compromised_keys.push_back(
+                {*fingerprint_text, *declared_at_text, std::move(reason)});
+        }
+    }
+    for (const auto& signature_value : *signatures) {
+        auto encoded_signature = cbor::encode(signature_value);
+        if (!encoded_signature) {
+            return std::unexpected(encoded_signature.error());
+        }
+        auto parsed_signature = parse_signature(*encoded_signature);
+        if (!parsed_signature) {
+            return std::unexpected(parsed_signature.error());
+        }
+        output.signatures.push_back(std::move(*parsed_signature));
+    }
+    auto canonical = canonical_document(output, true);
+    if (!canonical || !std::ranges::equal(*canonical, input)) {
+        return std::unexpected(failure(errc::corrupt, "identity document is not canonical"));
+    }
+    return output;
 }
 
 auto signing_input(std::string_view artifact_type, std::span<const std::byte> canonical_body)

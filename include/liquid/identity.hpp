@@ -33,6 +33,7 @@ struct LIQUID_EXPORT actor {
     std::string algorithm;
     std::string fingerprint;
     std::vector<std::byte> public_key;
+    std::string key_fingerprint;
 
     [[nodiscard]] std::string_view identifier() const noexcept;
 };
@@ -46,13 +47,26 @@ struct LIQUID_EXPORT signature {
     std::vector<std::byte> bytes;
 };
 
+struct LIQUID_EXPORT compromise_declaration {
+    std::string key_fingerprint_base32;
+    std::string declared_at;
+    std::optional<std::string> reason;
+};
+
 struct LIQUID_EXPORT identity_document {
     actor subject;
     std::string key_label;
     std::string created_at;
     std::string updated_at;
     std::optional<std::vector<std::byte>> previous_document_hash;
+    std::vector<compromise_declaration> compromised_keys;
     std::vector<signature> signatures;
+};
+
+struct LIQUID_EXPORT verified_identity {
+    actor subject;
+    std::vector<actor> current_keys;
+    bool has_compromised_history{};
 };
 
 class LIQUID_EXPORT signer {
@@ -67,6 +81,8 @@ public:
     [[nodiscard]] static runtime::task<signer> open(std::string identifier, keyring& keys);
     [[nodiscard]] runtime::task<signature> sign(std::string artifact_type,
                                                 std::vector<std::byte> canonical_body);
+    [[nodiscard]] runtime::task<identity_document>
+    rotate(std::optional<compromise_declaration> compromise = {});
 
     [[nodiscard]] actor identity() const;
 
@@ -82,6 +98,8 @@ private:
                                                 const signature& signed_value);
 
 [[nodiscard]] LIQUID_EXPORT result<bool> verify_document(const identity_document& document);
+[[nodiscard]] LIQUID_EXPORT result<verified_identity>
+verify_chain(std::span<const identity_document> documents);
 
 struct LIQUID_EXPORT argon2_parameters {
     std::uint32_t memory_kib{64U * 1024U};

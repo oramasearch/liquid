@@ -60,7 +60,7 @@ owning issue in `error::context`.
 | `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
-| `liquid/identity.hpp` | #4, #7, #51 | implemented (#4, #7); declared (#51) | TAAP `actor`, `signer`, `verify`, keyring and custody providers |
+| `liquid/identity.hpp` | #4, #7, #51, #111 | implemented (#4, #7, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
@@ -255,9 +255,21 @@ class capture {                        // the journal, as a subscription
   result<subscription> subscribe(std::function<void(const drip&)>);   // registration is synchronous
   runtime::task<void> pause();  runtime::task<void> resume();  result<capture_status> status();
 };
-struct actor { std::string taap_id; };                   // TAAP/1 subject
-class signer { public: runtime::task<signature> sign(std::string artifact_type, std::vector<std::byte> canonical_body); };  // TAAP/1 §6.6; custody may be remote
+struct actor { std::string taap_id; std::string fingerprint; std::vector<std::byte> public_key;
+               std::string key_fingerprint; };           // stable identity and current key identifiers
+struct compromise_declaration { std::string key_fingerprint_base32; std::string declared_at;
+                                std::optional<std::string> reason; };
+struct identity_document { actor subject; std::string key_label; std::string created_at; std::string updated_at;
+                           std::optional<std::vector<std::byte>> previous_document_hash;
+                           std::vector<compromise_declaration> compromised_keys; std::vector<signature> signatures; };
+struct verified_identity { actor subject; std::vector<actor> current_keys; bool has_compromised_history; };
+class signer {
+ public:
+  runtime::task<signature> sign(std::string artifact_type, std::vector<std::byte> canonical_body);  // TAAP/1 §6.6
+  runtime::task<identity_document> rotate(std::optional<compromise_declaration> compromise = {});
+};
 result<bool> verify(const actor&, std::string_view artifact_type, std::span<const std::byte> canonical_body, const signature&);
+result<verified_identity> verify_chain(std::span<const identity_document> documents);
 struct signature { std::string algorithm; std::string signing_key_identifier; std::string signing_key_label;
                    std::string signature_purpose; std::string signed_at; std::vector<std::byte> bytes; };   // TAAP/1 §6.7
 struct argon2_parameters { std::uint32_t memory_kib; std::uint32_t iterations; std::uint32_t lanes; };
@@ -279,6 +291,14 @@ is SHA-512/256 over the canonical bytes of the previous document as stored, sign
 chains (§22.5) are not used by drips: a drip is signed by its actor directly. Signing is on by default; a
 repository whose `config.signing` is `optional` accepts unsigned drips and marks them, and `status` says so;
 verification distinguishes *unsigned* from *invalid*.
+For §5.5 and §18.7, `compromised_keys` is an optional signed identity-document array of
+`{ key_fingerprint_base32, declared_at, reason? }`; its fingerprint is SHA-512/256 of the
+canonical public-key object, encoded as unpadded uppercase base32, and `declared_at` is RFC 3339
+UTC. A successor naming its predecessor key there may carry only the new-key signature. Signatures
+from that key at or after `declared_at` fail; earlier signatures remain valid and
+`verified_identity` reports compromised history. `signer::rotate` persists the chain under
+`identity/<identity-fingerprint>/documents/NNN.cbor`, replaces the active local private key after
+the successor is signed, and `verify_chain` returns the current key set.
 `passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
 objects. Recipient, KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains
 liquid #4 work.

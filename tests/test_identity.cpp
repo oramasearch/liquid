@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 
 #include "identity/taap.hpp"
 #include "liquid/identity.hpp"
@@ -25,6 +26,50 @@ auto decode_hex(std::string_view input) -> std::vector<std::byte> {
         output.push_back(std::byte{static_cast<unsigned char>(value)});
     }
     return output;
+}
+
+auto rotation_home(std::string_view name) -> std::filesystem::path {
+    return std::filesystem::temp_directory_path() /
+           ("liquid-identity-rotation-" + std::string{name});
+}
+
+auto set_identity_home(const std::filesystem::path& path) -> void {
+    std::error_code code;
+    std::filesystem::remove_all(path, code);
+    setenv("LIQUID_HOME", path.c_str(), 1);
+}
+
+auto read_identity_documents(const std::filesystem::path& home, const liquid::actor& subject)
+    -> std::vector<liquid::identity_document> {
+    const auto directory = home / "identity" / subject.fingerprint / "documents";
+    auto paths = std::vector<std::filesystem::path>{};
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (entry.path().extension() == ".cbor") {
+            paths.push_back(entry.path());
+        }
+    }
+    std::ranges::sort(paths);
+    auto documents = std::vector<liquid::identity_document>{};
+    for (const auto& path : paths) {
+        auto input = std::ifstream{path, std::ios::binary};
+        auto bytes = std::vector<std::byte>{};
+        for (char character; input.get(character);) {
+            bytes.push_back(std::byte{static_cast<unsigned char>(character)});
+        }
+        auto document = liquid::identity_detail::parse_document(bytes);
+        EXPECT_TRUE(document) << document.error().message;
+        if (document) {
+            documents.push_back(std::move(*document));
+        }
+    }
+    return documents;
+}
+
+auto expect_chain_error(const std::vector<liquid::identity_document>& documents,
+                        std::string_view expected) -> void {
+    const auto verified = liquid::verify_chain(documents);
+    ASSERT_FALSE(verified);
+    EXPECT_EQ(verified.error().message, expected);
 }
 
 TEST(Identity, Sha512_256NistVector) {
@@ -79,6 +124,101 @@ TEST(Identity, LocalSignerSignsAndVerifiesWithDomainSeparation) {
     tampered.front() = std::byte{'C'};
     auto changed = liquid::verify(signer->identity(), "drip", tampered, *signed_value);
     EXPECT_FALSE(changed);
+    std::filesystem::remove_all(home, code);
+}
+
+TEST(Identity, RotationStoresAndVerifiesTheKeyChain) {
+    const auto home = rotation_home("valid");
+    set_identity_home(home);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(signer) << signer.error().message;
+    const auto initial = signer->identity();
+    const auto body = bytes("drip signed before rotation");
+    const auto old_signature = liquid::runtime::block_on(signer->sign("drip", body));
+    ASSERT_TRUE(old_signature) << old_signature.error().message;
+    const auto successor = liquid::runtime::block_on(signer->rotate());
+    ASSERT_TRUE(successor) << successor.error().message;
+    EXPECT_EQ(successor->subject.identifier(), initial.identifier());
+    EXPECT_NE(successor->subject.key_fingerprint, initial.key_fingerprint);
+    const auto documents = read_identity_documents(home, initial);
+    ASSERT_EQ(documents.size(), 2U);
+    const auto verified = liquid::verify_chain(documents);
+    ASSERT_TRUE(verified) << verified.error().message;
+    ASSERT_EQ(verified->current_keys.size(), 1U);
+    EXPECT_EQ(verified->current_keys.front().key_fingerprint, successor->subject.key_fingerprint);
+    EXPECT_FALSE(verified->has_compromised_history);
+    const auto old_drip_valid = liquid::verify(successor->subject, "drip", body, *old_signature);
+    ASSERT_TRUE(old_drip_valid) << old_drip_valid.error().message;
+    EXPECT_TRUE(*old_drip_valid);
+    const auto reopened = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    EXPECT_EQ(reopened->identity().key_fingerprint, successor->subject.key_fingerprint);
+    std::error_code code;
+    std::filesystem::remove_all(home, code);
+}
+
+TEST(Identity, RotationChainRejectsNamedIntegrityFailures) {
+    const auto home = rotation_home("failures");
+    set_identity_home(home);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(signer) << signer.error().message;
+    const auto initial = signer->identity();
+    const auto successor = liquid::runtime::block_on(signer->rotate());
+    ASSERT_TRUE(successor) << successor.error().message;
+    const auto documents = read_identity_documents(home, initial);
+    ASSERT_EQ(documents.size(), 2U);
+
+    auto missing_dual_signature = documents;
+    missing_dual_signature.back().signatures.erase(
+        missing_dual_signature.back().signatures.begin());
+    expect_chain_error(missing_dual_signature, "identity_chain_missing_dual_signature");
+
+    auto non_monotonic_update = documents;
+    non_monotonic_update.back().updated_at = non_monotonic_update.front().updated_at;
+    expect_chain_error(non_monotonic_update, "identity_chain_non_monotonic_updated_at");
+
+    auto broken_hash = documents;
+    broken_hash.back().previous_document_hash->front() ^= std::byte{1};
+    expect_chain_error(broken_hash, "identity_chain_broken_predecessor_hash");
+
+    auto changed_identifier = documents;
+    changed_identifier.back().subject.taap_id =
+        "taap:1:ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    expect_chain_error(changed_identifier, "identity_chain_identifier_changed");
+    std::error_code code;
+    std::filesystem::remove_all(home, code);
+}
+
+TEST(Identity, CompromisedKeyRotationUsesNewSignatureAndFlagsHistory) {
+    const auto home = rotation_home("compromised");
+    set_identity_home(home);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(signer) << signer.error().message;
+    const auto initial = signer->identity();
+    const auto body = bytes("drip signed before reported compromise");
+    const auto old_signature = liquid::runtime::block_on(signer->sign("drip", body));
+    ASSERT_TRUE(old_signature) << old_signature.error().message;
+    const auto compromise = liquid::compromise_declaration{
+        initial.key_fingerprint, old_signature->signed_at, "private key exposure"};
+    const auto successor = liquid::runtime::block_on(signer->rotate(compromise));
+    ASSERT_TRUE(successor) << successor.error().message;
+    const auto documents = read_identity_documents(home, initial);
+    ASSERT_EQ(documents.size(), 2U);
+    ASSERT_EQ(documents.back().signatures.size(), 1U);
+    const auto verified = liquid::verify_chain(documents);
+    ASSERT_TRUE(verified) << verified.error().message;
+    EXPECT_TRUE(verified->has_compromised_history);
+
+    auto before_compromise = *old_signature;
+    before_compromise.signed_at = "2000-01-01T00:00:00Z";
+    const auto before_valid = liquid::verify(successor->subject, "drip", body, before_compromise);
+    ASSERT_TRUE(before_valid) << before_valid.error().message;
+    EXPECT_TRUE(*before_valid);
+
+    const auto at_compromise = liquid::verify(initial, "drip", body, *old_signature);
+    ASSERT_FALSE(at_compromise);
+    EXPECT_EQ(at_compromise.error().code, liquid::errc::unauthorized);
+    std::error_code code;
     std::filesystem::remove_all(home, code);
 }
 

@@ -17,7 +17,7 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 chunk store, garbage collection, deterministic crash simulator, first working repository, and TAAP/1 signed drips and changes are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 chunk store, garbage collection, deterministic crash simulator, first working repository, and TAAP/1 identities with rotation plus signed drips and changes are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error and digest APIs
 > are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
@@ -28,7 +28,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree
 > reads and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
-> locks, and status are implemented. TAAP/1 identities and signed drips and changes, the internal
+> locks, and status are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
 > `liquid version` and `liquid hello` remain unchanged; `liquid gc --explain` reports why retained
 > chunks are live, and `find_package(liquid)` works from an install.
