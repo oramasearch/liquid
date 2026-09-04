@@ -106,12 +106,12 @@ and performs the point lookups.
 
 | N | Bulk insert ops/s | Point lookup ops/s | Range scan (64) ops/s | Reopen point lookup ops/s | On-disk bytes | Peak RSS bytes |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1,000,000 | 5,063,082.85 | 4,234,055.77 | 23,154.97 | 2,712,391.59 | 49,512,236 | 294,912,000 |
-| 10,000,000 | 1,228,096.36 | 1,410,667.29 | 16,960.87 | 1,153,008.56 | 494,073,296 | 1,043,857,408 |
+| 1,000,000 | 5,253,317.13 | 2,855,164.29 | 20,774.91 | 3,790,583.02 | 49,512,236 | 316,669,952 |
+| 10,000,000 | 2,099,543.19 | 1,070,078.74 | 14,877.68 | 892,647.60 | 494,073,296 | 1,137,377,280 |
 
 Both runs used the recorded Apple M3 Max machine and reported
 `cache_drop=unavailable_without_root_on_macos`. At 10M, liquid meets the required 1.16M inserts/s
-(1.228M), 438k point lookups/s (1.411M), and 589 MB disk limit (494.1 MB).
+(2.100M), 438k point lookups/s (1.070M), and 589 MB disk limit (494.1 MB).
 
 ## Results at N = 10,000,000
 
@@ -133,10 +133,10 @@ Both runs used the recorded Apple M3 Max machine and reported
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | point lookup | 1,040,100.51 | 0.958 | 1.375 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | range scan (64) | 512,377.11 | 1.916 | 2.958 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | reopen point lookup | 762,016.76 | 1.167 | 2.166 |
-| liquid | mapped run, 10-bit bloom | bulk insert | 1,228,096.36 | 0.482 | 0.923 |
-| liquid | mapped run, 10-bit bloom | point lookup | 1,410,667.29 | 0.666 | 1.500 |
-| liquid | mapped run, 10-bit bloom | range scan (64) | 16,960.87 | 58.250 | 73.667 |
-| liquid | mapped run, 10-bit bloom | reopen point lookup | 1,153,008.56 | 0.625 | 2.958 |
+| liquid | mapped run, 10-bit bloom | bulk insert | 2,099,543.19 | 0.155 | 0.373 |
+| liquid | mapped run, 10-bit bloom | point lookup | 1,070,078.74 | 0.750 | 5.542 |
+| liquid | mapped run, 10-bit bloom | range scan (64) | 14,877.68 | 62.750 | 123.500 |
+| liquid | mapped run, 10-bit bloom | reopen point lookup | 892,647.60 | 0.792 | 4.166 |
 
 | Engine | Configuration | On-disk bytes | Bytes written | Write amplification | Peak RSS bytes |
 |---|---|---:|---:|---:|---:|
@@ -144,7 +144,7 @@ Both runs used the recorded Apple M3 Max machine and reported
 | RocksDB | bloom + 512-MiB cache | 589,291,963 | 510,012,000 | 1.062525 | 1,485,291,520 |
 | LMDB | map 2,697 MiB, sync | 1,173,626,880 | 1,173,626,880 | 2.445056 | 1,703,051,264 |
 | LMDB | map 2,697 MiB, `MDB_NOSYNC` | 1,173,626,880 | 1,173,626,880 | 2.445056 | 1,702,051,840 |
-| liquid | mapped run, 10-bit bloom | 494,073,296 | 760,414,048 | 1.584196 | 1,043,857,408 |
+| liquid | mapped run, 10-bit bloom | 494,073,296 | 760,414,048 | 1.584196 | 1,137,377,280 |
 
 ## Run N = 100,000,000 on Linux
 
