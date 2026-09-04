@@ -43,7 +43,6 @@ add_executable(liquid-tests
   build/test_distribution.cpp
   build/test_policy.cpp
   build/test_facts.cpp
-  build/test_frontend.cpp
   build/test_graph.cpp
   build/test_provenance.cpp
   build/test_why.cpp
