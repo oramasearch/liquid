@@ -12,11 +12,14 @@ runs CTest with failure output, and runs `liquid version` on each desktop platfo
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer | Debug configure, build, CTest |
 
 `CMakeLists.txt` selects Homebrew LLVM on macOS, a versioned `clang++` on Linux, and `clang-cl`
-on Windows before `project()`. If no compiler is found, configuration stops with instructions for
-installing one or choosing an explicit system compiler. The Windows job updates CMake before
-configuration because the image's CMake 3.31 does not recognize `cxx_std_26` for Clang 19.1.5;
-the current package maps that requirement to `clang-cl`'s `/std:c++latest`. It initializes the
-Visual Studio developer environment so `clang-cl` uses the MSVC STL and linker.
+for both C and C++ on Windows before `project()`. GoogleTest enables C when FetchContent adds it;
+using `clang-cl` for that language prevents CMake from selecting GNU-style `clang.exe`, which
+cannot consume the Visual Studio flags passed by its developer environment. If no compiler is
+found, configuration stops with instructions for installing one or choosing an explicit system
+compiler. The Windows job updates CMake before configuration because the image's CMake 3.31 does
+not recognize `cxx_std_26` for Clang 19.1.5; the current package maps that requirement to
+`clang-cl`'s `/std:c++latest`. It initializes the Visual Studio developer environment so
+`clang-cl` uses the MSVC STL and linker.
 
 ## Platform coverage
 
