@@ -21,7 +21,14 @@ document. Importers use the `git.commit.<sha1>` and `git.change.<change-id>` key
 bidirectional identity mapping. Prefix enumeration is sorted and resumes an interrupted import
 without scanning history.
 
+## History traversal
+
+`log()` traverses all locally stored reachable parents, returning each change once in
+child-before-parent topological order. Equal timestamps are ordered by change identifier. A
+`log_options::from` value selects another starting change; `first_parent` provides Git's familiar
+linear traversal for callers that need it.
+
 ## Status
 
-`record(change_input)` and repository metadata are implemented. The remaining importer primitives
-are documented here as they land.
+`record(change_input)`, repository metadata, and full-DAG history traversal are implemented. The
+remaining importer primitives are documented here as they land.

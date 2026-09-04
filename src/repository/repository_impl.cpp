@@ -1898,6 +1898,10 @@ runtime::task<change_id> repository::record(change_input input) {
     auto root = co_await impl_->snapshot(impl_->current.root);
     if (!root)
         co_return std::unexpected(root.error());
+    for (auto& parent : input.parents)
+        if (std::ranges::all_of(parent.repo_id,
+                                [](std::byte value) { return value == std::byte{}; }))
+            parent.repo_id = impl_->current.repository;
     change value{};
     value.parents = std::move(input.parents);
     value.author = std::move(input.author);
@@ -1996,21 +2000,89 @@ result<repository_status> repository::status() {
     visit(visit, impl_->current.root, "");
     return output;
 }
-runtime::task<std::vector<change>> repository::log(log_options) {
+runtime::task<std::vector<change>> repository::log(log_options options) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    std::vector<change> output;
-    auto next = impl_->current.head;
-    while (next) {
-        auto bytes = co_await impl_->objects.get(next->value);
+    auto next = options.from ? options.from : impl_->current.head;
+    if (options.first_parent) {
+        std::vector<change> output;
+        while (next) {
+            auto bytes = co_await impl_->objects.get(next->value);
+            if (!bytes)
+                co_return std::unexpected(bytes.error());
+            auto value = objects::decode_change(*bytes, impl_->hash_algorithm);
+            if (!value)
+                co_return std::unexpected(value.error());
+            output.push_back(*value);
+            if (value->parents.empty() ||
+                value->parents.front().repo_id != impl_->current.repository) {
+                next.reset();
+            } else {
+                next = value->parents.front().id;
+            }
+        }
+        co_return output;
+    }
+
+    std::vector<change> changes;
+    std::map<std::string, std::size_t> indexes;
+    std::vector<change_id> pending;
+    if (next)
+        pending.push_back(*next);
+    while (!pending.empty()) {
+        const auto id = pending.back();
+        pending.pop_back();
+        const auto key = to_string(id.value);
+        if (indexes.contains(key))
+            continue;
+        auto bytes = co_await impl_->objects.get(id.value);
         if (!bytes)
             co_return std::unexpected(bytes.error());
         auto value = objects::decode_change(*bytes, impl_->hash_algorithm);
         if (!value)
             co_return std::unexpected(value.error());
-        output.push_back(*value);
-        next = value->parents.empty() ? std::optional<change_id>{}
-                                      : std::optional<change_id>{value->parents.front().id};
+        indexes.emplace(key, changes.size());
+        changes.push_back(*value);
+        for (const auto& parent : value->parents)
+            if (parent.repo_id == impl_->current.repository)
+                pending.push_back(parent.id);
+    }
+
+    std::vector<std::uint64_t> children(changes.size());
+    for (const auto& value : changes)
+        for (const auto& parent : value.parents)
+            if (parent.repo_id == impl_->current.repository) {
+                const auto found = indexes.find(to_string(parent.id.value));
+                if (found != indexes.end())
+                    ++children[found->second];
+            }
+    auto earlier = [&](std::size_t left, std::size_t right) {
+        if (changes[left].at != changes[right].at)
+            return changes[left].at > changes[right].at;
+        return to_string(changes[left].id.value) < to_string(changes[right].id.value);
+    };
+    std::vector<std::size_t> ready;
+    for (std::size_t index = 0; index < children.size(); ++index)
+        if (children[index] == 0)
+            ready.push_back(index);
+    std::ranges::sort(ready, earlier);
+    std::vector<change> output;
+    while (!ready.empty()) {
+        const auto index = ready.front();
+        ready.erase(ready.begin());
+        output.push_back(changes[index]);
+        for (const auto& parent : changes[index].parents) {
+            if (parent.repo_id != impl_->current.repository)
+                continue;
+            const auto found = indexes.find(to_string(parent.id.value));
+            if (found == indexes.end())
+                continue;
+            auto& count = children[found->second];
+            if (--count == 0) {
+                ready.push_back(found->second);
+                std::ranges::sort(ready, earlier);
+            }
+        }
     }
     co_return output;
 }

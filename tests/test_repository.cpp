@@ -281,6 +281,64 @@ TEST(Repository, metadata_persists_and_lists_a_prefix) {
     EXPECT_FALSE(*absent);
 }
 
+TEST(Repository, log_walks_the_full_graph_or_the_first_parent) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    const auto author = liquid::actor{"git:author@example.test"};
+
+    liquid::change_input base_input{
+        {}, author, std::chrono::sys_seconds{std::chrono::seconds{1}}, "base", {}, "main"};
+    const auto base = liquid::runtime::block_on(repository.record(std::move(base_input)));
+    ASSERT_TRUE(base) << base.error().message;
+    liquid::change_input left_input{{{{}, *base}},
+                                    author,
+                                    std::chrono::sys_seconds{std::chrono::seconds{2}},
+                                    "left",
+                                    {},
+                                    "left"};
+    const auto left = liquid::runtime::block_on(repository.record(std::move(left_input)));
+    ASSERT_TRUE(left) << left.error().message;
+    liquid::change_input right_input{{{{}, *base}},
+                                     author,
+                                     std::chrono::sys_seconds{std::chrono::seconds{3}},
+                                     "right",
+                                     {},
+                                     "right"};
+    const auto right = liquid::runtime::block_on(repository.record(std::move(right_input)));
+    ASSERT_TRUE(right) << right.error().message;
+    liquid::change_input merge_input{{{{}, *left}, {{}, *right}},
+                                     author,
+                                     std::chrono::sys_seconds{std::chrono::seconds{4}},
+                                     "merge",
+                                     {},
+                                     "main"};
+    const auto merge = liquid::runtime::block_on(repository.record(std::move(merge_input)));
+    ASSERT_TRUE(merge) << merge.error().message;
+
+    const auto graph = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(graph) << graph.error().message;
+    ASSERT_EQ(graph->size(), 4U);
+    EXPECT_EQ(graph->at(0).message, "merge");
+    EXPECT_EQ(graph->at(1).message, "right");
+    EXPECT_EQ(graph->at(2).message, "left");
+    EXPECT_EQ(graph->at(3).message, "base");
+
+    const auto first_parent = liquid::runtime::block_on(repository.log({.first_parent = true}));
+    ASSERT_TRUE(first_parent) << first_parent.error().message;
+    ASSERT_EQ(first_parent->size(), 3U);
+    EXPECT_EQ(first_parent->at(0).message, "merge");
+    EXPECT_EQ(first_parent->at(1).message, "left");
+    EXPECT_EQ(first_parent->at(2).message, "base");
+
+    const auto from_right = liquid::runtime::block_on(repository.log({.from = *right}));
+    ASSERT_TRUE(from_right) << from_right.error().message;
+    ASSERT_EQ(from_right->size(), 2U);
+    EXPECT_EQ(from_right->at(0).message, "right");
+    EXPECT_EQ(from_right->at(1).message, "base");
+}
+
 TEST(Repository, write_undo_and_locks_are_recorded) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
