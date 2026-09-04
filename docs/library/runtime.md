@@ -24,8 +24,9 @@ workers. At process exit it stops the context, joins those threads, then destroy
 | `offload` | blocking CPU work | the compute thread pool; resumes on the caller executor |
 
 `spawn` reports its `result<void>` to a completion callback. `offload` moves the blocking
-callable into a coroutine frame, launches it on the compute pool, and signals a Capy async event.
-The awaiting continuation is posted back to the executor from which it called `offload`.
+callable into a coroutine frame and launches it on the compute pool. Completion posts a
+runtime-side wake to the caller executor; only that executor sets the Capy async event that
+resumes the caller.
 
 Use `runtime::as_io` when a liquid task must participate in Capy's `when_all` or `timeout`.
 The adapter preserves the liquid `result<T>` as the I/O payload; Capy's outer error code remains

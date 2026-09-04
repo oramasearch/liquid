@@ -53,8 +53,14 @@ template <class T> struct offload_state {
     boost::capy::async_event done;
 };
 
-template <class Callable, class T>
-boost::capy::task<> run_blocking(Callable callable, std::shared_ptr<offload_state<T>> state) {
+template <class T> task<void> wake_offload(std::shared_ptr<offload_state<T>> state) {
+    state->done.set();
+    co_return {};
+}
+
+template <class Callable, class T, class Executor>
+boost::capy::task<>
+run_blocking(Callable callable, std::shared_ptr<offload_state<T>> state, Executor executor) {
     try {
         if constexpr (std::is_void_v<T>) {
             std::invoke(callable);
@@ -66,7 +72,7 @@ boost::capy::task<> run_blocking(Callable callable, std::shared_ptr<offload_stat
         state->output.emplace(
             std::unexpected(exception_error(std::current_exception(), "runtime::offload")));
     }
-    state->done.set();
+    boost::capy::run_async(executor)(wake_offload(std::move(state)));
     co_return;
 }
 
@@ -120,8 +126,9 @@ template <class Callable> task<std::invoke_result_t<Callable>> offload(Callable 
     using output_type = std::invoke_result_t<Callable>;
     try {
         auto state = std::make_shared<detail::offload_state<output_type>>();
+        const auto executor = co_await boost::capy::this_coro::executor;
         detail::run_on_pool(
-            detail::run_blocking<Callable, output_type>(std::move(callable), state));
+            detail::run_blocking<Callable, output_type>(std::move(callable), state, executor));
         auto [event_error] = co_await state->done.wait();
         if (event_error) {
             co_return std::unexpected(
