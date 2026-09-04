@@ -10,6 +10,8 @@ includes anything outside the public `liquid/` header tree. The `cli-why-json` a
 `cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
 cache.
 The scenario also pins `remote_bytes` in the status JSON contract.
+It maps an anchor from the imported change through a later rename and checks the returned path and
+flags.
 
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.

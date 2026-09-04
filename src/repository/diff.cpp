@@ -1,12 +1,14 @@
 #include "liquid/repository.hpp"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <limits>
 #include <map>
 #include <set>
 #include <span>
 #include <string_view>
+#include <unordered_map>
 
 namespace liquid {
 namespace {
@@ -420,6 +422,110 @@ auto compare(repository& source,
     co_return output;
 }
 
+auto anchor_error(errc code, std::string message, std::string context = {}) -> error {
+    return {code, std::move(message), std::move(context)};
+}
+
+auto hunk_end(const line_change& hunk) -> result<std::uint64_t> {
+    if (hunk.old_count > std::numeric_limits<std::uint64_t>::max() - hunk.old_line) {
+        return std::unexpected(anchor_error(errc::corrupt, "line hunk range overflows"));
+    }
+    return hunk.old_line + hunk.old_count;
+}
+
+auto add_count(std::uint64_t& total, std::uint64_t count) -> result<void> {
+    if (count > std::numeric_limits<std::uint64_t>::max() - total) {
+        return std::unexpected(anchor_error(errc::corrupt, "line hunk count overflows"));
+    }
+    total += count;
+    return {};
+}
+
+auto shifted_line(std::uint64_t line, std::uint64_t added, std::uint64_t removed)
+    -> result<std::uint64_t> {
+    if (added >= removed) {
+        const auto shift = added - removed;
+        if (shift > std::numeric_limits<std::uint64_t>::max() - line) {
+            return std::unexpected(anchor_error(errc::corrupt, "mapped line overflows"));
+        }
+        return line + shift;
+    }
+    const auto shift = removed - added;
+    if (shift >= line) {
+        return std::unexpected(anchor_error(errc::corrupt, "mapped line underflows"));
+    }
+    return line - shift;
+}
+
+auto map_hunks(std::span<const text_anchor> anchors,
+               std::span<const std::size_t> indices,
+               const tree_diff_entry& entry,
+               std::vector<mapped_anchor>& output) -> result<void> {
+    if (!entry.line_hunks) {
+        return std::unexpected(anchor_error(
+            errc::unsupported, "text anchor cannot map through non-text content", entry.path));
+    }
+    auto sorted = std::vector<std::size_t>{indices.begin(), indices.end()};
+    std::ranges::sort(sorted, {}, [&](std::size_t index) { return anchors[index].line; });
+    auto hunk_index = std::size_t{};
+    auto added = std::uint64_t{};
+    auto removed = std::uint64_t{};
+    for (const auto index : sorted) {
+        const auto line = anchors[index].line;
+        while (hunk_index < entry.line_hunks->size()) {
+            const auto& hunk = entry.line_hunks->at(hunk_index);
+            auto end = hunk_end(hunk);
+            if (!end) {
+                return std::unexpected(end.error());
+            }
+            const auto before_anchor = hunk.old_count == 0 ? hunk.old_line <= line : *end <= line;
+            if (!before_anchor) {
+                break;
+            }
+            auto added_result = add_count(added, hunk.new_count);
+            if (!added_result) {
+                return std::unexpected(added_result.error());
+            }
+            auto removed_result = add_count(removed, hunk.old_count);
+            if (!removed_result) {
+                return std::unexpected(removed_result.error());
+            }
+            ++hunk_index;
+        }
+        if (hunk_index < entry.line_hunks->size()) {
+            const auto& hunk = entry.line_hunks->at(hunk_index);
+            auto end = hunk_end(hunk);
+            if (!end) {
+                return std::unexpected(end.error());
+            }
+            if (hunk.old_count != 0 && line >= hunk.old_line && line < *end) {
+                if (hunk.new_count == 0) {
+                    output[index].line = hunk.new_line;
+                    output[index].column = 1;
+                    output[index].moved = output[index].moved || output[index].line != line;
+                    output[index].deleted = true;
+                    continue;
+                }
+                const auto relative = std::min(line - hunk.old_line, hunk.new_count - 1);
+                if (relative > std::numeric_limits<std::uint64_t>::max() - hunk.new_line) {
+                    return std::unexpected(anchor_error(errc::corrupt, "mapped line overflows"));
+                }
+                output[index].line = hunk.new_line + relative;
+                output[index].moved = output[index].moved || output[index].line != line;
+                output[index].approximate = true;
+                continue;
+            }
+        }
+        auto mapped = shifted_line(line, added, removed);
+        if (!mapped) {
+            return std::unexpected(mapped.error());
+        }
+        output[index].line = *mapped;
+        output[index].moved = output[index].moved || output[index].line != line;
+    }
+    return {};
+}
+
 } // namespace
 
 runtime::task<std::vector<tree_diff_entry>>
@@ -468,6 +574,79 @@ repository::diff(digest old_tree, digest new_tree, tree_diff_options options) {
 runtime::task<std::vector<tree_diff_entry>>
 repository::diff(liquid::tree old_tree, liquid::tree new_tree, tree_diff_options options) {
     co_return co_await compare(*this, std::move(old_tree), std::move(new_tree), options);
+}
+
+runtime::task<mapped_anchor> repository::map_anchor(text_anchor anchor, change_id target) {
+    const auto anchors = std::array<text_anchor, 1>{std::move(anchor)};
+    auto mapped = co_await map_anchors(anchors, target);
+    if (!mapped) {
+        co_return std::unexpected(mapped.error());
+    }
+    co_return std::move(mapped->front());
+}
+
+runtime::task<std::vector<mapped_anchor>>
+repository::map_anchors(std::span<const text_anchor> anchors, change_id target) {
+    if (anchors.empty()) {
+        co_return std::vector<mapped_anchor>{};
+    }
+    const auto source = anchors.front().change;
+    auto output = std::vector<mapped_anchor>{};
+    output.reserve(anchors.size());
+    for (const auto& anchor : anchors) {
+        if (!same_digest(anchor.change.value, source.value)) {
+            co_return std::unexpected(anchor_error(
+                errc::invalid_argument, "batched text anchors must share one source change"));
+        }
+        if (anchor.line == 0 || anchor.column == 0) {
+            co_return std::unexpected(anchor_error(
+                errc::invalid_argument, "text anchor line and column are one-based", anchor.path));
+        }
+        output.push_back(
+            {.change = target, .path = anchor.path, .line = anchor.line, .column = anchor.column});
+    }
+    if (same_digest(source.value, target.value)) {
+        co_return output;
+    }
+    auto changes = co_await diff(source, target, {.text = true});
+    if (!changes) {
+        co_return std::unexpected(changes.error());
+    }
+    auto anchors_by_path = std::unordered_map<std::string_view, std::vector<std::size_t>>{};
+    anchors_by_path.reserve(anchors.size());
+    for (auto index = std::size_t{}; index != anchors.size(); ++index) {
+        anchors_by_path[anchors[index].path].push_back(index);
+    }
+    for (const auto& entry : *changes) {
+        if (has_change(entry, tree_diff_kind::added) && !entry.old_path && !entry.old_blob) {
+            continue;
+        }
+        const auto& source_path = entry.old_path.value_or(entry.path);
+        const auto found = anchors_by_path.find(source_path);
+        if (found == anchors_by_path.end()) {
+            continue;
+        }
+        const auto& indices = found->second;
+        const auto path_moved = entry.old_path && *entry.old_path != entry.path;
+        for (const auto index : indices) {
+            if (path_moved) {
+                output[index].path = entry.path;
+                output[index].moved = true;
+            }
+            if (has_change(entry, tree_diff_kind::removed) || (entry.old_blob && !entry.new_blob)) {
+                output[index].deleted = true;
+            }
+        }
+        if (has_change(entry, tree_diff_kind::removed) || (entry.old_blob && !entry.new_blob) ||
+            !has_change(entry, tree_diff_kind::modified)) {
+            continue;
+        }
+        auto mapped = map_hunks(anchors, indices, entry, output);
+        if (!mapped) {
+            co_return std::unexpected(mapped.error());
+        }
+    }
+    co_return output;
 }
 
 } // namespace liquid

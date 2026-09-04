@@ -19,6 +19,7 @@ auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
 auto tree_move(int argc, char** argv) -> int;
 auto tree_remove(int argc, char** argv) -> int;
+auto anchor(int argc, char** argv) -> int;
 auto compose_nest(int argc, char** argv) -> int;
 auto compose_split(int argc, char** argv) -> int;
 auto compose_combine(int argc, char** argv) -> int;
@@ -101,6 +102,11 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::serve},
     {"move", "move <from> <to>", "record a path move", "available", liquid_cli::tree_move},
     {"rm", "rm <path>", "record a path removal", "available", liquid_cli::tree_remove},
+    {"anchor",
+     "anchor <path>:<line>@<change> --to <change>",
+     "map a text position between changes",
+     "available",
+     liquid_cli::anchor},
     {"nest",
      "nest <repository> <path>",
      "nest another repository",

@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, public tree/change diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -569,6 +569,9 @@ struct tree_diff_entry {
   std::optional<digest> old_blob, new_blob; std::optional<std::vector<line_change>> line_hunks;
   std::vector<digest> old_conflicts, new_conflicts;
 };
+struct text_anchor { change_id change; std::string path; std::uint64_t line, column; };
+struct mapped_anchor { change_id change; std::string path; std::uint64_t line, column;
+                       bool moved, approximate, deleted; };
 struct record_cursor { std::string token; };
 struct record_page_options { std::optional<record_cursor> cursor; std::uint64_t limit{100}; };
 template<class T> struct record_page { std::vector<T> records; std::optional<record_cursor> next;
@@ -611,6 +614,9 @@ class repository {
                                                     tree_diff_options = {});
   runtime::task<std::vector<tree_diff_entry>> diff(tree old, tree next,
                                                     tree_diff_options = {});
+  runtime::task<mapped_anchor> map_anchor(text_anchor, change_id target);
+  runtime::task<std::vector<mapped_anchor>> map_anchors(std::span<const text_anchor>,
+                                                        change_id target);
   runtime::task<record_page<repository_result>> results(result_filter = {});
   runtime::task<record_page<repository_attestation>> attestations(attestation_filter = {});
   runtime::task<record_page<repository_attestation>> attestations(digest subject,
@@ -711,6 +717,13 @@ and read UTF-8 blob contents only when `tree_diff_options::text` requests `line_
 Change-level diffs add the exact conflict values from both records. The tree value and tree-digest
 forms omit conflicts because no change record is available. Phase 4 may append a structural diff
 field without replacing the existing byte/line fields.
+
+Text anchors use one-based lines and columns. Mapping follows `node_id` moves and applies one
+change-pair diff's line hunks: unchanged lines retain their columns, earlier insertions and removals
+shift later lines, replacement lines are approximate, and removed regions are deleted. `moved`
+means the returned path or line changed. A batch must share one source change, preserves caller
+order, scans diff entries once, and walks each anchored path's hunks once after sorting that path's
+anchors. Modified non-text blobs return `errc::unsupported`.
 
 Record pages use opaque stored-record digest cursors. Limits are 1 through 1,000. Result filters
 cover result id, action id, output path, and output content; result values retain sequence,

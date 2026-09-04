@@ -12,6 +12,10 @@ parses `--target`, prints the probe-start count, and exposes foreign-target erro
 `facts.cpp` implements list, show, and bundle export entirely through public build APIs. The commands
 never read the private action cache directly.
 
+`anchor.cpp` parses `<path>:<line>@<change> --to <change>`, calls the public text-anchor mapper,
+and prints the target coordinate plus moved, approximate, and deleted state. It does not inspect
+repository storage or file contents.
+
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
 `verify.cpp` parses action, all, and changed selectors, calls the public verification API, prints

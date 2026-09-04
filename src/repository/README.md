@@ -11,6 +11,10 @@ entries by `node_id`, and reports moves independently from mode and content chan
 comparison also attaches the conflict values stored on each change. Text hunk generation reads
 blob contents only when the caller opts in.
 
+Text-anchor mapping reuses one change-level text diff, indexes anchors by their source paths, and
+walks each matched path's line hunks in order. It follows renames through `node_id`, shifts lines
+for earlier count changes, marks replacements approximate, and marks removed regions deleted.
+
 At every cut and configured drip interval, cached directory documents are compact-saved, stored,
 and immediately reopened shallowly. The repository marker is published before the covered journal
 state is retired; open restores later journaled working-tree updates on the shallow documents.
