@@ -111,6 +111,8 @@ class store {                          // the chunk store: chunks, packs, the in
 Chunking (FastCDC), packs, compression, the index engine and its tuning are internal; none of
 them appears in a signature. `store_options` names the algorithm and the pack size only.
 
+The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
+
 ### `liquid/object.hpp`
 
 ```cpp
