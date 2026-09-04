@@ -219,6 +219,174 @@ TEST(Repository, ReadabilityReportsExactBlobKeyVersionsAcrossRotation) {
     EXPECT_EQ(text(*new_value), "new");
 }
 
+TEST(Repository, record_preserves_imported_change_fields) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("contents"))));
+
+    liquid::change_input input{};
+    input.author = liquid::actor{"git:author@example.test"};
+    input.at = std::chrono::sys_seconds{std::chrono::seconds{123456789}};
+    input.message = "imported Git change";
+    input.metadata.emplace("git_commit", "0123456789012345678901234567890123456789");
+    input.ref = "imported";
+    const auto id = liquid::runtime::block_on(repository.record(std::move(input)));
+    ASSERT_TRUE(id) << id.error().message;
+
+    const auto history = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(history) << history.error().message;
+    ASSERT_EQ(history->size(), 1U);
+    EXPECT_EQ(history->front().id.value.alg, id->value.alg);
+    EXPECT_EQ(history->front().id.value.bytes, id->value.bytes);
+    EXPECT_TRUE(history->front().parents.empty());
+    EXPECT_EQ(history->front().author.taap_id, "git:author@example.test");
+    EXPECT_EQ(history->front().at, std::chrono::sys_seconds{std::chrono::seconds{123456789}});
+    EXPECT_EQ(history->front().message, "imported Git change");
+    EXPECT_EQ(history->front().metadata.at("git_commit"),
+              "0123456789012345678901234567890123456789");
+    const auto refs = liquid::runtime::block_on(repository.refs());
+    ASSERT_TRUE(refs) << refs.error().message;
+    ASSERT_EQ(refs->size(), 1U);
+    EXPECT_EQ(refs->front().name, "imported");
+    EXPECT_EQ(refs->front().id.value.alg, id->value.alg);
+    EXPECT_EQ(refs->front().id.value.bytes, id->value.bytes);
+}
+
+TEST(Repository, metadata_persists_and_lists_a_prefix) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.set_metadata("git.commit.0123", content("blake3:change"))));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.set_metadata("git.change.blake3", content("0123"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.set_metadata("other", content("ignored"))));
+
+    const auto keys = liquid::runtime::block_on(repository.metadata_keys("git."));
+    ASSERT_TRUE(keys) << keys.error().message;
+    EXPECT_EQ(*keys, (std::vector<std::string>{"git.change.blake3", "git.commit.0123"}));
+    repository = {};
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    const auto stored = liquid::runtime::block_on(reopened->metadata("git.commit.0123"));
+    ASSERT_TRUE(stored) << stored.error().message;
+    ASSERT_TRUE(*stored);
+    EXPECT_EQ(text(**stored), "blake3:change");
+    const auto absent = liquid::runtime::block_on(reopened->metadata("git.commit.missing"));
+    ASSERT_TRUE(absent) << absent.error().message;
+    EXPECT_FALSE(*absent);
+}
+
+TEST(Repository, log_walks_the_full_graph_or_the_first_parent) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    const auto author = liquid::actor{"git:author@example.test"};
+
+    liquid::change_input base_input{
+        {}, author, std::chrono::sys_seconds{std::chrono::seconds{1}}, "base", {}, "main"};
+    const auto base = liquid::runtime::block_on(repository.record(std::move(base_input)));
+    ASSERT_TRUE(base) << base.error().message;
+    liquid::change_input left_input{{{{}, *base}},
+                                    author,
+                                    std::chrono::sys_seconds{std::chrono::seconds{2}},
+                                    "left",
+                                    {},
+                                    "left"};
+    const auto left = liquid::runtime::block_on(repository.record(std::move(left_input)));
+    ASSERT_TRUE(left) << left.error().message;
+    liquid::change_input right_input{{{{}, *base}},
+                                     author,
+                                     std::chrono::sys_seconds{std::chrono::seconds{3}},
+                                     "right",
+                                     {},
+                                     "right"};
+    const auto right = liquid::runtime::block_on(repository.record(std::move(right_input)));
+    ASSERT_TRUE(right) << right.error().message;
+    liquid::change_input merge_input{{{{}, *left}, {{}, *right}},
+                                     author,
+                                     std::chrono::sys_seconds{std::chrono::seconds{4}},
+                                     "merge",
+                                     {},
+                                     "main"};
+    const auto merge = liquid::runtime::block_on(repository.record(std::move(merge_input)));
+    ASSERT_TRUE(merge) << merge.error().message;
+
+    const auto graph = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(graph) << graph.error().message;
+    ASSERT_EQ(graph->size(), 4U);
+    EXPECT_EQ(graph->at(0).message, "merge");
+    EXPECT_EQ(graph->at(1).message, "right");
+    EXPECT_EQ(graph->at(2).message, "left");
+    EXPECT_EQ(graph->at(3).message, "base");
+
+    const auto first_parent = liquid::runtime::block_on(repository.log({.first_parent = true}));
+    ASSERT_TRUE(first_parent) << first_parent.error().message;
+    ASSERT_EQ(first_parent->size(), 3U);
+    EXPECT_EQ(first_parent->at(0).message, "merge");
+    EXPECT_EQ(first_parent->at(1).message, "left");
+    EXPECT_EQ(first_parent->at(2).message, "base");
+
+    const auto from_right = liquid::runtime::block_on(repository.log({.from = *right}));
+    ASSERT_TRUE(from_right) << from_right.error().message;
+    ASSERT_EQ(from_right->size(), 2U);
+    EXPECT_EQ(from_right->at(0).message, "right");
+    EXPECT_EQ(from_right->at(1).message, "base");
+}
+
+TEST(Repository, tree_and_blob_read_historical_records) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("directory/file", content("contents"))));
+    const auto change = liquid::runtime::block_on(repository.cut("record tree"));
+    ASSERT_TRUE(change) << change.error().message;
+    const auto snapshot = liquid::runtime::block_on(repository.at(*change));
+    ASSERT_TRUE(snapshot) << snapshot.error().message;
+    ASSERT_EQ(snapshot->root.entries.size(), 1U);
+
+    const auto directory =
+        liquid::runtime::block_on(repository.tree(snapshot->root.entries.front().ref));
+    ASSERT_TRUE(directory) << directory.error().message;
+    ASSERT_EQ(directory->entries.size(), 1U);
+    const auto contents =
+        liquid::runtime::block_on(repository.blob(directory->entries.front().ref));
+    ASSERT_TRUE(contents) << contents.error().message;
+    EXPECT_EQ(text(*contents), "contents");
+}
+
+TEST(Repository, write_modes_and_nested_references_are_preserved) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("script", content("#!/bin/sh\n"), {.mode = 0100755})));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("link", content("target"), {.mode = 0120000})));
+    liquid::repo_ref nested{};
+    nested.repo_id.front() = std::byte{1};
+    nested.id.value.alg = liquid::algorithm::blake3;
+    nested.id.value.bytes.front() = std::byte{2};
+    ASSERT_TRUE(liquid::runtime::block_on(repository.nest_ref("module", nested)));
+
+    const auto root = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(root) << root.error().message;
+    ASSERT_EQ(root->entries.size(), 3U);
+    EXPECT_EQ(root->entries.at(0).mode, 0120000U);
+    EXPECT_EQ(root->entries.at(1).kind, liquid::node_kind::repo);
+    EXPECT_EQ(root->entries.at(1).mode, 0160000U);
+    ASSERT_TRUE(root->entries.at(1).nested);
+    EXPECT_EQ(root->entries.at(1).nested->repo_id, nested.repo_id);
+    EXPECT_EQ(root->entries.at(2).mode, 0100755U);
+}
+
 TEST(Repository, write_undo_and_locks_are_recorded) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));

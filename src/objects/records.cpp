@@ -416,6 +416,38 @@ auto milliseconds_value(const cbor::value& value) -> result<std::chrono::millise
     return std::chrono::milliseconds{static_cast<std::int64_t>(*count)};
 }
 
+auto encode_change_ref(const change_ref& value) -> cbor::value {
+    return map({{"repo", encode_node_id(value.repo_id)}, {"id", encode_change_id(value.id)}});
+}
+
+auto decode_change_ref(const cbor::value& value) -> result<change_ref> {
+    const auto* repository = find(value, "repo");
+    const auto* id = find(value, "id");
+    if (!repository || !id)
+        return std::unexpected(corrupt("change reference is missing fields"));
+    auto decoded_repository = decode_node_id(*repository);
+    auto decoded_id = decode_change_id(*id);
+    if (!decoded_repository || !decoded_id)
+        return std::unexpected(corrupt("invalid change reference"));
+    return change_ref{*decoded_repository, *decoded_id};
+}
+
+auto encode_repo_ref(const repo_ref& value) -> cbor::value {
+    return map({{"repo", encode_node_id(value.repo_id)}, {"id", encode_change_id(value.id)}});
+}
+
+auto decode_repo_ref(const cbor::value& value) -> result<repo_ref> {
+    const auto* repository = find(value, "repo");
+    const auto* id = find(value, "id");
+    if (!repository || !id)
+        return std::unexpected(corrupt("repository reference is missing fields"));
+    auto decoded_repository = decode_node_id(*repository);
+    auto decoded_id = decode_change_id(*id);
+    if (!decoded_repository || !decoded_id)
+        return std::unexpected(corrupt("invalid repository reference"));
+    return repo_ref{*decoded_repository, *decoded_id};
+}
+
 } // namespace
 
 auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes) -> result<digest> {
@@ -450,12 +482,16 @@ auto encode(const tree& value) -> result<std::vector<std::byte>> {
         return std::unexpected(error{errc::invalid_argument, "duplicate tree entry", "tree"});
     auto output = cbor::value::array{};
     for (const auto& entry : entries) {
-        output.push_back(map({{"name", cbor::value{entry.name}},
-                              {"mode", cbor::value{std::uint64_t{entry.mode}}},
-                              {"kind", cbor::value{static_cast<std::uint64_t>(entry.kind)}},
-                              {"id", encode_digest(entry.id)},
-                              {"node", encode_node_id(entry.node)},
-                              {"ref", encode_digest(entry.ref)}}));
+        auto fields =
+            cbor::value::map{{"name", cbor::value{entry.name}},
+                             {"mode", cbor::value{std::uint64_t{entry.mode}}},
+                             {"kind", cbor::value{static_cast<std::uint64_t>(entry.kind)}},
+                             {"id", encode_digest(entry.id)},
+                             {"node", encode_node_id(entry.node)},
+                             {"ref", encode_digest(entry.ref)}};
+        if (entry.nested)
+            fields.emplace_back("nested", encode_repo_ref(*entry.nested));
+        output.push_back(cbor::value{std::move(fields)});
     }
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "tree"},
@@ -466,7 +502,10 @@ auto encode_change_body_value(const change& value, bool include_signature)
     -> result<std::vector<std::byte>> {
     auto parents = cbor::value::array{};
     for (const auto& parent : value.parents)
-        parents.push_back(encode_change_id(parent));
+        parents.push_back(encode_change_ref(parent));
+    auto metadata = cbor::value::map{};
+    for (const auto& [key, value] : value.metadata)
+        metadata.emplace_back(cbor::value{key}, cbor::value{value});
     auto conflicts = cbor::value::array{};
     for (const auto& item : value.conflicts) {
         auto refs = cbor::value::array{};
@@ -482,6 +521,7 @@ auto encode_change_body_value(const change& value, bool include_signature)
         {"at", cbor::value{value.at.time_since_epoch().count()}},
         {"message", cbor::value{value.message}},
         {"root", encode_digest(value.root)},
+        {"metadata", cbor::value{std::move(metadata)}},
         {"conflicts", std::move(conflicts)},
         {"symbols", value.symbols ? encode_digest(*value.symbols) : cbor::value{cbor::null{}}}};
     if (include_signature) {
@@ -768,12 +808,20 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
                              : result<digest>{std::unexpected(corrupt("tree ref missing"))};
         if (!object || !identity || !reference)
             return std::unexpected(corrupt("invalid tree entry references"));
+        auto nested = std::optional<repo_ref>{};
+        if (const auto* value = find(item, "nested")) {
+            auto decoded = decode_repo_ref(*value);
+            if (!decoded)
+                return std::unexpected(decoded.error());
+            nested = *decoded;
+        }
         output.entries.push_back({*text,
                                   static_cast<std::uint32_t>(*bits),
                                   static_cast<node_kind>(*type),
                                   *object,
                                   *identity,
-                                  *reference});
+                                  *reference,
+                                  nested});
     }
     if (!std::ranges::is_sorted(output.entries, {}, &tree_entry::name))
         return std::unexpected(corrupt("tree entries are not sorted"));
@@ -790,6 +838,7 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
     const auto* at = find(*source, "at");
     const auto* message = find(*source, "message");
     const auto* root = find(*source, "root");
+    const auto* metadata = find(*source, "metadata");
     const auto* parent_values = parents ? std::get_if<cbor::value::array>(&parents->data) : nullptr;
     const auto* who = author ? std::get_if<std::string>(&author->data) : nullptr;
     const auto* signed_when = at ? std::get_if<std::int64_t>(&at->data) : nullptr;
@@ -812,13 +861,25 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
                   *root_digest,
                   {},
                   {},
+                  {},
                   std::nullopt,
                   {}};
     for (const auto& item : *parent_values) {
-        auto parent = decode_change_id(item);
+        auto parent = decode_change_ref(item);
         if (!parent)
             return std::unexpected(parent.error());
         output.parents.push_back(*parent);
+    }
+    if (metadata) {
+        const auto* fields = std::get_if<cbor::value::map>(&metadata->data);
+        if (!fields)
+            return std::unexpected(corrupt("invalid change metadata"));
+        for (const auto& [key, value] : *fields) {
+            const auto* name = std::get_if<std::string>(&key.data);
+            const auto* text = std::get_if<std::string>(&value.data);
+            if (!name || !text || !output.metadata.emplace(*name, *text).second)
+                return std::unexpected(corrupt("invalid change metadata entry"));
+        }
     }
     const auto* conflicts = find(*source, "conflicts");
     const auto* symbols = find(*source, "symbols");

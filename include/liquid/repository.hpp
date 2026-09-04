@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,6 +23,7 @@ namespace repository_detail {
 struct build_access;
 struct testing;
 struct vfs_access;
+struct git_access;
 } // namespace repository_detail
 
 enum class encryption_mode : std::uint8_t { leaf, file };
@@ -55,7 +57,23 @@ struct LIQUID_EXPORT repository_options {
     verify_config verify{};
 };
 
-struct LIQUID_EXPORT log_options {};
+struct LIQUID_EXPORT log_options {
+    std::optional<change_id> from;
+    bool first_parent{};
+};
+
+struct LIQUID_EXPORT change_input {
+    std::vector<change_ref> parents;
+    actor author;
+    std::chrono::sys_seconds at;
+    std::string message;
+    std::map<std::string, std::string> metadata;
+    std::optional<std::string> ref;
+};
+
+struct LIQUID_EXPORT write_options {
+    std::uint32_t mode{0100644};
+};
 
 struct LIQUID_EXPORT ref {
     std::string name;
@@ -123,6 +141,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>> read_decrypted(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
     [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
+    [[nodiscard]] runtime::task<void>
+    write(std::string path, std::vector<std::byte> contents, write_options options);
     [[nodiscard]] runtime::task<void> redact(std::string path,
                                              std::optional<change_id> change = std::nullopt);
     [[nodiscard]] runtime::task<void> redact(std::string path,
@@ -133,14 +153,22 @@ public:
     [[nodiscard]] runtime::task<void> move(std::string from, std::string to);
     [[nodiscard]] runtime::task<void> remove(std::string path);
     [[nodiscard]] runtime::task<change_id> cut(std::string message);
+    [[nodiscard]] runtime::task<change_id> record(change_input input);
+    [[nodiscard]] runtime::task<change_id> record_from_tree(change_input input, digest root_tree);
+    [[nodiscard]] runtime::task<void> set_metadata(std::string key, std::vector<std::byte> value);
+    [[nodiscard]] runtime::task<std::optional<std::vector<std::byte>>> metadata(std::string key);
+    [[nodiscard]] runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);
     [[nodiscard]] runtime::task<std::vector<ref>> refs();
     [[nodiscard]] runtime::task<void> set_ref(std::string name, change_id id);
     [[nodiscard]] result<repository_status> status();
     [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
     [[nodiscard]] runtime::task<snapshot> at(change_id id);
+    [[nodiscard]] runtime::task<tree> tree(digest id);
+    [[nodiscard]] runtime::task<std::vector<std::byte>> blob(digest id);
     [[nodiscard]] runtime::task<readability_report>
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
+    [[nodiscard]] runtime::task<void> nest_ref(std::string path, repo_ref reference);
     [[nodiscard]] runtime::task<repository> split(std::string path, std::filesystem::path into);
     [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);
     [[nodiscard]] runtime::task<std::vector<conflict>> conflicts();
@@ -158,6 +186,7 @@ private:
     friend struct repository_detail::build_access;
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
+    friend struct repository_detail::git_access;
     struct impl;
     std::unique_ptr<impl> impl_;
 };

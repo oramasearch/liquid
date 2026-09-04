@@ -36,6 +36,8 @@ auto provenance(int argc, char** argv) -> int;
 auto wrap(int argc, char** argv) -> int;
 auto why(int argc, char** argv) -> int;
 auto cache(int argc, char** argv) -> int;
+auto git_import(int argc, char** argv) -> int;
+auto git_export(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -106,6 +108,16 @@ constexpr auto commands = std::to_array<command>({
      "checkpoint and collect a repository",
      "available",
      liquid_cli::garbage_collect},
+    {"import",
+     "import git <path>",
+     "import a local Git repository",
+     "available",
+     liquid_cli::git_import},
+    {"export",
+     "export git <path> [ref]",
+     "export as a Git repository",
+     "available",
+     liquid_cli::git_export},
     {"identity",
      "identity [show|rotate] [--json]",
      "show or rotate the device identity",

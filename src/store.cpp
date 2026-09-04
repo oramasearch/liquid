@@ -89,6 +89,26 @@ runtime::task<digest> store::put_encrypted(std::vector<std::byte> input, std::st
     co_return co_await impl_->value->put_encrypted(std::move(input), std::move(key_id));
 }
 
+void store::begin_object_batch() {
+    if (impl_) {
+        impl_->value->begin_object_batch();
+    }
+}
+
+void store::abort_object_batch() {
+    if (impl_) {
+        impl_->value->abort_object_batch();
+    }
+}
+
+runtime::task<void> store::commit_object_batch() {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::commit_object_batch"});
+    }
+    co_return co_await impl_->value->commit_object_batch();
+}
+
 runtime::task<std::vector<std::byte>> store::get(digest id) {
     if (!impl_)
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});

@@ -165,6 +165,7 @@ add_executable(liquid-header-tests
   headers/drip.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/git.cpp
   headers/hash.cpp
   headers/identity.cpp
   headers/liquid.cpp
@@ -234,6 +235,28 @@ target_compile_definitions(liquid-record-tests PRIVATE
   LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-record-tests PRIVATE liquid::liquid GTest::gtest_main)
 gtest_discover_tests(liquid-record-tests)
+
+add_executable(liquid-git-tests
+  git/test_object_store.cpp
+  ${PROJECT_SOURCE_DIR}/src/git/object_store.cpp
+  ${PROJECT_SOURCE_DIR}/src/git/sha1.cpp)
+target_include_directories(liquid-git-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-git-tests PRIVATE liquid::liquid GTest::gtest_main ZLIB::ZLIB)
+gtest_discover_tests(liquid-git-tests)
+
+option(LIQUID_REALWORLD_TESTS "Register the opt-in real-world Git interoperability check" OFF)
+set(LIQUID_REALWORLD_GIT_DIRECTORY "" CACHE PATH "Checkout to import in the real-world Git check")
+if(LIQUID_REALWORLD_TESTS)
+  if(NOT LIQUID_REALWORLD_GIT_DIRECTORY)
+    message(FATAL_ERROR "LIQUID_REALWORLD_GIT_DIRECTORY is required when LIQUID_REALWORLD_TESTS=ON")
+  endif()
+  add_test(NAME git-realworld
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_REALWORLD_GIT_DIRECTORY=${LIQUID_REALWORLD_GIT_DIRECTORY}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/git/realworld.cmake)
+  set_tests_properties(git-realworld PROPERTIES LABELS realworld)
+endif()
 
 add_executable(liquid-repository-scenario repository/scenario.cpp)
 target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)

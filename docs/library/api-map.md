@@ -57,6 +57,7 @@ owning issue in `error::context`.
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
+| `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2, #50, #62 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #11, #40, #41, #42, #50, #52, #53, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics |
@@ -278,6 +279,7 @@ class repository {
   runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
   // Import primitives (liquid #43; lake's importers use the same calls)
   runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
+  runtime::task<change_id> record_from_tree(change_input, digest root_tree); // records a supplied snapshot tree
   runtime::task<void> set_metadata(std::string key, std::vector<std::byte>);   // repository-document metadata map
   runtime::task<std::optional<std::vector<std::byte>>> metadata(std::string key);
   runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);

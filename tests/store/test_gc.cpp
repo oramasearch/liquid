@@ -219,6 +219,7 @@ TEST(GarbageCollection, TreeAndChangeRootsKeepReferencedObjects) {
                           *tree_id,
                           {},
                           {},
+                          {},
                           std::nullopt,
                           {}};
     const auto change_bytes = liquid::objects::encode(change);

@@ -93,7 +93,7 @@ std::vector<digest> extract_change(std::span<const std::byte> bytes) {
                    static_cast<std::size_t>(change->symbols.has_value()));
     append_once(output, change->root);
     for (const auto& parent : change->parents)
-        append_once(output, parent.value);
+        append_once(output, parent.id.value);
     for (const auto& conflict : change->conflicts) {
         for (const auto& reference : conflict.refs)
             append_once(output, reference);
