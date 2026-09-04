@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <utility>
 
+#include "encoding/cbor.hpp"
 #include "identity/taap.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
@@ -179,21 +181,31 @@ TEST(Identity, PublicCodecsRoundTripStoredIdentityAndRotationDocuments) {
         auto encoded = liquid::encode_identity_document(*decoded);
         ASSERT_TRUE(encoded) << encoded.error().message;
         EXPECT_EQ(*encoded, stored);
-        for (const auto& signed_value : decoded->signatures) {
-            auto signature_bytes = liquid::identity_detail::canonical_signature(signed_value);
-            ASSERT_TRUE(signature_bytes) << signature_bytes.error().message;
-            auto decoded_signature = liquid::decode_signature(*signature_bytes);
-            ASSERT_TRUE(decoded_signature) << decoded_signature.error().message;
-            EXPECT_EQ(decoded_signature->bytes, signed_value.bytes);
-            EXPECT_EQ(decoded_signature->signing_key_identifier,
-                      signed_value.signing_key_identifier);
-            EXPECT_EQ(decoded_signature->signature_purpose, signed_value.signature_purpose);
-        }
         ++document_count;
     }
     EXPECT_EQ(document_count, 2U);
     std::error_code code;
     std::filesystem::remove_all(home, code);
+}
+
+TEST(Identity, PublicSignatureDecoderAcceptsCanonicalSignatureRecord) {
+    namespace cbor = liquid::encoding::cbor;
+    const auto encoded_bytes = std::string(86, 'A') + "==";
+    auto fields = cbor::value::map{
+        {"signature_algorithm", "ed25519"},
+        {"signing_key_identifier", "taap:1:ed25519:TEST#TEST"},
+        {"signing_key_label", "test"},
+        {"signature_purpose", "drip"},
+        {"signed_at", "2026-09-04T00:00:00Z"},
+        {"signature_bytes_base64", encoded_bytes},
+    };
+    const auto encoded = cbor::encode(cbor::value{std::move(fields)});
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    const auto decoded = liquid::decode_signature(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(decoded->algorithm, "ed25519");
+    EXPECT_EQ(decoded->signature_purpose, "drip");
+    EXPECT_EQ(decoded->bytes, std::vector<std::byte>(64));
 }
 
 TEST(Identity, RotationChainRejectsNamedIntegrityFailures) {

@@ -27,8 +27,8 @@ invalid Ed25519 signature lengths.
 The codecs do not verify trust. Call `verify_document` for one decoded document and `verify_chain`
 for an ordered initial-document and rotation-document chain. `cli-identity-codec` runs `liquid
 identity show` and `liquid identity rotate`, then round-trips and verifies their exact stored files
-through these public functions. The identity unit test also decodes each stored signature object
-through `decode_signature`.
+through these public functions. The identity unit test also decodes a complete canonical signature
+object through `decode_signature`.
 
 ## Rotation
 
