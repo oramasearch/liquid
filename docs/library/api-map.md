@@ -21,14 +21,21 @@ concurrency rule are all cheap now and expensive to retrofit. The map also says 
 3. **Values are plain.** Records (`digest`, `tree_entry`, `change`, `drip`, `error`) are aggregates
    of standard types: `std::string`, `std::vector`, `std::array`, `std::optional`, `std::span`,
    `std::chrono`. They may gain fields; they never lose or reorder them before 1.0 is declared.
-4. **No third-party type is visible.** Not Zetta, ever. Not Boost.Capy, Corosio, automerge-cpp,
-   RocksDB, BLAKE3, tree-sitter. They live behind the handles. If a facility from one of them must
-   reach a client, it is wrapped in a liquid type.
+4. **No third-party type is visible, with one exception.** Not Zetta, ever. Not Corosio,
+   automerge-cpp, zstd, BLAKE3, tree-sitter: they live behind the handles. The exception is
+   **Boost.Capy, the coroutine substrate** (Steve, 2026-09-03: "use the coroutine library that we
+   have"): its `task` and `io_result` reach clients through `liquid/runtime.hpp`, the one header
+   that names Capy, so a substrate change is a change there and nowhere else (Zetta's pattern).
 5. **Every reference carries its algorithm.** A `digest` is `(algorithm, bytes)`; its text form is
    `blake3:<hex>` or `sha256:<hex>`. Nothing in the API takes bare bytes as an identity.
-6. **Synchronous for Phase 1.** Every call may block on I/O and says so. The async surface arrives
-   with the daemon (Phase 4) as its own header and is a decision then, not a leak now (see
-   *Open*).
+6. **Coroutine-native.** Every function that performs I/O or may wait returns
+   `liquid::task<T>` (`boost::capy::task<liquid::result<T>>`) and is `co_await`ed; pure computation
+   (hashing, chunking, encoding, parsing) is synchronous and returns `result<T>` directly. liquid
+   tasks run on a Corosio `io_context` executor: a client that owns one (lake, liquify) awaits
+   liquid tasks from its own coroutines; a client that does not (the CLI, tests) uses
+   `runtime::block_on`, which owns one. Blocking third-party work goes through `runtime::offload`,
+   never a raw thread. Errors stay in `result<T>`; composition with Capy's `when_all`/`timeout`
+   goes through the adapters in `runtime.hpp`.
 7. **Exported explicitly.** Every public class and free function carries `LIQUID_EXPORT`. Templates
    and inline functions in public headers touch only public types; nothing inline reaches private
    state.
