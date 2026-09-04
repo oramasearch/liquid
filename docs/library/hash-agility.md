@@ -20,7 +20,8 @@ resolve side by side. Reopening a repository with the same
 `repository_options::store` preserves its selected write algorithm; the option
 also reserves the repository boundary for future key custody configuration.
 Change IDs reconstructed by `log` use that algorithm and can be passed directly
-to `at`.
+to `at`. Repository directory creation uses it for both the placeholder object
+reference and its operation identifier.
 
 An application can rehash bytes from a BLAKE3 object, index the SHA-256 form by
 writing those bytes through a SHA-256-configured store, and retain both object

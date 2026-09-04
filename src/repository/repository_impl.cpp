@@ -1146,7 +1146,8 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
-    auto parent = parent_for(source.impl_->current.root, *parts, false);
+    auto parent =
+        parent_for(source.impl_->current.root, *parts, false, source.impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     if ((*parent)->entries.contains(parts->back()))
@@ -1155,14 +1156,14 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
     if (!directory)
         co_return std::unexpected(directory.error());
     const auto identity = random_id();
-    const auto reference = digest{algorithm::blake3, {}};
+    const auto reference = digest{source.impl_->hash_algorithm, {}};
     auto recorded =
         (*directory)->put_entry(parts->back(), {"tree", identity, mode, to_string(reference)});
     if (!recorded)
         co_return std::unexpected(recorded.error());
     (*parent)->entries.emplace(parts->back(),
                                working_entry{entry_kind::directory, identity, mode, reference, {}});
-    auto operation_hash = hash(algorithm::blake3, std::span<const std::byte>{identity});
+    auto operation_hash = hash(source.impl_->hash_algorithm, std::span<const std::byte>{identity});
     if (!operation_hash)
         co_return std::unexpected(operation_hash.error());
     source.impl_->current.operations.push_back(
@@ -1184,7 +1185,8 @@ repository_detail::vfs_access::set_mode(repository& source, std::string path, st
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
-    auto parent = parent_for(source.impl_->current.root, *parts, false);
+    auto parent =
+        parent_for(source.impl_->current.root, *parts, false, source.impl_->hash_algorithm);
     if (!parent)
         co_return std::unexpected(parent.error());
     auto found = (*parent)->entries.find(parts->back());
