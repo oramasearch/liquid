@@ -115,7 +115,9 @@ Rules liquid's wrapper enforces on top of automerge-cpp, until the upstream issu
 
 | Operation | What happens |
 |---|---|
-| `write(path, bytes)` | `store.put` → blob digest; one transaction: put or update the entry (minting `node_id` on create). That transaction is the drip. |
+| `write(path, bytes)` | `store.put` → blob digest; one transaction on the directory document: put or update the entry (minting `node_id` on create). That transaction is the drip. |
+| `move(from, to)` / `remove(path)` | explicit operations, the API's own methods: a move within a directory is one transaction; across directories two, carrying the same `node_id`; `remove` deletes the entry and records the operation. |
+| `cut(message)` | the explicit change cut: save touched directory documents, write the `tree` snapshot, build and sign the `change` record, update the ref, advance `head`; the working copy continues as a new change. |
 | move | one transaction: delete the old key, put the entry with the **same** `node_id` under the new key. Recorded, never inferred. |
 | cut a change | write the tree snapshot to the store (walk `tree`, emit `tree` records bottom-up), build the `change` record with `parents = heads of the ref`, `heads = document heads`, sign, `store.put`; set the ref. |
 | `at(change_id)` | read the record; the snapshot is its `root` tree from the store. Rebuilding the document at that point uses `heads` and automerge's `get_at`, which is expensive today (upstream issue 9) and is not on the read path. |
@@ -138,8 +140,15 @@ not.
 
 The layout from here:
 
-- The **repository document** holds `repo`, `format`, `refs`, `locks`, `nested`, `config`, `ops`
-  and the `node_id` of the root directory. It is small and always loaded.
+- The **repository document** holds `repo`, `format`, `refs`, `locks`, `nested`, `config`, `ops`,
+  the `node_id` of the root directory, and **`dirs`: a map from directory `node_id` to the digest of
+  that directory document's latest saved bytes in the store**. That map is the mutable name→content
+  indirection a content-addressed store lacks: to load a directory, look its `node_id` up in `dirs`,
+  `store.get` the digest, `document::load`. A directory document is saved (and `dirs` updated in one
+  repository-document transaction) at every cut and at a configurable interval; between saves the
+  journal's drips replay onto the loaded document. The repository document itself is saved to the
+  store at the same moments and its digest is written to `LIQUID_REPO` at the repository root,
+  atomically via rename, so `open` has one fixed entry point.
 - **Each directory is its own automerge document**, stored as a blob in the content store under
   a key derived from its `node_id`, holding one directory map of entries (`{kind, id, mode, ref}`
   for files; `{kind: "dir", id}` for subdirectories, whose own document is found by that `id`).

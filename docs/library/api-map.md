@@ -181,6 +181,12 @@ class repository {
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
+  runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
+  runtime::task<void> remove(std::string path);
+  runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
+  runtime::task<std::vector<ref>> refs();                 // name → change_id
+  runtime::task<void> set_ref(std::string name, change_id);
+  result<repository_status> status();                     // pending drips, paused, conflicts, oversized directories
   runtime::task<std::vector<change>> log(log_options = {});
   runtime::task<snapshot> at(change_id);                 // time travel
   runtime::task<void> nest(repository source, std::string path);
@@ -192,6 +198,9 @@ class repository {
   runtime::task<void> unlock(std::string path);
 };
 ```
+
+`ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
+`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 
