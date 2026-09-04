@@ -212,6 +212,7 @@ set_target_properties(liquid_metadata_objects PROPERTIES
 
 add_library(libliquid
   src/attestation/registry.cpp
+  src/build/cache.cpp
   src/build/executor.cpp
   src/build/materialise.cpp
   src/capture/coalesce.cpp

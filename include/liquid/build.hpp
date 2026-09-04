@@ -9,6 +9,7 @@
 
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -53,6 +54,21 @@ struct LIQUID_EXPORT action_timing {
     std::chrono::milliseconds upload{};
 };
 
+enum class cache_status : std::uint8_t { miss, hit };
+
+struct LIQUID_EXPORT cache_miss {
+    std::string path;
+    std::optional<digest> expected;
+    std::optional<digest> actual;
+};
+
+struct LIQUID_EXPORT cache_report {
+    std::uint64_t hits{};
+    std::uint64_t misses{};
+    std::uint64_t bytes_served{};
+    std::uint64_t bytes_stored{};
+};
+
 struct LIQUID_EXPORT action_result {
     digest action;
     int exit{};
@@ -63,6 +79,10 @@ struct LIQUID_EXPORT action_result {
     action_timing timing;
     std::string worker;
     std::chrono::sys_seconds observed_at{};
+    actor producer;
+    std::vector<std::byte> sig;
+    cache_status cache{cache_status::miss};
+    std::optional<cache_miss> why;
 };
 
 namespace build {

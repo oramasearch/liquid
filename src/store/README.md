@@ -15,3 +15,8 @@ the attached keyring can currently unwrap it; key-id parsing stays in `src/ident
 Targeted redaction removes selected object-map entries, commits tombstones for their unshared
 frames, rebuilds the index, and compacts only affected packs. It is separate from lease-driven
 reachability collection so unrelated repository objects remain available.
+
+Build-cache collection roots are canonical `action-index-root` records under the same store. The
+reference registry traverses root to result, result to action/output/stdout/stderr, and action to
+input/toolchain/sandbox, so an indexed result and the bytes needed to use it remain one reachable
+graph.

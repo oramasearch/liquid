@@ -15,14 +15,16 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issue #10 implements the local action path: canonical action,
+**Implementation status.** Issues #10 and #11 implement the local action path and disk cache:
+canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
 only from the mount's request callback, which carries the FUSE caller pid. It has no tracing,
 preload, or DTrace dependency. macOS carries the generated deprecated `sandbox-exec` profile but
 requires macFUSE before it can run the fixed virtual-root path; Windows remains explicitly
-unsupported until Phase 6. Cache lookup, `wrap`, remote execution, and provenance remain their
-own issues.
+unsupported until Phase 6. The disk cache validates observed manifests before a hit, verifies every
+result's TAAP signature, persists its action index, and defaults to read-only publication.
+`wrap`, memory caching, remote caching and execution, and provenance remain their own issues.
 
 ## Records in the store
 
@@ -35,7 +37,8 @@ action  { v, kind:"action", inputs: digest(tree), command: [argv…], cwd, env: 
           platform: { os, arch }, toolchain: digest(tree), sandbox: digest(sandbox definition), timeout_s? }
 result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, blob: digest } … ],
           stdout: digest, stderr: digest, manifest: [ { path, digest } … ],   # everything the action read, with content hashes
-          timing: { queued_ms, sandbox_ms, exec_ms, upload_ms }, worker: string, observed_at: time }
+          timing: { queued_ms, sandbox_ms, exec_ms, upload_ms }, worker: string, observed_at: time,
+          producer: actor, sig: TAAP-signature }
 ```
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
@@ -87,6 +90,14 @@ direct mode generalised:
    the current input tree; the first manifest whose hashes all match is a hit. A miss records
    which manifest entry differed, which is `liquid why` (#15) for free.
 
+Issue #11 implements both stages through `src/build/cache.{hpp,cpp}`. Validation resolves each
+manifest path from the action's current input-tree record and compares the referenced blob digest;
+it never hashes a checkout path. Missing paths have no actual digest. Results are tried newest
+first. A candidate is served only when its result and action records decode, the action derives the
+same candidate key, the producer's TAAP `result` signature verifies, every manifest entry matches,
+and every output and stream blob record still exists. `action_result::cache` and `why` describe the
+current execution request and are not part of the immutable producer-signed result bytes.
+
 Tiers (features/05) share one store and one key:
 
 | Tier | Where | Phase |
@@ -100,10 +111,53 @@ The Action Cache and the CAS are the two halves the object model already separat
 whose output chunks were collected is never returned, because the result record is reachable
 only through the roots that keep its outputs.
 
+### Disk action-index format
+
+The disk tier lives under `.liquid-store/actions/`. `ROOT` contains the text digest of a canonical
+`action-index-root` record in the store. That record contains every candidate/result pair and its
+monotonic sequence and is both the recovery source and the collector root. The repository keeps it
+with the same 30-day persisted lease used for repository refs, replacing or renewing that lease on
+every publish. The collector's `action-index-root` extractor reaches results; the `result` extractor
+reaches its action, output blob records, stdout, and stderr; the `action` extractor reaches inputs,
+toolchain, and sandbox. Once the cache-root lease is no longer live, collection can remove the
+result and its outputs together. A stale on-disk candidate then misses because lookup requires all
+referenced records to exist.
+
+`INDEX` is a checksummed sorted projection rebuilt from `ROOT` when absent, corrupt, or for a
+different root:
+
+| Offset | Bytes | Field |
+|---:|---:|---|
+| 0 | 8 | `LQACT`, version byte `1`, two zero bytes |
+| 8 | 8 | record count, little-endian |
+| 16 | 8 | next sequence, little-endian |
+| 24 | 1 + 7 | root digest algorithm and reserved zero bytes |
+| 32 | 32 | root digest bytes |
+| 64 | 80 × count | fixed records described below |
+| end | 8 | FNV-1a checksum of every preceding byte |
+
+Each 80-byte record is candidate algorithm plus 32 digest bytes, result algorithm plus 32 digest
+bytes, an eight-byte sequence, and six reserved zero bytes. Records sort by candidate algorithm and
+digest ascending, then sequence descending, so candidate lookup returns newest results first.
+`ROOT` is replaced before `INDEX`; a crash between them is recovered from the store record.
+
+This index deliberately uses one sorted file rather than the chunk index's mapped run set. A chunk
+run pays 256 KiB for its 65,537-entry fanout before storing one record; at 80 bytes per action row,
+3,276 action rows occupy less than that fanout alone. Local repositories are expected to have far
+fewer action candidates than chunks, and publication is explicitly opt-in, so atomic rewrite is the
+smaller disk and implementation cost for this phase. The root record preserves a migration path to
+runs without changing candidate keys or collector reachability.
+
 Trust (features/05): developer machines read; only signed writers publish (the signature is
 the producer's TAAP identity on the result record, the same `sig` field as changes); CI and
 verified-reproducible builds are the trust anchors; sampled re-execution (#13) compares
 two results for one action digest and treats divergence as a critical alert.
+
+`repository_options::cache.publish` is persisted in the repository document and defaults to
+`false`. Execution still produces a signed result when publication is disabled, but `publish`
+returns `errc::unauthorized` and no action-index entry is added. CI or another trusted producer must
+create the repository with publication enabled. Lookup verifies signatures even though this phase
+has no shared tier, keeping unsigned data out when the remote tier arrives.
 
 ## `liquid wrap`: an existing build becomes actions
 

@@ -62,6 +62,7 @@ struct repository_document {
     std::vector<conflict> conflict_values;
     std::vector<persisted_drip> drips;
     std::vector<encryption_path_rule> encryption_rules;
+    bool cache_publish{};
     std::uint64_t pending_drips{};
 };
 
@@ -210,7 +211,8 @@ auto encode_repository_document(const repository_document& value)
                  {"mode", cbor::value{rule.mode == encryption_mode::leaf ? "leaf" : "file"}},
                  {"encrypted_regex", cbor::value{rule.encrypted_regex}}}));
     }
-    auto config = map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})}});
+    auto config = map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
+                       {"cache", map({{"publish", cbor::value{value.cache_publish}}})}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
@@ -398,6 +400,15 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                  *key_text,
                  *mode_text == "leaf" ? encryption_mode::leaf : encryption_mode::file,
                  *regex_text});
+        }
+        if (const auto* cache = find(*config, "cache")) {
+            const auto* publish = find(*cache, "publish");
+            const auto* enabled = publish ? std::get_if<bool>(&publish->data) : nullptr;
+            if (!enabled) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid cache config", "repository document"));
+            }
+            output.cache_publish = *enabled;
         }
     }
     for (const auto& item : *saved_drips) {
@@ -602,10 +613,13 @@ struct repository::impl {
     std::map<node_id, crdt::directory_document> directory_cache;
     std::optional<retained_lease> working_tree_lease;
     std::optional<retained_lease> checkpoint_lease;
+    std::optional<retained_lease> cache_root_lease;
     std::map<std::string, retained_lease> ref_leases;
     std::map<node_id, retained_lease> directory_leases;
     signer signing_key;
     std::shared_ptr<keyring> keys;
+    cache_report cache_statistics;
+    std::map<std::string, std::pair<cache_status, std::optional<cache_miss>>> cache_lookups;
     impl(std::filesystem::path path,
          store value,
          repository_document document,
@@ -1283,6 +1297,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.root.node = random_id();
     document.root.object.alg = hash_algorithm;
     document.encryption_rules = std::move(options.encrypt.paths);
+    document.cache_publish = options.cache.publish;
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -2211,6 +2226,13 @@ runtime::task<collection_report> repository::collect(collection_options options)
     co_return co_await impl_->objects.collect(options);
 }
 
+runtime::task<cache_report> repository::cache_stats() {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return impl_->cache_statistics;
+}
+
 runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry(repository& source,
                                                                                  std::string path) {
     if (!source.impl_)
@@ -2438,6 +2460,100 @@ result<std::filesystem::path> repository_detail::build_access::root_path(reposit
     if (!source.impl_)
         return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     return source.impl_->root_path;
+}
+
+runtime::task<bool> repository_detail::build_access::contains(repository& source, digest id) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return co_await source.impl_->objects.contains(id);
+}
+
+runtime::task<void> repository_detail::build_access::sign_result(repository& source,
+                                                                 action_result& value) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    value.producer = source.impl_->signing_key.identity();
+    auto body = objects::encode_result_body(value);
+    if (!body) {
+        co_return std::unexpected(body.error());
+    }
+    auto signed_value = co_await source.impl_->signing_key.sign("result", std::move(*body));
+    if (!signed_value) {
+        co_return std::unexpected(signed_value.error());
+    }
+    auto signature = identity_detail::canonical_signature(*signed_value);
+    if (!signature) {
+        co_return std::unexpected(signature.error());
+    }
+    value.sig = std::move(*signature);
+    co_return result<void>{};
+}
+
+runtime::task<void> repository_detail::build_access::retain_cache_root(repository& source,
+                                                                       digest root) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return co_await source.impl_->retain(source.impl_->cache_root_lease, root);
+}
+
+runtime::task<void> repository_detail::build_access::release_cache_root(repository& source) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (!source.impl_->cache_root_lease) {
+        co_return result<void>{};
+    }
+    auto released = co_await source.impl_->cache_root_lease->value.release();
+    if (!released) {
+        co_return std::unexpected(released.error());
+    }
+    source.impl_->cache_root_lease.reset();
+    co_return result<void>{};
+}
+
+bool repository_detail::build_access::cache_publish_enabled(repository& source) noexcept {
+    return source.impl_ && source.impl_->current.cache_publish;
+}
+
+void repository_detail::build_access::record_cache_lookup(repository& source,
+                                                          digest result,
+                                                          cache_status status,
+                                                          std::optional<cache_miss> why,
+                                                          std::uint64_t bytes_served) {
+    if (!source.impl_) {
+        return;
+    }
+    source.impl_->cache_lookups.insert_or_assign(to_string(result),
+                                                 std::pair{status, std::move(why)});
+    if (status == cache_status::hit) {
+        ++source.impl_->cache_statistics.hits;
+        source.impl_->cache_statistics.bytes_served += bytes_served;
+    } else {
+        ++source.impl_->cache_statistics.misses;
+    }
+}
+
+void repository_detail::build_access::record_cache_store(repository& source, std::uint64_t bytes) {
+    if (source.impl_) {
+        source.impl_->cache_statistics.bytes_stored += bytes;
+    }
+}
+
+void repository_detail::build_access::apply_cache_lookup(repository& source,
+                                                         digest result,
+                                                         action_result& value) {
+    if (!source.impl_) {
+        return;
+    }
+    const auto found = source.impl_->cache_lookups.find(to_string(result));
+    if (found == source.impl_->cache_lookups.end()) {
+        return;
+    }
+    value.cache = found->second.first;
+    value.why = found->second.second;
 }
 
 auto repository_detail::testing::directory_loads(repository& value) -> std::uint64_t {

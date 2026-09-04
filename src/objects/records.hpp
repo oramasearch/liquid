@@ -35,6 +35,16 @@ struct sandbox_record {
     bool network{};
 };
 
+struct action_index_entry {
+    digest candidate;
+    digest result;
+    std::uint64_t sequence{};
+};
+
+struct action_index_root {
+    std::vector<action_index_entry> entries;
+};
+
 [[nodiscard]] auto encode(const blob& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const tree& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const change& value) -> result<std::vector<std::byte>>;
@@ -43,7 +53,9 @@ struct sandbox_record {
 [[nodiscard]] auto encode(const attestation& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const action_record& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const action_result& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode_result_body(const action_result& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const sandbox_record& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const action_index_root& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body(const attestation& value)
     -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body_unchecked(const attestation& value)
@@ -58,6 +70,8 @@ struct sandbox_record {
 [[nodiscard]] auto decode_attestation(std::span<const std::byte> bytes) -> result<attestation>;
 [[nodiscard]] auto decode_action(std::span<const std::byte> bytes) -> result<action_record>;
 [[nodiscard]] auto decode_result(std::span<const std::byte> bytes) -> result<action_result>;
+[[nodiscard]] auto decode_action_index_root(std::span<const std::byte> bytes)
+    -> result<action_index_root>;
 [[nodiscard]] auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes)
     -> result<digest>;
 

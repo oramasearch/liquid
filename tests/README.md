@@ -19,3 +19,8 @@ and cryptography tests stay in their existing targets. They also verify that rep
 retains checkpointed content while reclaiming an orphan. CLI scenario and command-documentation
 tests live in `cli/`. `test_runtime.cpp` repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
+
+Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
+privileged Linux environment they also prove a second identical execution launches no process,
+an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
+cannot be served, read-only publication is refused, and producer signatures verify.

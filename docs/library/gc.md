@@ -2,7 +2,8 @@
 
 **Status: implemented for single-process local stores (liquid #8, #46).** Leased roots, epoch
 marking, chunk-list reference extraction, whole-pack deletion, sparse-pack compaction, dry runs,
-and retained-chunk explanations are available through `liquid/store.hpp`. Repositories retain their
+retained-chunk explanations, and build-cache action/result traversal are available through
+`liquid/store.hpp`. Repositories retain their
 own checkpoint roots through `liquid/repository.hpp`, and `liquid gc` uses that repository API.
 
 ## What and why
@@ -34,6 +35,10 @@ kind to a byte extractor returning referenced digests. The built-in `chunk-list`
 an object's chunks coupled to the object; the built-in tree extractor retains each entry's object
 and reference digest; the change extractor retains its root, parents, conflict references, and
 optional symbols. Unknown kinds are safe leaves and are listed in `collection_report::unknown_kinds`.
+The build cache adds three registered kinds: an `action-index-root` reaches each indexed result, a
+`result` reaches its action plus output/stdout/stderr blob records, and an `action` reaches its input
+tree, toolchain tree, and sandbox definition. The action-index root uses a persisted repository
+lease, so expiry or explicit release makes the complete cached result graph collectible together.
 
 Each pack gets a bitmap indexed by physical frame position for the epoch. A set bit is live. This
 bitmap is working state only: it is never consulted by recovery or index reconstruction. Any frame

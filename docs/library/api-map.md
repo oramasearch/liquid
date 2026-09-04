@@ -59,11 +59,11 @@ owning issue in `error::context`.
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2, #50, #62 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #40, #41, #42, #50, #52, #53, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks |
+| `liquid/repository.hpp` | #2, #11, #40, #41, #42, #50, #52, #53, #116 | implemented | `repository`: open, encrypted and plaintext reads, memory and streaming-file writes, redaction, structural key diff, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10 | public records and executor declaration | `build::execute` and `build::result`, action/result values; no sandbox implementation types are public |
+| `liquid/build.hpp` | #10, #11 | implemented local executor and disk cache records | `build::execute` and `build::result`, action/result values, cache diagnostics and statistics; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -271,6 +271,7 @@ class repository {
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
   runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
+  runtime::task<cache_report> cache_stats();               // hits, misses, bytes served/stored
   // Import primitives (liquid #43; lake's importers use the same calls)
   runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
   runtime::task<void> set_metadata(std::string key, std::vector<std::byte>);   // repository-document metadata map
@@ -294,11 +295,19 @@ normalization, enforcement, and JSON Pointer key paths.
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
-`repository_options` is a plain record with `checkpoint_interval`, `store`, and `encrypt`; its `store_options`
+`repository_options` is a plain record with `checkpoint_interval`, `store`, `encrypt`, and
+`cache`; its `store_options`
 member selects the object-store hash algorithm and, when configured, its key custody. Pass the
 same options to `create` and `open` so later writes and reads use the intended store settings.
 Repository change IDs are computed with that selected store algorithm, including IDs returned by
 `log` and accepted by `at`.
+
+`cache_config` is `{ bool publish{}; }`. Its read-only default allows lookup but refuses action-index
+publication with `errc::unauthorized`; the value is persisted at repository creation.
+`cache_report` contains `hits`, `misses`, `bytes_served`, and `bytes_stored` for the open repository
+handle. `action_result::cache` is `cache_status::hit` or `cache_status::miss`; on a validation miss,
+`why` contains the first differing path and optional expected/actual digests. These two fields are
+request diagnostics rather than part of the signed immutable result record.
 
 `key_readability` is `{ key_id, version, readable }`. `revision_readability` is a `change_id` and
 the sorted key-version set used by its blobs. `readability_report` contains those revision rows and
@@ -335,6 +344,29 @@ runtime::task<void> materialise(repository&, std::filesystem::path,
 
 The handle contains no FUSE type. Backend details and the persistent hydration cache are private
 under `src/vfs/`; see [`vfs.md`](vfs.md).
+
+### `liquid/build.hpp`
+
+```cpp
+enum class cache_status : std::uint8_t { miss, hit };
+struct cache_miss { std::string path; std::optional<digest> expected, actual; };
+struct cache_report { std::uint64_t hits, misses, bytes_served, bytes_stored; };
+struct action_result {
+  digest action; int exit; std::vector<action_output> outputs; digest stdout_output, stderr_output;
+  std::vector<observed_input> manifest; action_timing timing; std::string worker;
+  std::chrono::sys_seconds observed_at; actor producer; std::vector<std::byte> sig;
+  cache_status cache; std::optional<cache_miss> why;
+};
+namespace build {
+runtime::task<result_id> execute(repository&, action_input);
+runtime::task<action_result> result(repository&, result_id);
+}
+```
+
+The candidate key covers command, cwd, environment, toolchain, sandbox definition, and platform.
+`execute` returns an indexed result only after the result's signed action derives that same key,
+all observed paths match the current input tree, and all referenced blobs exist. Producer and `sig`
+are immutable record fields; cache status and miss detail describe the current request.
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 

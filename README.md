@@ -38,10 +38,14 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install.
 
-> **Phase 2 begins with local sandboxed action execution.** `liquid::build` stores action and
+> **Phase 2 now includes local sandboxed action execution and the persistent disk cache.**
+> `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
-> action in Linux namespaces with a fixed environment. Cache lookup and `wrap` remain separate
-> Phase 2 work; macOS needs macFUSE to execute the fixed virtual-root path and Windows returns its
+> action in Linux namespaces with a fixed environment. Before execution it looks up signed results
+> by candidate key, validates every observed manifest path against the current input tree, and
+> reports the first differing input on a miss. The on-disk action index rebuilds from its leased
+> store root, and publication defaults to disabled. Memory and remote tiers plus `wrap` remain
+> separate work; macOS needs macFUSE to execute the fixed virtual-root path and Windows returns its
 > documented unsupported result.
 
 ## Where this sits
@@ -80,6 +84,7 @@ and Zetta's.
 - [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, cursor delivery, coalescing, recovery, and telemetry.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
+- [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 | | |
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |

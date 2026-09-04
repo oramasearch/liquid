@@ -23,6 +23,24 @@ static int copy_file(const char* source, const char* destination) {
     return count < 0 ? 4 : 0;
 }
 
+static int copy_tagged(const char* source, const char* destination) {
+    int copied = copy_file(source, destination);
+    int output;
+    if (copied != 0) {
+        return copied;
+    }
+    output = open(destination, O_APPEND | O_WRONLY);
+    if (output < 0) {
+        return 5;
+    }
+    if (write(output, "-derived", 8) != 8) {
+        close(output);
+        return 6;
+    }
+    close(output);
+    return 0;
+}
+
 static int print_environment(const char* destination) {
     int output = open(destination, O_CREAT | O_TRUNC | O_WRONLY, 0644);
     char** entry = environ;
@@ -46,6 +64,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "copy") == 0 && argc == 4) {
         return copy_file(argv[2], argv[3]);
+    }
+    if (strcmp(argv[1], "copy-tagged") == 0 && argc == 4) {
+        return copy_tagged(argv[2], argv[3]);
     }
     if (strcmp(argv[1], "env") == 0 && argc == 3) {
         return print_environment(argv[2]);
