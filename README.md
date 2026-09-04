@@ -67,8 +67,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Each result records non-overlapping queued, sandbox, exec, hash, and store phases. Every wrap
 > retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
 > totals, and supports `liquid build trace --chrome` and `liquid why-slow <target>`. Issue #18 adds
-> transport-independent remote blob and executor interfaces, ships source and toolchain trees from
-> the store, and chooses local, remote, or racing execution from recorded timing, absent bytes,
+> a transport-independent remote executor alongside #17's remote blob interface, ships source and
+> toolchain trees from the store, and chooses local, remote, or racing execution from recorded timing, absent bytes,
 > queue depth, and cache locality. Four or more short actions share one supported remote batch; a
 > race cancels its loser and publishes only its winner. Results, `liquid why`, retained traces, and
 > Chrome events preserve the decision and every model input. The REAPI transport, production

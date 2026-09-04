@@ -37,7 +37,7 @@ public:
         return read_blobs_;
     }
 
-    auto store() -> liquid::store& {
+    auto contents_store() -> liquid::store& {
         return contents_;
     }
 

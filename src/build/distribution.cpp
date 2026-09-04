@@ -166,8 +166,8 @@ runtime::task<void> hydrate_result(repository& destination,
                                    const action_result& value) {
     auto seen = std::set<std::string>{};
     for (const auto& id : {value.stdout_output, value.stderr_output}) {
-        auto hydrated =
-            co_await hydrate_object(destination, source, instance, id, graph_object_kind::blob, seen);
+        auto hydrated = co_await hydrate_object(
+            destination, source, instance, id, graph_object_kind::blob, seen);
         if (!hydrated) {
             co_return std::unexpected(hydrated.error());
         }

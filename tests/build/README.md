@@ -9,9 +9,9 @@ SPDX/CycloneDX structure, and fully marked system-binary inference.
 
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
-executor reconstructs the source and toolchain in a new directory, matches a local output, groups
-four short actions through one batch call, and proves a race cancels its delayed remote loser while
-adding one published result.
+executor uses #17's shared on-disk remote source to reconstruct the source and toolchain in a new
+directory, matches a local output, groups four short actions through one batch call, and proves a
+race cancels its delayed remote loser while adding one published result.
 
 `test_why.cpp` builds signed action/result histories without a mount and proves input digests and
 line ranges, drip attribution, argv, environment, toolchain, sandbox, never-built, imported-index,

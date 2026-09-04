@@ -33,8 +33,8 @@ exec hook. Verification re-executes sampled cached actions, emits signed attesta
 quarantines divergent results. Each result references verified, device-signed `slsa_provenance/1`
 and `sbom/1` attestations derived from its action and manifest. Before execution, repository policy
 can require verified registered-profile attestations for source and toolchain blobs. Issue #18 adds
-remote blob/executor interfaces, input and toolchain transfer, cost-based local/remote/race
-selection, remote batching, and loser cancellation. Network transport, production workers, and the
+a remote executor alongside #17's remote blob interface, input and toolchain transfer, cost-based
+local/remote/race selection, remote batching, and loser cancellation. Network transport, production workers, and the
 remote cache tier remain their own issues. Configure checks additionally populate a
 shared content-addressed fact base and can be answered across projects without starting the probe.
 

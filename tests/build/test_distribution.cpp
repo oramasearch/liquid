@@ -19,11 +19,11 @@
 #include "build/cache.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
-#include "build/remote_blob_source.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
+#include "remote_blob_source.hpp"
 #include "sandbox/environment.hpp"
 #include "vfs/repository_access.hpp"
 
@@ -261,9 +261,10 @@ liquid::runtime::task<liquid::digest> store_remote_blob(liquid::store& store,
 
 class materialising_remote_executor final : public liquid::remote_executor {
 public:
-    materialising_remote_executor(std::shared_ptr<liquid::test_support::on_disk_remote_source> blobs,
-                                  std::filesystem::path root,
-                                  std::chrono::milliseconds delay = {})
+    materialising_remote_executor(
+        std::shared_ptr<liquid::test_support::on_disk_remote_source> blobs,
+        std::filesystem::path root,
+        std::chrono::milliseconds delay = {})
         : blobs_(std::move(blobs)), root_(std::move(root)), delay_(delay) {}
 
     auto blobs() noexcept -> liquid::remote_blob_source& override {
@@ -296,12 +297,13 @@ public:
         const auto run = root_ / ("run-" + std::to_string(executions_++));
         const auto work = run / "work";
         const auto toolchain = run / "toolchain";
-        auto materialised = co_await materialise_remote_tree(blobs_->store(), input.inputs, work);
+        auto materialised =
+            co_await materialise_remote_tree(blobs_->contents_store(), input.inputs, work);
         if (!materialised) {
             co_return std::unexpected(materialised.error());
         }
         materialised =
-            co_await materialise_remote_tree(blobs_->store(), input.toolchain, toolchain);
+            co_await materialise_remote_tree(blobs_->contents_store(), input.toolchain, toolchain);
         if (!materialised) {
             co_return std::unexpected(materialised.error());
         }
@@ -325,8 +327,8 @@ public:
             co_return std::unexpected(liquid::error{
                 liquid::errc::io, "cannot read remote fixture output", work.string()});
         }
-        auto output_blob = co_await store_remote_blob(blobs_->store(), std::move(content));
-        auto empty_blob = co_await store_remote_blob(blobs_->store(), {});
+        auto output_blob = co_await store_remote_blob(blobs_->contents_store(), std::move(content));
+        auto empty_blob = co_await store_remote_blob(blobs_->contents_store(), {});
         if (!output_blob || !empty_blob) {
             co_return std::unexpected(!output_blob ? output_blob.error() : empty_blob.error());
         }
@@ -468,8 +470,7 @@ TEST(BuildDistribution, remote_double_materialises_toolchain_from_store_and_matc
     temporary_directory remote_location{"liquid-distribution-remote"};
     auto store = liquid::runtime::block_on(liquid::store::open(remote_location.path() / "store"));
     ASSERT_TRUE(store) << store.error().message;
-    auto source =
-        std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*store));
+    auto source = std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*store));
     materialising_remote_executor executor{source, remote_location.path() / "runs"};
     auto remote = liquid::runtime::block_on(
         liquid::build::execute(remote_fixture.repository, remote_fixture.input(), executor));
@@ -499,8 +500,7 @@ TEST(BuildDistribution, short_actions_share_one_remote_batch) {
     temporary_directory remote_location{"liquid-distribution-batch"};
     auto store = liquid::runtime::block_on(liquid::store::open(remote_location.path() / "store"));
     ASSERT_TRUE(store) << store.error().message;
-    auto source =
-        std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*store));
+    auto source = std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*store));
     materialising_remote_executor executor{source, remote_location.path() / "runs"};
     auto inputs = std::vector<liquid::action_input>(4, fixture.input());
     auto results = liquid::runtime::block_on(
@@ -530,8 +530,7 @@ TEST(BuildDistribution, race_publishes_local_winner_and_cancels_remote_loser) {
     temporary_directory remote_location{"liquid-distribution-race"};
     auto store = liquid::runtime::block_on(liquid::store::open(remote_location.path() / "store"));
     ASSERT_TRUE(store) << store.error().message;
-    auto source =
-        std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*store));
+    auto source = std::make_shared<liquid::test_support::on_disk_remote_source>(std::move(*store));
     materialising_remote_executor executor{
         source, remote_location.path() / "runs", std::chrono::seconds{5}};
     auto winner = liquid::runtime::block_on(
