@@ -27,7 +27,7 @@ if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT LIQUID_USE_SYSTEM_COMPILER)
   endif()
 endif()
 
-project(liquid VERSION 0.0.1 LANGUAGES CXX
+project(liquid VERSION 0.0.1 LANGUAGES C CXX
         DESCRIPTION "liquid — version control, build, packages, artifacts and runtime in one program")
 
 set(CMAKE_CXX_STANDARD 26)
@@ -50,20 +50,71 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # -----------------------------------------------------------------------------
 # libliquid — everything under include/liquid/ is the public API.
 # -----------------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(blake3_source
+  GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
+  GIT_TAG        1.8.7
+  SOURCE_SUBDIR  c/liquid-no-upstream-cmake)
+FetchContent_MakeAvailable(blake3_source)
+
+add_library(liquid_blake3_objects OBJECT
+  ${blake3_source_SOURCE_DIR}/c/blake3.c
+  ${blake3_source_SOURCE_DIR}/c/blake3_dispatch.c
+  ${blake3_source_SOURCE_DIR}/c/blake3_portable.c)
+target_include_directories(liquid_blake3_objects SYSTEM PRIVATE
+  ${blake3_source_SOURCE_DIR}/c)
+target_compile_definitions(liquid_blake3_objects PRIVATE
+  BLAKE3_API=
+  BLAKE3_PRIVATE=
+  BLAKE3_USE_NEON=0
+  BLAKE3_NO_SSE2
+  BLAKE3_NO_SSE41
+  BLAKE3_NO_AVX2
+  BLAKE3_NO_AVX512)
+set_target_properties(liquid_blake3_objects PROPERTIES
+  C_EXTENSIONS OFF
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+target_compile_features(liquid_blake3_objects PRIVATE c_std_99)
+
+# Keep the upstream C implementation as a private static target. Its object files are also
+# folded into libliquid so static-package consumers have no transitive dependency.
+add_library(liquid_blake3 STATIC $<TARGET_OBJECTS:liquid_blake3_objects>)
+set_target_properties(liquid_blake3 PROPERTIES
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+
 add_library(libliquid
+  src/drip.cpp
+  src/error.cpp
+  src/hash.cpp
+  src/hash/sha256.c
+  src/identity.cpp
+  src/object.cpp
+  src/remote.cpp
+  src/repository.cpp
+  src/store.cpp
   src/version.cpp
+  src/vfs.cpp
 )
 add_library(liquid::liquid ALIAS libliquid)
 set_target_properties(libliquid PROPERTIES
   OUTPUT_NAME liquid            # libliquid.a / libliquid.dylib / libliquid.so
   EXPORT_NAME liquid            # find_package(liquid) → liquid::liquid
   VERSION     ${PROJECT_VERSION}
-  SOVERSION   0)
+  SOVERSION   0
+  C_VISIBILITY_PRESET hidden)
 target_include_directories(libliquid PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
+  $<INSTALL_INTERFACE:include>
+  PRIVATE ${blake3_source_SOURCE_DIR}/c)
 target_compile_features(libliquid PUBLIC cxx_std_26)
+if(BUILD_SHARED_LIBS)
+  target_link_libraries(libliquid PRIVATE liquid_blake3)
+else()
+  target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_blake3_objects>)
+endif()
 include(GenerateExportHeader)
 generate_export_header(libliquid
   BASE_NAME liquid
@@ -110,7 +161,6 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/liquidConfig.cmake
 # Tests: GoogleTest via FetchContent + CTest, matching Zetta.
 # -----------------------------------------------------------------------------
 if(LIQUID_BUILD_TESTS)
-  include(FetchContent)
   FetchContent_Declare(googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG        v1.17.0)

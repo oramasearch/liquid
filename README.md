@@ -17,11 +17,12 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: hello world, as a library.** The specification is complete. Code is a C++26
-> **libliquid** (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the
-> `liquid` binary as a thin client of it; liquify and lake link the same library. `liquid version`
-> and `liquid hello` run, the test passes, `find_package(liquid)` works from an install. Phase 1 (the
-> store) starts inside libliquid.
+> **Status: the Phase 1 library surface is declared.** Code is a C++26 **libliquid**
+> (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
+> as a thin client of it; liquify and lake link the same library. The public error and digest APIs
+> are implemented, including BLAKE3 and SHA-256. Store, repository, capture, identity, VFS and
+> remote operations remain `unsupported` until their owning issues land. `liquid version` and
+> `liquid hello` remain unchanged, and `find_package(liquid)` works from an install.
 
 ## Where this sits
 
@@ -45,6 +46,7 @@ and Zetta's.
 ## Documentation
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
+- [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 | | |
 |---|---|
