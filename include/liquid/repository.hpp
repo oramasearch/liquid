@@ -136,6 +136,8 @@ public:
     [[nodiscard]] runtime::task<void> undo(op_id operation);
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
+    [[nodiscard]] runtime::task<collection_report>
+    collect(collection_options options = {});
 
 private:
     [[nodiscard]] runtime::task<void>

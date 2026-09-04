@@ -585,6 +585,13 @@ auto string_bytes(std::string_view input) -> std::vector<std::byte> {
 } // namespace
 
 struct repository::impl {
+    struct retained_lease {
+        digest id;
+        lease value;
+    };
+
+    static constexpr auto lease_ttl = std::chrono::days{30};
+
     std::filesystem::path root_path;
     store objects;
     repository_document current;
@@ -592,6 +599,10 @@ struct repository::impl {
     algorithm hash_algorithm;
     std::uint64_t directory_load_count{};
     std::map<node_id, crdt::directory_document> directory_cache;
+    std::optional<retained_lease> working_tree_lease;
+    std::optional<retained_lease> checkpoint_lease;
+    std::map<std::string, retained_lease> ref_leases;
+    std::map<node_id, retained_lease> directory_leases;
     signer signing_key;
     std::shared_ptr<keyring> keys;
     impl(std::filesystem::path path,
@@ -681,7 +692,7 @@ struct repository::impl {
             co_return std::unexpected(restored.error());
         co_return &inserted.first->second;
     }
-    runtime::task<void> persist() {
+    runtime::task<digest> persist() {
         for (auto& [node, document] : directory_cache) {
             auto saved_document = document.save();
             if (!saved_document)
@@ -717,11 +728,138 @@ struct repository::impl {
         }
         if (code)
             co_return std::unexpected(failure(errc::io, code.message(), marker().string()));
+        co_return *stored;
+    }
+    runtime::task<void> retain(std::optional<retained_lease>& retained, digest id) {
+        if (retained && retained->id.alg == id.alg && retained->id.bytes == id.bytes) {
+            co_return co_await retained->value.renew(lease_ttl);
+        }
+        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        if (!replacement) {
+            co_return std::unexpected(replacement.error());
+        }
+        if (retained) {
+            auto released = co_await retained->value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+        }
+        retained.emplace(retained_lease{id, std::move(*replacement)});
+        co_return result<void>{};
+    }
+    runtime::task<void> retain_ref(std::string_view name, digest id) {
+        auto existing = ref_leases.find(std::string{name});
+        if (existing != ref_leases.end() && existing->second.id.alg == id.alg &&
+            existing->second.id.bytes == id.bytes) {
+            co_return co_await existing->second.value.renew(lease_ttl);
+        }
+        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        if (!replacement) {
+            co_return std::unexpected(replacement.error());
+        }
+        if (existing != ref_leases.end()) {
+            auto released = co_await existing->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            existing->second = retained_lease{id, std::move(*replacement)};
+        } else {
+            ref_leases.emplace(std::string{name}, retained_lease{id, std::move(*replacement)});
+        }
+        co_return result<void>{};
+    }
+    runtime::task<void> retain_directory(const node_id& node, digest id) {
+        auto existing = directory_leases.find(node);
+        if (existing != directory_leases.end() && existing->second.id.alg == id.alg &&
+            existing->second.id.bytes == id.bytes) {
+            co_return co_await existing->second.value.renew(lease_ttl);
+        }
+        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        if (!replacement) {
+            co_return std::unexpected(replacement.error());
+        }
+        if (existing != directory_leases.end()) {
+            auto released = co_await existing->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            existing->second = retained_lease{id, std::move(*replacement)};
+        } else {
+            directory_leases.emplace(node, retained_lease{id, std::move(*replacement)});
+        }
+        co_return result<void>{};
+    }
+    runtime::task<void> retain_checkpoint_roots(digest root, digest document) {
+        auto retained_tree = co_await retain(working_tree_lease, root);
+        if (!retained_tree) {
+            co_return std::unexpected(retained_tree.error());
+        }
+        auto retained_document = co_await retain(checkpoint_lease, document);
+        if (!retained_document) {
+            co_return std::unexpected(retained_document.error());
+        }
+        for (const auto& [name, head] : current.refs) {
+            auto retained_ref = co_await retain_ref(name, head.value);
+            if (!retained_ref) {
+                co_return std::unexpected(retained_ref.error());
+            }
+        }
+        for (const auto& [node, directory] : current.dirs) {
+            auto retained_directory = co_await retain_directory(node, directory);
+            if (!retained_directory) {
+                co_return std::unexpected(retained_directory.error());
+            }
+        }
+        for (auto found = ref_leases.begin(); found != ref_leases.end();) {
+            if (current.refs.contains(found->first)) {
+                ++found;
+                continue;
+            }
+            auto released = co_await found->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            found = ref_leases.erase(found);
+        }
+        for (auto found = directory_leases.begin(); found != directory_leases.end();) {
+            if (current.dirs.contains(found->first)) {
+                ++found;
+                continue;
+            }
+            auto released = co_await found->second.value.release();
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            found = directory_leases.erase(found);
+        }
+        co_return result<void>{};
+    }
+    runtime::task<void> checkpoint(std::optional<digest> root = {}) {
+        auto working_tree = root;
+        if (!working_tree) {
+            auto snapshot_id = co_await snapshot(current.root);
+            if (!snapshot_id) {
+                co_return std::unexpected(snapshot_id.error());
+            }
+            working_tree = *snapshot_id;
+        }
+        current.pending_drips = 0;
+        auto document = co_await persist();
+        if (!document) {
+            co_return std::unexpected(document.error());
+        }
+        auto retained = co_await retain_checkpoint_roots(*working_tree, *document);
+        if (!retained) {
+            co_return std::unexpected(retained.error());
+        }
+        std::error_code cleanup;
+        std::filesystem::remove(journal_marker(), cleanup);
         co_return result<void>{};
     }
     runtime::task<void> checkpoint_or_journal() {
-        if (current.pending_drips >= checkpoint_interval)
-            co_return co_await persist();
+        if (current.pending_drips >= checkpoint_interval) {
+            co_return co_await checkpoint();
+        }
         auto encoded = encode_repository_document(current);
         if (!encoded)
             co_return std::unexpected(encoded.error());
@@ -809,7 +947,12 @@ struct repository::impl {
         auto encoded = objects::encode(value);
         if (!encoded)
             co_return std::unexpected(encoded.error());
-        co_return co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+        auto stored =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+        if (!stored)
+            co_return std::unexpected(stored.error());
+        entry.object = *stored;
+        co_return *stored;
     }
     runtime::task<tree> root_tree() {
         auto snapshot_id = co_await snapshot(current.root);
@@ -1150,7 +1293,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
                                           std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
-    auto saved = co_await output.impl_->persist();
+    auto saved = co_await output.impl_->checkpoint();
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return output;
@@ -1199,6 +1342,9 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
                                           std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
+    auto checkpointed = co_await output.impl_->checkpoint();
+    if (!checkpointed)
+        co_return std::unexpected(checkpointed.error());
     co_return output;
 }
 runtime::task<tree> repository::root() {
@@ -1718,12 +1864,9 @@ runtime::task<change_id> repository::cut(std::string message) {
     change_id id{*stored};
     impl_->current.head = id;
     impl_->current.refs["main"] = id;
-    impl_->current.pending_drips = 0;
-    auto saved = co_await impl_->persist();
+    auto saved = co_await impl_->checkpoint(*root);
     if (!saved)
         co_return std::unexpected(saved.error());
-    std::error_code cleanup;
-    std::filesystem::remove(impl_->journal_marker(), cleanup);
     co_return id;
 }
 runtime::task<std::vector<ref>> repository::refs() {
@@ -1739,7 +1882,7 @@ runtime::task<void> repository::set_ref(std::string name, change_id id) {
         co_return std::unexpected(
             failure(errc::invalid_argument, "invalid repository reference", name));
     impl_->current.refs[std::move(name)] = id;
-    auto saved = co_await impl_->checkpoint_or_journal();
+    auto saved = co_await impl_->checkpoint();
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return result<void>{};
@@ -2054,6 +2197,17 @@ runtime::task<void> repository::unlock(std::string path) {
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return result<void>{};
+}
+
+runtime::task<collection_report> repository::collect(collection_options options) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto checkpointed = co_await impl_->checkpoint();
+    if (!checkpointed) {
+        co_return std::unexpected(checkpointed.error());
+    }
+    co_return co_await impl_->objects.collect(options);
 }
 
 runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry(repository& source,

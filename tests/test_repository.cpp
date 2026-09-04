@@ -279,6 +279,43 @@ TEST(Repository, journal_replay_restores_a_working_tree_for_mutation) {
         root->entries, [](const liquid::tree_entry& entry) { return entry.name == "first.txt"; }));
 }
 
+TEST(Repository, collect_retains_checkpointed_content_and_reclaims_orphans) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("cut.txt", content("cut"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.cut("cut")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("pending.txt", content("pending"))));
+
+    auto store = liquid::runtime::block_on(liquid::store::open(location.path() / ".liquid-store"));
+    ASSERT_TRUE(store);
+    const auto orphan = liquid::runtime::block_on(store->put(content("orphan")));
+    ASSERT_TRUE(orphan);
+
+    const auto collected = liquid::runtime::block_on(repository.collect());
+    ASSERT_TRUE(collected) << collected.error().message;
+    EXPECT_EQ(collected->roots, 4U);
+    store = {};
+    store = liquid::runtime::block_on(liquid::store::open(location.path() / ".liquid-store"));
+    ASSERT_TRUE(store);
+    const auto removed = liquid::runtime::block_on(store->get(*orphan));
+    ASSERT_FALSE(removed);
+    EXPECT_EQ(removed.error().code, liquid::errc::not_found);
+
+    repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    const auto cut = liquid::runtime::block_on(reopened->read("cut.txt"));
+    ASSERT_TRUE(cut) << cut.error().message;
+    EXPECT_EQ(text(*cut), "cut");
+    const auto pending = liquid::runtime::block_on(reopened->read("pending.txt"));
+    ASSERT_TRUE(pending) << pending.error().message;
+    EXPECT_EQ(text(*pending), "pending");
+    const auto moved = liquid::runtime::block_on(reopened->move("pending.txt", "moved.txt"));
+    ASSERT_TRUE(moved) << moved.error().message;
+}
+
 TEST(Repository, Sha256StoreRoundTripsRecords) {
     temporary_repository location;
     const auto options = sha256_options();

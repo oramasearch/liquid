@@ -248,6 +248,7 @@ class repository {
   runtime::task<void> undo(op_id);                       // #41: the operation log
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
+  runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
   // Import primitives (liquid #43; lake's importers use the same calls)
   runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
   runtime::task<void> set_metadata(std::string key, std::vector<std::byte>);   // repository-document metadata map
@@ -284,6 +285,11 @@ the three required rotation, revocation, and metadata-disclosure statements.
 `operation_record` is `{ op_id id, std::string kind, std::string from, std::string to, actor by,
 std::chrono::sys_seconds at }`. Each operation ID is unique, so it selects one operation for
 `undo`. `operations()` returns the repository document's recorded operations newest first.
+
+`repository::collect` checkpoints the working tree, retains leases for that tree, every current ref
+head, the checkpoint document, and its lazy directory documents, then delegates to
+`store::collect`. Repository callers use this operation instead of collecting the repository's store
+directly.
 Existing repository documents without operation metadata remain readable; their records return an
 empty actor and epoch timestamp.
 

@@ -32,7 +32,7 @@ that the table and `liquid --help` name the same commands.
 | `unlock` | `unlock <path>` | Remove an advisory lock. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
-| `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [store]` | Collect a store. | available |
+| `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
@@ -70,7 +70,7 @@ liquid lock src/main.cpp
 liquid unlock src/main.cpp
 liquid mount /tmp/liquid-mount --read-only
 liquid materialise /tmp/liquid-checkout src
-liquid gc --dry-run .liquid-store
+liquid gc --dry-run .
 liquid identity rotate
 liquid pause
 liquid resume
@@ -82,7 +82,8 @@ liquid watch
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
 two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
 combines it, reads JSON history and operations, undoes the move, verifies a locked mutation is
-refused, pauses and resumes capture, and runs dry-run collection. `cli-help-docs` compares the
+refused, pauses and resumes capture, collects the repository, and reads the retained files back.
+`cli-help-docs` compares the
 documented command names to `--help`.
 
 ## How to change

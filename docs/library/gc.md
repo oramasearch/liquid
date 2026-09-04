@@ -2,7 +2,8 @@
 
 **Status: implemented for single-process local stores (liquid #8, #46).** Leased roots, epoch
 marking, chunk-list reference extraction, whole-pack deletion, sparse-pack compaction, dry runs,
-and retained-chunk explanations are available through `liquid/store.hpp` and `liquid gc`.
+and retained-chunk explanations are available through `liquid/store.hpp`. Repositories retain their
+own checkpoint roots through `liquid/repository.hpp`, and `liquid gc` uses that repository API.
 
 ## What and why
 
@@ -74,10 +75,16 @@ manifests, leases, the index, or packs. `collection_report` returns root, object
 pack, and epoch counts. Setting `collection_options::explain` also returns each retained chunk
 with either its lease path or the epoch high-water rule as the reason.
 
-The CLI opens the supplied store path, or the current directory when omitted:
+Repository collection first checkpoints its working tree and leases that tree, every current ref
+head, the repository checkpoint document, and lazy directory documents for 30 days. It renews
+those leases at every open and checkpoint, and releases superseded checkpoint, ref, and directory
+leases while the repository remains open. Call `repository::collect` for a repository; calling
+`store::collect` directly on its store can discard live repository objects.
+
+The CLI opens the supplied repository path, or the current directory when omitted:
 
 ```sh
-liquid gc [--explain] [--compact] [--compact-below <fraction>] [store-path]
+liquid gc [--explain] [--compact] [--compact-below <fraction>] [repository-path]
 ```
 
 `--explain` prints lines such as `blake3:… retained: lease … for root blake3:…` and identifies

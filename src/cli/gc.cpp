@@ -5,8 +5,8 @@
 #include <print>
 #include <string_view>
 
+#include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
-#include "liquid/store.hpp"
 
 namespace liquid_cli {
 namespace {
@@ -52,17 +52,17 @@ auto garbage_collect(int argc, char** argv) -> int {
         } else if (argument.starts_with('-')) {
             return usage(std::format("unknown gc option '{}'", argument));
         } else if (path_seen) {
-            return usage("gc accepts at most one store path");
+            return usage("gc accepts at most one repository path");
         } else {
             path = argv[index];
             path_seen = true;
         }
     }
-    auto store = liquid::runtime::block_on(liquid::store::open(path));
-    if (!store) {
-        return fail(store.error());
+    auto repository = liquid::runtime::block_on(liquid::repository::open(path));
+    if (!repository) {
+        return fail(repository.error());
     }
-    auto report = liquid::runtime::block_on(store->collect(options));
+    auto report = liquid::runtime::block_on(repository->collect(options));
     if (!report) {
         return fail(report.error());
     }

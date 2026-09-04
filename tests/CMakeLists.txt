@@ -32,22 +32,22 @@ gtest_discover_tests(liquid-tests)
 if(LIQUID_BUILD_CLI)
   add_executable(liquid-gc-cli-fixture store/gc_cli_fixture.cpp)
   target_link_libraries(liquid-gc-cli-fixture PRIVATE liquid::liquid)
-  set(LIQUID_GC_CLI_STORE ${CMAKE_CURRENT_BINARY_DIR}/gc-cli-store)
+  set(LIQUID_GC_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/gc-cli-repository)
   add_test(NAME gc-cli-setup
-    COMMAND liquid-gc-cli-fixture ${LIQUID_GC_CLI_STORE})
+    COMMAND liquid-gc-cli-fixture ${LIQUID_GC_CLI_REPOSITORY})
   set_tests_properties(gc-cli-setup PROPERTIES FIXTURES_SETUP gc_cli)
   add_test(NAME gc-cli-explain
-    COMMAND $<TARGET_FILE:liquid-cli> gc --explain ${LIQUID_GC_CLI_STORE})
+    COMMAND $<TARGET_FILE:liquid-cli> gc --explain ${LIQUID_GC_CLI_REPOSITORY})
   set_tests_properties(gc-cli-explain PROPERTIES
     FIXTURES_REQUIRED gc_cli
     PASS_REGULAR_EXPRESSION "retained: lease")
   add_test(NAME gc-cli-compact
-    COMMAND $<TARGET_FILE:liquid-cli> gc --compact --compact-below 0.5 ${LIQUID_GC_CLI_STORE})
+    COMMAND $<TARGET_FILE:liquid-cli> gc --compact --compact-below 0.5 ${LIQUID_GC_CLI_REPOSITORY})
   set_tests_properties(gc-cli-compact PROPERTIES
     FIXTURES_REQUIRED gc_cli
     PASS_REGULAR_EXPRESSION "packs_compacted=0")
   add_test(NAME gc-cli-clean
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_GC_CLI_STORE})
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_GC_CLI_REPOSITORY})
   set_tests_properties(gc-cli-clean PROPERTIES FIXTURES_CLEANUP gc_cli)
   add_test(NAME cli-scenario
     COMMAND ${CMAKE_COMMAND}
