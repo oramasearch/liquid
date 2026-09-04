@@ -12,7 +12,7 @@
 
 namespace liquid {
 
-enum class algorithm : std::uint8_t { blake3 = 1, sha256 = 2 };
+enum class algorithm : std::uint8_t { blake3 = 1, sha256 = 2, blake3_keyed = 3 };
 
 struct LIQUID_EXPORT digest {
     algorithm alg;

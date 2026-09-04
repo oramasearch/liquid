@@ -1,7 +1,8 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process local stores (liquid #1).** `store::open`, `put`,
-`get`, `read`, and `contains` are Capy coroutines. Leases and collection remain unsupported
+**Status: implemented for single-process local stores (liquid #1, #7).** `store::open`, `put`,
+`get`, `read`, and `contains` are Capy coroutines. The same operations support encrypted
+objects when supplied a keyring. Leases and collection remain unsupported
 until liquid #8.
 
 ## What and why
@@ -19,6 +20,7 @@ share chunks without a file-per-object bottleneck.
 <root>/packs/objects.meta ordered input digest → chunk-list descriptors
 <root>/index/MANIFEST
 <root>/index/run-<seq>.idx
+<root>/keys/<key-id>.wrapped   encrypted trust-domain data key
 <root>/tmp/
 ```
 
@@ -32,6 +34,27 @@ footer or table is a `corrupt` error; its entries are never silently ignored.
 The current pack keeps a complete footer after each append. The next append removes the previous
 table and footer, appends the new compressed chunk, and writes a replacement table and footer.
 Packs roll at `store_options::pack_size`, or 64 MiB when it is zero.
+
+## Encrypted objects
+
+When `store_options::keys` is set, `put` selects `store_options::write_key` or the keyring's
+default key id. That id names a trust domain. The keyring unwraps its domain data key from
+`keys/<key-id>.wrapped`; BLAKE3 derive-key creates distinct keys for chunk identifiers and
+XChaCha20-Poly1305 encryption. Chunk ids are `blake3k` keyed digests, so a storage server cannot
+test a guessed plaintext. The data key is random when the domain is first written and the KEK
+never directly identifies or encrypts a chunk.
+
+The pack's existing eight reserved header bytes are an encryption flag. For encrypted records it
+is `1`, and the compressed payload is replaced by `nonce[24] || tag[16] || ciphertext`. The nonce
+comes from the operating system random source for every new chunk. The object map format is now
+`LQOBJ2`: each record adds an encryption flag and, when set, a length-prefixed key id. Its
+chunk-list descriptor contains the same key id and is encrypted too. `LQOBJ1` plaintext metadata
+remains readable.
+
+Every encrypted read first unwraps the domain data key, then authenticates and decompresses each
+requested chunk and verifies its keyed id. A missing or wrong key is `unauthorized` with the key
+id in `error::context`; ciphertext authentication failure or keyed-id mismatch is `corrupt`.
+`get` never returns ciphertext as content.
 
 ## Chunking and integrity
 

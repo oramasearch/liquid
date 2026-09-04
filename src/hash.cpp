@@ -44,6 +44,9 @@ result<digest> hash(algorithm alg, std::span<const std::byte> input) {
             sha256_final(&context, reinterpret_cast<BYTE*>(output.bytes.data()));
             return output;
         }
+        case algorithm::blake3_keyed:
+            return std::unexpected(error{errc::invalid_argument,
+                                         "keyed BLAKE3 requires a private store key", "hash"});
     }
     return std::unexpected(
         error{errc::invalid_argument, "unknown digest algorithm", "hash"});
@@ -57,6 +60,9 @@ std::string to_string(const digest& value) {
             break;
         case algorithm::sha256:
             output = "sha256:";
+            break;
+        case algorithm::blake3_keyed:
+            output = "blake3k:";
             break;
         default:
             output = "unknown:";
@@ -81,6 +87,9 @@ result<digest> parse_digest(std::string_view text) {
         } else if (text.starts_with("sha256:")) {
             alg = algorithm::sha256;
             hex = text.substr(7);
+        } else if (text.starts_with("blake3k:")) {
+            alg = algorithm::blake3_keyed;
+            hex = text.substr(8);
         } else {
             return parse_error("unknown digest algorithm");
         }

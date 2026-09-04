@@ -3,11 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <vector>
 
 #include "liquid/hash.hpp"
 #include "liquid/runtime.hpp"
+#include "../crypto/crypto.hpp"
 
 namespace liquid::store_detail {
 
@@ -46,8 +48,10 @@ void reset_file_write_counter() noexcept;
 [[nodiscard]] runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t id);
 [[nodiscard]] runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
                                                           pack_contents contents, digest id,
-                                                          std::vector<std::byte> raw);
+                                                          std::vector<std::byte> raw,
+                                                          std::optional<crypto_detail::key> encryption_key = std::nullopt);
 [[nodiscard]] runtime::task<std::vector<std::byte>>
-read_pack_entry(std::filesystem::path path, chunk_location location, digest expected);
+read_pack_entry(std::filesystem::path path, chunk_location location, digest expected,
+                std::optional<crypto_detail::key> encryption_key = std::nullopt);
 
 } // namespace liquid::store_detail

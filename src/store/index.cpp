@@ -75,7 +75,8 @@ std::uint64_t checksum(std::span<const std::byte> bytes) {
 
 bool valid_algorithm(unsigned char value) {
   return value == static_cast<unsigned char>(algorithm::blake3) ||
-         value == static_cast<unsigned char>(algorithm::sha256);
+         value == static_cast<unsigned char>(algorithm::sha256) ||
+         value == static_cast<unsigned char>(algorithm::blake3_keyed);
 }
 
 std::uint64_t bloom_hash(const std::array<std::byte, 32> &id) { return checksum(id); }

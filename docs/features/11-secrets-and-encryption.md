@@ -58,8 +58,11 @@ collaboration property liquid exists to provide.
 
 ## Envelope encryption
 
-A random **DEK** per object; a longer-lived **KEK** wraps it. Rotating the KEK
-rewraps a small key instead of re-encrypting gigabytes.
+A random **data key** per trust domain, wrapped by a longer-lived **KEK**. The data
+key derives independent chunk-identifier and chunk-encryption keys. Rotating the KEK
+rewraps the small data key instead of re-encrypting gigabytes. Per-object data keys
+would prevent chunks shared by different objects in the same trust domain from
+deduplicating, so they are deliberately not used.
 
 KEK custody is pluggable, covering both halves of "password protected or key
 protected":

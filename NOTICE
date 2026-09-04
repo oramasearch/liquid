@@ -7,6 +7,12 @@ BLAKE3 C implementation
   Licence: CC0 1.0, Apache 2.0, or Apache 2.0 with LLVM exceptions
   The source is fetched during configuration and compiled as a private static target.
 
+Monocypher
+  Project: https://monocypher.org/
+  Version: 4.0.3
+  Licence: BSD-2-Clause or CC0-1.0
+  The source tarball is SHA-256 pinned during configuration and compiled as a private static target.
+
 SHA-256 implementation
   Author: Brad Conte
   Project: https://github.com/B-Con/crypto-algorithms
