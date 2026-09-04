@@ -495,6 +495,15 @@ auto object_store::read(const sha1& id) -> result<object> {
             continue;
         auto pack = it->path();
         pack.replace_extension(".pack");
+        auto cache = [this](const object& value) {
+            constexpr std::uint64_t delta_cache_limit = 32U * 1024U * 1024U;
+            const auto name = sha1_hex(value.id);
+            if (delta_cache_.contains(name) || value.payload.size() > delta_cache_limit ||
+                delta_cache_bytes_ + value.payload.size() > delta_cache_limit)
+                return;
+            delta_cache_bytes_ += value.payload.size();
+            delta_cache_.emplace(name, value);
+        };
         auto decode = [&](auto&& self,
                           std::uint64_t position,
                           std::optional<sha1> expected) -> result<object> {
@@ -586,17 +595,14 @@ auto object_store::read(const sha1& id) -> result<object> {
             if (expected && sha1_hash(object_bytes(output.kind, output.payload)) != *expected)
                 return std::unexpected(
                     failure(errc::corrupt, "Git object SHA-1 mismatch", sha1_hex(*expected)));
+            if (expected)
+                cache(output);
             return output;
         };
         auto object = decode(decode, **offset, id);
         if (!object)
             return std::unexpected(object.error());
-        constexpr std::uint64_t delta_cache_limit = 32U * 1024U * 1024U;
-        if (object->payload.size() <= delta_cache_limit &&
-            delta_cache_bytes_ + object->payload.size() <= delta_cache_limit) {
-            delta_cache_bytes_ += object->payload.size();
-            delta_cache_.emplace(hex, *object);
-        }
+        cache(*object);
         return object;
     }
     if (code)
