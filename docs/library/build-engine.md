@@ -412,6 +412,8 @@ the host.
 
 ## What Phase 2 does not do
 
+The demand-driven graph, the daemon and per-definition granularity are Phase 4: [`incremental-engine.md`](incremental-engine.md).
+
 No query graph beyond actions (Phase 4 turns queries and actions into one engine), no production
 worker (Phase 3), no daemon (Phase 4), no per-definition
 granularity (Phase 4). Actions are the coarse end of the spectrum features/04 describes; the fine

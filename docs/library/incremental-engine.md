@@ -1,0 +1,162 @@
+# The incremental engine: the query graph, the daemon, and liquify on the graph
+
+> Phase 4 of the plan ([`action-plan.md`](https://github.com/oramasearch/liquid-bridge/blob/main/docs/action-plan.md),
+> epics https://github.com/oramasearch/liquid/issues/36 and https://github.com/oramasearch/liquify/issues/13).
+> Specification: [`features/04-build-engine.md`](../features/04-build-engine.md) (the model, early
+> cutoff, durability tiers, granularity, compile as you type, the daemon, correctness),
+> [`features/21-liquify-ide.md`](../features/21-liquify-ide.md) (the one architectural argument,
+> stub trees, design position), [`features/22-change-capture.md`](../features/22-change-capture.md)
+> (the fan-out), [`features/12-search.md`](../features/12-search.md) (the planner, symbols).
+> Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
+> a retained GPU text layer inside Dear ImGui. This page is written before the issues and corrected
+> by them.
+
+Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
+outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
+remotely ([`build-engine.md`](build-engine.md), [`distribution.md`](distribution.md)). Phase 4 puts
+the same mechanism under a demand-driven graph that stays warm, so a keystroke recomputes only what
+that keystroke changed, and gives liquify that graph in-process.
+
+**Exit for the phase:** a one-line change in a large C++ project recompiles one translation unit
+and relinks in the time a save takes; the editor shows the diagnostic before the build finishes; a
+comment-only edit rebuilds nothing.
+
+## Queries and actions are one mechanism (#20)
+
+A **query** is a memoised function from inputs to a value, keyed by a query kind and its
+arguments. An **action** is the coarse end of the same spectrum: its inputs are a tree and a
+command, its value is a result record. The engine does not distinguish them: `execute` from Phase 2
+becomes the `action_result` query, `wrap`'s per-tool actions become nodes, and every derived thing
+liquify asks for (a parse, a stub, a symbol table, a diagnostic list, a completion) is a query too.
+
+Every query value carries a **fingerprint**: the digest of its canonical encoding. Every query
+records the queries and inputs it read while computing (the observed-dependency principle from the
+sandbox, applied inside the process: reads go through one accessor that records them). An **input**
+is a leaf: a blob at a path in the working tree, an editor overlay buffer, an environment value,
+the toolchain digest.
+
+**Validation is red-green.** When an input changes, the engine does not recompute dependents; it
+marks them *maybe stale* and, on the next demand, walks each dependency in the order it was read
+the last time: if a dependency's fingerprint is unchanged the walk continues; if one changed, the
+query re-executes. **Early cutoff**: when a re-executed query produces the same fingerprint, its
+dependents are marked green without re-executing. This is what makes a comment-only edit rebuild
+nothing: the object file's fingerprint is unchanged, so the link is not revisited.
+
+**Durability tiers.** Each input carries a durability (volatile, low, medium, high, as the
+specification tables them) and each query the minimum durability of everything it read. A change
+to a volatile input (the buffer being typed in) marks stale only queries whose durability is
+volatile; the rest of the graph is not visited. The tier of a path is configured per repository
+(`config.build.durability`) with defaults: the working tree is low, dependencies medium, the
+toolchain tree high.
+
+**Persistence.** The graph is a record set in the store: query keys, fingerprints, dependency
+lists and values (values that are already records, such as results, are referenced by digest; small
+values are inline). On daemon start the graph loads shallowly (keys, fingerprints and dependency
+lists; values on demand) and validates against the current inputs by the same red-green walk, so a
+restart costs a validation pass, not a rebuild. Cold-start time on a large C++ tree is measured and
+recorded here.
+
+**Cancellation.** A keystroke cancels in-flight queries that depend on the changed volatile input;
+queries are Capy coroutines, and cancellation is cooperative at every dependency read. Results of
+cancelled computations are discarded, never stored.
+
+## The daemon (#21)
+
+One long-lived process per checkout: started on first use by the CLI or liquify, single instance
+enforced by a lock in `LIQUID_REPO/daemon/`, idle exit after a configured period, shutdown that
+persists the graph. It owns the capture subscription ([`capture.md`](capture.md)): a drip arrives
+as a journal cursor advance; the daemon maps changed paths to inputs, marks the minimum stale, and
+fans out to pluggable targets in order: the build graph (demand what the last build demanded), the
+local search index (#22), collaborators and lake (the sync client from
+[`sync.md`](sync.md)), each with its own cursor, at-least-once and idempotent, as
+`features/22` requires. `liquid status` shows what the last drip triggered and how far each target
+is behind.
+
+**Memory.** The graph has a ceiling (`config.build.graph_memory`); values are evicted least
+recently demanded first (they are recomputable, and results are in the store anyway); keys,
+fingerprints and dependency lists are the working set and are what the ceiling protects.
+
+**Clients** talk to the daemon over one local endpoint: the CLI over a Unix socket (named pipe on
+Windows) with the same framed canonical-CBOR request shape the sync protocol uses; liquify links
+libliquid and hosts the graph in-process (the daemon becomes a thread in liquify's process when
+liquify is the first client, and the CLI attaches to it), which is the whole point of the
+architecture and is the only way to avoid a serialisation boundary.
+
+## Continuous clean-rebuild validation (#23)
+
+Phase 2's sampled re-execution verifies actions; Phase 4 verifies the graph: on idle capacity the
+daemon picks sampled targets, rebuilds them from clean in a fresh sandbox, and compares outputs
+with the incremental result. A divergence is reported with the query that was wrong and its
+recorded inputs, as a critical alert and an audit-able record, and the offending value is
+evicted so the next demand recomputes it. Zero divergences on the reference projects (liquid
+itself from #59, the wrap fixtures) is the acceptance.
+
+## Granularity: per translation unit, then per definition (#65)
+
+Per translation unit is the floor today and stays the unit for linking. Per definition is a
+frontend's job: a **frontend module** behind a stable non-C++ boundary (the plugin ABI of decision
+§14; the same boundary format codecs will use) that, given a blob, yields its **units** (functions,
+types, declarations with their source ranges) and, for C and C++ with a Clang-fronted target, the
+per-unit compile actions the engine can run. tree-sitter provides the syntactic fallback for
+languages without a frontend module. A change inside one function body re-runs that definition's
+actions only; the object for the translation unit is assembled from unit outputs by the frontend
+module. The module is replaceable and lives outside libliquid's core (`modules/frontends/`), so a
+frontend's licence and size never enter libliquid.
+
+## Symbols and the search planner (#66, #67, #22)
+
+Compiler-derived symbols are a byproduct of building: the frontend module emits a SCIP-equivalent
+symbol record per translation unit as an action output, content-addressed like everything else,
+with tree-sitter's syntactic symbols as the fallback. The local search index (#22) is oramacore-cpp
+BM25F and lake's trigram index run in the daemon, updated per drip from the fan-out, indexed by
+blob once. The **planner** (#67) chooses per query among BM25F, the trigram index and a brute-force
+scan over blobs by cost (index availability, term selectivity, corpus size), and explains its
+choice the way `liquid why` explains a cache miss.
+
+## liquify on the graph
+
+liquify (its epic https://github.com/oramasearch/liquify/issues/13) is a client of this engine
+in-process:
+
+- **Overlay inputs.** An open buffer is a volatile input backed by memory; the graph reads it
+  through the same accessor as a blob; a save turns it into a drip and the overlay into the blob.
+- **Interactive analysis (liquify #5).** Cursor-centric queries (the node at a position, its
+  definition, references, hover, completion) run over error-tolerant parse trees with source ranges
+  and trivia produced by the frontend module in interactive mode; these are queries like any other,
+  cancelled on the next keystroke.
+- **Stub trees (liquify #4).** A stub per blob (declarations, names, signatures) is an action
+  output, content-addressed and cached; cross-file resolution reads stubs and only open files hold
+  full trees.
+- **Diagnostics from the graph.** The build populates diagnostics as query values; the editor
+  shows them as soon as the query completes, before the build's link step, which is the exit
+  criterion.
+- **Inline build, test and deploy (liquify #6).** The editor demands the same queries the CLI does;
+  there is no second path.
+- **Rendering (decision §15).** The buffer is a retained GPU text layer inside Dear ImGui with a
+  per-blob cached line layout; panels and the shell stay ImGui.
+- **The plugin ABI (decision §14).** One C ABI (query kinds registered by name, values as
+  canonical CBOR, callbacks for progress and cancellation) that frontend modules, format codecs and
+  editor plugins share; no VS Code compatibility in this phase.
+
+## Waves
+
+1. liquid #20 (the graph, persistence, cancellation) with #23's validation hook designed in;
+   liquid #21 (the daemon, fan-out, memory ceiling); liquify #4 (stub trees, against #20's
+   query interface) and liquify #1's shell work that does not need the graph (the retained text
+   layer).
+2. liquid #65 (frontend module boundary, C and C++ per definition), #66 (symbols), #22 (local
+   index on drip), #23 (validation on the reference projects); liquify #5 (interactive analysis)
+   and #1 (the editor on the graph).
+3. liquid #67 (the planner); liquify #6 (inline build, test, deploy).
+
+## How to verify
+
+Each issue adds its proof beside the Phase 2 and 3 ones. The phase exit is measured on liquid's
+own tree (the self-host project from #59) and recorded here: the time from a one-line edit to a
+relinked binary, the time to the first diagnostic in liquify, and zero rebuilds for a comment-only
+edit.
+
+## How to change
+
+This page precedes its implementation. An issue that finds it wrong changes it in the same commit
+as the code and says why in the commit body.
