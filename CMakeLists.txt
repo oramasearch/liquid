@@ -223,6 +223,7 @@ add_library(libliquid
   src/build/verify.cpp
   src/build/materialise.cpp
   src/build/provenance.cpp
+  src/build/why.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp

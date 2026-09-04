@@ -58,10 +58,52 @@ struct LIQUID_EXPORT action_timing {
 
 enum class cache_status : std::uint8_t { miss, hit, divergent };
 
+enum class cache_miss_reason : std::uint8_t {
+    input_changed,
+    command_changed,
+    environment_changed,
+    toolchain_changed,
+    sandbox_changed,
+    never_built,
+    divergent_result_quarantined,
+    unknown
+};
+
+struct LIQUID_EXPORT line_change {
+    std::uint64_t old_line{};
+    std::uint64_t old_count{};
+    std::uint64_t new_line{};
+    std::uint64_t new_count{};
+};
+
+struct LIQUID_EXPORT change_attribution {
+    digest drip;
+    actor by;
+    std::chrono::sys_seconds at{};
+};
+
 struct LIQUID_EXPORT cache_miss {
+    cache_miss_reason reason{cache_miss_reason::unknown};
     std::string path;
     std::optional<digest> expected;
     std::optional<digest> actual;
+    std::vector<std::string> expected_command;
+    std::vector<std::string> actual_command;
+    std::string environment_key;
+    std::optional<std::string> expected_value;
+    std::optional<std::string> actual_value;
+    std::string tool;
+    std::optional<line_change> lines;
+    std::optional<change_attribution> changed_by;
+    std::string detail;
+};
+
+struct LIQUID_EXPORT cache_tier_report {
+    bool available{};
+    std::uint64_t hits{};
+    std::uint64_t misses{};
+    std::uint64_t bytes_transferred{};
+    std::uint64_t bytes_avoided{};
 };
 
 struct LIQUID_EXPORT reproducibility_difference {
@@ -85,6 +127,11 @@ struct LIQUID_EXPORT cache_report {
     std::uint64_t bytes_served{};
     std::uint64_t bytes_stored{};
     std::vector<critical_cache_alert> critical_alerts;
+    std::uint64_t bytes_rebuilt{};
+    std::map<cache_miss_reason, std::uint64_t> misses_by_reason;
+    cache_tier_report memory;
+    cache_tier_report disk{.available = true};
+    cache_tier_report remote;
 };
 
 struct LIQUID_EXPORT action_result {
@@ -123,6 +170,12 @@ struct LIQUID_EXPORT wrap_options {
     std::optional<std::filesystem::path> cache_directory;
 };
 
+struct LIQUID_EXPORT critical_action {
+    digest action;
+    std::chrono::milliseconds duration{};
+    std::vector<std::string> outputs;
+};
+
 struct LIQUID_EXPORT wrap_report {
     int exit{};
     std::uint64_t actions{};
@@ -132,6 +185,8 @@ struct LIQUID_EXPORT wrap_report {
     cache_status outer{cache_status::miss};
     std::vector<cache_miss> why;
     bool verification_scheduled{};
+    cache_report cache;
+    std::vector<critical_action> critical_path;
 };
 
 enum class verify_selection : std::uint8_t { sample, all, changed, action };
@@ -156,6 +211,16 @@ struct LIQUID_EXPORT verify_report {
     std::vector<verified_action> actions;
 };
 
+struct LIQUID_EXPORT why_report {
+    std::string target;
+    cache_status lookup{cache_status::miss};
+    std::optional<result_id> result;
+    std::optional<result_id> previous_result;
+    std::optional<digest> action;
+    std::optional<digest> previous_action;
+    cache_miss cause;
+};
+
 namespace build {
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
@@ -176,6 +241,13 @@ provenance_json(const provenance_report& report, bool dsse = false);
                                                                 verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(std::filesystem::path working_tree,
                                                                 verify_options options = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<why_report>
+why(std::filesystem::path working_tree,
+    std::string target,
+    std::optional<std::filesystem::path> cache_directory = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<cache_report>
+cache_stats(std::filesystem::path working_tree,
+            std::optional<std::filesystem::path> cache_directory = {});
 
 } // namespace build
 

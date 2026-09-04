@@ -22,7 +22,7 @@ struct vfs_entry {
     std::vector<std::uint64_t> chunk_sizes;
 };
 
-struct vfs_access {
+struct LIQUID_EXPORT vfs_access {
     [[nodiscard]] static auto entry(repository& source, std::string path)
         -> runtime::task<vfs_entry>;
     [[nodiscard]] static auto children(repository& source, std::string path)

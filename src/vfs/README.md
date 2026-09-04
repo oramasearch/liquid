@@ -5,6 +5,9 @@ chunk hydration cache, and platform-independent full materialisation implementat
 remain in `include/liquid/vfs.hpp`; contributor guidance and verification live in
 [`docs/library/vfs.md`](../../docs/library/vfs.md).
 
+The private repository adapter retains shared-library visibility because build diagnostics and
+their portable fixtures use the same stored-entry lookup without exposing it as a public header.
+
 The libfuse3 backend parses process-level options before constructing its session, runs the
 configured request loop through the runtime blocking adapter, and interrupts that loop only for a
 recorded explicit stop. Writable observed mounts support build output creation, replacement,

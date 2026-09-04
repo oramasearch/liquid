@@ -24,6 +24,7 @@ add_executable(liquid-tests
   vfs/test_mount.cpp
   build/test_executor.cpp
   build/test_provenance.cpp
+  build/test_why.cpp
   build/test_wrap.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)

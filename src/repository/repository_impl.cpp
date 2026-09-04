@@ -2473,6 +2473,73 @@ repository_detail::build_access::change_time(repository& source, digest tree) {
     co_return change->at;
 }
 
+runtime::task<std::optional<change_attribution>>
+repository_detail::build_access::path_change(repository& source, std::string path, digest content) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    const auto* current = lookup(source.impl_->current.root, *parts);
+    if (!current || current->kind != entry_kind::file || current->object.alg != content.alg ||
+        current->object.bytes != content.bytes) {
+        co_return std::nullopt;
+    }
+    const auto operation = std::ranges::find_if(
+        source.impl_->current.operations.rbegin(),
+        source.impl_->current.operations.rend(),
+        [&](const stored_operation& value) { return value.kind == "write" && value.from == path; });
+    if (operation == source.impl_->current.operations.rend() || operation->node != current->node) {
+        co_return std::nullopt;
+    }
+    for (auto candidate = source.impl_->current.drips.rbegin();
+         candidate != source.impl_->current.drips.rend();
+         ++candidate) {
+        auto decoded = cbor::decode(candidate->body);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        const auto* kind_value = find(*decoded, "kind");
+        const auto* operation_value = find(*decoded, "operation");
+        const auto* author_value = find(*decoded, "author");
+        const auto* at_value = find(*decoded, "at");
+        const auto* node_value = find(*decoded, "node");
+        const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
+        const auto* operation_name =
+            operation_value ? std::get_if<std::string>(&operation_value->data) : nullptr;
+        const auto* author = author_value ? std::get_if<std::string>(&author_value->data) : nullptr;
+        auto at = std::optional<std::int64_t>{};
+        if (const auto* signed_at =
+                at_value ? std::get_if<std::int64_t>(&at_value->data) : nullptr) {
+            at = *signed_at;
+        } else if (const auto* unsigned_at =
+                       at_value ? std::get_if<std::uint64_t>(&at_value->data) : nullptr;
+                   unsigned_at && *unsigned_at <= static_cast<std::uint64_t>(
+                                                      std::numeric_limits<std::int64_t>::max())) {
+            at = static_cast<std::int64_t>(*unsigned_at);
+        }
+        const auto* node =
+            node_value ? std::get_if<cbor::value::bytes>(&node_value->data) : nullptr;
+        if (!kind || *kind != "drip" || !operation_name || *operation_name != "write" || !author ||
+            !at || !node || node->size() != operation->node.size()) {
+            continue;
+        }
+        if (*author != operation->by.taap_id ||
+            std::chrono::sys_seconds{std::chrono::seconds{*at}} != operation->at ||
+            !std::ranges::equal(*node, operation->node)) {
+            continue;
+        }
+        auto id = hash(source.impl_->hash_algorithm, candidate->body);
+        if (!id) {
+            co_return std::unexpected(id.error());
+        }
+        co_return change_attribution{*id, operation->by, operation->at};
+    }
+    co_return std::nullopt;
+}
+
 result<std::filesystem::path> repository_detail::build_access::root_path(repository& source) {
     if (!source.impl_)
         return std::unexpected(failure(errc::invalid_argument, "repository is empty"));

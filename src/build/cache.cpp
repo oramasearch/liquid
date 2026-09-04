@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "build/repository_access.hpp"
+#include "build/why.hpp"
 #include "identity/taap.hpp"
 #include "store/pack.hpp"
 
@@ -538,7 +539,10 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
             if (!*actual || !same_digest(expected.content, **actual)) {
                 matches = false;
                 if (!output.why) {
-                    output.why = cache_miss{expected.path, expected.content, *actual};
+                    output.why = cache_miss{.reason = cache_miss_reason::input_changed,
+                                            .path = expected.path,
+                                            .expected = expected.content,
+                                            .actual = *actual};
                 }
                 break;
             }
@@ -553,6 +557,11 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         output.hit = result_id{id};
         output.why.reset();
         output.bytes_served = *served;
+        auto avoided = co_await output_bytes(source_, *value);
+        if (!avoided) {
+            co_return std::unexpected(avoided.error());
+        }
+        output.bytes_avoided = *avoided;
         co_return output;
     }
     co_return output;
@@ -681,6 +690,11 @@ runtime::task<void> disk_cache::persist_root() {
         co_return std::unexpected(pointer.error());
     }
     co_return co_await index_.persist(*root);
+}
+
+result<void>
+disk_cache::record_lookup(cache_status status, result_id id, std::optional<result_id> previous) {
+    return append_lookup(directory_, lookup_record{status, id, previous});
 }
 
 void testing::reset_sandbox_spawn_count() noexcept {

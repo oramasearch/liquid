@@ -27,3 +27,8 @@ The private `repository_access.hpp` adapter is the only route from these compone
 storage, signing, cache and verification configuration, leases, counters, and critical alerts. Public
 build values and operations stay
 in `include/liquid/build.hpp`.
+
+`why.cpp` resolves output paths, action digests, and result digests through the persistent lookup
+journal and action index. It classifies differences strictly from action/result records, manifests,
+stored trees and blobs, and repository history. It also owns the completed-wrap statistics
+projection. `cache.cpp` records lookup result relationships but does not store a guessed cause.
