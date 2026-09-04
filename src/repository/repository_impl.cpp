@@ -14,7 +14,9 @@
 #include "objects/records.hpp"
 #include "repository/merge.hpp"
 #include "repository/testing.hpp"
+#include "store/chunker.hpp"
 #include "store/pack.hpp"
+#include "vfs/repository_access.hpp"
 
 namespace liquid {
 namespace {
@@ -32,6 +34,7 @@ struct operation_record {
     std::string kind;
     std::string from;
     std::string to;
+    node_id node{};
     std::optional<working_entry> prior;
 };
 struct persisted_drip {
@@ -143,6 +146,7 @@ auto encode_repository_document(const repository_document& value)
                  {"kind", cbor::value{operation.kind}},
                  {"from", cbor::value{operation.from}},
                  {"to", cbor::value{operation.to}},
+                 {"node", bytes(operation.node)},
                  {"prior",
                   operation.prior ? encode_entry(*operation.prior) : cbor::value{cbor::null{}}}}));
     auto locks = cbor::value::array{};
@@ -233,11 +237,13 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         const auto* operation_kind = find(item, "kind");
         const auto* from = find(item, "from");
         const auto* to = find(item, "to");
+        const auto* node = find(item, "node");
         const auto* prior = find(item, "prior");
         const auto* kind_text =
             operation_kind ? std::get_if<std::string>(&operation_kind->data) : nullptr;
         const auto* from_text = from ? std::get_if<std::string>(&from->data) : nullptr;
         const auto* to_text = to ? std::get_if<std::string>(&to->data) : nullptr;
+        const auto* node_bytes = node ? std::get_if<cbor::value::bytes>(&node->data) : nullptr;
         if (!operation_id || !kind_text || !from_text || !to_text || !prior)
             return std::unexpected(
                 failure(errc::corrupt, "invalid operation", "repository document"));
@@ -251,8 +257,15 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                 return std::unexpected(entry.error());
             previous = std::move(*entry);
         }
+        node_id identity{};
+        if (node_bytes) {
+            if (node_bytes->size() != identity.size())
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid operation node", "repository document"));
+            std::ranges::copy(*node_bytes, identity.begin());
+        }
         output.operations.push_back(
-            {op_id{*digest}, *kind_text, *from_text, *to_text, std::move(previous)});
+            {op_id{*digest}, *kind_text, *from_text, *to_text, identity, std::move(previous)});
     }
     if (!std::holds_alternative<cbor::null>(head->data)) {
         auto digest = decode_digest(*head);
@@ -434,12 +447,13 @@ struct repository::impl {
             co_return std::unexpected(encoded.error());
         co_return co_await store_detail::write_file(journal_marker(), std::move(*encoded));
     }
-    runtime::task<void> append_drip(std::string operation) {
+    runtime::task<void> append_drip(std::string operation, const node_id& node) {
         const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
         auto body = cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                                       {"kind", "drip"},
                                       {"author", cbor::value{signing_key.identity().taap_id}},
                                       {"at", cbor::value{at.time_since_epoch().count()}},
+                                      {"node", bytes(node)},
                                       {"operation", cbor::value{std::move(operation)}}}));
         if (!body) {
             co_return std::unexpected(body.error());
@@ -607,10 +621,16 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
     if (!parts)
         co_return std::unexpected(parts.error());
     const auto size = contents.size();
-    auto content = co_await impl_->objects.put(std::move(contents));
-    if (!content)
-        co_return std::unexpected(content.error());
-    blob record{{*content}, size};
+    blob record{{}, size, {}};
+    for (const auto range : store_detail::fastcdc(contents)) {
+        auto chunk = std::vector<std::byte>(contents.begin() + range.offset,
+                                            contents.begin() + range.offset + range.size);
+        auto content = co_await impl_->objects.put(std::move(chunk));
+        if (!content)
+            co_return std::unexpected(content.error());
+        record.chunks.push_back(*content);
+        record.chunk_sizes.push_back(range.size);
+    }
     auto encoded = objects::encode(record);
     if (!encoded)
         co_return std::unexpected(encoded.error());
@@ -648,8 +668,9 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
     auto operation_hash = hash(algorithm::blake3, std::span<const std::byte>{reference->bytes});
     if (!operation_hash)
         co_return std::unexpected(operation_hash.error());
-    impl_->current.operations.push_back({op_id{*operation_hash}, "write", path, {}, prior});
-    auto signed_drip = co_await impl_->append_drip("write");
+    impl_->current.operations.push_back(
+        {op_id{*operation_hash}, "write", path, {}, found->second.node, prior});
+    auto signed_drip = co_await impl_->append_drip("write", found->second.node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++impl_->current.pending_drips;
@@ -695,9 +716,12 @@ runtime::task<void> repository::move(std::string from, std::string to) {
         auto removed = (*source_document)->remove_entry(source->back());
         if (!removed)
             co_return std::unexpected(removed.error());
+        const auto kind = found->second.kind == entry_kind::file        ? "blob"
+                          : found->second.kind == entry_kind::directory ? "tree"
+                                                                        : "repo";
         auto inserted = (*destination_document)
                             ->put_entry(destination->back(),
-                                        {"blob",
+                                        {kind,
                                          found->second.node,
                                          found->second.mode,
                                          to_string(found->second.object)});
@@ -705,13 +729,15 @@ runtime::task<void> repository::move(std::string from, std::string to) {
             co_return std::unexpected(inserted.error());
     }
     auto moved = std::move(found->second);
+    const auto moved_node = moved.node;
     (*source_parent)->entries.erase(found);
     (*destination_parent)->entries.emplace(destination->back(), std::move(moved));
     auto hash_value = hash(algorithm::blake3, std::span<const std::byte>{impl_->current.root.node});
     if (!hash_value)
         co_return std::unexpected(hash_value.error());
-    impl_->current.operations.push_back({op_id{*hash_value}, "move", from, to, std::nullopt});
-    auto signed_drip = co_await impl_->append_drip("move");
+    impl_->current.operations.push_back(
+        {op_id{*hash_value}, "move", from, to, moved_node, std::nullopt});
+    auto signed_drip = co_await impl_->append_drip("move", moved_node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++impl_->current.pending_drips;
@@ -745,8 +771,9 @@ runtime::task<void> repository::remove(std::string path) {
     auto hash_value = hash(algorithm::blake3, std::span<const std::byte>{prior.node});
     if (!hash_value)
         co_return std::unexpected(hash_value.error());
-    impl_->current.operations.push_back({op_id{*hash_value}, "remove", path, {}, prior});
-    auto signed_drip = co_await impl_->append_drip("remove");
+    impl_->current.operations.push_back(
+        {op_id{*hash_value}, "remove", path, {}, prior.node, prior});
+    auto signed_drip = co_await impl_->append_drip("remove", prior.node);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++impl_->current.pending_drips;
@@ -1008,6 +1035,169 @@ runtime::task<void> repository::unlock(std::string path) {
     co_return result<void>{};
 }
 
+runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry(repository& source,
+                                                                                 std::string path) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    working_entry* found = &source.impl_->current.root;
+    std::string name;
+    if (!path.empty()) {
+        auto parts = split_path(path);
+        if (!parts)
+            co_return std::unexpected(parts.error());
+        found = lookup(source.impl_->current.root, *parts);
+        name = parts->back();
+    }
+    if (!found)
+        co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
+    vfs_entry output{.name = std::move(name),
+                     .kind = found->kind == entry_kind::file ? node_kind::blob : node_kind::tree,
+                     .mode = found->mode,
+                     .node = found->node,
+                     .object = found->object};
+    if (found->kind == entry_kind::nested_repository)
+        output.kind = node_kind::repo;
+    if (found->kind == entry_kind::file) {
+        auto encoded = co_await source.impl_->objects.get(found->object);
+        if (!encoded)
+            co_return std::unexpected(encoded.error());
+        auto record = objects::decode_blob(*encoded);
+        if (!record)
+            co_return std::unexpected(record.error());
+        output.size = record->size;
+        output.chunks = std::move(record->chunks);
+        output.chunk_sizes = std::move(record->chunk_sizes);
+    }
+    co_return output;
+}
+
+runtime::task<std::vector<repository_detail::vfs_entry>>
+repository_detail::vfs_access::children(repository& source, std::string path) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    working_entry* directory = &source.impl_->current.root;
+    if (!path.empty()) {
+        auto parts = split_path(path);
+        if (!parts)
+            co_return std::unexpected(parts.error());
+        directory = lookup(source.impl_->current.root, *parts);
+    }
+    if (!directory || directory->kind == entry_kind::file)
+        co_return std::unexpected(failure(errc::not_found, "directory does not exist", path));
+    auto output = std::vector<vfs_entry>{};
+    output.reserve(directory->entries.size());
+    for (const auto& [name, child] : directory->entries) {
+        vfs_entry value{.name = name,
+                        .kind = child.kind == entry_kind::file ? node_kind::blob : node_kind::tree,
+                        .mode = child.mode,
+                        .node = child.node,
+                        .object = child.object};
+        if (child.kind == entry_kind::nested_repository)
+            value.kind = node_kind::repo;
+        if (child.kind == entry_kind::file) {
+            auto encoded = co_await source.impl_->objects.get(child.object);
+            if (!encoded)
+                co_return std::unexpected(encoded.error());
+            auto record = objects::decode_blob(*encoded);
+            if (!record)
+                co_return std::unexpected(record.error());
+            value.size = record->size;
+            value.chunks = std::move(record->chunks);
+            value.chunk_sizes = std::move(record->chunk_sizes);
+        }
+        output.push_back(std::move(value));
+    }
+    co_return output;
+}
+
+runtime::task<std::uint64_t> repository_detail::vfs_access::read_chunk(repository& source,
+                                                                       digest id,
+                                                                       std::uint64_t offset,
+                                                                       std::span<std::byte> into) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return co_await source.impl_->objects.read(id, offset, into);
+}
+
+runtime::task<void> repository_detail::vfs_access::make_directory(repository& source,
+                                                                  std::string path,
+                                                                  std::uint32_t mode) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    if (source.impl_->locked(path))
+        co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+    auto parts = split_path(path);
+    if (!parts)
+        co_return std::unexpected(parts.error());
+    auto parent = parent_for(source.impl_->current.root, *parts, false);
+    if (!parent)
+        co_return std::unexpected(parent.error());
+    if ((*parent)->entries.contains(parts->back()))
+        co_return std::unexpected(failure(errc::already_exists, "path already exists", path));
+    auto directory = co_await source.impl_->directory((*parent)->node);
+    if (!directory)
+        co_return std::unexpected(directory.error());
+    const auto identity = random_id();
+    const auto reference = digest{algorithm::blake3, {}};
+    auto recorded =
+        (*directory)->put_entry(parts->back(), {"tree", identity, mode, to_string(reference)});
+    if (!recorded)
+        co_return std::unexpected(recorded.error());
+    (*parent)->entries.emplace(parts->back(),
+                               working_entry{entry_kind::directory, identity, mode, reference, {}});
+    auto operation_hash = hash(algorithm::blake3, std::span<const std::byte>{identity});
+    if (!operation_hash)
+        co_return std::unexpected(operation_hash.error());
+    source.impl_->current.operations.push_back(
+        {op_id{*operation_hash}, "mkdir", path, {}, identity, std::nullopt});
+    auto signed_drip = co_await source.impl_->append_drip("mkdir", identity);
+    if (!signed_drip)
+        co_return std::unexpected(signed_drip.error());
+    ++source.impl_->current.pending_drips;
+    auto saved = co_await source.impl_->checkpoint_or_journal();
+    if (!saved)
+        co_return std::unexpected(saved.error());
+    co_return result<void>{};
+}
+
+runtime::task<void>
+repository_detail::vfs_access::set_mode(repository& source, std::string path, std::uint32_t mode) {
+    if (!source.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto parts = split_path(path);
+    if (!parts)
+        co_return std::unexpected(parts.error());
+    auto parent = parent_for(source.impl_->current.root, *parts, false);
+    if (!parent)
+        co_return std::unexpected(parent.error());
+    auto found = (*parent)->entries.find(parts->back());
+    if (found == (*parent)->entries.end())
+        co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
+    auto directory = co_await source.impl_->directory((*parent)->node);
+    if (!directory)
+        co_return std::unexpected(directory.error());
+    const auto kind = found->second.kind == entry_kind::file        ? "blob"
+                      : found->second.kind == entry_kind::directory ? "tree"
+                                                                    : "repo";
+    auto recorded =
+        (*directory)
+            ->put_entry(parts->back(),
+                        {kind, found->second.node, mode, to_string(found->second.object)});
+    if (!recorded)
+        co_return std::unexpected(recorded.error());
+    found->second.mode = mode;
+    auto saved = co_await source.impl_->checkpoint_or_journal();
+    if (!saved)
+        co_return std::unexpected(saved.error());
+    co_return result<void>{};
+}
+
+result<std::filesystem::path> repository_detail::vfs_access::root_path(repository& source) {
+    if (!source.impl_)
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    return source.impl_->root_path;
+}
+
 auto repository_detail::testing::directory_loads(repository& value) -> std::uint64_t {
     return value.impl_ ? value.impl_->directory_load_count : 0;
 }
@@ -1016,6 +1206,12 @@ auto repository_detail::testing::last_operation(repository& value) -> op_id {
     return value.impl_ && !value.impl_->current.operations.empty()
                ? value.impl_->current.operations.back().id
                : op_id{};
+}
+
+auto repository_detail::testing::last_operation_node(repository& value) -> node_id {
+    return value.impl_ && !value.impl_->current.operations.empty()
+               ? value.impl_->current.operations.back().node
+               : node_id{};
 }
 
 runtime::task<repository> repository_detail::testing::clone(const repository& source,

@@ -61,7 +61,7 @@ owning issue in `error::context`.
 | `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
 | `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51 | implemented (#4, #7); declared (#51) | TAAP `actor`, `signer`, `verify`, keyring and custody providers |
-| `liquid/vfs.hpp` | #6 | declared | `mount`: the virtual filesystem over a repository |
+| `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -169,13 +169,18 @@ values, and [gc.md](gc.md) defines their epoch and crash semantics.
 
 ```cpp
 enum class node_kind : std::uint8_t { blob, tree, change, action, result_, attestation, repo };
-struct blob   { std::vector<digest> chunks; std::uint64_t size; };
+struct blob   { std::vector<digest> chunks; std::uint64_t size;
+                std::vector<std::uint64_t> chunk_sizes; };
 struct tree_entry { std::string name; std::uint32_t mode; node_kind kind; digest id; };
 struct tree   { std::vector<tree_entry> entries; };                   // sorted by name
 struct change { change_id id; std::vector<change_id> parents; actor author;
                 std::string message; std::chrono::sys_seconds at; digest root; };
 struct change_id { digest value; };    // stable across rebase and transplant (features/02)
 ```
+
+`chunk_sizes` is appended to the blob value and canonical record so a range reader can locate the
+covering logical chunks without reading every preceding chunk. The decoder accepts the earlier
+single-chunk record and derives its one size, preserving repositories written before liquid #6.
 
 `action`, `result_`, `attestation` and `repo` are declared as kinds now and given their records in
 Phases 2, 2, 2 and 1 respectively. Two fields are reserved from the first commit because they
@@ -213,6 +218,27 @@ class repository {
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
+
+### `liquid/vfs.hpp`
+
+```cpp
+struct mount_options { bool read_only{false}; std::chrono::seconds attr_timeout{1}; };
+struct mount_status { std::uint64_t hydrated_bytes, hydrated_files, misses_served,
+                      writes_captured; std::chrono::nanoseconds request_queue_latency; };
+class mount {
+ public:
+  runtime::task<void> unmount();
+  result<mount_status> status() const;
+};
+namespace vfs {
+runtime::task<::liquid::mount> mount(repository&, std::filesystem::path, mount_options = {});
+runtime::task<void> materialise(repository&, std::filesystem::path,
+                                std::optional<std::string> path_prefix = std::nullopt);
+}
+```
+
+The handle contains no FUSE type. Backend details and the persistent hydration cache are private
+under `src/vfs/`; see [`vfs.md`](vfs.md).
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 

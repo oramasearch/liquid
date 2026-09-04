@@ -35,6 +35,11 @@ event stream allows.
 **OS watchers cover what the VFS does not** — files outside a liquid workspace,
 non-materialised paths, and platforms or configurations where the VFS is unavailable.
 
+In the Phase 1 FUSE implementation, create, write, move and remove requests call the repository
+mutation API. Its persisted journal records the operation and stable `node_id`; no OS watcher sits
+between the mount and a drip. The capture subscription and watcher fallback remain owned by their
+separate issues.
+
 ## What OS watchers actually give you
 
 Each platform is different, and the differences are not cosmetic.

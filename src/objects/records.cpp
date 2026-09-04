@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <numeric>
 #include <utility>
 
 #include "encoding/cbor.hpp"
@@ -118,10 +119,21 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
     auto chunks = cbor::value::array{};
     for (const auto& chunk : value.chunks)
         chunks.push_back(encode_digest(chunk));
+    auto sizes = value.chunk_sizes;
+    if (sizes.empty() && value.chunks.size() == 1)
+        sizes.push_back(value.size);
+    const auto total = std::accumulate(sizes.begin(), sizes.end(), std::uint64_t{});
+    if (sizes.size() != value.chunks.size() || total != value.size)
+        return std::unexpected(
+            error{errc::invalid_argument, "blob chunk sizes do not match content size", "blob"});
+    auto chunk_sizes = cbor::value::array{};
+    for (const auto size : sizes)
+        chunk_sizes.push_back(cbor::value{size});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "blob"},
                              {"size", cbor::value{value.size}},
-                             {"chunks", std::move(chunks)}}));
+                             {"chunks", std::move(chunks)},
+                             {"chunk_sizes", std::move(chunk_sizes)}}));
 }
 
 auto encode(const tree& value) -> result<std::vector<std::byte>> {
@@ -196,17 +208,35 @@ auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
         return std::unexpected(source.error());
     const auto* size = find(*source, "size");
     const auto* chunks = find(*source, "chunks");
+    const auto* chunk_sizes = find(*source, "chunk_sizes");
     const auto* n = size ? std::get_if<std::uint64_t>(&size->data) : nullptr;
     const auto* values = chunks ? std::get_if<cbor::value::array>(&chunks->data) : nullptr;
     if (!n || !values)
         return std::unexpected(corrupt("invalid blob record"));
-    blob output{{}, *n};
+    blob output{{}, *n, {}};
     for (const auto& item : *values) {
         auto digest = decode_digest(item);
         if (!digest)
             return std::unexpected(digest.error());
         output.chunks.push_back(*digest);
     }
+    if (chunk_sizes) {
+        const auto* sizes = std::get_if<cbor::value::array>(&chunk_sizes->data);
+        if (!sizes || sizes->size() != output.chunks.size())
+            return std::unexpected(corrupt("invalid blob chunk sizes"));
+        for (const auto& item : *sizes) {
+            const auto* value = std::get_if<std::uint64_t>(&item.data);
+            if (!value)
+                return std::unexpected(corrupt("invalid blob chunk size"));
+            output.chunk_sizes.push_back(*value);
+        }
+    } else if (output.chunks.size() == 1) {
+        output.chunk_sizes.push_back(*n);
+    }
+    const auto total =
+        std::accumulate(output.chunk_sizes.begin(), output.chunk_sizes.end(), std::uint64_t{});
+    if (output.chunk_sizes.size() != output.chunks.size() || total != *n)
+        return std::unexpected(corrupt("blob chunk sizes do not match content size"));
     return output;
 }
 

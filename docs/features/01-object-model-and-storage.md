@@ -104,6 +104,11 @@ on page fault. One implementation serves five needs:
 A conventional full checkout remains available for tools that cannot tolerate a
 virtual filesystem.
 
+**Phase 1 implementation (decision 2026-09-04):** libfuse3 on Linux, optional macFUSE on macOS,
+and the conventional full checkout on every platform. macOS File Provider and Windows Cloud Files
+require a signed host application and arrive with the drive in Phase 6. Phase 1 remote hydration is
+out of scope; the same chunk-range path reads the local store.
+
 ## Garbage collection
 
 Designed in from the start, because retrofitting it is not possible.

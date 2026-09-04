@@ -23,8 +23,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put, get,
 > range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
-> leased roots, and epoch garbage collection. Capture, VFS and remote operations remain `unsupported`
-> until their owning issues land. Repository creation, working-tree reads and writes, recorded moves
+> leased roots, and epoch garbage collection. Capture subscriptions and remote operations remain
+> `unsupported` until their owning issues land. VFS full materialisation works on every platform;
+> lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree
+> reads and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
 > locks, and status are implemented. TAAP/1 identities and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
@@ -61,6 +63,7 @@ and Zetta's.
 - [`docs/library/encryption.md`](docs/library/encryption.md) — trust-domain encrypted store objects, key custody, and failure behavior.
 - [`docs/library/simulation.md`](docs/library/simulation.md) — seeded crash recovery simulation, fault points, invariants, and replay.
 - [`docs/library/identity.md`](docs/library/identity.md) — TAAP/1 identities, local custody, signatures, and verification.
+- [`docs/library/vfs.md`](docs/library/vfs.md) — lazy chunk hydration, FUSE mounts, full materialisation, and platform support.
 | | |
 |---|---|
 | **[docs/research/](docs/research/)** | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and — for 24 of them — the web-grounded sources it was drawn from. |

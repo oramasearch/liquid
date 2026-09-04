@@ -40,7 +40,7 @@ shortest integers) so the same value always has the same digest on every platfor
 starts with a `kind` and a `v` (format version).
 
 ```
-blob        { v, kind:"blob", size, chunks:[digest…] }
+blob        { v, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…] }
 tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo, id:node_id, ref:digest | repo_ref } … ] }   # sorted by name, bytewise
 change      { v, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), heads:[bytes…], conflicts?:[conflict…], symbols?:digest, sig:bytes }
@@ -117,7 +117,7 @@ Rules liquid's wrapper enforces on top of automerge-cpp, until the upstream issu
 
 | Operation | What happens |
 |---|---|
-| `write(path, bytes)` | `store.put` → blob digest; one transaction on the directory document: put or update the entry (minting `node_id` on create). That transaction is the drip. |
+| `write(path, bytes)` | FastCDC logical chunks → `store.put` per chunk → blob digest; one transaction on the directory document: put or update the entry (minting `node_id` on create). That transaction is the drip. |
 | `move(from, to)` / `remove(path)` | explicit operations, the API's own methods: a move within a directory is one transaction; across directories two, carrying the same `node_id`; `remove` deletes the entry and records the operation. |
 | `cut(message)` | the explicit change cut: save touched directory documents, write the `tree` snapshot, build and sign the `change` record, update the ref, advance `head`; the working copy continues as a new change. |
 | move | one transaction: delete the old key, put the entry with the **same** `node_id` under the new key. Recorded, never inferred. |
@@ -192,10 +192,12 @@ is a private CRDT document cached by its `node_id`; saving a checkpoint writes t
 to the store and refreshes its `dirs` entry. A checkpoint occurs at `cut` and after the configured
 drip interval (64 by default); an uncut write is recovered from the repository journal.
 
-File content is represented by a canonical `blob` record whose chunk list currently contains the
-content-store object written by `store::put`. Trees and changes are canonical records as well;
-the change digest is the digest of its canonical bytes and is never an automerge hash. The
-fixture in `tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree encoding.
+File content is represented by a canonical `blob` record whose parallel chunk digest and size
+lists describe FastCDC logical chunks. The size list lets VFS range reads locate an offset without
+loading earlier chunks. The decoder remains compatible with the earlier single-chunk record by
+deriving its one size from the blob total. Trees and changes are canonical records as well; the
+change digest is the digest of its canonical bytes and is never an automerge hash. The fixture in
+`tests/fixtures/records/empty-tree.hex` pins the canonical empty-tree encoding.
 
 ## How to verify
 
