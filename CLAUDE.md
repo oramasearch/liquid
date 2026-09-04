@@ -43,6 +43,8 @@ docs/features/NN-name.md
     specifications — what liquid does
 docs/library/<topic>.md
     implementation and benchmark notes for libliquid contributors
+docs/build/<topic>.md
+    local and continuous-integration build verification
 docs/standards/
     external standards liquid depends on, vendored
 ```
@@ -118,7 +120,7 @@ ls docs/research/*/sources.md | wc -l   # with sources
 ls docs/features/*.md | grep -v README | wc -l
 ```
 
-### Before finishing — run all four
+### Before finishing — run all five
 
 The first two are commands and got run every time; the last two are prose and got
 skipped. Treat them as the same checklist, not as an afterthought.
@@ -130,6 +132,8 @@ skipped. Treat them as the same checklist, not as an afterthought.
 4. **Root `README.md` and this file.** Any change to what liquid *is*, what it *does*, a
    new top-level directory, or a new convention updates **both**. A new `docs/`
    subdirectory that appears in neither is a bug.
+5. **CI changes.** Run the local proof command before pushing, then wait for every platform
+   and sanitizer check and record their results in the pull request.
 
 **This last one has already been missed.** `docs/standards/` existed in the tree before
 it appeared in either file, and TAAP was the security model before this file mentioned
