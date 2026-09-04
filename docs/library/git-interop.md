@@ -71,12 +71,13 @@ and compares the multiset of every reachable commit tree hash before and after e
 
 ### Real-world measurement
 
-The nlohmann/json checkout measured 5,497 commits. Import completed in about 11 and a half
-minutes. Its `.git` directory was 298,648 KiB and the resulting `.liquid-store` was 963,832 KiB
-(3.23 times): 896,944 KiB of packs, 42,100 KiB of indexes, 23,152 KiB of `objects.meta`, and
-1,636 KiB of other files. At 120 seconds, macOS `footprint` reported 76 MiB physical footprint;
-the measured physical-footprint peak was 354 MiB. These are the memory measurements used for the
-gate.
+The nlohmann/json checkout measured 5,497 commits. Import completed in 676 seconds. Its `.git`
+directory was 285,736 KiB and the resulting `.liquid-store` was 906,672 KiB (3.17 times). At 120
+seconds, macOS `footprint` reported 85 MiB physical footprint; the importer reported a
+168,338,496-byte physical-footprint peak. These are the memory measurements used for the gate.
+
+The earlier 963,832 KiB storage measurement broke down as 896,944 KiB of packs, 42,100 KiB of
+indexes, 23,152 KiB of `objects.meta`, and 1,636 KiB of other files.
 
 The checkout changes a roughly 900 KiB header in most commits. Git's pack deltas compress that
 history more tightly than liquid's current chunk representation. Storage tuning is tracked in
