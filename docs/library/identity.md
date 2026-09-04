@@ -15,16 +15,46 @@ Identity documents are canonical CBOR with `artifact_type = "identity_document"`
 "ccbor"`, and a `signatures` array. A predecessor hash is SHA-512/256 of the predecessor's stored
 canonical CBOR bytes, signatures included, encoded as base64.
 
+## Rotation
+
+`signer::rotate(compromise_declaration?)` creates the successor document and moves the local
+signer to its new Ed25519 key. Its subject identifier and identifier fingerprint remain those of
+the first document; `key_fingerprint` identifies the particular public key. The successor has the
+predecessor's stored-byte hash, a strictly later `updated_at`, and signatures over its body without
+the `signatures` field. It normally carries both the previous and new key signatures. The local
+private key is overwritten only after the successor is signed, leaving only the active private key
+on disk.
+
+`compromised_keys`, when non-empty, is part of that signed body. Each entry is
+`{ key_fingerprint_base32, declared_at, reason? }`: the fingerprint is unpadded uppercase base32
+of SHA-512/256 over the key's canonical public-key object, `declared_at` is an RFC 3339 UTC time,
+and `reason` is optional. A successor may omit the old-key signature only when its own
+`compromised_keys` names the predecessor key. A signature from that key at or after `declared_at`
+is invalid; one made before it is valid but the resulting `verified_identity` reports compromised
+history.
+
+Documents are retained as canonical CBOR at
+`$LIQUID_HOME/identity/<identity-fingerprint>/documents/NNN.cbor`; the legacy current-document
+path is updated to the newest document for local compatibility. `verify_chain` checks stored-byte
+links, stable identifiers, timestamps, declarations, and the required signatures, then returns the
+current key set. `verify(actor, ...)` resolves a non-current signing key through that local chain.
+
+A verifier that holds only an old document can validate that document and signatures made with its
+key, but cannot identify a successor or its current key without receiving or resolving the chain.
+When presented a normal successor, it can prove old-key continuity. A compromise successor proves
+that the new key signed the declaration, but cannot prove continuity of control through the omitted
+old-key signature; that claim remains subject to verifier policy.
+
 ## Local custody and verification
 
 Identities live at `$LIQUID_HOME/identity` or `~/.liquid/identity`. `<fingerprint>.key` holds the
-encrypted private key, `<fingerprint>.pub` the public key, and `<fingerprint>.identity.cbor` the
-self-signed document. The owner-only local wrapping-key provider and private key are never logged;
-`signer` wipes its secret material on destruction.
+encrypted active private key, `<fingerprint>.pub` the active public key, and
+`<fingerprint>.identity.cbor` the current document. The owner-only local wrapping-key provider and
+private key are never logged; `signer` wipes its secret material on destruction.
 
 `verify(actor, artifact_type, canonical_body, signature)` is synchronous. It returns `true` for a
 valid signature, `false` for an unsigned record, and `errc::unauthorized` for invalid signed data.
-`verify_document` checks the self-signatures. Drips and changes use the same verification rules.
+`verify_document` checks the self-signature. Drips and changes use the same verification rules.
 
 ## Measurement and limits
 
