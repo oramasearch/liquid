@@ -6,7 +6,7 @@
 namespace liquid {
 
 // Semantic version of this build.
-struct version {
+struct LIQUID_EXPORT version {
     unsigned major;
     unsigned minor;
     unsigned patch;
@@ -14,7 +14,7 @@ struct version {
 
 // constexpr functions are implicitly inline and must be visible to every
 // translation unit that uses them, so this lives in the header.
-[[nodiscard]] constexpr version current_version() noexcept { return {0, 0, 1}; }
+[[nodiscard]] LIQUID_EXPORT constexpr version current_version() noexcept { return {0, 0, 1}; }
 
 [[nodiscard]] LIQUID_EXPORT std::string_view version_string() noexcept;
 

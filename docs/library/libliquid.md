@@ -13,10 +13,13 @@ command-line binary, liquify and lake are clients of it. Decided 2026-09-02 (`CL
 | `liquid-tests` | GoogleTest; `LIQUID_BUILD_TESTS` defaults to ON only when liquid is the top-level project |
 
 **Public API.** Everything under `include/liquid/`; `liquid/liquid.hpp` is the umbrella. Today:
-`liquid::version`, `current_version()`, `version_string()`. Rules: `std::expected` at the
-boundary, no exceptions across it, **never a Zetta type**, third-party types (Boost.Capy,
-Corosio) kept behind it where feasible so a shared build stays viable. The CLI never carries
-behaviour the library lacks; scaffolding does not go into the public API.
+the version API; `errc`, `error` and `result<T>`; algorithm-tagged digests with BLAKE3 and
+SHA-256; plain object, drip and identity values; and opaque store, repository, capture, signer,
+key-provider, mount and remote handles. Hashing, digest text conversion and the error model are
+implemented. Operations owned by later issues return `errc::unsupported` and name that issue in
+`error::context`. Rules: `std::expected` at the boundary, no exceptions across it, **never a
+Zetta type**, and no third-party type in a public header. The CLI never carries behaviour the
+library lacks.
 
 **Consume.**
 
@@ -36,9 +39,10 @@ target_link_libraries(app PRIVATE liquid::liquid)
 
 **Verify.** Static: `cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build`.
 Shared: `cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON` then
-`nm -gU build-shared/libliquid.dylib | grep liquid` lists exactly the exported API. Install +
-consumer: install to a prefix, then a two-line CMake project with `find_package(liquid CONFIG)`
-builds and runs.
+`nm -gU build-shared/libliquid.dylib | grep liquid` lists exactly the exported API. For an
+install consumer, install to a temporary prefix, configure a separate CMake project whose
+`CMakeLists.txt` calls `find_package(liquid CONFIG REQUIRED)` and links its executable to
+`liquid::liquid`, then build and run that executable with the prefix in `CMAKE_PREFIX_PATH`.
 
 **Change.** New public headers go under `include/liquid/` and into `liquid.hpp`; new sources into
 the `libliquid` target. The public surface, its rules and the ABI policy are

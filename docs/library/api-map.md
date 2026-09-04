@@ -36,20 +36,24 @@ concurrency rule are all cheap now and expensive to retrofit. The map also says 
 
 ## The headers
 
-| Header | Phase | What it exposes |
-|---|---|---|
-| `liquid/liquid.hpp` | now | umbrella |
-| `liquid/version.hpp` | now | `version`, `current_version()`, `version_string()` |
-| `liquid/export.hpp` | now | generated; `LIQUID_EXPORT` |
-| `liquid/error.hpp` | #39 | `errc`, `error`, `result<T>` |
-| `liquid/hash.hpp` | #39 | `algorithm`, `digest`, `hash(span) -> digest`, text round trip |
-| `liquid/store.hpp` | #1, #8 | `store`: content in, digests out; leases and collection |
-| `liquid/object.hpp` | #2 | node kinds and their records; `blob`, `tree`, `change`, and the reserved shapes |
-| `liquid/repository.hpp` | #2, #40, #41, #42 | `repository`: open, read, write, history, nest/split/combine, conflicts, undo, locks |
-| `liquid/drip.hpp` | #4, #5, #48 | `drip`, `capture`: the journal as a subscription, pause and resume |
-| `liquid/identity.hpp` | #4, #51 | TAAP `actor`, `signer`, `verify`, `key_provider` |
-| `liquid/vfs.hpp` | #6 | `mount`: the virtual filesystem over a repository |
-| `liquid/remote.hpp` | Phase 6 | `remote`: push and pull; declared with the protocol, implemented with lake |
+`implemented` means the operation performs its documented work. `declared` means the public type
+and signatures compile and link, with callable operations returning `errc::unsupported` and the
+owning issue in `error::context`.
+
+| Header | Phase | Status | What it exposes |
+|---|---|---|---|
+| `liquid/liquid.hpp` | now | implemented | umbrella |
+| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
+| `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
+| `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
+| `liquid/hash.hpp` | #39 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, text round trip |
+| `liquid/store.hpp` | #1, #8 | declared | `store`: content in, digests out; leases and collection |
+| `liquid/object.hpp` | #2 | declared | node kinds and their records; `blob`, `tree`, `change`, and the reserved shapes |
+| `liquid/repository.hpp` | #2, #40, #41, #42 | declared | `repository`: open, read, write, history, nest/split/combine, conflicts, undo, locks |
+| `liquid/drip.hpp` | #4, #5, #48 | declared | `drip`, `capture`: the journal as a subscription, pause and resume |
+| `liquid/identity.hpp` | #4, #51 | declared | TAAP `actor`, `signer`, `verify`, `key_provider` |
+| `liquid/vfs.hpp` | #6 | declared | `mount`: the virtual filesystem over a repository |
+| `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
 
@@ -78,6 +82,16 @@ result<digest> parse_digest(std::string_view);
 
 BLAKE3 is the default everywhere; SHA-256 exists for OCI and REAPI interop. Adding an algorithm
 is adding an enumerator; a repository may hold both (liquid #44).
+
+The BLAKE3 implementation is the official C implementation, fetched privately at release tag
+`1.8.7` and compiled in portable mode. Its headers do not enter `include/liquid/`. SHA-256 is the
+small public-domain implementation by Brad Conte from
+[`B-Con/crypto-algorithms`](https://github.com/B-Con/crypto-algorithms), vendored from commit
+`cfbde48414baacf51fc7c74f275190881f037d32` under `src/hash/`. Upstream states that the code is
+released into the public domain without restrictions. The local copy adds C++ linkage guards,
+fixed-width input promotion before shifts, and a `size_t` input loop; `NOTICE` records both
+origins. The `abc` SHA-256 vector is from that implementation's `sha256_test.c`; BLAKE3 vectors
+are checked against the official implementation.
 
 ### `liquid/store.hpp`
 
@@ -178,8 +192,9 @@ key custody providers). Their headers live beside their sources, never under `in
 ## How to verify
 
 `nm -gU build-shared/libliquid.dylib | grep liquid` lists exactly the symbols of the headers on
-this map. Every public function has a test that exercises its `result` error path. A clean
-consumer (`find_package(liquid CONFIG)`) compiles each header in isolation.
+this map. Every public function has a test that exercises either its implemented result or its
+`result` error path. The `liquid-header-tests` target compiles every public header in its own
+translation unit, and a clean installed consumer verifies `find_package(liquid CONFIG)`.
 
 ## How to change
 
