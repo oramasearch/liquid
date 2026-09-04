@@ -18,3 +18,9 @@ root with a repository lease, and owns per-handle cache counters and critical al
 For build diagnostics, the same adapter resolves a path's current content to the newest matching
 write operation and signed drip. Content, node, actor, and timestamp must all agree; otherwise the
 caller receives no attribution.
+
+The repository document also persists typed `config.policy` rules. `repository::set_policy`
+validates the complete replacement before checkpointing it, while the build adapter exposes the
+current policy and the store's subject-attestation index to the policy evaluator.
+`repository::store_attestation` imports canonical signed evidence without granting it trust;
+evaluation verifies the stored record independently.

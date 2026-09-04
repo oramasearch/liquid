@@ -82,4 +82,5 @@ unregistered-profile fallback.
   `subject_kind` records the intended kind while object-subject protocol work is pending.
    `slsa_provenance/1` uses the interim result-body digest documented in
    [provenance.md](provenance.md#interim-taap-object-subject).
-- #60 will consume the registry when its build functionality lands.
+- Build-input policy consumes the registry exactly as documented in [policy.md](policy.md); it has
+  no unregistered-profile fallback.

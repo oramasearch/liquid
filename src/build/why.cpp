@@ -10,6 +10,7 @@
 #include <sstream>
 
 #include "build/cache.hpp"
+#include "build/policy.hpp"
 #include "build/repository_access.hpp"
 #include "build/why.hpp"
 #include "objects/records.hpp"
@@ -321,7 +322,7 @@ auto load_stats(const std::filesystem::path& path) -> result<cache_report> {
             const auto text = std::string_view{key}.substr(7);
             const auto parsed = std::from_chars(text.data(), text.data() + text.size(), index);
             if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
-                index > static_cast<unsigned>(cache_miss_reason::unknown)) {
+                index > static_cast<unsigned>(cache_miss_reason::policy_refused)) {
                 return std::unexpected(why_error(errc::corrupt, "invalid cache statistics", path));
             }
             output.misses_by_reason[static_cast<cache_miss_reason>(index)] = value;
@@ -764,6 +765,26 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
             report.previous_action = previous->action;
         }
     }
+    auto action = co_await build_detail::load_action(*source, value->action);
+    if (!action) {
+        report.cause = {.reason = cache_miss_reason::unknown,
+                        .detail = "the recorded action is unavailable"};
+        co_return report;
+    }
+    auto policy = co_await build_detail::enforce_policy(*source, action->input);
+    if (!policy) {
+        co_return std::unexpected(policy.error());
+    }
+    if (!policy->allowed) {
+        const auto refused = std::ranges::find_if(policy->inputs, [](const auto& input) {
+            return !input.satisfied && input.on_missing == policy_on_missing::refuse;
+        });
+        const auto refusal = build_detail::policy_refusal(*policy);
+        report.cause = {.reason = cache_miss_reason::policy_refused,
+                        .path = refused == policy->inputs.end() ? std::string{} : refused->input,
+                        .detail = refusal.message + " (" + refusal.context + ")"};
+        co_return report;
+    }
     if (selected->status == cache_status::hit) {
         report.cause = {.reason = cache_miss_reason::unknown, .detail = "cache hit"};
         co_return report;
@@ -771,12 +792,6 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
     if (quarantined) {
         report.cause = {.reason = cache_miss_reason::divergent_result_quarantined,
                         .detail = build_detail::quarantine_detail(*quarantined)};
-        co_return report;
-    }
-    auto action = co_await build_detail::load_action(*source, value->action);
-    if (!action) {
-        report.cause = {.reason = cache_miss_reason::unknown,
-                        .detail = "the recorded action is unavailable"};
         co_return report;
     }
     auto cause = co_await build_detail::classify_miss(

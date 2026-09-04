@@ -22,6 +22,7 @@
 
 #include "build/cache.hpp"
 #include "build/materialise.hpp"
+#include "build/policy.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/trace.hpp"
@@ -1760,6 +1761,20 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     auto report = wrap_report{};
     auto outer_miss_recorded = false;
     const auto action_environment = fixed_environment(options);
+    auto outer_input = action_input{.command = command,
+                                    .cwd = "",
+                                    .env = action_environment,
+                                    .outputs = {},
+                                    .inputs = input_tree,
+                                    .toolchain = *toolchain ? **toolchain : digest{},
+                                    .platform = host_platform(),
+                                    .timeout = {}};
+    auto policy = co_await build_detail::enforce_policy(*source, outer_input);
+    if (!policy)
+        co_return std::unexpected(policy.error());
+    report.policy_warnings = policy->warnings;
+    if (!policy->allowed)
+        co_return std::unexpected(build_detail::policy_refusal(*policy));
     auto plan = cache_plan{};
     if (*toolchain) {
         auto prepared = co_await prepare_cache_plan(*source,
@@ -1777,14 +1792,6 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
         plan = std::move(*prepared);
     }
 
-    auto outer_input = action_input{.command = command,
-                                    .cwd = "",
-                                    .env = action_environment,
-                                    .outputs = {},
-                                    .inputs = input_tree,
-                                    .toolchain = *toolchain ? **toolchain : digest{},
-                                    .platform = host_platform(),
-                                    .timeout = {}};
     if (options.cache && *toolchain) {
         auto served = co_await serve_outer_action(*source,
                                                   cache,

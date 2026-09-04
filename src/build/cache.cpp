@@ -1,4 +1,5 @@
 #include "build/cache.hpp"
+#include "build/policy.hpp"
 
 #include <algorithm>
 #include <array>
@@ -466,6 +467,16 @@ result<digest> disk_cache::candidate_key(const action_input& input, digest sandb
     if (!encoded) {
         return std::unexpected(encoded.error());
     }
+    auto configured = repository_detail::build_access::policy(source_);
+    if (!configured) {
+        return std::unexpected(configured.error());
+    }
+    auto policy = policy_digest(*configured);
+    if (!policy) {
+        return std::unexpected(policy.error());
+    }
+    encoded->push_back(std::byte{static_cast<unsigned char>(policy->alg)});
+    encoded->insert(encoded->end(), policy->bytes.begin(), policy->bytes.end());
     return hash(input.inputs.alg, *encoded);
 }
 

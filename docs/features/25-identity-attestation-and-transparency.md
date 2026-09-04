@@ -39,6 +39,8 @@ rules are in [`../library/secret-scanning.md`](../library/secret-scanning.md#sca
 is the cached result and its required fields identify the verifier, sandbox, and outcome.
 `slsa_provenance/1` is emitted for every local build result and has an in-toto/DSSE projection.
 Its canonical record and verification rules are in [`../library/provenance.md`](../library/provenance.md).
+Build-input policy consumes these registered profiles without inferring meaning from field names;
+[`../library/policy.md`](../library/policy.md) defines issuer selection and quorum evaluation.
 
 **Users, agents, documents, artifacts, drips, changes — all subjects.** That is the whole
 point, and it is why TAAP is the security model rather than a signing library.

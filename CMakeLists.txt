@@ -226,6 +226,7 @@ add_library(libliquid
   src/build/provenance.cpp
   src/build/trace.cpp
   src/build/why.cpp
+  src/build/policy.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
@@ -263,6 +264,7 @@ add_library(libliquid
   src/store/pack.cpp
   src/store/references.cpp
   src/store/store_impl.cpp
+  src/store/subject_index.cpp
   src/version.cpp
   src/vfs.cpp
   src/vfs/fuse_fs.cpp
@@ -339,6 +341,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/history.cpp
     src/cli/identity.cpp
     src/cli/locks.cpp
+    src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp

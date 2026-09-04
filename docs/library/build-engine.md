@@ -15,9 +15,9 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, #14, #15, and #57 implement the local
+**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, and #60 implement the local
 action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA provenance,
-cache diagnostics, and build observability:
+cache diagnostics, build observability, and build-input attestation policy:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -30,8 +30,9 @@ pins their content tree in `config.wrap.toolchain`, splits the mount stream at o
 processes, publishes the inner and outer actions, and serves valid results through the sandbox-only
 exec hook. Verification re-executes sampled cached actions, emits signed attestations, and
 quarantines divergent results. Each result references a verified, device-signed
-`slsa_provenance/1` attestation derived from its action and manifest. Memory caching and remote
-caching and execution remain their own issues.
+`slsa_provenance/1` attestation derived from its action and manifest. Before execution, repository
+policy can require verified registered-profile attestations for source and toolchain blobs. Memory
+caching and remote caching and execution remain their own issues.
 
 ## Records in the store
 
@@ -101,7 +102,7 @@ inputs, the command, the environment, the toolchain by content, and the sandbox 
 Because observed inputs are known only after a first run, lookup is two-stage, ccache's
 direct mode generalised:
 
-1. **Candidate key**: `digest(command, cwd, env, toolchain, sandbox, platform)` → a list of
+1. **Candidate key**: `digest(command, cwd, env, toolchain, sandbox, platform, policy)` → a list of
    result digests recorded under it.
 2. **Validation**: for each candidate result, hash the paths in its manifest as they are in
    the current input tree; the first manifest whose hashes all match is a hit. A miss records
@@ -161,6 +162,29 @@ tool chain.
 Divergence is not inferred from two different output lists. `liquid why` uses only the authoritative
 divergence flag stored in the action-index entry by `liquid verify`; it reports the linked verification
 attestation digest when present.
+
+### Build-input policy
+
+`repository_options::policy` is persisted under `config.policy`. Before cache lookup or sandbox
+launch, `src/build/policy.cpp` walks the selected source paths and toolchain tree, finds
+attestations through the store's subject-digest index, verifies each signature and registered
+profile, filters exact issuer identities, and counts distinct issuers. A failed `refuse` rule
+returns `errc::unauthorized` with the input and rule index; a failed `warn` rule remains in the
+report and permits execution. A tree or attestation that cannot be evaluated never satisfies a
+requirement.
+
+Already-signed evidence enters the repository through `repository::store_attestation`. Importing a
+record updates the subject index but does not grant trust; the evaluator always verifies it.
+
+The canonical policy digest is part of every candidate key. Replacing repository policy therefore
+prevents an older candidate from being served even when its action fields and manifest still match.
+`liquid policy check <target>` evaluates an existing action without building, and `liquid policy
+explain [target]` prints the rule and per-input evidence. See [policy.md](policy.md) for the typed
+language, approved-builder expansion, quorum rules, and limits.
+
+`liquid why` evaluates current policy before classifying a recorded target as a hit or an ordinary
+miss. An unsatisfied refuse rule is the typed `policy_refused` cause and carries the first failing
+input plus the rule detail.
 
 Tiers (features/05) share one store and one key:
 
@@ -329,6 +353,9 @@ stored local trace and its Chrome trace-event projection do not invent either me
 - A two-action sleeping-tool fixture produces a dependency edge from its intermediate output to its
   final output. Its phase sums equal each action duration, `why_slow` returns the dependent chain,
   and the Chrome trace-event projection parses as JSON.
+- Input-policy tests cover refusal and warning reports, unapproved and invalid signers, unknown
+  profile rejection, two distinct reproducibility signers, toolchain traversal, store-index rebuild,
+  and policy-bound candidate keys.
 
 ## How to change
 

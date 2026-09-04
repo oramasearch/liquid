@@ -25,8 +25,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
-> secret scanning, the TAAP attestation profile registry with `scan_result/1` and
-> secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
+> Secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
 > and structured `slsa_provenance/1`, and repository redaction are implemented; remote operations
 > remain
 > `unsupported` until their owning issues land. VFS full materialisation works on every platform;
@@ -47,7 +46,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > reproducibility verification, signed SLSA provenance, record-derived cache diagnostics, and
-> dependency-aware build observability.**
+> dependency-aware build observability and build-input policy.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -68,6 +67,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
 > totals, and supports `liquid build trace --chrome` and `liquid why-slow <target>`. Remote transfer
 > timing remains Phase 3 work.
+> Repository `config.policy` rules can require registered-profile attestations from approved builders
+> for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
+> without building, and the policy digest isolates cache candidates.
 
 ## Where this sits
 
@@ -108,6 +110,7 @@ and Zetta's.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
+- [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 
 | | |
 |---|---|

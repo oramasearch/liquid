@@ -12,6 +12,7 @@
 #include <string_view>
 #include <utility>
 
+#include "build/policy.hpp"
 #include "build/repository_access.hpp"
 #include "crdt/document.hpp"
 #include "encoding/cbor.hpp"
@@ -67,6 +68,7 @@ struct repository_document {
     std::vector<encryption_path_rule> encryption_rules;
     bool cache_publish{};
     std::uint32_t verification_rate{20};
+    policy_config policy;
     std::uint64_t pending_drips{};
 };
 
@@ -218,10 +220,43 @@ auto encode_repository_document(const repository_document& value)
                  {"mode", cbor::value{rule.mode == encryption_mode::leaf ? "leaf" : "file"}},
                  {"encrypted_regex", cbor::value{rule.encrypted_regex}}}));
     }
+    auto approved_builders = cbor::value::array{};
+    for (const auto& builder : value.policy.approved_builders) {
+        approved_builders.push_back(cbor::value{builder});
+    }
+    auto policy_rules = cbor::value::array{};
+    for (const auto& rule : value.policy.rules) {
+        auto paths = cbor::value::array{};
+        for (const auto& path : rule.paths) {
+            paths.push_back(cbor::value{path});
+        }
+        auto requirements = cbor::value::array{};
+        for (const auto& requirement : rule.require) {
+            auto authorities = cbor::value::array{};
+            for (const auto& authority : requirement.from) {
+                authorities.push_back(cbor::value{authority});
+            }
+            requirements.push_back(
+                map({{"profile", cbor::value{requirement.profile}},
+                     {"from", cbor::value{std::move(authorities)}},
+                     {"min_count", cbor::value{std::uint64_t{requirement.min_count}}}}));
+        }
+        const auto scope = rule.scope == policy_scope::paths       ? "paths"
+                           : rule.scope == policy_scope::toolchain ? "toolchain"
+                                                                   : "all inputs";
+        const auto on_missing = rule.on_missing == policy_on_missing::refuse ? "refuse" : "warn";
+        policy_rules.push_back(map({{"scope", cbor::value{scope}},
+                                    {"paths", cbor::value{std::move(paths)}},
+                                    {"require", cbor::value{std::move(requirements)}},
+                                    {"on_missing", cbor::value{on_missing}}}));
+    }
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
-             {"verify", map({{"rate", cbor::value{std::uint64_t{value.verification_rate}}}})}});
+             {"verify", map({{"rate", cbor::value{std::uint64_t{value.verification_rate}}}})},
+             {"policy",
+              map({{"approved_builders", cbor::value{std::move(approved_builders)}},
+                   {"rules", cbor::value{std::move(policy_rules)}}})}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
@@ -440,6 +475,88 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     failure(errc::corrupt, "invalid verification config", "repository document"));
             }
             output.verification_rate = static_cast<std::uint32_t>(*value);
+        }
+        if (const auto* policy = find(*config, "policy")) {
+            const auto* approved = find(*policy, "approved_builders");
+            const auto* rules = find(*policy, "rules");
+            const auto* approved_values =
+                approved ? std::get_if<cbor::value::array>(&approved->data) : nullptr;
+            const auto* rule_values =
+                rules ? std::get_if<cbor::value::array>(&rules->data) : nullptr;
+            if (!approved_values || !rule_values) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid input policy config", "repository document"));
+            }
+            for (const auto& item : *approved_values) {
+                const auto* text = std::get_if<std::string>(&item.data);
+                if (!text) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid approved builder", "repository document"));
+                }
+                output.policy.approved_builders.push_back(*text);
+            }
+            for (const auto& item : *rule_values) {
+                const auto* scope_value = find(item, "scope");
+                const auto* paths = find(item, "paths");
+                const auto* requirements = find(item, "require");
+                const auto* on_missing_value = find(item, "on_missing");
+                const auto* scope =
+                    scope_value ? std::get_if<std::string>(&scope_value->data) : nullptr;
+                const auto* path_values =
+                    paths ? std::get_if<cbor::value::array>(&paths->data) : nullptr;
+                const auto* requirement_values =
+                    requirements ? std::get_if<cbor::value::array>(&requirements->data) : nullptr;
+                const auto* on_missing =
+                    on_missing_value ? std::get_if<std::string>(&on_missing_value->data) : nullptr;
+                if (!scope || !path_values || !requirement_values || !on_missing ||
+                    (*scope != "paths" && *scope != "toolchain" && *scope != "all inputs") ||
+                    (*on_missing != "refuse" && *on_missing != "warn")) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid input policy rule", "repository document"));
+                }
+                auto rule =
+                    policy_rule{.scope = *scope == "paths"       ? policy_scope::paths
+                                         : *scope == "toolchain" ? policy_scope::toolchain
+                                                                 : policy_scope::all_inputs,
+                                .on_missing = *on_missing == "refuse" ? policy_on_missing::refuse
+                                                                      : policy_on_missing::warn};
+                for (const auto& path : *path_values) {
+                    const auto* text = std::get_if<std::string>(&path.data);
+                    if (!text) {
+                        return std::unexpected(
+                            failure(errc::corrupt, "invalid policy path", "repository document"));
+                    }
+                    rule.paths.push_back(*text);
+                }
+                for (const auto& required : *requirement_values) {
+                    const auto* profile_value = find(required, "profile");
+                    const auto* from_value = find(required, "from");
+                    const auto* count_value = find(required, "min_count");
+                    const auto* profile =
+                        profile_value ? std::get_if<std::string>(&profile_value->data) : nullptr;
+                    const auto* from =
+                        from_value ? std::get_if<cbor::value::array>(&from_value->data) : nullptr;
+                    const auto* count =
+                        count_value ? std::get_if<std::uint64_t>(&count_value->data) : nullptr;
+                    if (!profile || !from || !count || *count == 0 ||
+                        *count > std::numeric_limits<std::uint32_t>::max()) {
+                        return std::unexpected(failure(
+                            errc::corrupt, "invalid policy requirement", "repository document"));
+                    }
+                    auto requirement = policy_requirement{
+                        .profile = *profile, .min_count = static_cast<std::uint32_t>(*count)};
+                    for (const auto& authority : *from) {
+                        const auto* text = std::get_if<std::string>(&authority.data);
+                        if (!text) {
+                            return std::unexpected(failure(
+                                errc::corrupt, "invalid policy authority", "repository document"));
+                        }
+                        requirement.from.push_back(*text);
+                    }
+                    rule.require.push_back(std::move(requirement));
+                }
+                output.policy.rules.push_back(std::move(rule));
+            }
         }
     }
     for (const auto& item : *saved_drips) {
@@ -1328,6 +1445,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_rules) {
         co_return std::unexpected(valid_rules.error());
     }
+    auto valid_policy = build_detail::validate_policy(options.policy);
+    if (!valid_policy) {
+        co_return std::unexpected(valid_policy.error());
+    }
     auto code = std::error_code{};
     std::filesystem::create_directories(path, code);
     if (code)
@@ -1347,6 +1468,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.encryption_rules = std::move(options.encrypt.paths);
     document.cache_publish = options.cache.publish;
     document.verification_rate = options.verify.rate;
+    document.policy = std::move(options.policy);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -1396,6 +1518,9 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     auto valid_rules = validate_encryption_rules(document->encryption_rules);
     if (!valid_rules)
         co_return std::unexpected(valid_rules.error());
+    auto valid_policy = build_detail::validate_policy(document->policy);
+    if (!valid_policy)
+        co_return std::unexpected(valid_policy.error());
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -2536,6 +2661,30 @@ runtime::task<void> repository::unlock(std::string path) {
     co_return result<void>{};
 }
 
+runtime::task<digest> repository::store_attestation(attestation value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto encoded = objects::encode(value);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return co_await repository_detail::store_access::put_plain(impl_->objects,
+                                                                  std::move(*encoded));
+}
+
+runtime::task<void> repository::set_policy(policy_config policy) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto valid = build_detail::validate_policy(policy);
+    if (!valid) {
+        co_return std::unexpected(valid.error());
+    }
+    impl_->current.policy = std::move(policy);
+    co_return co_await impl_->checkpoint();
+}
+
 runtime::task<collection_report> repository::collect(collection_options options) {
     if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -2862,6 +3011,14 @@ runtime::task<bool> repository_detail::build_access::contains(repository& source
     co_return co_await source.impl_->objects.contains(id);
 }
 
+std::vector<digest> repository_detail::build_access::attestations(repository& source,
+                                                                  digest subject) {
+    if (!source.impl_) {
+        return {};
+    }
+    return repository_detail::store_access::attestations(source.impl_->objects, subject);
+}
+
 runtime::task<void> repository_detail::build_access::sign_result(repository& source,
                                                                  action_result& value) {
     if (!source.impl_) {
@@ -2942,6 +3099,13 @@ bool repository_detail::build_access::cache_publish_enabled(repository& source) 
 
 std::uint32_t repository_detail::build_access::verification_rate(repository& source) noexcept {
     return source.impl_ ? source.impl_->current.verification_rate : 20;
+}
+
+result<policy_config> repository_detail::build_access::policy(repository& source) {
+    if (!source.impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return source.impl_->current.policy;
 }
 
 void repository_detail::build_access::record_cache_lookup(repository& source,

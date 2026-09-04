@@ -43,6 +43,7 @@ that the table and `liquid --help` name the same commands.
 | `why` | `why <target> [--json]` | Explain the latest cache lookup for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
+| `policy` | `policy <check\|explain> [target]` | Check or explain build-input policy. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -109,6 +110,8 @@ that imported remote cache records, it uses action-index sequence and the signed
 An absent target is `never built`; incomplete or ambiguous records are `unknown` and retain the
 known action and result identifiers. A divergence explanation is emitted only for the authoritative
 action-index flag written by `liquid verify`, with its verification attestation digest when recorded.
+Current input policy is checked first for a recorded action. An unsatisfied refuse rule is
+`policy refused` and names its first failing input and rule even if the previous lookup was a hit.
 `--json` emits the same fields, including nullable digest, line-change, attribution, environment,
 and tool fields.
 
@@ -116,6 +119,13 @@ and tool fields.
 its hit rate and bytes avoided are reported, while memory and remote say `unavailable` and remote
 bytes transferred remain zero. Bytes avoided and rebuilt are sums of recorded output blob sizes.
 The report also groups misses by the same reason vocabulary as `why`.
+
+`policy check <target>` evaluates the current repository's `config.policy` against a cached action,
+result, or produced path without executing it. It exits non-zero when a `refuse` rule fails.
+`policy explain` prints approved builders, rules, and the policy digest; an optional target adds
+every selected input, accepted signer count, and satisfaction result. Warning rules print
+`warning:` lines and exit successfully. Both commands open the current liquid repository or the
+current project's wrap repository.
 
 ## Examples
 
@@ -145,6 +155,8 @@ liquid verify --all
 liquid verify --changed --explain
 liquid provenance blake3:<result-digest>
 liquid provenance --dsse build/output.o
+liquid policy check build/output.o
+liquid policy explain build/output.o
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --jobs 8 --explain cmake --build build
 liquid build --profile cmake --build build

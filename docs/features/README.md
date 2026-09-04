@@ -81,7 +81,7 @@ is wrong.
 | [07](07-dependency-resolution.md) | Dependency resolution | Spack-grade constraint solving over variants, compilers, targets and virtual providers. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
-| [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, and the attacks this prevents. |
+| [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
 | [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |
 | [12](12-search.md) | Search | Full-text and code search over the working tree, history, and published artifacts. |
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
@@ -100,6 +100,5 @@ is wrong.
 
 ## Status
 
-**Everything in this tree is a specification, not a description.** Nothing is
-implemented yet. Documents state intent; where a decision is still open, they say
-so explicitly rather than inventing an answer.
+This tree is the specification. Each document states implementation status where code has landed;
+unimplemented behavior remains explicit, and open decisions stay in each document's final section.

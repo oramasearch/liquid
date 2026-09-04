@@ -33,6 +33,7 @@ auto garbage_collect(int argc, char** argv) -> int;
 auto attestation(int argc, char** argv) -> int;
 auto verify(int argc, char** argv) -> int;
 auto provenance(int argc, char** argv) -> int;
+auto policy(int argc, char** argv) -> int;
 auto wrap(int argc, char** argv) -> int;
 auto why(int argc, char** argv) -> int;
 auto cache(int argc, char** argv) -> int;
@@ -140,6 +141,11 @@ constexpr auto commands = std::to_array<command>({
      "print and verify build provenance",
      "available",
      liquid_cli::provenance},
+    {"policy",
+     "policy <check|explain> [target]",
+     "check or explain build-input policy",
+     "available",
+     liquid_cli::policy},
     {"wrap",
      "wrap [--jobs <count>] [--no-cache] [--no-verify] [--explain] <command> [args...]",
      "run an existing build as cached actions",

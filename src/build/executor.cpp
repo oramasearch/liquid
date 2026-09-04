@@ -14,6 +14,7 @@
 #include "build/cache.hpp"
 #include "build/executor.hpp"
 #include "build/materialise.hpp"
+#include "build/policy.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "objects/records.hpp"
@@ -408,6 +409,11 @@ runtime::task<result_id> execute(repository& source, action_input input) {
     auto valid = validate(input);
     if (!valid)
         co_return std::unexpected(valid.error());
+    auto policy = co_await build_detail::enforce_policy(source, input);
+    if (!policy)
+        co_return std::unexpected(policy.error());
+    if (!policy->allowed)
+        co_return std::unexpected(build_detail::policy_refusal(*policy));
     auto source_time = co_await repository_detail::build_access::change_time(source, input.inputs);
     if (!source_time)
         co_return std::unexpected(source_time.error());

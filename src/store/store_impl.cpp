@@ -19,6 +19,7 @@
 #include "faults.hpp"
 #include "hash/sha256.h"
 #include "identity/key_version.hpp"
+#include "objects/records.hpp"
 #include "references.hpp"
 
 namespace liquid::store_detail {
@@ -210,6 +211,9 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
             !opened || !manifest_exists || result->index_.collection_epoch() != collection->epoch);
         if (!indexed)
             co_return std::unexpected(indexed.error());
+        auto subjects = co_await result->rebuild_subject_index();
+        if (!subjects)
+            co_return std::unexpected(subjects.error());
         co_return result;
     } catch (const std::system_error& caught) {
         co_return std::unexpected(store_error(errc::io, caught.what(), root.string()));
@@ -408,6 +412,26 @@ runtime::task<void> store_backend::save_objects() {
     if (!staged)
         co_return std::unexpected(staged.error());
     co_return co_await publish_staged_objects();
+}
+
+runtime::task<void> store_backend::rebuild_subject_index() {
+    subjects_.clear();
+    for (const auto& [unused, object] : objects_) {
+        if (object.kind != "attestation") {
+            continue;
+        }
+        auto bytes = co_await get(object.id);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto value = objects::decode_attestation(*bytes);
+        if (!value) {
+            co_return std::unexpected(store_error(
+                errc::corrupt, "indexed attestation cannot be decoded", to_string(object.id)));
+        }
+        subjects_.add(value->subject, object.id);
+    }
+    co_return result<void>{};
 }
 
 runtime::task<void> store_backend::stage_objects() {
@@ -775,6 +799,14 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     object.size = input.size();
     object.key_id = key_id;
     object.kind = detect_object_kind(input);
+    auto attestation_subject = std::optional<digest>{};
+    if (object.kind == "attestation") {
+        auto value = objects::decode_attestation(input);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        attestation_subject = value->subject;
+    }
     for (const auto part : ranges) {
         const auto bytes = std::span<const std::byte>(input).subspan(part.offset, part.size);
         const auto id = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, bytes)
@@ -803,6 +835,9 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     auto saved = co_await add_object(std::move(object));
     if (!saved)
         co_return std::unexpected(saved.error());
+    if (attestation_subject) {
+        subjects_.add(*attestation_subject, whole);
+    }
     index_.set_highest_pack_id(descriptor_stored->location.pack_id);
     auto flushed = co_await index_.flush();
     if (!flushed)
@@ -1154,6 +1189,10 @@ runtime::task<bool> store_backend::contains(digest id) {
     if (!found)
         co_return std::unexpected(found.error());
     co_return found->has_value();
+}
+
+std::vector<digest> store_backend::attestations(digest subject) const {
+    return subjects_.find(subject);
 }
 
 runtime::task<std::optional<object_key_version>> store_backend::key_version(digest id) {

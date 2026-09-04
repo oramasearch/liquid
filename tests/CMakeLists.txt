@@ -23,6 +23,7 @@ add_executable(liquid-tests
   vfs/test_materialise.cpp
   vfs/test_mount.cpp
   build/test_executor.cpp
+  build/test_policy.cpp
   build/test_provenance.cpp
   build/test_why.cpp
   build/test_wrap.cpp

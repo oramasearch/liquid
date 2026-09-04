@@ -14,6 +14,7 @@
 
 #include "formats/json.hpp"
 #include "liquid/build.hpp"
+#include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
 namespace {
@@ -324,6 +325,34 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
     EXPECT_NE(text.find("output=trace-middle.txt"), std::string::npos) << text;
     EXPECT_NE(text.find("output=trace-final.txt"), std::string::npos) << text;
 #endif
+}
+
+TEST(BuildWrap, why_reports_current_policy_refusal_for_a_recorded_target) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0)
+        GTEST_SKIP() << "FUSE is unavailable";
+    if (!available("make") || !available("clang"))
+        GTEST_SKIP() << "make or clang is absent";
+    wrap_directory fixture{"make"};
+    auto built = run_wrap(fixture.project(), fixture.cache(), {"make"}, false, 3);
+    ASSERT_TRUE(built) << built.error().message << ": " << built.error().context;
+    ASSERT_EQ(built->exit, 0);
+
+    auto source =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(source) << source.error().message;
+    auto configured = liquid::runtime::block_on(
+        source->set_policy({.rules = {{.scope = liquid::policy_scope::all_inputs,
+                                       .require = {{.profile = "reproducibility/1",
+                                                    .from = {"unavailable-builder"},
+                                                    .min_count = 1}}}}}));
+    ASSERT_TRUE(configured) << configured.error().message;
+
+    auto explanation = liquid::runtime::block_on(
+        liquid::build::why(fixture.project(), "build/wrapped", fixture.cache()));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    EXPECT_EQ(explanation->cause.reason, liquid::cache_miss_reason::policy_refused);
+    EXPECT_FALSE(explanation->cause.path.empty());
+    EXPECT_NE(explanation->cause.detail.find("config.policy.rules[0]"), std::string::npos);
 }
 
 #if defined(LIQUID_CLI)

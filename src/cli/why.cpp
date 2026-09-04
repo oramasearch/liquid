@@ -40,6 +40,8 @@ auto reason_name(liquid::cache_miss_reason reason) -> std::string_view {
         return "divergent result quarantined";
     case liquid::cache_miss_reason::unknown:
         return "unknown";
+    case liquid::cache_miss_reason::policy_refused:
+        return "policy refused";
     }
     return "unknown";
 }
