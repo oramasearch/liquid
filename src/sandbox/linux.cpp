@@ -93,6 +93,49 @@ auto write_bootstrap(const launch_request& request, const std::filesystem::path&
     return {};
 }
 
+auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesystem::path& script)
+    -> result<void> {
+    auto stream = std::ofstream{script, std::ios::binary | std::ios::trunc};
+    if (!stream)
+        return std::unexpected(error{errc::io, "cannot create wrap bootstrap", script.string()});
+    const auto rooted = [&](std::string_view path) {
+        return request.sandbox_root / std::filesystem::path{path}.relative_path();
+    };
+    stream << "set -eu\n";
+    stream << "/usr/bin/mount --make-rprivate /\n";
+    stream << "/usr/bin/mount --bind " << quote(request.input_mount.string()) << ' '
+           << quote(rooted("/liquid/work").string()) << "\n";
+    for (const auto* path : {"/usr", "/usr/local", "/bin", "/lib", "/lib64", "/etc"}) {
+        if (!std::filesystem::exists(path))
+            continue;
+        const auto destination = rooted(path);
+        stream << "/usr/bin/mount --rbind " << quote(path) << ' ' << quote(destination.string())
+               << "\n";
+        stream << "/usr/bin/mount -o remount,bind,ro " << quote(destination.string()) << "\n";
+    }
+    stream << "/usr/bin/mount --rbind /dev " << quote(rooted("/dev").string()) << "\n";
+    stream << "/usr/bin/mount --bind " << quote(request.hook.string()) << ' '
+           << quote(rooted("/liquid/wrap-hook.so").string()) << "\n";
+    stream << "/usr/bin/mount --bind " << quote(request.trace.string()) << ' '
+           << quote(rooted("/liquid/trace").string()) << "\n";
+    stream << "/usr/bin/mount --bind " << quote(request.plan.string()) << ' '
+           << quote(rooted("/liquid/plan").string()) << "\n";
+    stream << "/usr/bin/mount -t tmpfs tmpfs " << quote(rooted("/tmp").string()) << "\n";
+    stream << "/usr/bin/mkdir -p " << quote(rooted("/tmp/home").string()) << "\n";
+    stream << "/usr/bin/mount --rbind /proc " << quote(rooted("/proc").string()) << "\n";
+    stream << "exec /usr/bin/unshare --root=" << quote(request.sandbox_root.string())
+           << " --wd=/liquid/work -- /usr/bin/env -i";
+    for (const auto& [name, value] : request.environment)
+        stream << ' ' << quote(name + "=" + value);
+    for (const auto& argument : request.command)
+        stream << ' ' << quote(argument);
+    stream << "\n";
+    stream.close();
+    if (!stream)
+        return std::unexpected(error{errc::io, "cannot write wrap bootstrap", script.string()});
+    return {};
+}
+
 auto environment_block(const std::map<std::string, std::string>& values)
     -> std::vector<std::string> {
     auto output = std::vector<std::string>{};
@@ -198,6 +241,53 @@ auto launch(const launch_request& request) -> result<launch_result> {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }
+}
+
+auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
+    auto created = ensure_directory(request.sandbox_root / "liquid/work");
+    if (!created)
+        return std::unexpected(created.error());
+    for (const auto* path :
+         {"usr", "usr/local", "bin", "lib", "lib64", "etc", "dev", "tmp", "proc"}) {
+        created = ensure_directory(request.sandbox_root / path);
+        if (!created)
+            return std::unexpected(created.error());
+    }
+    for (const auto* path : {"liquid/wrap-hook.so", "liquid/trace", "liquid/plan"}) {
+        auto file = create_file(request.sandbox_root / path);
+        if (!file)
+            return std::unexpected(file.error());
+    }
+    const auto script = request.sandbox_root / "wrap-bootstrap.sh";
+    auto written = write_wrap_bootstrap(request, script);
+    if (!written)
+        return std::unexpected(written.error());
+    auto arguments = std::vector<std::string>{
+        "unshare", "--user", "--map-root-user", "--mount", "--net", "/bin/sh", script.string()};
+    auto argument_pointers = pointers(arguments);
+    auto environment = environment_block({});
+    auto environment_pointers = pointers(environment);
+    auto actions = posix_spawn_file_actions_t{};
+    auto attributes = posix_spawnattr_t{};
+    posix_spawn_file_actions_init(&actions);
+    posix_spawnattr_init(&attributes);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attributes, 0);
+    auto pid = pid_t{};
+    const auto spawned = posix_spawn(&pid,
+                                     "/usr/bin/unshare",
+                                     &actions,
+                                     &attributes,
+                                     argument_pointers.data(),
+                                     environment_pointers.data());
+    posix_spawnattr_destroy(&attributes);
+    posix_spawn_file_actions_destroy(&actions);
+    if (spawned != 0)
+        return std::unexpected(error{errc::io, std::strerror(spawned), "posix_spawn wrap"});
+    auto status = int{};
+    if (::waitpid(pid, &status, 0) < 0)
+        return std::unexpected(error{errc::io, std::strerror(errno), "waitpid wrap"});
+    return launch_result{exit_code(status), false};
 }
 
 } // namespace liquid::sandbox_detail

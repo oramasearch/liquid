@@ -22,6 +22,7 @@ add_executable(liquid-tests
   vfs/test_materialise.cpp
   vfs/test_mount.cpp
   build/test_executor.cpp
+  build/test_wrap.cpp
 )
 target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
 target_include_directories(liquid-tests PRIVATE
@@ -38,6 +39,7 @@ endif()
 add_dependencies(liquid-tests liquid-build-fixture)
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+  LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
 
 if(LIQUID_BUILD_CLI)

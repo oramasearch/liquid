@@ -26,6 +26,11 @@ universality tractable rather than aspirational.
 Tier 3 is where the marketing pressure will be, and it is where liquid must not
 overpromise.
 
+The implemented Tier 1 entry point is `liquid wrap`: local observed execution and caching work on
+Linux with FUSE and on macOS when macFUSE is installed. Remote execution, artifact provenance,
+packaging, Windows, and BSD are still future work, so the complete Tier 1 row remains a product
+requirement rather than a claim about the current release.
+
 ## Platforms and operating systems
 
 | | Tier 0/1 | Virtual filesystem | Sandbox | Notes |

@@ -125,7 +125,7 @@ sampling infrastructure detects divergent remote workers
 liquid must be useful before a project changes anything.
 
 ```
-liquid wrap ./configure && make
+liquid wrap /bin/sh -c './configure && make'
 liquid wrap cmake --build build
 ```
 
@@ -133,6 +133,10 @@ Runs an existing build inside liquid's sandbox, observes its dependencies, cache
 its actions, distributes them, and produces provenance — for a project with no
 liquid configuration at all. This is the adoption path, and it is the first
 shippable product.
+
+This adoption path is implemented for CMake, Autotools, Make, and
+`compile_commands.json` projects on Linux with FUSE and macOS with macFUSE. The local disk tier
+serves unchanged results; distribution and provenance remain the work of their owning phases.
 
 `compile_commands.json` is a first-class input.
 

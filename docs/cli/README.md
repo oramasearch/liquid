@@ -1,8 +1,9 @@
 # liquid command line
 
-`liquid` is a thin command-line client of libliquid. It opens a repository from the current
-directory unless a command names another repository. Every library operation runs through
-`runtime::block_on`; the CLI does not read repository storage directly.
+`liquid` is a thin command-line client of libliquid. Repository commands open from the current
+directory unless a command names another repository; `wrap` instead snapshots the current working
+tree into its project cache. Every library operation runs through `runtime::block_on`; the CLI does
+not read repository storage directly.
 
 `init` imports regular files already present in its target directory through
 `repository::write_file`. Subsequent external edits need the watcher-backed capture service from
@@ -35,6 +36,7 @@ that the table and `liquid --help` name the same commands.
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
+| `wrap` | `wrap [--jobs <count>] [--no-cache] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -50,6 +52,12 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
+outer action's status. `--explain` adds one `miss:` line for each changed manifest path. `--jobs`
+sets driver parallelism and the compilation-database seed width; `--no-cache` executes and records
+the observation without publishing or serving cache entries. The persistent project cache defaults
+to the platform cache directory and can be relocated with `LIQUID_WRAP_CACHE`.
 
 ## Examples
 
@@ -75,6 +83,8 @@ liquid gc --dry-run .
 liquid identity rotate
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
+liquid wrap cmake -S . -B build -G Ninja
+liquid wrap --jobs 8 --explain cmake --build build
 liquid pause
 liquid resume
 liquid watch

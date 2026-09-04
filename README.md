@@ -33,20 +33,21 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > locks, status, and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
 > The `liquid` binary is the documented thin client of the Phase 1 repository, capture, VFS, store,
-> and identity APIs. `liquid gc --explain` reports why retained chunks are live. Repository path
+> and identity APIs plus the Phase 2 build wrapper. `liquid gc --explain` reports why retained chunks are live. Repository path
 > rules encrypt selected JSON and `.env` leaf values while leaving their structure visible, with
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install.
 
-> **Phase 2 now includes local sandboxed action execution and the persistent disk cache.**
+> **Phase 2 now includes `liquid wrap`, local sandboxed action execution, and the persistent disk cache.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
-> action in Linux namespaces with a fixed environment. Before execution it looks up signed results
+> action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
+> unchanged CMake, Autotools, Make, or compilation-database project in one observed mount and turns
+> output-producing tool processes into cached actions. Before execution it looks up signed results
 > by candidate key, validates every observed manifest path against the current input tree, and
 > reports the first differing input on a miss. The on-disk action index rebuilds from its leased
-> store root, and publication defaults to disabled. Memory and remote tiers plus `wrap` remain
-> separate work; macOS needs macFUSE to execute the fixed virtual-root path and Windows returns its
-> documented unsupported result.
+> store root. Memory and remote tiers remain separate work; macOS needs macFUSE and Windows returns
+> its documented unsupported result.
 
 ## Where this sits
 
@@ -175,6 +176,17 @@ library, never the other way round).
 
 ### Build
 
+The first shippable build product wraps an existing project without adding liquid configuration:
+
+```sh
+liquid wrap cmake -S . -B build -G Ninja
+liquid wrap --jobs 8 --explain cmake --build build
+```
+
+The second command reuses valid compile and link results before their tools start. Linux requires
+libfuse3; macOS requires macFUSE. See [`docs/cli/README.md`](docs/cli/README.md) for options and
+platform availability.
+
 `LIQUID_BUILD_BENCH=ON` adds the optional `bench/chunk-index/chunk-index-bench` target and
 fetches its RocksDB and LMDB dependencies. It defaults to OFF, so the default configure does not
 fetch or build benchmark code.
@@ -188,7 +200,7 @@ cd liquid
 cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
 mkdir example && printf 'first\n' > example/readme.txt
 (cd example && ../build/liquid init . && ../build/liquid status --json && ../build/liquid cut "import")
-cmake --install build --prefix /opt/liquid        # bin/liquid, lib/libliquid.a, include/liquid/, lib/cmake/liquid/
+cmake --install build --prefix /opt/liquid        # bin/liquid, lib/libliquid.a, libexec/liquid/, include/liquid/, lib/cmake/liquid/
 ```
 
 Consume from CMake either way:

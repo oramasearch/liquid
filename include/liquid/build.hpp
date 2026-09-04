@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -85,11 +86,31 @@ struct LIQUID_EXPORT action_result {
     std::optional<cache_miss> why;
 };
 
+struct LIQUID_EXPORT wrap_options {
+    std::uint32_t jobs{};
+    bool cache{true};
+    bool explain{};
+    std::optional<std::filesystem::path> cache_directory;
+};
+
+struct LIQUID_EXPORT wrap_report {
+    int exit{};
+    std::uint64_t actions{};
+    std::uint64_t hits{};
+    std::uint64_t misses{};
+    std::uint64_t processes_started{};
+    cache_status outer{cache_status::miss};
+    std::vector<cache_miss> why;
+};
+
 namespace build {
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
                                                              action_input input);
 [[nodiscard]] LIQUID_EXPORT runtime::task<action_result> result(repository& source, result_id id);
+[[nodiscard]] LIQUID_EXPORT runtime::task<wrap_report> wrap(std::filesystem::path working_tree,
+                                                            std::vector<std::string> command,
+                                                            wrap_options options = {});
 
 } // namespace build
 

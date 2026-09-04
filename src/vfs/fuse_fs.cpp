@@ -97,7 +97,8 @@ auto prepare_mountpoint(const std::filesystem::path& path) -> result<void> {
 runtime::task<void> wake_fuse_loop(std::filesystem::path mountpoint) {
     auto awakened = co_await runtime::offload([mountpoint = std::move(mountpoint)] {
         struct stat attributes{};
-        static_cast<void>(::lstat(mountpoint.c_str(), &attributes));
+        const auto wake_path = mountpoint / ".liquid-unmount-wake";
+        static_cast<void>(::lstat(wake_path.c_str(), &attributes));
     });
     if (!awakened)
         co_return std::unexpected(awakened.error());
@@ -110,11 +111,15 @@ public:
                  std::filesystem::path mountpoint,
                  std::filesystem::path repository_root,
                  mount_options options,
-                 observation_sink sink = {})
+                 observation_sink sink = {},
+                 std::vector<std::string> initial_outputs = {})
         : source_(source), mountpoint_(std::move(mountpoint)),
           repository_root_(std::move(repository_root)), options_(options),
           cache_(repository_root_ / "LIQUID_VFS" / "chunks"),
-          queue_(std::make_shared<request_queue>()), sink_(std::move(sink)) {}
+          queue_(std::make_shared<request_queue>()), sink_(std::move(sink)) {
+        for (auto& path : initial_outputs)
+            modification_times_.insert_or_assign(std::move(path), 2'000'000'000);
+    }
 
     void request_unmount() noexcept override {
         auto wake_loop = false;
@@ -297,6 +302,17 @@ public:
         ++writes_captured_;
     }
 
+    auto modification_time(std::string_view path) const -> std::int64_t {
+        auto lock = std::scoped_lock{modification_mutex_};
+        const auto found = modification_times_.find(path);
+        return found == modification_times_.end() ? 1'000'000'000 : found->second;
+    }
+
+    void touch(std::string path) {
+        auto lock = std::scoped_lock{modification_mutex_};
+        modification_times_.insert_or_assign(std::move(path), next_modification_time_++);
+    }
+
     void observe(observed_operation operation,
                  std::string path,
                  std::int64_t pid,
@@ -345,6 +361,9 @@ private:
     std::shared_ptr<request_queue> queue_;
     observation_sink sink_;
     std::atomic_uint64_t writes_captured_{};
+    mutable std::mutex modification_mutex_;
+    std::map<std::string, std::int64_t, std::less<>> modification_times_;
+    std::int64_t next_modification_time_{2'000'000'001};
     mutable std::mutex lifecycle_mutex_;
     std::condition_variable lifecycle_changed_;
     struct fuse* fuse_{};
@@ -370,7 +389,7 @@ runtime::task<int> getattr_request(fuse_backend* state,
                                    std::string path,
                                    std::int64_t pid,
                                    std::shared_ptr<struct stat> output) {
-    auto entry = co_await repository_detail::vfs_access::entry(state->source(), std::move(path));
+    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
     if (!entry)
         co_return fuse_error(entry.error());
     std::memset(output.get(), 0, sizeof(struct stat));
@@ -379,6 +398,11 @@ runtime::task<int> getattr_request(fuse_backend* state,
     output->st_size = static_cast<off_t>(entry->size);
     output->st_uid = getuid();
     output->st_gid = getgid();
+#if defined(__APPLE__)
+    output->st_mtimespec.tv_sec = state->modification_time(path);
+#else
+    output->st_mtim.tv_sec = state->modification_time(path);
+#endif
     state->observe(observed_operation::getattr, std::move(path), pid, entry->object);
     co_return 0;
 }
@@ -410,6 +434,15 @@ open_request(fuse_backend* state, std::string path, std::int64_t pid, int flags)
     if (state->read_only() && (flags & (O_WRONLY | O_RDWR)) != 0) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
+    }
+    if (!state->read_only() && (flags & O_TRUNC) != 0) {
+        auto written = co_await state->source().write(path, {});
+        if (!written)
+            co_return fuse_error(written.error());
+        state->cache().invalidate(entry->node);
+        state->captured();
+        state->touch(path);
+        state->observe(observed_operation::write, path, pid);
     }
     state->observe(observed_operation::open, std::move(path), pid, entry->object);
     co_return 0;
@@ -446,6 +479,8 @@ create_request(fuse_backend* state, std::string path, std::int64_t pid, std::uin
     if (!mode_set)
         co_return fuse_error(mode_set.error());
     state->captured();
+    state->touch(path);
+    state->observe(observed_operation::write, std::move(path), pid);
     co_return 0;
 }
 
@@ -475,10 +510,13 @@ runtime::task<int> write_request(fuse_backend* state,
         co_return fuse_error(written.error());
     state->cache().invalidate(entry->node);
     state->captured();
+    state->touch(path);
+    state->observe(observed_operation::write, std::move(path), pid);
     co_return static_cast<int>(input.size());
 }
 
-runtime::task<int> remove_request(fuse_backend* state, std::string path, bool directory) {
+runtime::task<int>
+remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool directory) {
     if (state->read_only())
         co_return -EROFS;
     auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
@@ -500,16 +538,48 @@ runtime::task<int> remove_request(fuse_backend* state, std::string path, bool di
         co_return fuse_error(removed.error());
     state->cache().invalidate(entry->node);
     state->captured();
+    state->touch(path);
+    state->observe(observed_operation::write, std::move(path), pid);
     co_return 0;
 }
 
-runtime::task<int> rename_request(fuse_backend* state, std::string from, std::string to) {
+runtime::task<int>
+rename_request(fuse_backend* state, std::string from, std::string to, std::int64_t pid) {
     if (state->read_only())
         co_return -EROFS;
-    auto moved = co_await state->source().move(std::move(from), std::move(to));
+    if (from == to)
+        co_return 0;
+    auto source = co_await repository_detail::vfs_access::entry(state->source(), from);
+    if (!source)
+        co_return fuse_error(source.error());
+    auto destination = co_await repository_detail::vfs_access::entry(state->source(), to);
+    if (destination) {
+        if (source->kind == node_kind::blob && destination->kind != node_kind::blob)
+            co_return -EISDIR;
+        if (source->kind != node_kind::blob && destination->kind == node_kind::blob)
+            co_return -ENOTDIR;
+        if (destination->kind != node_kind::blob) {
+            auto children = co_await repository_detail::vfs_access::children(state->source(), to);
+            if (!children)
+                co_return fuse_error(children.error());
+            if (!children->empty())
+                co_return -ENOTEMPTY;
+        }
+        auto removed = co_await state->source().remove(to);
+        if (!removed)
+            co_return fuse_error(removed.error());
+        state->cache().invalidate(destination->node);
+    } else if (destination.error().code != errc::not_found) {
+        co_return fuse_error(destination.error());
+    }
+    auto moved = co_await state->source().move(from, to);
     if (!moved)
         co_return fuse_error(moved.error());
     state->captured();
+    state->touch(from);
+    state->touch(to);
+    state->observe(observed_operation::write, std::move(from), pid);
+    state->observe(observed_operation::write, std::move(to), pid);
     co_return 0;
 }
 
@@ -520,10 +590,55 @@ mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
         co_return -EROFS;
     }
     auto created = co_await repository_detail::vfs_access::make_directory(
-        state->source(), std::move(path), static_cast<std::uint32_t>(S_IFDIR) | mode);
+        state->source(), path, static_cast<std::uint32_t>(S_IFDIR) | mode);
     if (!created)
         co_return fuse_error(created.error());
     state->captured();
+    state->touch(path);
+    state->observe(observed_operation::write, std::move(path), pid);
+    co_return 0;
+}
+
+runtime::task<int>
+truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint64_t size) {
+    if (state->read_only()) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
+        co_return -EROFS;
+    }
+    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    if (!entry)
+        co_return fuse_error(entry.error());
+    auto contents = co_await state->cache().read(state->source(), *entry, 0, entry->size);
+    if (!contents)
+        co_return fuse_error(contents.error(), true);
+    contents->resize(static_cast<std::size_t>(size));
+    auto written = co_await state->source().write(path, std::move(*contents));
+    if (!written)
+        co_return fuse_error(written.error());
+    state->cache().invalidate(entry->node);
+    state->captured();
+    state->touch(path);
+    state->observe(observed_operation::write, std::move(path), pid);
+    co_return 0;
+}
+
+runtime::task<int>
+chmod_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
+    if (state->read_only()) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
+        co_return -EROFS;
+    }
+    auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
+    if (!entry)
+        co_return fuse_error(entry.error());
+    const auto type = entry->kind == node_kind::blob ? S_IFREG : S_IFDIR;
+    auto changed = co_await repository_detail::vfs_access::set_mode(
+        state->source(), path, static_cast<std::uint32_t>(type) | (mode & 0777U));
+    if (!changed)
+        co_return fuse_error(changed.error());
+    state->captured();
+    state->touch(path);
+    state->observe(observed_operation::write, std::move(path), pid);
     co_return 0;
 }
 
@@ -645,8 +760,9 @@ int fuse_unlink(const char* path) {
     auto* state = current_backend();
     if (!state)
         return -EIO;
-    return state->queue()->submit(
-        [state, path = fuse_path(path)] { return remove_request(state, path, false); });
+    return state->queue()->submit([state, path = fuse_path(path), pid = current_pid()] {
+        return remove_request(state, path, pid, false);
+    });
 }
 
 #if defined(LIQUID_HAS_FUSE3)
@@ -659,9 +775,10 @@ int fuse_rename(const char* from, const char* to) {
     auto* state = current_backend();
     if (!state)
         return -EIO;
-    return state->queue()->submit([state, from = fuse_path(from), to = fuse_path(to)] {
-        return rename_request(state, from, to);
-    });
+    return state->queue()->submit(
+        [state, from = fuse_path(from), to = fuse_path(to), pid = current_pid()] {
+            return rename_request(state, from, to, pid);
+        });
 }
 
 int fuse_mkdir(const char* path, mode_t mode) {
@@ -677,8 +794,35 @@ int fuse_rmdir(const char* path) {
     auto* state = current_backend();
     if (!state)
         return -EIO;
-    return state->queue()->submit(
-        [state, path = fuse_path(path)] { return remove_request(state, path, true); });
+    return state->queue()->submit([state, path = fuse_path(path), pid = current_pid()] {
+        return remove_request(state, path, pid, true);
+    });
+}
+
+#if defined(LIQUID_HAS_FUSE3)
+int fuse_truncate(const char* path, off_t size, struct fuse_file_info*) {
+#else
+int fuse_truncate(const char* path, off_t size) {
+#endif
+    auto* state = current_backend();
+    if (!state || size < 0)
+        return -EIO;
+    return state->queue()->submit([state, path = fuse_path(path), pid = current_pid(), size] {
+        return truncate_request(state, path, pid, static_cast<std::uint64_t>(size));
+    });
+}
+
+#if defined(LIQUID_HAS_FUSE3)
+int fuse_chmod(const char* path, mode_t mode, struct fuse_file_info*) {
+#else
+int fuse_chmod(const char* path, mode_t mode) {
+#endif
+    auto* state = current_backend();
+    if (!state)
+        return -EIO;
+    return state->queue()->submit([state, path = fuse_path(path), pid = current_pid(), mode] {
+        return chmod_request(state, path, pid, static_cast<std::uint32_t>(mode));
+    });
 }
 
 int fuse_statfs(const char*, struct statvfs* output) {
@@ -704,6 +848,8 @@ auto fuse_backend::make_operations() -> fuse_operations {
     operations.rename = fuse_rename;
     operations.mkdir = fuse_mkdir;
     operations.rmdir = fuse_rmdir;
+    operations.truncate = fuse_truncate;
+    operations.chmod = fuse_chmod;
     operations.statfs = fuse_statfs;
     return operations;
 }
@@ -748,8 +894,9 @@ start_fuse(repository& source, std::filesystem::path mountpoint, mount_options o
 runtime::task<std::shared_ptr<backend>> start_observed_fuse(repository& source,
                                                             digest,
                                                             std::filesystem::path mountpoint,
-                                                            std::vector<std::string>,
-                                                            observation_sink sink) {
+                                                            std::vector<std::string> outputs,
+                                                            observation_sink sink,
+                                                            bool read_only) {
     auto root = repository_detail::vfs_access::root_path(source);
     if (!root)
         co_return std::unexpected(root.error());
@@ -762,8 +909,9 @@ runtime::task<std::shared_ptr<backend>> start_observed_fuse(repository& source,
     auto state = std::make_shared<fuse_backend>(source,
                                                 std::move(mountpoint),
                                                 std::move(*root),
-                                                mount_options{.read_only = true},
-                                                std::move(sink));
+                                                mount_options{.read_only = read_only},
+                                                std::move(sink),
+                                                std::move(outputs));
     auto initialised = co_await state->initialise_cache();
     if (!initialised)
         co_return std::unexpected(initialised.error());

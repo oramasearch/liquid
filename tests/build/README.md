@@ -7,3 +7,8 @@ rebuild, and the read-only publication default.
 
 `fixture.c` is the hermetic toolchain program materialised into each test repository. Its commands
 copy one input, print the fixed environment, attempt denied access, or exercise timeout cleanup.
+
+`wrap/` holds unchanged CMake, Autotools, recursive Make, and compilation-database projects built
+with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
+invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
+parallel compilation-database seeding, and sandbox-only hook variables.

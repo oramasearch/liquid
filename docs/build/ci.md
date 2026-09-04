@@ -10,7 +10,7 @@ on each desktop platform.
 
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
-| Linux | `ubuntu-24.04` | Clang 19 from apt.llvm.org, `libstdc++-14-dev`, libfuse3, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount scenario, `liquid version` |
+| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, libfuse3, Autoconf, Automake, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount scenario, `liquid version` |
 | macOS | `macos-15` | Homebrew LLVM, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, current Chocolatey CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
@@ -35,7 +35,7 @@ repository at no cost. Linux arm64 verification is deferred until a suitable run
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
 `-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
 
-The Linux jobs install both `libfuse3-dev` and `fuse3`. Configuration requires the `fuse3`
+The Linux jobs install `libfuse3-dev`, `fuse3`, Autoconf, and Automake. Configuration requires the `fuse3`
 pkg-config package on Linux, and the mount test exercises a 64 MiB repository through libfuse3
 when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device, the test reports
 that FUSE is unavailable and is skipped rather than silently substituting the materialisation
@@ -48,7 +48,8 @@ Hosted CI cannot build while the org submodule token is missing, and macOS build
 classes of Linux difference: libc++ supplies some standard headers transitively where libstdc++
 does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
 `std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same
-toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3). Build it once
+toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3, Autoconf,
+Automake). Build it once
 and run the whole suite against a worktree; `--privileged` with `/dev/fuse` lets the mount and
 sandbox tests run for real:
 
@@ -73,9 +74,12 @@ docker run --rm --memory 2g --privileged --device /dev/fuse \
 The mount originally passed `-f` directly to `fuse_new`, which rejects command-line-only options,
 and later asked `fuse_exit` to stop a loop whose worker remained blocked in `/dev/fuse`. The Linux
 path now passes `-f` and the mountpoint through `fuse_parse_cmdline`, gives `fuse_loop_mt` an
-allocated loop configuration, and issues one offloaded root lookup after `fuse_exit` during an
-explicit unmount. That lookup wakes the blocked libfuse worker without blocking the runtime
+allocated loop configuration, and issues one offloaded fresh-path lookup after `fuse_exit` during
+an explicit unmount. The uncached lookup wakes the blocked libfuse worker without blocking the runtime
 executor. A successful named run reports one passed test and no skipped tests.
+
+`BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
+The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.
 
 Run the Linux restart scenario by itself with:
 

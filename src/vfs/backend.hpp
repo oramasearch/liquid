@@ -22,7 +22,8 @@ public:
                                        digest tree,
                                        std::filesystem::path mountpoint,
                                        std::vector<std::string> outputs,
-                                       observation_sink sink)
+                                       observation_sink sink,
+                                       bool read_only = true)
     -> runtime::task<std::shared_ptr<backend>>;
 
 struct mount_factory {

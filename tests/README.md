@@ -24,3 +24,5 @@ Build tests cover the disk action index's reopen and rebuild paths on every plat
 privileged Linux environment they also prove a second identical execution launches no process,
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.
+The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
+`compile_commands.json` projects and cache reuse from a different checkout path.

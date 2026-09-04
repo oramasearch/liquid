@@ -24,11 +24,12 @@ verified
 redaction, and liquid #52's JSON/`.env` leaf encryption with structural key diff are implemented;
 liquid #10 provides local sandboxed action execution through `liquid::build` on Linux, and liquid
 #11 provides its signed, manifest-validated persistent disk cache with read-only publication by
-default; operations owned by later issues return
+default. Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and
+`compile_commands.json` builds on Linux with FUSE and macOS with macFUSE; operations owned by later issues return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
 and drip journal are implemented. Full materialisation works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
-store, VFS, and identity calls. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store)
+store, VFS, and identity calls plus the Phase 2 build wrapper. Clang 17+, CMake + Ninja, GoogleTest. Phase 1 (the store)
 is built inside
 libliquid. Optional developer benchmarks live under `bench/` and are excluded unless their build
 option is enabled.
