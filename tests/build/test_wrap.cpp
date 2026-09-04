@@ -362,6 +362,8 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
         std::ranges::any_of(explanation->critical_path.back().outputs,
                             [](const auto& output) { return output == "trace-final.txt"; }));
     for (const auto& action : trace->actions) {
+        ASSERT_TRUE(action.schedule);
+        EXPECT_EQ(action.schedule->decision, liquid::execution_decision::local);
         const auto phases = action.timing.queued + action.timing.sandbox + action.timing.exec +
                             action.timing.hash + action.timing.store;
         const auto found = std::ranges::find_if(explanation->critical_path, [&](const auto& item) {
@@ -379,6 +381,21 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
     }
     auto chrome = liquid::build::chrome_trace(*trace);
     ASSERT_TRUE(chrome) << chrome.error().message;
+    for (const auto field : {"execution_decision",
+                             "history_ms",
+                             "size_class",
+                             "input_bytes",
+                             "remote_state_queried",
+                             "remote_missing_bytes",
+                             "remote_queue_depth",
+                             "remote_cache_locality_permille",
+                             "batch_supported",
+                             "batch_size",
+                             "local_estimate_ms",
+                             "remote_estimate_ms",
+                             "decision_reason"}) {
+        EXPECT_NE(chrome->find(field), std::string::npos) << field;
+    }
     auto json = liquid::formats::json::parse(*chrome);
     ASSERT_TRUE(json) << json.error().message;
     const auto* object = std::get_if<liquid::formats::json::value::object>(&json->data);
@@ -399,6 +416,20 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
     ASSERT_EQ(status, 0) << text;
     EXPECT_NE(text.find("output=trace-middle.txt"), std::string::npos) << text;
     EXPECT_NE(text.find("output=trace-final.txt"), std::string::npos) << text;
+    EXPECT_NE(text.find("decision=local"), std::string::npos) << text;
+    EXPECT_NE(text.find("history_ms="), std::string::npos) << text;
+
+    const auto why_output = fixture.project().parent_path() / "why-schedule-output";
+    const auto why_command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                             shell_quote(LIQUID_CLI) + " why trace-final.txt --json >" +
+                             shell_quote(why_output.string()) + " 2>&1";
+    const auto why_status = std::system(why_command.c_str());
+    auto why_input = std::ifstream{why_output};
+    const auto why_text =
+        std::string{std::istreambuf_iterator<char>{why_input}, std::istreambuf_iterator<char>{}};
+    ASSERT_EQ(why_status, 0) << why_text;
+    EXPECT_NE(why_text.find("\"schedule\":{\"decision\":\"local\""), std::string::npos) << why_text;
+    EXPECT_NE(why_text.find("\"remote_missing_bytes\":0"), std::string::npos) << why_text;
 #endif
 }
 

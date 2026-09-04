@@ -123,7 +123,8 @@ public:
                  std::string input,
                  liquid::digest content,
                  std::map<std::string, std::string> environment = {{"LANG", "C.UTF-8"}},
-                 std::optional<liquid::digest> sandbox = {}) -> liquid::result_id {
+                 std::optional<liquid::digest> sandbox = {},
+                 std::optional<liquid::execution_schedule> schedule = {}) -> liquid::result_id {
         auto action_input = liquid::action_input{.command = std::move(command),
                                                  .cwd = "",
                                                  .env = std::move(environment),
@@ -138,7 +139,8 @@ public:
                                            .stderr_output = content,
                                            .manifest = {{std::move(input), content}},
                                            .observed_at = std::chrono::floor<std::chrono::seconds>(
-                                               std::chrono::system_clock::now())};
+                                               std::chrono::system_clock::now()),
+                                           .schedule = std::move(schedule)};
         auto id =
             liquid::runtime::block_on(liquid::build_detail::testing::store_result_with_provenance(
                 repository_, action, value));
@@ -253,6 +255,46 @@ TEST(BuildWhy, changed_command_reports_the_argv_diff) {
         fixture.project(), liquid::to_string(*by_result->action), fixture.cache_path()));
     ASSERT_TRUE(by_action) << by_action.error().message;
     EXPECT_EQ(by_action->cause.reason, liquid::cache_miss_reason::command_changed);
+}
+
+TEST(BuildWhy, reports_execution_decision_and_every_model_input) {
+    why_fixture fixture;
+    fixture.write("main.c", "int main(void) { return 0; }\n");
+    const auto root = fixture.cut();
+    const auto content = fixture.blob("main.c");
+    const auto toolchain = fixture.toolchain("/usr/bin/cc", "compiler");
+    const auto schedule =
+        liquid::execution_schedule{.decision = liquid::execution_decision::remote,
+                                   .inputs = {.history = {{.exec = std::chrono::milliseconds{800}}},
+                                              .size_class = liquid::action_size_class::medium,
+                                              .input_bytes = 8192,
+                                              .remote_state_queried = true,
+                                              .remote_missing_bytes = 2048,
+                                              .remote_queue_depth = 3,
+                                              .remote_cache_locality_permille = 750,
+                                              .batch_supported = true,
+                                              .batch_size = 4},
+                                   .local_estimate = std::chrono::milliseconds{800},
+                                   .remote_estimate = std::chrono::milliseconds{720},
+                                   .reason = "remote estimate is lower"};
+    const auto value = fixture.publish(
+        {"cc", "main.c"}, root, toolchain, "main.o", "main.c", content, {}, {}, schedule);
+    fixture.lookup(value);
+
+    auto report = liquid::runtime::block_on(
+        liquid::build::why(fixture.project(), "main.o", fixture.cache_path()));
+    ASSERT_TRUE(report) << report.error().message;
+    ASSERT_TRUE(report->schedule);
+    EXPECT_EQ(report->schedule->decision, liquid::execution_decision::remote);
+    EXPECT_EQ(report->schedule->inputs.history.size(), 1U);
+    EXPECT_EQ(report->schedule->inputs.size_class, liquid::action_size_class::medium);
+    EXPECT_EQ(report->schedule->inputs.input_bytes, 8192U);
+    EXPECT_TRUE(report->schedule->inputs.remote_state_queried);
+    EXPECT_EQ(report->schedule->inputs.remote_missing_bytes, 2048U);
+    EXPECT_EQ(report->schedule->inputs.remote_queue_depth, 3U);
+    EXPECT_EQ(report->schedule->inputs.remote_cache_locality_permille, 750U);
+    EXPECT_TRUE(report->schedule->inputs.batch_supported);
+    EXPECT_EQ(report->schedule->inputs.batch_size, 4U);
 }
 
 TEST(BuildWhy, imported_action_index_explains_without_a_local_lookup_journal) {

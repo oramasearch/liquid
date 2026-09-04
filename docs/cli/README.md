@@ -43,10 +43,10 @@ that the table and `liquid --help` name the same commands.
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
-| `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its trace. | available on Linux with FUSE and on macOS with macFUSE |
+| `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its timing, dependency, and scheduling trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
-| `why` | `why <target> [--json]` | Explain the latest cache lookup for an output, action, or result. | available |
+| `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
 | `policy` | `policy <check\|explain> [target]` | Check or explain build-input policy. | available |
@@ -131,12 +131,16 @@ defaults to the platform cache directory and can be relocated with `LIQUID_WRAP_
 profiled, so existing `liquid wrap` callers receive the same stored record and summary. `liquid
 build trace` describes the latest trace retained by the project's cache root. `--chrome` writes a
 Chrome trace-event JSON object with one complete event for every action phase. The export reads only
-the recorded trace and result graph.
+the recorded trace and result graph. Each action includes its recorded `local`, `remote`, or `race`
+decision, timing history, size class, input and missing bytes, remote-query flag, queue depth, cache
+locality, batch capability and size, local and remote estimates, and decision reason. Chrome events
+carry the same fields in their `args` object.
 
 `liquid why-slow <target>` accepts an output path, action digest, or result digest from the latest
 trace. It prints the longest dependency path ending at that action, followed by queued, sandbox,
-exec, hash, and store durations for every action. When both an inner tool action and the outer driver
-record the target, the command selects the inner action with the narrower output set.
+exec, hash, and store durations plus the recorded scheduling fields for every action. When both an
+inner tool action and the outer driver record the target, the command selects the inner action with
+the narrower output set.
 
 `liquid why <target>` accepts an output path, an action digest, or a result digest. It selects the
 most recent recorded lookup for that target and compares only the action, result, manifest, input
@@ -148,8 +152,10 @@ known action and result identifiers. A divergence explanation is emitted only fo
 action-index flag written by `liquid verify`, with its verification attestation digest when recorded.
 Current input policy is checked first for a recorded action. An unsatisfied refuse rule is
 `policy refused` and names its first failing input and rule even if the previous lookup was a hit.
-`--json` emits the same fields, including nullable digest, line-change, attribution, environment,
-and tool fields.
+When the selected result has a schedule, text output names the decision and prints every model
+input, both estimates, and the reason. `--json` emits the same data in `schedule`, alongside the
+nullable digest, line-change, attribution, environment, and tool fields. Legacy results have a null
+schedule.
 
 `liquid cache stats` reports cumulative completed-wrap counts. Disk is the only implemented tier;
 its hit rate and bytes avoided are reported, while memory and remote say `unavailable` and remote
