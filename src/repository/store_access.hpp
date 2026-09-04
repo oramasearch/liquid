@@ -41,6 +41,11 @@ struct store_access {
     }
 
     [[nodiscard]] static runtime::task<digest>
+    put_plain(store& destination, std::vector<std::byte> input, algorithm hash_algorithm) {
+        return destination.put_plain(std::move(input), hash_algorithm);
+    }
+
+    [[nodiscard]] static runtime::task<digest>
     put_encrypted(store& destination, std::vector<std::byte> input, std::string key_id) {
         return destination.put_encrypted(std::move(input), std::move(key_id));
     }

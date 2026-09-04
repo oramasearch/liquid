@@ -54,11 +54,13 @@ and operations stay in `include/liquid/build.hpp`.
 `why.cpp` resolves output paths, action digests, and result digests through the persistent lookup
 journal and action index. It classifies differences strictly from action/result records, manifests,
 stored trees and blobs, and repository history. It also owns the completed-wrap statistics
-projection, and returns the selected result's immutable schedule for CLI explanation. `cache.cpp`
+projection with separate disk and REAPI remote tiers, and returns the selected result's immutable
+schedule plus tier counts for CLI explanation. `cache.cpp`
 records lookup result relationships but does not store a guessed cause.
 
 `record_remote_result` stores signed remote action results and their provenance using registered
 version 2 blob records, without reading output content. Remote scheduling uses the shared
 `remote_blob_source` contract and `remote_executor` from `liquid/remote.hpp`; the executor passes
 remote eligibility to the Linux read guard and returns an unauthorized error containing the first
-forbidden read path.
+forbidden read path. `wrap.cpp` checks REAPI ActionCache only after disk, imports under the same
+candidate, and passes the imported result through the ordinary signed manifest-validating lookup.

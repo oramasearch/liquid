@@ -8,8 +8,9 @@
 > design the Phase 3 issues implement. The build-without-bytes, replay, and delta slices are
 > implemented. Issue #18 adds cost-model scheduling, batching, and racing through the shared
 > transport-neutral remote interfaces. The protobuf messages and native record mapping are
-> implemented in [`reapi-codec.md`](reapi-codec.md); later work connects them to the HTTP/2 client
-> and production workers.
+> implemented in [`reapi-codec.md`](reapi-codec.md). Issue #16 connects them to the HTTP/2 client,
+> remote cache tier, and liquid CAS/ActionCache server as documented in [`reapi.md`](reapi.md).
+> Production workers remain separate work.
 
 Phase 2 built the local action path: records for actions and results
 ([`build-engine.md`](build-engine.md)), observation by the mount, the signed disk cache, `liquid
@@ -293,6 +294,24 @@ or transparency log (Phase 6); no Windows remote workers.
 Each issue adds its proof beside the Phase 2 ones (`build-engine.md`, "How to verify"). The phase
 exit is the Phase 2 wrap fixtures built against a stock backend in Docker with the same hit rate
 as local, and the non-hermetic fixture refused at the read.
+
+Issue #16's `tools/reapi-peers/run-reapi-interop.sh build-linux` uses pinned NativeLink 1.6.6 and
+BuildBarn bb-storage containers. The Make wrap fixture records a 100% local second-run baseline;
+after removing only the disk action index, both peer ActionCache implementations produce 100% on
+the second run as well:
+
+| Backend | Local second run | Remote second run | CAS and ActionCache round trip |
+|---|---:|---:|---|
+| NativeLink 1.6.6 | 100% | 100% | pass |
+| BuildBarn `20260609T094425Z-10acc76` | 100% | 100% | pass |
+
+The privileged Linux read-guard case refuses `/etc/hostname` before remote dispatch. For the server
+direction, stock Bazel 7.4.1 writes a genrule's CAS objects and ActionResult to `liquid serve reapi`;
+a clean second output base reports `1 remote cache hit`. The upstream `remote-apis` repository does
+not provide a server conformance runner and BuildBarn does not publish a black-box conformance
+binary, so this stock Bazel cache read/write case is the applicable upstream-client compatibility
+case. Client and server details, configuration, and the exact API map are in
+[`reapi.md`](reapi.md).
 
 Issue #19's privileged Linux cases replay a deterministic recorded failure, replay an indexed
 cache hit by action digest, detect an altered recorded output at byte zero, and hydrate a missing

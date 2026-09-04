@@ -1099,14 +1099,108 @@ runtime::task<void> complete_report(const std::filesystem::path& cache_directory
         std::chrono::steady_clock::now() - started);
     report.cache.hits = report.hits;
     report.cache.misses = report.misses;
-    report.cache.disk.hits = report.hits;
-    report.cache.disk.misses = report.misses;
+    report.cache.disk.hits = report.hits - report.cache.remote.hits;
+    report.cache.disk.misses = report.misses + report.cache.remote.hits;
     report.cache.disk.bytes_transferred = report.cache.bytes_served;
     auto traced = co_await build_detail::record_trace(source, cache, report);
     if (!traced) {
         co_return std::unexpected(traced.error());
     }
     co_return build_detail::update_cache_stats(cache_directory, report);
+}
+
+runtime::task<void> collect_manifest(repository& source,
+                                     digest root,
+                                     std::string prefix,
+                                     std::vector<observed_input>& output) {
+    auto bytes = co_await repository_detail::build_access::get(source, root);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto value = objects::decode_tree(*bytes);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    for (const auto& entry : value->entries) {
+        const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
+        if (entry.kind == node_kind::tree) {
+            auto nested = co_await collect_manifest(source, entry.ref, path, output);
+            if (!nested) {
+                co_return std::unexpected(nested.error());
+            }
+        } else if (entry.kind == node_kind::blob) {
+            output.push_back({.path = path, .content = entry.ref});
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<std::optional<result_id>> import_remote_result(repository& source,
+                                                             build_detail::disk_cache& cache,
+                                                             remote& backend,
+                                                             const action_input& input,
+                                                             digest sandbox,
+                                                             bool eligible,
+                                                             wrap_report& report) {
+    report.cache.remote.available = true;
+    if (!eligible) {
+        co_return std::optional<result_id>{};
+    }
+    auto value = co_await backend.get_action_result(source, input, sandbox);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    if (!*value) {
+        ++report.cache.remote.misses;
+        co_return std::optional<result_id>{};
+    }
+    auto action_bytes = objects::encode(objects::action_record{input, sandbox});
+    if (!action_bytes) {
+        co_return std::unexpected(action_bytes.error());
+    }
+    auto action =
+        co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
+    if (!action) {
+        co_return std::unexpected(action.error());
+    }
+    (*value)->action = *action;
+    if ((*value)->manifest.empty()) {
+        auto collected = co_await collect_manifest(source, input.inputs, {}, (*value)->manifest);
+        if (!collected) {
+            co_return std::unexpected(collected.error());
+        }
+    }
+    (*value)->provenance.reset();
+    (*value)->sboms.clear();
+    (*value)->sig.clear();
+    auto stored = co_await build_detail::store_result_with_provenance(source, **value);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    auto candidate = cache.candidate_key(input, sandbox);
+    if (!candidate) {
+        co_return std::unexpected(candidate.error());
+    }
+    auto published = co_await cache.publish(*candidate, *stored, **value);
+    if (!published) {
+        co_return std::unexpected(published.error());
+    }
+    auto validated = co_await cache.lookup(input, sandbox);
+    if (!validated) {
+        co_return std::unexpected(validated.error());
+    }
+    if (!validated->hit || !same_digest(validated->hit->value, stored->value)) {
+        ++report.cache.remote.misses;
+        co_return std::optional<result_id>{};
+    }
+    auto transferred = co_await build_detail::output_bytes(source, **value);
+    if (!transferred) {
+        co_return std::unexpected(transferred.error());
+    }
+    ++report.cache.remote.hits;
+    report.cache.remote.bytes_transferred += *transferred;
+    report.cache.remote.bytes_avoided += *transferred;
+    co_return std::optional<result_id>{*stored};
 }
 
 runtime::task<cache_plan> prepare_cache_plan(repository& source,
@@ -1118,6 +1212,7 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
                                              digest toolchain,
                                              digest sandbox,
                                              const wrap_options& options,
+                                             remote* backend,
                                              wrap_report& report) {
     auto output = cache_plan{};
     if (!options.cache || state.action_command != command)
@@ -1159,6 +1254,30 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
                 }
                 continue;
             }
+            if (backend) {
+                auto imported = co_await import_remote_result(
+                    source, cache, *backend, input, sandbox, !old_result->manifest.empty(), report);
+                if (!imported) {
+                    co_return std::unexpected(imported.error());
+                }
+                if (*imported) {
+                    output.processes.insert_or_assign(saved.key, 0);
+                    output.next_actions.push_back({saved.key, (*imported)->value});
+                    ++report.hits;
+                    output.lookups.push_back(
+                        {cache_status::hit, **imported, result_id{saved.result}});
+                    auto value = co_await load_result(source, (*imported)->value);
+                    if (!value) {
+                        co_return std::unexpected(value.error());
+                    }
+                    add_timing(report, **imported, *value, cache_status::hit);
+                    auto materialised = co_await materialise_result(source, *value);
+                    if (!materialised) {
+                        co_return std::unexpected(materialised.error());
+                    }
+                    continue;
+                }
+            }
             auto cause = co_await build_detail::classify_miss(
                 source, input, sandbox, result_id{saved.result});
             if (!cause) {
@@ -1191,12 +1310,36 @@ runtime::task<bool> serve_outer_action(repository& source,
                                        const action_input& input,
                                        digest sandbox,
                                        const wrap_options& options,
+                                       remote* backend,
                                        wrap_report& report) {
     if (!options.cache)
         co_return false;
     auto lookup = co_await cache.lookup(input, sandbox);
     if (!lookup)
         co_return std::unexpected(lookup.error());
+    if (!lookup->hit) {
+        if (backend) {
+            auto previous = state.outer_result
+                                ? std::optional<result_id>{result_id{*state.outer_result}}
+                                : std::nullopt;
+            auto eligible = false;
+            if (previous) {
+                auto previous_value = co_await load_result(source, previous->value);
+                eligible = previous_value && !previous_value->manifest.empty();
+            }
+            auto imported = co_await import_remote_result(
+                source, cache, *backend, input, sandbox, eligible, report);
+            if (!imported) {
+                co_return std::unexpected(imported.error());
+            }
+            if (*imported) {
+                lookup = co_await cache.lookup(input, sandbox);
+                if (!lookup) {
+                    co_return std::unexpected(lookup.error());
+                }
+            }
+        }
+    }
     if (!lookup->hit) {
         ++report.misses;
         auto previous = state.outer_result
@@ -1407,6 +1550,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                          cache_plan& plan,
                                          observed_run& run,
                                          const wrap_options& options,
+                                         remote* backend,
                                          bool fact_answers_used,
                                          bool outer_miss_recorded,
                                          wrap_report& report) {
@@ -1579,6 +1723,19 @@ runtime::task<void> publish_observed_run(repository& source,
     if (!outer_value) {
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(outer_value.error());
+    }
+    if (backend && backend->config().publish) {
+        auto outer_action = co_await load_action(source, outer_value->action);
+        if (!outer_action) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(outer_action.error());
+        }
+        auto uploaded = co_await backend->update_action_result(
+            source, outer_action->input, outer_action->sandbox, *outer_value);
+        if (!uploaded) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(uploaded.error());
+        }
     }
     auto outer_bytes = co_await build_detail::output_bytes(source, *outer_value);
     if (!outer_bytes) {
@@ -1850,10 +2007,20 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     auto source =
         std::filesystem::exists(repository_path / "LIQUID_REPO")
             ? co_await repository::open(repository_path)
-            : co_await repository::create(
-                  repository_path, repository_options{.cache = cache_config{.publish = true}});
+            : co_await repository::create(repository_path,
+                                          repository_options{.cache = cache_config{.publish = true},
+                                                             .remote = options.remote});
     if (!source)
         co_return std::unexpected(source.error());
+    auto remote_configuration = options.remote ? options.remote : source->remote_configuration();
+    auto backend = std::optional<remote>{};
+    if (remote_configuration) {
+        auto connected = co_await remote::connect(*remote_configuration);
+        if (!connected) {
+            co_return std::unexpected(connected.error());
+        }
+        backend = std::move(*connected);
+    }
     auto cache = build_detail::disk_cache{*source};
     auto opened = co_await cache.open();
     if (!opened)
@@ -1911,22 +2078,6 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!policy->allowed)
         co_return std::unexpected(build_detail::policy_refusal(*policy));
     auto plan = cache_plan{};
-    if (*toolchain) {
-        auto prepared = co_await prepare_cache_plan(*source,
-                                                    cache,
-                                                    *state,
-                                                    command,
-                                                    action_environment,
-                                                    input_tree,
-                                                    **toolchain,
-                                                    *sandbox,
-                                                    options,
-                                                    report);
-        if (!prepared)
-            co_return std::unexpected(prepared.error());
-        plan = std::move(*prepared);
-    }
-
     if (options.cache && *toolchain) {
         auto served = co_await serve_outer_action(*source,
                                                   cache,
@@ -1937,6 +2088,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                   outer_input,
                                                   *sandbox,
                                                   options,
+                                                  backend ? &*backend : nullptr,
                                                   report);
         if (!served)
             co_return std::unexpected(served.error());
@@ -1953,6 +2105,22 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
             co_return report;
         }
         outer_miss_recorded = true;
+    }
+    if (*toolchain) {
+        auto prepared = co_await prepare_cache_plan(*source,
+                                                    cache,
+                                                    *state,
+                                                    command,
+                                                    action_environment,
+                                                    input_tree,
+                                                    **toolchain,
+                                                    *sandbox,
+                                                    options,
+                                                    backend ? &*backend : nullptr,
+                                                    report);
+        if (!prepared)
+            co_return std::unexpected(prepared.error());
+        plan = std::move(*prepared);
     }
 
     auto run = co_await execute_observed_run(*source,
@@ -1990,6 +2158,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    plan,
                                                    *run,
                                                    options,
+                                                   backend ? &*backend : nullptr,
                                                    !fact_variables.empty(),
                                                    outer_miss_recorded,
                                                    report);

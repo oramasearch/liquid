@@ -1,19 +1,87 @@
 {
-  stores: [{
-    name: "cas",
-    filesystem: {
-      content_path: "/tmp/nativelink/content",
-      temp_path: "/tmp/nativelink/tmp",
-      eviction_policy: { max_bytes: 1073741824 },
+  stores: [
+    {
+      name: "CAS",
+      filesystem: {
+        content_path: "/tmp/liquid-nativelink/cas/content",
+        temp_path: "/tmp/liquid-nativelink/cas/temp",
+        eviction_policy: { max_bytes: 2000000000 },
+      },
+    },
+    {
+      name: "AC",
+      filesystem: {
+        content_path: "/tmp/liquid-nativelink/ac/content",
+        temp_path: "/tmp/liquid-nativelink/ac/temp",
+        eviction_policy: { max_bytes: 200000000 },
+      },
+    },
+    {
+      name: "WORKER",
+      fast_slow: {
+        fast: {
+          filesystem: {
+            content_path: "/tmp/liquid-nativelink/worker/content",
+            temp_path: "/tmp/liquid-nativelink/worker/temp",
+            eviction_policy: { max_bytes: 2000000000 },
+          },
+        },
+        slow: { ref_store: { name: "CAS" } },
+      },
+    },
+  ],
+  schedulers: [{
+    name: "SCHEDULER",
+    simple: {
+      supported_platform_properties: {
+        cpu_count: "minimum",
+        OSFamily: "priority",
+        ISA: "priority",
+        "liquid.inputs": "priority",
+        "liquid.toolchain": "priority",
+        "liquid.sandbox": "priority",
+      },
     },
   }],
-  schedulers: [{ name: "scheduler", simple: { supported_platform_properties: {} } }],
-  servers: [{
-    listener: { http: { socket_address: "0.0.0.0:50051" } },
-    services: {
-      cas: [{ instance_name: "", cas_store: "cas" }],
-      capabilities: [{ instance_name: "", remote_execution: { scheduler: "scheduler" } }],
-      bytestream: [{ instance_name: "", cas_store: "cas" }],
+  workers: [{
+    local: {
+      worker_api_endpoint: { uri: "grpc://127.0.0.1:50061" },
+      cas_fast_slow_store: "WORKER",
+      upload_action_result: { ac_store: "AC" },
+      work_directory: "/tmp/liquid-nativelink/work",
+      platform_properties: {
+        cpu_count: { values: ["1"] },
+        OSFamily: { values: ["linux", ""] },
+        ISA: { values: ["x86_64", "aarch64", ""] },
+        "liquid.inputs": { values: [""] },
+        "liquid.toolchain": { values: [""] },
+        "liquid.sandbox": { values: [""] },
+      },
     },
   }],
+  servers: [
+    {
+      name: "client",
+      listener: { http: { socket_address: "0.0.0.0:50051" } },
+      services: {
+        cas: [{ instance_name: "", cas_store: "CAS" }],
+        ac: [{ instance_name: "", ac_store: "AC" }],
+        bytestream: [{ instance_name: "", cas_store: "CAS" }],
+        execution: [{ instance_name: "", cas_store: "CAS", scheduler: "SCHEDULER" }],
+        capabilities: [{
+          instance_name: "",
+          remote_execution: { scheduler: "SCHEDULER" },
+        }],
+      },
+    },
+    {
+      name: "worker",
+      listener: { http: { socket_address: "0.0.0.0:50061" } },
+      services: {
+        worker_api: { scheduler: "SCHEDULER" },
+        health: {},
+      },
+    },
+  ],
+  global: { max_open_files: 24576 },
 }

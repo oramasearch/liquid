@@ -328,6 +328,22 @@ auto load_stats(const std::filesystem::path& path) -> result<cache_report> {
             output.bytes_rebuilt = value;
         } else if (key == "bytes_avoided") {
             output.disk.bytes_avoided = value;
+        } else if (key == "disk.hits") {
+            output.disk.hits = value;
+        } else if (key == "disk.misses") {
+            output.disk.misses = value;
+        } else if (key == "disk.bytes_transferred") {
+            output.disk.bytes_transferred = value;
+        } else if (key == "remote.available") {
+            output.remote.available = value != 0;
+        } else if (key == "remote.hits") {
+            output.remote.hits = value;
+        } else if (key == "remote.misses") {
+            output.remote.misses = value;
+        } else if (key == "remote.bytes_transferred") {
+            output.remote.bytes_transferred = value;
+        } else if (key == "remote.bytes_avoided") {
+            output.remote.bytes_avoided = value;
         } else if (key.starts_with("reason.")) {
             auto index = unsigned{};
             const auto text = std::string_view{key}.substr(7);
@@ -342,9 +358,12 @@ auto load_stats(const std::filesystem::path& path) -> result<cache_report> {
     if (!input.eof()) {
         return std::unexpected(why_error(errc::corrupt, "invalid cache statistics", path));
     }
-    output.disk.hits = output.hits;
-    output.disk.misses = output.misses;
-    output.disk.bytes_transferred = output.bytes_served;
+    if (output.disk.hits == 0 && output.disk.misses == 0 && output.remote.hits == 0 &&
+        output.remote.misses == 0) {
+        output.disk.hits = output.hits;
+        output.disk.misses = output.misses;
+        output.disk.bytes_transferred = output.bytes_served;
+    }
     return output;
 }
 
@@ -360,6 +379,14 @@ auto save_stats(const std::filesystem::path& path, const cache_report& value) ->
     output << "bytes_served " << value.bytes_served << '\n';
     output << "bytes_avoided " << value.disk.bytes_avoided << '\n';
     output << "bytes_rebuilt " << value.bytes_rebuilt << '\n';
+    output << "disk.hits " << value.disk.hits << '\n';
+    output << "disk.misses " << value.disk.misses << '\n';
+    output << "disk.bytes_transferred " << value.disk.bytes_transferred << '\n';
+    output << "remote.available " << value.remote.available << '\n';
+    output << "remote.hits " << value.remote.hits << '\n';
+    output << "remote.misses " << value.remote.misses << '\n';
+    output << "remote.bytes_transferred " << value.remote.bytes_transferred << '\n';
+    output << "remote.bytes_avoided " << value.remote.bytes_avoided << '\n';
     for (const auto& [reason, count] : value.misses_by_reason) {
         output << "reason." << static_cast<unsigned>(reason) << ' ' << count << '\n';
     }
@@ -631,12 +658,21 @@ auto update_cache_stats(const std::filesystem::path& cache_directory, const wrap
     current->bytes_served += report.cache.bytes_served;
     current->bytes_rebuilt += report.cache.bytes_rebuilt;
     current->disk.bytes_avoided += report.cache.disk.bytes_avoided;
+    const auto has_tier_counts = report.cache.disk.hits != 0 || report.cache.disk.misses != 0 ||
+                                 report.cache.remote.hits != 0 || report.cache.remote.misses != 0;
+    current->disk.hits += has_tier_counts ? report.cache.disk.hits : report.hits;
+    current->disk.misses += has_tier_counts ? report.cache.disk.misses : report.misses;
+    current->disk.bytes_transferred += report.cache.disk.bytes_transferred != 0
+                                           ? report.cache.disk.bytes_transferred
+                                           : report.cache.bytes_served;
+    current->remote.available = current->remote.available || report.cache.remote.available;
+    current->remote.hits += report.cache.remote.hits;
+    current->remote.misses += report.cache.remote.misses;
+    current->remote.bytes_transferred += report.cache.remote.bytes_transferred;
+    current->remote.bytes_avoided += report.cache.remote.bytes_avoided;
     for (const auto& [reason, count] : report.cache.misses_by_reason) {
         current->misses_by_reason[reason] += count;
     }
-    current->disk.hits = current->hits;
-    current->disk.misses = current->misses;
-    current->disk.bytes_transferred = current->bytes_served;
     return save_stats(path, *current);
 }
 
@@ -658,6 +694,11 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
         co_return std::unexpected(cache_directory.error());
     }
     auto report = why_report{.target = target};
+    auto statistics = build_detail::load_stats(*cache_directory / "stats");
+    if (!statistics) {
+        co_return std::unexpected(statistics.error());
+    }
+    report.cache = std::move(*statistics);
     const auto repository_path = *cache_directory / "repository";
     if (!std::filesystem::exists(repository_path / "LIQUID_REPO")) {
         report.cause = {.reason = cache_miss_reason::never_built,

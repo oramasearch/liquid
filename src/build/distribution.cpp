@@ -30,6 +30,15 @@ struct graph_objects {
         return output;
     }
 
+    auto blobs() const -> std::vector<remote_blob> {
+        auto output = std::vector<remote_blob>{};
+        output.reserve(values.size());
+        for (const auto& [key, value] : values) {
+            output.push_back({value.first, value.second});
+        }
+        return output;
+    }
+
     auto bytes() const -> std::uint64_t {
         auto output = std::uint64_t{};
         for (const auto& [key, value] : values) {
@@ -130,8 +139,8 @@ runtime::task<void> hydrate_object(repository& destination,
     if (!bytes) {
         co_return std::unexpected(bytes.error());
     }
-    auto stored =
-        co_await repository_detail::build_access::put_record(destination, std::move(*bytes));
+    auto stored = co_await repository_detail::build_access::put_record(
+        destination, std::move(*bytes), id.alg);
     if (!stored) {
         co_return std::unexpected(stored.error());
     }
@@ -395,6 +404,10 @@ runtime::task<result_id> execute(repository& source, action_input input, remote_
             co_return std::unexpected(toolchain_graph.error());
         }
         auto ids = graph.ids();
+        auto prepared = co_await remote.blobs().prepare(remote.instance(), graph.blobs());
+        if (!prepared) {
+            co_return std::unexpected(prepared.error());
+        }
         auto remote_missing =
             co_await remote.blobs().find_missing(remote.instance(), std::move(ids));
         if (!remote_missing) {
@@ -523,6 +536,10 @@ execute_batch(repository& source, std::vector<action_input> inputs, remote_execu
             combined.values.insert(action.graph.values.begin(), action.graph.values.end());
         }
         auto combined_ids = combined.ids();
+        auto prepared = co_await remote.blobs().prepare(remote.instance(), combined.blobs());
+        if (!prepared) {
+            co_return std::unexpected(prepared.error());
+        }
         auto missing =
             co_await remote.blobs().find_missing(remote.instance(), std::move(combined_ids));
         if (!missing) {

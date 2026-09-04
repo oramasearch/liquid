@@ -90,6 +90,13 @@ runtime::task<digest> store::put_plain(std::vector<std::byte> input) {
     co_return co_await impl_->value->put_plain(std::move(input));
 }
 
+runtime::task<digest> store::put_plain(std::vector<std::byte> input, algorithm hash_algorithm) {
+    if (!impl_) {
+        co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});
+    }
+    co_return co_await impl_->value->put_plain(std::move(input), hash_algorithm);
+}
+
 runtime::task<digest> store::put_encrypted(std::vector<std::byte> input, std::string key_id) {
     if (!impl_) {
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::put"});

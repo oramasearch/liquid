@@ -216,8 +216,13 @@ TEST(ReapiConversion, results_fill_standard_fields_and_preserve_the_native_recor
     ASSERT_TRUE(encoded->execution_metadata);
     ASSERT_EQ(encoded->execution_metadata->auxiliary_metadata.size(), 1U);
 
+    auto wire = liquid::reapi::encode(*encoded);
+    ASSERT_TRUE(wire) << wire.error().message;
+    auto from_wire = liquid::reapi::decode_message<liquid::reapi::ActionResult>(*wire);
+    ASSERT_TRUE(from_wire) << from_wire.error().message;
+
     auto decoded =
-        liquid::reapi::from_reapi_result(*encoded, value.action, liquid::algorithm::blake3);
+        liquid::reapi::from_reapi_result(*from_wire, value.action, liquid::algorithm::blake3);
     ASSERT_TRUE(decoded) << decoded.error().message;
     auto original_record = liquid::objects::encode(value);
     auto decoded_record = liquid::objects::encode(*decoded);

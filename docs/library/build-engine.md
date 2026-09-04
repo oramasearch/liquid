@@ -34,8 +34,8 @@ quarantines divergent results. Each result references verified, device-signed `s
 and `sbom/1` attestations derived from its action and manifest. Before execution, repository policy
 can require verified registered-profile attestations for source and toolchain blobs. Issue #18 adds
 a remote executor alongside #17's remote blob interface, input and toolchain transfer, cost-based
-local/remote/race selection, remote batching, and loser cancellation. Network transport, production workers, and the
-remote cache tier remain their own issues. Configure checks additionally populate a
+local/remote/race selection, remote batching, and loser cancellation. Issue #16 supplies the REAPI
+network transport and validated remote cache tier. Production workers remain separate. Configure checks additionally populate a
 shared content-addressed fact base and can be answered across projects without starting the probe.
 
 ## Records in the store
@@ -134,6 +134,12 @@ immutable producer-signed result bytes.
 `src/build/why.cpp` turns recorded comparisons into the public `why_report` and persists the
 completed-wrap counters used by `liquid cache stats`.
 
+Issue #16 places REAPI ActionCache behind disk. A remote response is imported under the same
+candidate, signed and attested locally, and then sent through `disk_cache::lookup`; it cannot skip
+candidate, manifest, signature, provenance, SBOM, or referenced-object validation. Publication is
+read-only by default. The completed report and `why_report` retain separate disk and remote hit,
+miss, transferred-byte, and avoided-byte counters.
+
 ### Diagnostics and lookup history
 
 The local disk cache appends one compact `LOOKUPS` row after a completed action lookup. A row holds
@@ -167,8 +173,8 @@ digest of its canonical body. If the correspondence cannot be established, attri
 rather than inferred.
 
 The adjacent `stats` file is a recoverable projection of completed wrap reports. It totals actions,
-miss reasons, bytes avoided by disk hits, and bytes rebuilt from output blob sizes. Memory and
-remote tier fields are explicitly unavailable. Every wrap also stores a `build_trace` record. An
+miss reasons, bytes avoided by disk and remote hits, bytes transferred per implemented tier, and
+bytes rebuilt from output blob sizes. Memory remains explicitly unavailable. Every wrap also stores a `build_trace` record. An
 edge exists when one recorded action reads a path produced by another action in that wrap. Longest
 path analysis sums the five recorded phases along those edges, and `why_slow` selects the narrowest
 action that produced the requested output so the driver's aggregate outer action does not hide the
@@ -406,8 +412,8 @@ the host.
 
 ## What Phase 2 does not do
 
-No query graph beyond actions (Phase 4 turns queries and actions into one engine), no networked
-remote cache tier or production worker (Phase 3), no daemon (Phase 4), no per-definition
+No query graph beyond actions (Phase 4 turns queries and actions into one engine), no production
+worker (Phase 3), no daemon (Phase 4), no per-definition
 granularity (Phase 4). Actions are the coarse end of the spectrum features/04 describes; the fine
 end arrives when the graph does.
 

@@ -90,6 +90,10 @@ auto client_session(boost::corosio::tcp_socket& socket) -> liquid::runtime::task
     if (!stream_id) {
         co_return std::unexpected(stream_id.error());
     }
+    auto sent_empty = co_await client.send_data(*stream_id, {}, false);
+    if (!sent_empty) {
+        co_return std::unexpected(sent_empty.error());
+    }
     auto request = std::vector<std::byte>(4096, std::byte{'x'});
     auto sent = co_await client.send_data(*stream_id, std::move(request), true);
     if (!sent) {

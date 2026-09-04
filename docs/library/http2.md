@@ -1,13 +1,14 @@
 # HTTP/2 and gRPC transport
 
-Issue #155 owns liquid's private HTTP/2 transport. The code is under `src/http2/`; no header in
-`include/liquid/` exposes it before #16 defines the REAPI surface.
+Issue #155 owns liquid's private HTTP/2 transport. The code is under `src/http2/`; #16 exposes only
+the REAPI client and server handles, never a transport type.
 
 ## Design
 
 `connection` runs on a Corosio stream wrapped as a Capy `any_stream`. A client sends the HTTP/2
-prior-knowledge preface and SETTINGS; a server validates that preface, accepts SETTINGS, and sends
-its own SETTINGS. The connection tracks odd/even stream identifiers, multiplexes frames by stream,
+prior-knowledge preface and SETTINGS. A server validates the client preface and sends its own
+SETTINGS before acknowledging the client's SETTINGS, as the server connection preface requires.
+The connection tracks odd/even stream identifiers, multiplexes frames by stream,
 and keeps independent HPACK state in each direction.
 
 Frames supported by the implementation are DATA, HEADERS, CONTINUATION, RST_STREAM, SETTINGS,
@@ -73,3 +74,10 @@ report `h2` after the handshake before sending `GetCapabilities`; it then requir
 and `grpc-status: 0`. The script starts liquid's private server with the same certificate and uses
 `grpcurl -insecure` to reach it, which proves server-side ALPN selection and TLS gRPC framing. It
 prints a skip diagnostic when Docker is unavailable.
+
+`tools/reapi-peers/run-reapi-interop.sh` extends that proof through the complete #16 client and
+server. NativeLink and BuildBarn exercise the client; stock Bazel 7.4.1 exercises strict server
+preface ordering, client-streamed ByteStream writes, CAS, and ActionCache. The client recognizes a
+trailers-only gRPC response, including an ActionCache miss, without waiting for a DATA frame that
+will never arrive. Zero-length DATA frames consume no flow-control credit and do not produce an
+invalid zero-increment WINDOW_UPDATE response.

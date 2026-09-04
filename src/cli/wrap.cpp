@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
+#include <limits>
 #include <print>
 #include <string_view>
 #include <vector>
@@ -52,6 +53,13 @@ auto reason_name(liquid::cache_miss_reason reason) -> std::string_view {
 auto hit_rate(const liquid::wrap_report& report) -> double {
     const auto total = report.hits + report.misses;
     return total == 0 ? 0.0 : static_cast<double>(report.hits) * 100.0 / static_cast<double>(total);
+}
+
+auto remote_options(liquid::wrap_options& options) -> liquid::remote_config& {
+    if (!options.remote) {
+        options.remote = liquid::remote_config{};
+    }
+    return *options.remote;
 }
 
 void print_miss(const liquid::cache_miss& miss) {
@@ -116,6 +124,86 @@ auto wrap(int argc, char** argv) -> int {
             options.explain = true;
             continue;
         }
+        if (command.empty() && argument == "--remote") {
+            if (++index == argc) {
+                return usage("wrap --remote requires an endpoint");
+            }
+            remote_options(options).endpoint = argv[index];
+            continue;
+        }
+        if (command.empty() && argument == "--remote-instance") {
+            if (++index == argc) {
+                return usage("wrap --remote-instance requires a name");
+            }
+            remote_options(options).instance_name = argv[index];
+            continue;
+        }
+        if (command.empty() && argument == "--remote-header") {
+            if (++index == argc) {
+                return usage("wrap --remote-header requires name=value");
+            }
+            const auto value = std::string_view{argv[index]};
+            const auto separator = value.find('=');
+            if (separator == std::string_view::npos || separator == 0) {
+                return usage("wrap --remote-header requires name=value");
+            }
+            remote_options(options).headers.insert_or_assign(
+                std::string{value.substr(0, separator)}, std::string{value.substr(separator + 1)});
+            continue;
+        }
+        if (command.empty() && argument == "--remote-tls") {
+            remote_options(options).tls.enabled = true;
+            continue;
+        }
+        if (command.empty() && argument == "--remote-no-verify") {
+            remote_options(options).tls.enabled = true;
+            remote_options(options).tls.verify_peer = false;
+            continue;
+        }
+        if (command.empty() && argument == "--remote-ca") {
+            if (++index == argc) {
+                return usage("wrap --remote-ca requires a path");
+            }
+            remote_options(options).tls.enabled = true;
+            remote_options(options).tls.certificate_authority = argv[index];
+            continue;
+        }
+        if (command.empty() && argument == "--remote-client-cert") {
+            if (++index == argc) {
+                return usage("wrap --remote-client-cert requires a path");
+            }
+            remote_options(options).tls.enabled = true;
+            remote_options(options).tls.client_certificate = argv[index];
+            continue;
+        }
+        if (command.empty() && argument == "--remote-client-key") {
+            if (++index == argc) {
+                return usage("wrap --remote-client-key requires a path");
+            }
+            remote_options(options).tls.enabled = true;
+            remote_options(options).tls.client_key = argv[index];
+            continue;
+        }
+        if (command.empty() && argument == "--remote-publish") {
+            remote_options(options).publish = true;
+            continue;
+        }
+        if (command.empty() && argument == "--remote-deadline-ms") {
+            if (++index == argc) {
+                return usage("wrap --remote-deadline-ms requires a positive count");
+            }
+            auto count = std::uint64_t{};
+            const auto value = std::string_view{argv[index]};
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
+                count == 0 ||
+                count > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+                return usage("wrap --remote-deadline-ms requires a positive count");
+            }
+            remote_options(options).deadline =
+                std::chrono::milliseconds{static_cast<std::int64_t>(count)};
+            continue;
+        }
         if (command.empty() && argument == "--jobs") {
             if (++index == argc)
                 return usage("wrap --jobs requires a positive count");
@@ -145,6 +233,9 @@ auto wrap(int argc, char** argv) -> int {
     }
     if (command.empty())
         return usage("wrap requires a build command");
+    if (options.remote && options.remote->endpoint.empty()) {
+        return usage("wrap remote options require --remote <endpoint>");
+    }
     auto result = liquid::runtime::block_on(
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));
     if (!result)
@@ -161,6 +252,14 @@ auto wrap(int argc, char** argv) -> int {
                  result->cache.disk.bytes_transferred,
                  result->cache.disk.bytes_avoided,
                  result->cache.bytes_rebuilt);
+    if (result->cache.remote.available) {
+        std::println("remote_hits={} remote_misses={} remote_bytes_transferred={} "
+                     "remote_bytes_avoided={}",
+                     result->cache.remote.hits,
+                     result->cache.remote.misses,
+                     result->cache.remote.bytes_transferred,
+                     result->cache.remote.bytes_avoided);
+    }
     auto critical_path_time = std::chrono::milliseconds{};
     for (const auto& action : result->critical_path) {
         critical_path_time += action.duration;

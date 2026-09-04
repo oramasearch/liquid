@@ -628,6 +628,14 @@ auto fields(WaitExecutionRequest*) {
     return std::tuple{field(1, &WaitExecutionRequest::name)};
 }
 
+auto fields(Empty*) {
+    return std::tuple{};
+}
+
+auto fields(CancelOperationRequest*) {
+    return std::tuple{field(1, &CancelOperationRequest::name)};
+}
+
 auto fields(GetActionResultRequest*) {
     return std::tuple{field(1, &GetActionResultRequest::instance_name),
                       field(2, &GetActionResultRequest::action_digest),
@@ -927,6 +935,8 @@ LIQUID_DEFINE_REAPI_CODEC(ExecuteRequest)
 LIQUID_DEFINE_REAPI_CODEC(ExecuteResponse)
 LIQUID_DEFINE_REAPI_CODEC(ExecuteOperationMetadata)
 LIQUID_DEFINE_REAPI_CODEC(WaitExecutionRequest)
+LIQUID_DEFINE_REAPI_CODEC(Empty)
+LIQUID_DEFINE_REAPI_CODEC(CancelOperationRequest)
 LIQUID_DEFINE_REAPI_CODEC(GetActionResultRequest)
 LIQUID_DEFINE_REAPI_CODEC(UpdateActionResultRequest)
 LIQUID_DEFINE_REAPI_CODEC(FindMissingBlobsRequest)

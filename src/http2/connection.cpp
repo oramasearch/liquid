@@ -144,6 +144,10 @@ auto connection::start() -> runtime::task<void> {
             std::string_view(preface.data(), preface.size()) != client_preface) {
             co_return std::unexpected(protocol_error("HTTP/2 client preface is invalid"));
         }
+        auto settings = co_await send_settings();
+        if (!settings) {
+            co_return std::unexpected(settings.error());
+        }
     }
     auto received_peer_settings = false;
     while (!received_peer_settings) {
@@ -160,12 +164,6 @@ auto connection::start() -> runtime::task<void> {
             co_return std::unexpected(applied.error());
         }
         received_peer_settings = !peer_acknowledged;
-    }
-    if (role_ == endpoint_role::server) {
-        auto settings = co_await send_settings();
-        if (!settings) {
-            co_return std::unexpected(settings.error());
-        }
     }
     started_ = true;
     co_return {};
@@ -305,19 +303,22 @@ auto connection::next_for_stream(std::uint32_t stream_id) -> runtime::task<frame
         }
         if (received->type == frame_type::data) {
             const auto size = static_cast<std::uint32_t>(received->payload.size());
-            if (size > connection_receive_window_) {
-                co_return std::unexpected(protocol_error("connection receive window is exhausted"));
+            if (size != 0) {
+                if (size > connection_receive_window_) {
+                    co_return std::unexpected(
+                        protocol_error("connection receive window is exhausted"));
+                }
+                connection_receive_window_ -= size;
+                auto connection_update = co_await send_window_update(0, size);
+                if (!connection_update) {
+                    co_return std::unexpected(connection_update.error());
+                }
+                auto stream_update = co_await send_window_update(received->stream_id, size);
+                if (!stream_update) {
+                    co_return std::unexpected(stream_update.error());
+                }
+                connection_receive_window_ += size;
             }
-            connection_receive_window_ -= size;
-            auto connection_update = co_await send_window_update(0, size);
-            if (!connection_update) {
-                co_return std::unexpected(connection_update.error());
-            }
-            auto stream_update = co_await send_window_update(received->stream_id, size);
-            if (!stream_update) {
-                co_return std::unexpected(stream_update.error());
-            }
-            connection_receive_window_ += size;
         }
         if ((received->flags & flag_end_stream) != 0) {
             streams_[received->stream_id].received_end_stream = true;
@@ -513,6 +514,46 @@ auto connection::receive_headers(std::uint32_t stream_id)
         co_return std::unexpected(decoded.error());
     }
     co_return std::move(*decoded);
+}
+
+auto connection::receive_stream() -> runtime::task<std::uint32_t> {
+    if (!started_ || role_ != endpoint_role::server || received_goaway_) {
+        co_return std::unexpected(
+            protocol_error("cannot accept a stream in the current connection state"));
+    }
+    for (const auto& [stream_id, frames] : pending_) {
+        if (!frames.empty() && frames.front().type == frame_type::headers) {
+            co_return stream_id;
+        }
+    }
+    for (;;) {
+        auto received = co_await read_frame();
+        if (!received) {
+            co_return std::unexpected(received.error());
+        }
+        if (received->type == frame_type::settings || received->type == frame_type::ping ||
+            received->type == frame_type::window_update ||
+            received->type == frame_type::rst_stream || received->type == frame_type::goaway) {
+            auto applied = co_await apply_control(std::move(*received));
+            if (!applied) {
+                co_return std::unexpected(applied.error());
+            }
+            if (received_goaway_) {
+                co_return std::unexpected(protocol_error("peer has sent GOAWAY"));
+            }
+            continue;
+        }
+        if (received->type != frame_type::headers || received->stream_id == 0 ||
+            (received->stream_id & 1U) == 0) {
+            co_return std::unexpected(protocol_error("expected a client HEADERS frame"));
+        }
+        const auto stream_id = received->stream_id;
+        auto state = stream_state{};
+        state.send_window = peer_initial_window_;
+        streams_.insert_or_assign(stream_id, state);
+        pending_[stream_id].push_back(std::move(*received));
+        co_return stream_id;
+    }
 }
 
 auto connection::receive_data(std::uint32_t stream_id) -> runtime::task<std::vector<std::byte>> {

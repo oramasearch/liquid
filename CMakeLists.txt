@@ -296,7 +296,10 @@ add_library(libliquid
   src/objects/records.cpp
   src/protobuf/wire.cpp
   src/reapi/conversion.cpp
+  src/reapi/client.cpp
   src/reapi/messages.cpp
+  src/reapi/remote_client.cpp
+  src/reapi/server.cpp
   src/repository/merge.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
@@ -406,6 +409,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/provenance.cpp
     src/cli/sbom.cpp
     src/cli/sync.cpp
+    src/cli/serve.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp

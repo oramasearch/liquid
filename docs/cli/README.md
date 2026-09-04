@@ -162,10 +162,16 @@ input, both estimates, and the reason. `--json` emits the same data in `schedule
 nullable digest, line-change, attribution, environment, and tool fields. Legacy results have a null
 schedule.
 
-`liquid cache stats` reports cumulative completed-wrap counts. Disk is the only implemented tier;
-its hit rate and bytes avoided are reported, while memory and remote say `unavailable` and remote
-bytes transferred remain zero. Bytes avoided and rebuilt are sums of recorded output blob sizes.
-The report also groups misses by the same reason vocabulary as `why`.
+`liquid cache stats` reports cumulative completed-wrap counts. Disk and configured REAPI remote
+tiers report independent hits, misses, hit rates, transferred bytes, and avoided bytes; memory
+remains unavailable. Bytes avoided and rebuilt are sums of recorded output blob sizes. The report
+also groups misses by the same reason vocabulary as `why`, and `why` includes the current disk and
+remote tier counts in text and JSON.
+
+`liquid wrap` and `liquid build --profile` accept `--remote <endpoint>`, instance, TLS, custom
+header, deadline, and publication flags described in [`../library/reapi.md`](../library/reapi.md).
+Remote publication is off unless `--remote-publish` is supplied. `liquid serve reapi --listen
+<address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache.
 
 `policy check <target>` evaluates the current repository's `config.policy` against a cached action,
 result, or produced path without executing it. It exits non-zero when a `refuse` rule fails.

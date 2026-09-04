@@ -34,6 +34,10 @@ first, applies ref and result policy, releases results selected by the physical 
 then delegates byte reclamation to the store collector. `repository::retain_explain` uses a dry
 collector pass so the CLI does not inspect repository internals.
 
+The repository document persists `config.remote`: endpoint, instance, TLS trust and client-key
+paths, request headers, deadline, batch limit, and read-only-by-default publication. The public
+accessor lets later wrap runs reuse the configuration without exposing document internals.
+
 Remote file entries use the same working tree and canonical blob reference as local files.
 `store_remote_blob` registers metadata without reading content, `write_remote` records the entry,
 and repository status recursively sums chunk bytes that are not yet local.

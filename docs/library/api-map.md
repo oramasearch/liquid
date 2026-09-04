@@ -61,12 +61,13 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160 | implemented | `repository`: open, encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160 | implemented | `repository`: open, encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local executor, remote-result recording, wrapper, disk cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, SBOMs, and remote scheduling | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
-| `liquid/remote.hpp` | #17, #18, Phase 6 | implemented blob and executor interfaces; declared service handle | `remote_blob_location`, transport-neutral instance-aware source operations, `remote_executor` scheduling contract, and later hosted `remote` push/pull |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/remote.hpp` | #16, #17, #18 | implemented | REAPI endpoint, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations; and the move-only negotiated REAPI client handle |
+| `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/sync.hpp` | #160, Phase 6 | implemented | signed metadata items and reports, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
@@ -194,6 +195,7 @@ acknowledgement, and the remote source map. A non-null keyring enables trust-dom
 
 ```cpp
 struct remote_blob_location { std::string source, instance; };
+struct remote_config { /* endpoint, instance, TLS, headers, deadline, batch limit, publish */ };
 class remote_blob_source {
  public:
   virtual runtime::task<std::vector<digest>> find_missing(std::string, std::vector<digest>) = 0;
@@ -210,10 +212,28 @@ class remote_executor {
   virtual runtime::task<action_result> execute(action_input) = 0;
   virtual runtime::task<std::vector<action_result>> execute_batch(std::vector<action_input>) = 0;
 };
+class remote {
+ public:
+  static runtime::task<remote> connect(remote_config);
+  remote_blob_source& blobs() noexcept;
+  remote_executor& executor() noexcept;
+  runtime::task<std::shared_ptr<action_result>> get_action_result(repository&, action_input, digest);
+  runtime::task<void> update_action_result(repository&, action_input, digest, const action_result&);
+};
 ```
 
-The interfaces are transport-neutral. A later REAPI or hosted implementation stays behind them;
-the store and VFS depend only on range reads and digest verification.
+The interfaces remain transport-neutral; the store and VFS depend only on range reads and digest
+verification. `remote` is their REAPI implementation. See [`reapi.md`](reapi.md).
+
+### `liquid/reapi.hpp`
+
+```cpp
+struct reapi_serve_options { std::filesystem::path store_directory; std::string listen, instance_name; };
+runtime::task<void> serve_reapi(reapi_serve_options);
+```
+
+The server exposes the repository's SHA-256 CAS, ByteStream, Capabilities, and ActionCache. It does
+not expose transport implementation types.
 
 ### `liquid/sync.hpp`
 
