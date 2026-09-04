@@ -13,3 +13,15 @@ SHA-256 implementation
   Revision: cfbde48414baacf51fc7c74f275190881f037d32
   Licence: public domain, free of restrictions
   The source is vendored under src/hash/.
+
+Boost.Capy
+  Project: https://github.com/cppalliance/capy
+  Revision: ce1c7d710c4baaeeddb57fa101707c610f6eb975
+  Licence: Boost Software License 1.0
+  The source is vendored as modules/capy and linked publicly by libliquid.
+
+Boost.Corosio
+  Project: https://github.com/oramasearch/corosio
+  Revision: 1c1a6abf82c37ac2628d18cec2add502043c59c1
+  Licence: Boost Software License 1.0
+  The source is vendored as modules/corosio and linked privately by libliquid.

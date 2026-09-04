@@ -17,8 +17,8 @@ signer::~signer() = default;
 signer::signer(signer&&) noexcept = default;
 signer& signer::operator=(signer&&) noexcept = default;
 
-result<std::vector<std::byte>> signer::sign(std::span<const std::byte>) {
-    return unavailable<std::vector<std::byte>>("liquid #4");
+runtime::task<std::vector<std::byte>> signer::sign(std::vector<std::byte>) {
+    co_return unavailable<std::vector<std::byte>>("liquid #4");
 }
 
 result<bool> verify(const actor&, std::span<const std::byte>, std::span<const std::byte>) {

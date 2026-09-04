@@ -11,6 +11,7 @@
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/object.hpp"
+#include "liquid/runtime.hpp"
 
 namespace liquid {
 
@@ -57,8 +58,8 @@ public:
     capture& operator=(const capture&) = delete;
 
     [[nodiscard]] result<subscription> subscribe(std::function<void(const drip&)> callback);
-    [[nodiscard]] result<void> pause();
-    [[nodiscard]] result<void> resume();
+    [[nodiscard]] runtime::task<void> pause();
+    [[nodiscard]] runtime::task<void> resume();
     [[nodiscard]] result<capture_status> status();
 
 private:

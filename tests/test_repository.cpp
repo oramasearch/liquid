@@ -3,6 +3,7 @@
 #include <array>
 #include <filesystem>
 #include <optional>
+#include <utility>
 
 #include "liquid/repository.hpp"
 #include "unsupported.hpp"
@@ -14,7 +15,8 @@ TEST(Repository, FacadeNamesOwningIssues) {
     expect_unsupported(liquid::repository::open(path), "liquid #2");
 
     liquid::repository value;
-    liquid::repository other;
+    liquid::repository nested;
+    liquid::repository combined;
     const liquid::digest digest{liquid::algorithm::blake3, {}};
     const liquid::change_id change{digest};
     const liquid::op_id operation{digest};
@@ -22,12 +24,12 @@ TEST(Repository, FacadeNamesOwningIssues) {
     expect_unsupported(value.root(), "liquid #2");
     expect_unsupported(value.head(), "liquid #2");
     expect_unsupported(value.read("file"), "liquid #2");
-    expect_unsupported(value.write("file", contents), "liquid #2");
+    expect_unsupported(value.write("file", {contents.begin(), contents.end()}), "liquid #2");
     expect_unsupported(value.log(), "liquid #2");
     expect_unsupported(value.at(change), "liquid #2");
-    expect_unsupported(value.nest(other, "nested"), "liquid #2");
+    expect_unsupported(value.nest(std::move(nested), "nested"), "liquid #2");
     expect_unsupported(value.split("nested", path), "liquid #2");
-    expect_unsupported(value.combine(other, std::nullopt), "liquid #2");
+    expect_unsupported(value.combine(std::move(combined), std::nullopt), "liquid #2");
     expect_unsupported(value.conflicts(), "liquid #40");
     expect_unsupported(value.undo(operation), "liquid #41");
     expect_unsupported(value.lock("file"), "liquid #42");

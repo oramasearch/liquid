@@ -64,6 +64,17 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # libliquid — everything under include/liquid/ is the public API.
 # -----------------------------------------------------------------------------
 include(FetchContent)
+
+set(BOOST_CAPY_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(BOOST_CAPY_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BOOST_CAPY_BUILD_BENCH    OFF CACHE BOOL "" FORCE)
+add_subdirectory(modules/capy EXCLUDE_FROM_ALL)
+
+set(BOOST_COROSIO_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(BOOST_COROSIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BOOST_COROSIO_BUILD_PERF     OFF CACHE BOOL "" FORCE)
+add_subdirectory(modules/corosio EXCLUDE_FROM_ALL)
+
 FetchContent_Declare(blake3_source
   GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
   GIT_TAG        1.8.7
@@ -106,6 +117,7 @@ add_library(libliquid
   src/object.cpp
   src/remote.cpp
   src/repository.cpp
+  src/runtime/runtime.cpp
   src/store.cpp
   src/version.cpp
   src/vfs.cpp
@@ -123,6 +135,9 @@ target_include_directories(libliquid PUBLIC
   $<INSTALL_INTERFACE:include>
   PRIVATE ${blake3_source_SOURCE_DIR}/c)
 target_compile_features(libliquid PUBLIC cxx_std_26)
+target_link_libraries(libliquid
+  PUBLIC Boost::capy
+  PRIVATE Boost::corosio)
 if(BUILD_SHARED_LIBS)
   target_link_libraries(libliquid PRIVATE liquid_blake3)
 else()
@@ -154,7 +169,17 @@ install(TARGETS libliquid EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS boost_capy EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS boost_corosio EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ ${CMAKE_CURRENT_BINARY_DIR}/include/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY modules/capy/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 if(LIQUID_BUILD_CLI)
   install(TARGETS liquid-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

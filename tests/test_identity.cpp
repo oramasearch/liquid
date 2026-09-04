@@ -12,6 +12,6 @@ TEST(Identity, FacadeNamesOwningIssue) {
     liquid::key_provider provider;
     const liquid::actor actor{"taap:example"};
     std::array<std::byte, 1> bytes{};
-    expect_unsupported(signer.sign(bytes), "liquid #4");
+    expect_unsupported(signer.sign({bytes.begin(), bytes.end()}), "liquid #4");
     expect_unsupported(liquid::verify(actor, bytes, bytes), "liquid #4");
 }

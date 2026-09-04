@@ -237,7 +237,7 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    LLVM on macOS, `clang++-NN` on Linux; Apple's Clang and Ubuntu's GCC 13 are too old.
    **libliquid is coroutine-native on Capy in its public API** (Steve, 2026-09-03: "use the
    coroutine library that we have"): every I/O function returns `runtime::task<T>` and Capy is a
-   public dependency through the one seam header `liquid/runtime.hpp`; Corosio does the I/O
+   public dependency through the one boundary header `liquid/runtime.hpp`; Corosio does the I/O
    (files, sockets, timers) behind the boundary. No synchronous-first phase, no raw threads.
 6. **Licence posture.** liquid and liquify: open source, eventually — licence text not
    yet chosen. lake and the operator: enterprise. Zetta: source-available. k0s: Apache
@@ -251,7 +251,8 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    feasible, of third-party types (Boost stays behind the boundary). The CLI never carries
    behaviour the library lacks. **The surface is `docs/library/api-map.md`** (2026-09-03):
    `result<T>` errors everywhere, opaque handles, plain value records, digests that carry their
-   algorithm, synchronous in Phase 1; a header not on the map is not public. **The object model
+   algorithm, and coroutine-native waiting operations; a header not on the map is not public.
+   **The object model
    is `docs/library/object-model.md`**: canonical-CBOR records in the store, one automerge
    document per repository, liquid's own `node_id` (survives moves) and `change_id` (the digest
    of the change record, never automerge's `ChangeHash`), conflicts and symbols reserved in the

@@ -8,9 +8,9 @@
 #include <span>
 #include <vector>
 
-#include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/runtime.hpp"
 
 namespace liquid {
 
@@ -46,16 +46,15 @@ public:
     store(const store&) = delete;
     store& operator=(const store&) = delete;
 
-    [[nodiscard]] static result<store> open(
-        const std::filesystem::path& path, const store_options& options = {});
-    [[nodiscard]] result<digest> put(std::span<const std::byte> input);
-    [[nodiscard]] result<std::vector<std::byte>> get(const digest& id);
-    [[nodiscard]] result<std::uint64_t> read(
-        const digest& id, std::uint64_t offset, std::span<std::byte> into);
-    [[nodiscard]] result<bool> contains(const digest& id);
-    [[nodiscard]] result<lease> lease_root(const digest& id, std::chrono::seconds ttl);
-    [[nodiscard]] result<collection_report> collect(
-        const collection_options& options = {});
+    [[nodiscard]] static runtime::task<store> open(std::filesystem::path path,
+                                                   store_options options = {});
+    [[nodiscard]] runtime::task<digest> put(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<std::vector<std::byte>> get(digest id);
+    [[nodiscard]] runtime::task<std::uint64_t> read(digest id, std::uint64_t offset,
+                                                    std::span<std::byte> into);
+    [[nodiscard]] runtime::task<bool> contains(digest id);
+    [[nodiscard]] runtime::task<lease> lease_root(digest id, std::chrono::seconds ttl);
+    [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
 
 private:
     struct impl;
