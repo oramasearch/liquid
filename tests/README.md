@@ -31,3 +31,6 @@ The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive M
 `compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,
 rate-one sampling, and CLI verification of every wrapped action.
+Portable build
+diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
+statistics, and the JSON forms of `why` and `cache stats`.

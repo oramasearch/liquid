@@ -223,6 +223,7 @@ add_library(libliquid
   src/build/verify.cpp
   src/build/materialise.cpp
   src/build/provenance.cpp
+  src/build/why.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
@@ -336,6 +337,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp
+    src/cli/why.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE liquid::liquid)

@@ -34,6 +34,8 @@ auto attestation(int argc, char** argv) -> int;
 auto verify(int argc, char** argv) -> int;
 auto provenance(int argc, char** argv) -> int;
 auto wrap(int argc, char** argv) -> int;
+auto why(int argc, char** argv) -> int;
+auto cache(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -129,6 +131,16 @@ constexpr auto commands = std::to_array<command>({
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
+    {"why",
+     "why <target> [--json]",
+     "explain the latest cache lookup",
+     "available",
+     liquid_cli::why},
+    {"cache",
+     "cache stats [--json]",
+     "show build-cache statistics",
+     "available",
+     liquid_cli::cache},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},

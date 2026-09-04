@@ -6,4 +6,6 @@ repository, split a subtree, combine it, inspect JSON history, undo the move, re
 mutation, and dry-run collection. `help-docs.cmake` ensures every documented command is present
 in the command table's `--help` output by extracting the command cell directly instead of
 splitting a Markdown row as a CMake list. `public-includes.cmake` rejects a CLI source that
-includes anything outside the public `liquid/` header tree.
+includes anything outside the public `liquid/` header tree. The `cli-why-json` and
+`cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
+cache.

@@ -15,8 +15,9 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, and #14 implement the local action path,
-disk cache, `liquid wrap`, reproducibility verification, and automatic SLSA provenance:
+**Implementation status.** Issues #10, #11, #12, #13, #14, and #15 implement the local action path,
+disk cache, `liquid wrap`, reproducibility verification, automatic SLSA provenance, and cache
+diagnostics:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -105,6 +106,49 @@ same candidate key, the producer's TAAP `result` signature and referenced proven
 manifest entry matches, and every output and stream blob record still exists.
 `action_result::cache` and `why` describe the current execution request and are not part of the
 immutable producer-signed result bytes.
+`src/build/why.cpp` turns recorded comparisons into the public `why_report` and persists the
+completed-wrap counters used by `liquid cache stats`.
+
+### Diagnostics and lookup history
+
+The local disk cache appends one compact `LOOKUPS` row after a completed action lookup. A row holds
+only hit or miss, the selected or newly produced result digest, and the prior result digest when one
+exists. It does not duplicate a cause. `liquid why` loads the immutable action and result records
+named by the row and derives the cause from their fields:
+
+| First recorded difference | Classification | Detail |
+|---|---|---|
+| argv | `command changed` | complete old and new argv; the CLI prints changed indexes |
+| fixed environment | `environment changed` | first differing key and its optional values |
+| toolchain tree | `toolchain changed` | old/new tree digests and first differing decoded tool path |
+| sandbox record | `sandbox changed` | old/new definition digests |
+| prior manifest against the current lookup or result manifest | `input changed` | path and both blob digests; UTF-8 line hunk and repository attribution when available |
+| no prior result | `never built` | the recorded current result remains available in the report |
+| an action-index entry marked divergent by `liquid verify` | `divergent result quarantined` | result digest and its verification attestation digest |
+| incomplete or indistinguishable records | `unknown` | known action/result identifiers and a detail string |
+
+Candidate fields are checked before manifests because candidate selection occurs before manifest
+validation. This makes a command change the cause even if source also changed. Input validation at
+lookup time resolves the current digest from the stored input tree; a completed result comparison
+uses the two stored manifests directly. Both versions' blobs remain in the CAS, so the explanation
+works with an action index and CAS copied from another machine. When `LOOKUPS` is not copied,
+action-index sequence supplies the most recent result pair. Text classification requires valid
+UTF-8 without disallowed control bytes; binary inputs receive the digest pair without a line claim.
+
+Tracked input attribution comes from the repository's ordered operation and signed-drip history.
+The path and current content digest select the newest write operation; its node, actor, time, and
+recorded order select the corresponding signed drip. The displayed drip identifier is the content
+digest of its canonical body. If the correspondence cannot be established, attribution is omitted
+rather than inferred.
+
+The adjacent `stats` file is a recoverable projection of completed wrap reports. It totals actions,
+miss reasons, bytes avoided by disk hits, and bytes rebuilt from output blob sizes. Memory and
+remote tier fields are explicitly unavailable. Result timing fields, when non-zero, yield the five
+longest actions in a wrap report; dependency-aware critical-path calculation remains #57.
+
+Divergence is not inferred from two different output lists. `liquid why` uses only the authoritative
+divergence flag stored in the action-index entry by `liquid verify`; it reports the linked verification
+attestation digest when present.
 
 Tiers (features/05) share one store and one key:
 
@@ -258,6 +302,10 @@ coarse end of the spectrum features/04 describes; the fine end arrives when the 
   recursive-Make fixture.
 - Every executed action carries a verified SLSA provenance attestation, and an identical cached
   execution reuses the same attestation digest.
+- `why` names a changed header with both digests, its UTF-8 line hunk, and its repository drip.
+  Portable record tests cover command, environment, toolchain, sandbox, never-built, imported-index,
+  authoritative divergence quarantine, and cumulative-stat explanations. The privileged Linux wrap
+  test proves the observed header and completed-wrap statistics end to end.
 
 ## How to change
 

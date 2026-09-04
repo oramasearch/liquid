@@ -14,6 +14,7 @@ struct cache_lookup {
     std::optional<result_id> hit;
     std::optional<cache_miss> why;
     std::uint64_t bytes_served{};
+    std::uint64_t bytes_avoided{};
 };
 
 class LIQUID_EXPORT action_index {
@@ -52,6 +53,8 @@ public:
     record_verification(digest result, digest attestation, bool divergent);
     [[nodiscard]] const std::vector<objects::action_index_entry>& entries() const noexcept;
     [[nodiscard]] bool divergent(digest result) const noexcept;
+    [[nodiscard]] result<void>
+    record_lookup(cache_status status, result_id id, std::optional<result_id> previous = {});
 
 private:
     repository& source_;

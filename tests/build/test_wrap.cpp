@@ -172,6 +172,13 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(second->exit, 0);
     EXPECT_EQ(second->processes_started, 0U);
     EXPECT_EQ(second->outer, liquid::cache_status::hit);
+    EXPECT_EQ(second->hits + second->misses, second->actions);
+    auto statistics =
+        liquid::runtime::block_on(liquid::build::cache_stats(fixture.project(), fixture.cache()));
+    ASSERT_TRUE(statistics) << statistics.error().message;
+    EXPECT_EQ(statistics->hits, configured->hits + first->hits + second->hits);
+    EXPECT_EQ(statistics->misses, configured->misses + first->misses + second->misses);
+    EXPECT_GT(statistics->disk.bytes_avoided, 0U);
 
     auto header = std::ofstream{fixture.project() / "include/value.h", std::ios::app};
     header << "\n#define WRAPPED_SECOND_VALUE 1\n";
@@ -184,6 +191,21 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_LT(changed->processes_started, first->processes_started);
     EXPECT_TRUE(std::ranges::any_of(
         changed->why, [](const auto& miss) { return miss.path == "include/value.h"; }));
+    auto explanation = liquid::runtime::block_on(liquid::build::why(
+        fixture.project(), "build/CMakeFiles/wrapped.dir/left.c.o", fixture.cache()));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    ASSERT_TRUE(explanation->result);
+    const auto explanation_context =
+        liquid::to_string(explanation->result->value) + " after " +
+        (explanation->previous_result ? liquid::to_string(explanation->previous_result->value)
+                                      : std::string{"none"});
+    EXPECT_EQ(explanation->cause.reason, liquid::cache_miss_reason::input_changed)
+        << explanation->cause.detail << ": " << explanation_context;
+    EXPECT_EQ(explanation->cause.path, "include/value.h")
+        << explanation->cause.detail << ": " << explanation_context;
+    EXPECT_TRUE(explanation->cause.expected);
+    EXPECT_TRUE(explanation->cause.actual);
+    EXPECT_TRUE(explanation->cause.changed_by);
 
     const auto other = fixture.second_checkout();
     auto other_configured =

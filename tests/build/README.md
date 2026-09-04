@@ -6,6 +6,12 @@ privileged Linux container runs them for real. Portable tests cover action-index
 rebuild, the read-only publication default, SLSA provenance derivation and verification, tamper
 rejection, and DSSE/in-toto shape plus digest round-trip.
 
+`test_why.cpp` builds signed action/result histories without a mount and proves input digests and
+line ranges, drip attribution, argv, environment, toolchain, sandbox, never-built, imported-index,
+and cumulative-statistics explanations. The Linux `test_wrap.cpp` scenario additionally proves that
+a real observed header miss is available through `build::why` and that completed-wrap action and
+byte counts agree.
+
 `fixture.c` is the hermetic toolchain program materialised into each test repository. Its commands
 copy one input, print the fixed environment, emit random bytes, attempt denied access, or exercise
 timeout cleanup. Verification tests prove a pure agreement, signature-valid agreement and

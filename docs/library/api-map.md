@@ -63,7 +63,7 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14 | implemented local executor, wrapper, disk cache, verification, and provenance | action execution and results, cache diagnostics, critical alerts, reproducibility verification, provenance verification, and JSON/DSSE projection; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15 | implemented local executor, wrapper, disk cache, verification, provenance, and diagnostics | action execution and results, typed cache explanations, critical alerts, reproducibility verification, provenance verification, JSON/DSSE projection, tier and byte reports; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -310,10 +310,12 @@ Repository change IDs are computed with that selected store algorithm, including
 publication with `errc::unauthorized`; the value is persisted at repository creation.
 `verify_config` is `{ std::uint32_t rate{20}; }`; zero is invalid and the rate is persisted at
 repository creation. `cache_report` contains `hits`, `misses`, `bytes_served`, `bytes_stored`, and
-critical reproducibility alerts for the open repository handle. `action_result::cache` is
-`cache_status::hit`, `cache_status::miss`, or `cache_status::divergent`; on a validation miss,
-`why` contains the first differing path and optional expected/actual digests. These two fields are
-request diagnostics rather than part of the signed immutable result record.
+repository creation. `cache_report` contains aggregate hit, miss, served, stored, and rebuilt bytes;
+miss-reason counts; memory, disk, and remote tier rows; and critical reproducibility alerts for the
+open repository handle. `action_result::cache` is `cache_status::hit`, `cache_status::miss`, or
+`cache_status::divergent`; on a validation miss, `why` contains the first differing path and optional
+expected/actual digests. These fields are request diagnostics rather than part of the signed immutable
+result record.
 
 `key_readability` is `{ key_id, version, readable }`. `revision_readability` is a `change_id` and
 the sorted key-version set used by its blobs. `readability_report` contains those revision rows and
@@ -355,7 +357,10 @@ under `src/vfs/`; see [`vfs.md`](vfs.md).
 
 ```cpp
 enum class cache_status : std::uint8_t { miss, hit, divergent };
-struct cache_miss { std::string path; std::optional<digest> expected, actual; };
+enum class cache_miss_reason { input_changed, command_changed, environment_changed,
+  toolchain_changed, sandbox_changed, never_built, divergent_result_quarantined, unknown };
+struct cache_miss { cache_miss_reason reason; std::string path;
+  std::optional<digest> expected, actual; /* argv, environment, tool, line, attribution, detail */ };
 struct reproducibility_difference {
   std::string output; std::optional<digest> cached, reexecuted;
   std::optional<std::uint64_t> byte_offset;
@@ -365,7 +370,9 @@ struct critical_cache_alert {
   digest action, result; std::vector<reproducibility_difference> differences;
 };
 struct cache_report {
-  std::uint64_t hits, misses, bytes_served, bytes_stored;
+  std::uint64_t hits, misses, bytes_served, bytes_stored, bytes_rebuilt;
+  std::map<cache_miss_reason, std::uint64_t> misses_by_reason;
+  cache_tier_report memory, disk, remote;
   std::vector<critical_cache_alert> critical_alerts;
 };
 struct action_result {
@@ -400,9 +407,10 @@ runtime::task<provenance_report> verify_provenance(repository&, result_id);
 runtime::task<provenance_report> verify_provenance(repository&, std::string output_path);
 runtime::task<provenance_report> verify_wrapped_provenance(std::filesystem::path, std::filesystem::path);
 result<std::string> provenance_json(const provenance_report&, bool dsse = false);
-runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
-runtime::task<verify_report> verify(repository&, verify_options = {});
-runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
+runtime::task<why_report> why(std::filesystem::path, std::string,
+                              std::optional<std::filesystem::path> cache = {});
+runtime::task<cache_report> cache_stats(std::filesystem::path,
+                                        std::optional<std::filesystem::path> cache = {});
 }
 ```
 
@@ -411,16 +419,15 @@ The candidate key covers command, cwd, environment, toolchain, sandbox definitio
 all observed paths match the current input tree, and all referenced blobs exist. Producer and `sig`
 are immutable record fields; cache status and miss detail describe the current request.
 `verify` re-executes selected cache entries with their recorded sandbox definition, compares exit
-status and output digests, and returns the signed attestation digest plus any differences. A
-divergent index entry is permanently excluded from lookup. See
-[`build-engine.md`](build-engine.md#reproducibility-verification).
-all observed paths match the current input tree, all referenced blobs exist, and the referenced
-provenance verifies. Producer, `sig`, timestamps, and `provenance` are immutable record fields;
-cache status and miss detail describe the current request. `verify` re-executes selected cache
-entries with their recorded sandbox definition, compares exit status and output digests, and returns
-the signed attestation digest plus any differences. A divergent index entry is permanently excluded
-from lookup. See [build-engine.md](build-engine.md#reproducibility-verification) and
-[provenance.md](provenance.md) for the SLSA mapping and interim object subject.
+status and output digests, and returns the signed attestation digest plus any differences. A divergent
+index entry is permanently excluded from lookup. See
+[`build-engine.md`](build-engine.md#reproducibility-verification) and [provenance.md](provenance.md)
+for the SLSA mapping and interim object subject.
+`why` accepts an output path, action digest, or result digest and returns the selected lookup plus
+current/prior identifiers and a typed cause. `wrap_report` includes action counts, its per-wrap
+`cache_report`, typed miss details, and non-zero timing leaders. The path-taking `cache_stats`
+returns cumulative completed-wrap statistics; the repository member remains scoped to its open
+handle.
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 

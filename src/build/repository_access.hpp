@@ -9,7 +9,7 @@
 
 namespace liquid::repository_detail {
 
-struct build_access {
+struct LIQUID_EXPORT build_access {
     [[nodiscard]] static auto get(repository& source, digest id)
         -> runtime::task<std::vector<std::byte>>;
     [[nodiscard]] static auto put_record(repository& source, std::vector<std::byte> bytes)
@@ -21,6 +21,8 @@ struct build_access {
         -> runtime::task<std::uint64_t>;
     [[nodiscard]] static auto change_time(repository& source, digest tree)
         -> runtime::task<std::chrono::sys_seconds>;
+    [[nodiscard]] static auto path_change(repository& source, std::string path, digest content)
+        -> runtime::task<std::optional<change_attribution>>;
     [[nodiscard]] static auto root_path(repository& source) -> result<std::filesystem::path>;
     [[nodiscard]] static auto contains(repository& source, digest id) -> runtime::task<bool>;
     [[nodiscard]] static auto sign_result(repository& source, action_result& value)
