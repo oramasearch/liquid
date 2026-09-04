@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "git/object_store.hpp"
+#include "git/tree_order.hpp"
 #include "liquid/git.hpp"
 
 namespace {
@@ -68,6 +69,26 @@ TEST(GitObjectStore, hashes_and_verifies_loose_objects) {
     ASSERT_TRUE(object) << object.error().message;
     EXPECT_EQ(object->kind, liquid::git_detail::object_kind::blob);
     EXPECT_EQ(object->payload, bytes("contents"));
+}
+
+TEST(GitObjectStore, orders_tree_entries_as_git_does) {
+    struct entry {
+        std::string_view name;
+        bool directory;
+    };
+    auto entries =
+        std::vector<entry>{{"a", false}, {"a-b", false}, {"a", true}, {"a0", false}, {"ab", false}};
+    std::ranges::sort(entries, [](const entry& left, const entry& right) {
+        return liquid::git_detail::tree_entry_less(
+            left.name, left.directory, right.name, right.directory);
+    });
+    EXPECT_EQ(entries[0].name, "a");
+    EXPECT_FALSE(entries[0].directory);
+    EXPECT_EQ(entries[1].name, "a-b");
+    EXPECT_EQ(entries[2].name, "a");
+    EXPECT_TRUE(entries[2].directory);
+    EXPECT_EQ(entries[3].name, "a0");
+    EXPECT_EQ(entries[4].name, "ab");
 }
 
 TEST(GitObjectStore, refuses_a_corrupt_loose_object) {

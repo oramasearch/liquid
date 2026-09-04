@@ -50,7 +50,8 @@ mapped pack and index pages. This avoids treating mapped files as retained impor
 Export flattens nested repositories into ordinary Git trees where their content is available. It
 adds a `Liquid-Change: blake3:…` trailer to exported Git messages. Conflict values and signatures
 have no Git representation and are reported in `export_report::degradations`. Git LFS pointers
-and `.gitattributes` are ordinary files.
+and `.gitattributes` are ordinary files. Tree entries use Git's bytewise ordering, comparing a
+directory name as though it ends in `/`; this is required for `git fsck --strict`.
 
 ## Verification
 

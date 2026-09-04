@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "git/object_store.hpp"
+#include "git/tree_order.hpp"
 
 namespace liquid {
 namespace {
@@ -40,7 +41,10 @@ auto write_tree(repository& source,
                 const std::filesystem::path& target,
                 std::set<std::string>& degradations) -> runtime::task<git_detail::sha1> {
     auto entries = std::vector<tree_entry>{value.entries.begin(), value.entries.end()};
-    std::ranges::sort(entries, {}, &tree_entry::name);
+    std::ranges::sort(entries, [](const tree_entry& left, const tree_entry& right) {
+        return git_detail::tree_entry_less(
+            left.name, left.kind == node_kind::tree, right.name, right.kind == node_kind::tree);
+    });
     std::vector<std::byte> payload;
     for (const auto& entry : entries) {
         git_detail::sha1 id{};
