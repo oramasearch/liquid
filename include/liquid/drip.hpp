@@ -18,8 +18,8 @@ namespace liquid {
 
 class capture;
 namespace capture_detail {
-void inject_overflow_for_test(capture& handle);
-[[nodiscard]] auto last_journal_append_duration_for_test(const capture& handle)
+LIQUID_EXPORT void inject_overflow_for_test(capture& handle);
+[[nodiscard]] LIQUID_EXPORT auto last_journal_append_duration_for_test(const capture& handle)
     -> std::chrono::nanoseconds;
 } // namespace capture_detail
 
@@ -43,6 +43,7 @@ struct LIQUID_EXPORT drip {
 struct LIQUID_EXPORT capture_options {
     std::vector<std::string> exclude;
     std::chrono::milliseconds coalesce_window{200};
+    std::chrono::milliseconds reconcile_interval{2000};
     bool attribution{false};
 };
 

@@ -15,7 +15,7 @@ class capture;
 
 namespace liquid::capture_detail {
 
-enum class watch_event_kind { write, remove, reconcile, cookie };
+enum class watch_event_kind { write, remove, reconcile, periodic_reconcile, cookie };
 
 struct watch_event {
     watch_event_kind kind{watch_event_kind::write};

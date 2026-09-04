@@ -30,6 +30,13 @@ drip can be journaled.
 `coalesce_window` defaults to 200 ms. `attribution` is present for Phase 2 and remains false;
 foreign build output is governed only by declared exclusions in this phase.
 
+`reconcile_interval` defaults to two seconds; set it to zero to disable this backstop. A ticker
+on the capture context compares watcher-event counts after each interval. If no watcher hint
+arrived, it adds a reconcile hint to the same queue and wakes the capture loop. A backstop
+reconcile that finds changes increments `recrawl_count` and emits through the ordinary capture
+path. Hints make capture fast; reconcile makes it correct. Pausing suppresses emission, not the
+ticker.
+
 `capture_status` reports running or paused state, queued work, overflow count, recrawl count,
 and the latest public journal cursor token. Events are hints, so overflow and recrawl must be
 visible rather than silently repaired. `pause()` retains the observed window without appending;
@@ -79,7 +86,8 @@ and notification:
 | 20 ms | 245 / 245 µs | 37 / 37 ms |
 
 The single-digit capture-path budget applies to the journal append, not save-to-drip-visible.
-The latter intentionally includes the coalescing policy and is reported separately.
+The latter intentionally includes the coalescing policy and is reported separately. If a watcher
+hint is lost, visibility is bounded by `max(coalesce_window, reconcile_interval)`.
 
 ## Open questions
 

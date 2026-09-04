@@ -128,21 +128,15 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
     std::uint64_t recrawls{0};
     bool paused{false};
     bool closed{false};
-    bool cookie_seen{false};
     std::atomic<bool> stopped{false};
+    std::atomic<bool> ticker_stopped{false};
     std::atomic<bool> wake_pending{false};
+    std::atomic<std::uint64_t> event_count{0};
     std::atomic<std::uint64_t> last_append_ns{0};
 
     impl() : executor(runtime::default_context().executor()) {}
 
     static runtime::task<void> wake(std::shared_ptr<impl> state) {
-        {
-            std::lock_guard lock(state->mutex);
-            state->cookie_seen =
-                state->cookie_seen || std::ranges::any_of(state->events, [](const auto& event) {
-                    return event.kind == capture_detail::watch_event_kind::cookie;
-                });
-        }
         state->events_ready.set();
         co_return {};
     }
@@ -161,13 +155,54 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
             event.kind = capture_detail::watch_event_kind::cookie;
         else if (excluded(relative))
             return;
+        const auto counts_as_hint = event.kind != capture_detail::watch_event_kind::cookie;
         {
             std::lock_guard lock(mutex);
             if (closed)
                 return;
             events.push_back(std::move(event));
+            if (counts_as_hint)
+                event_count.fetch_add(1, std::memory_order_release);
         }
         schedule_wake();
+    }
+
+    void enqueue_periodic_reconcile() {
+        {
+            std::lock_guard lock(mutex);
+            if (closed)
+                return;
+            events.push_back(
+                {.kind = capture_detail::watch_event_kind::periodic_reconcile, .path = workspace});
+        }
+        events_ready.set();
+    }
+
+    [[nodiscard]] bool has_reconcile_hint() {
+        std::lock_guard lock(mutex);
+        return std::ranges::any_of(events, [](const auto& event) {
+            return event.kind == capture_detail::watch_event_kind::reconcile ||
+                   event.kind == capture_detail::watch_event_kind::periodic_reconcile;
+        });
+    }
+
+    static runtime::task<void> ticker(std::shared_ptr<impl> state) {
+        auto observed = state->event_count.load(std::memory_order_acquire);
+        while (!state->ticker_stopped.load(std::memory_order_acquire)) {
+            auto [delay_error] = co_await runtime::delay(state->options.reconcile_interval);
+            if (delay_error)
+                co_return std::unexpected(
+                    error{errc::internal, delay_error.message(), "capture reconcile ticker"});
+            if (state->ticker_stopped.load(std::memory_order_acquire))
+                break;
+            const auto current = state->event_count.load(std::memory_order_acquire);
+            if (current == observed)
+                state->enqueue_periodic_reconcile();
+            else
+                state->events_ready.set();
+            observed = current;
+        }
+        co_return {};
     }
 
     [[nodiscard]] auto excluded(const std::filesystem::path& path) const -> bool {
@@ -372,9 +407,10 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
         state->workspace = std::move(workspace);
         state->control = state->workspace / ".liquid" / "capture";
         state->options = std::move(options);
-        if (state->options.coalesce_window.count() < 0)
+        if (state->options.coalesce_window.count() < 0 ||
+            state->options.reconcile_interval.count() < 0)
             co_return std::unexpected(capture_error(
-                errc::invalid_argument, "coalescing window is negative", state->workspace));
+                errc::invalid_argument, "capture window is negative", state->workspace));
         auto ready = co_await runtime::offload(
             [path = state->control] { std::filesystem::create_directories(path); });
         if (!ready)
@@ -423,13 +459,6 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
             if (!cut_result)
                 co_return std::unexpected(cut_result.error());
         }
-        auto opened_store = co_await store::open(state->control / "store");
-        if (!opened_store)
-            co_return std::unexpected(opened_store.error());
-        state->objects.emplace(std::move(*opened_store));
-        auto initial = co_await state->recrawl(true);
-        if (!initial)
-            co_return std::unexpected(initial.error());
         state->watcher =
             capture_detail::make_watcher(state->workspace, state->options.coalesce_window);
         auto started =
@@ -441,10 +470,6 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
             co_return std::unexpected(started.error());
         auto armed = false;
         for (auto attempt = 0U; attempt < 50 && !armed; ++attempt) {
-            {
-                std::lock_guard lock(state->mutex);
-                state->cookie_seen = false;
-            }
             const auto cookie =
                 state->workspace / (".liquid-capture-cookie-" + std::to_string(attempt));
             auto written = co_await runtime::offload([cookie] {
@@ -463,7 +488,10 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
                  elapsed += std::chrono::milliseconds{1}) {
                 {
                     std::lock_guard lock(state->mutex);
-                    armed = state->cookie_seen;
+                    armed = std::ranges::any_of(state->events, [&cookie](const auto& event) {
+                        return event.kind == capture_detail::watch_event_kind::cookie &&
+                               event.path.filename() == cookie.filename();
+                    });
                 }
                 if (armed)
                     break;
@@ -487,15 +515,28 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
                                [state = output.impl_->shared](result<void>) {
                                    state->stopped.store(true, std::memory_order_release);
                                })([](std::shared_ptr<impl> state) -> runtime::task<void> {
+            auto opened_store = co_await store::open(state->control / "store");
+            if (!opened_store)
+                co_return std::unexpected(opened_store.error());
+            state->objects.emplace(std::move(*opened_store));
+            auto [initial_delay_error] = co_await runtime::delay(state->options.coalesce_window);
+            if (initial_delay_error)
+                co_return std::unexpected(
+                    error{errc::internal, initial_delay_error.message(), "capture startup"});
+            auto initial = co_await state->recrawl(true);
+            if (!initial)
+                co_return std::unexpected(initial.error());
             while (true) {
                 auto [event_error] = co_await state->events_ready.wait();
                 if (event_error)
                     co_return std::unexpected(
                         error{errc::internal, event_error.message(), "capture queue"});
-                auto [delay_error] = co_await runtime::delay(state->options.coalesce_window);
-                if (delay_error)
-                    co_return std::unexpected(
-                        error{errc::internal, delay_error.message(), "capture queue"});
+                if (!state->has_reconcile_hint()) {
+                    auto [delay_error] = co_await runtime::delay(state->options.coalesce_window);
+                    if (delay_error)
+                        co_return std::unexpected(
+                            error{errc::internal, delay_error.message(), "capture queue"});
+                }
                 {
                     std::lock_guard lock(state->mutex);
                     if (state->closed)
@@ -512,31 +553,35 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
                     batch.swap(state->events);
                 }
                 state->events_ready.clear();
+                state->wake_pending.store(false, std::memory_order_release);
                 {
                     std::lock_guard lock(state->mutex);
                     batch.insert(batch.end(),
                                  std::make_move_iterator(state->events.begin()),
                                  std::make_move_iterator(state->events.end()));
                     state->events.clear();
-                    state->wake_pending.store(false, std::memory_order_release);
                 }
                 auto coalesced = capture_detail::coalescer{};
                 auto needs_recrawl = false;
                 for (auto& event : batch) {
                     if (event.kind == capture_detail::watch_event_kind::cookie)
                         continue;
+                    if (event.kind == capture_detail::watch_event_kind::reconcile) {
+                        std::lock_guard lock(state->mutex);
+                        ++state->overflows;
+                        needs_recrawl = true;
+                        continue;
+                    }
+                    if (event.kind == capture_detail::watch_event_kind::periodic_reconcile) {
+                        needs_recrawl = true;
+                        continue;
+                    }
                     const auto relative = event.path.lexically_relative(state->workspace).empty()
                                               ? event.path
                                               : event.path.lexically_relative(state->workspace);
                     if (state->excluded(relative))
                         continue;
-                    if (event.kind == capture_detail::watch_event_kind::reconcile) {
-                        std::lock_guard lock(state->mutex);
-                        ++state->overflows;
-                        needs_recrawl = true;
-                    } else {
-                        coalesced.push(std::move(event));
-                    }
+                    coalesced.push(std::move(event));
                 }
                 const auto hints = coalesced.take();
                 if (!needs_recrawl && hints.empty())
@@ -547,6 +592,10 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
             }
             co_return {};
         }(output.impl_->shared));
+        if (output.impl_->shared->options.reconcile_interval.count() > 0) {
+            boost::capy::run_async(output.impl_->shared->executor,
+                                   [](result<void>) {})(impl::ticker(output.impl_->shared));
+        }
         co_return output;
     } catch (const std::exception& caught) {
         co_return std::unexpected(error{errc::internal, caught.what(), "capture::open"});
@@ -593,6 +642,7 @@ runtime::task<void> capture::close() {
         std::lock_guard lock(state->mutex);
         state->closed = true;
     }
+    state->ticker_stopped.store(true, std::memory_order_release);
     state->watcher->stop();
     state->schedule_wake();
     while (!state->stopped.load(std::memory_order_acquire)) {
