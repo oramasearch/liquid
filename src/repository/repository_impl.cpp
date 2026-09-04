@@ -2103,6 +2103,33 @@ runtime::task<snapshot> repository::at(change_id id) {
         co_return std::unexpected(tree.error());
     co_return snapshot{id, *tree};
 }
+runtime::task<::liquid::tree> repository::tree(digest id) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto bytes = co_await impl_->objects.get(id);
+    if (!bytes)
+        co_return std::unexpected(bytes.error());
+    co_return objects::decode_tree(*bytes);
+}
+runtime::task<std::vector<std::byte>> repository::blob(digest id) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto encoded = co_await impl_->objects.get(id);
+    if (!encoded)
+        co_return std::unexpected(encoded.error());
+    auto value = objects::decode_blob(*encoded);
+    if (!value)
+        co_return std::unexpected(value.error());
+    std::vector<std::byte> output;
+    output.reserve(static_cast<std::size_t>(value->size));
+    for (const auto& chunk : value->chunks) {
+        auto bytes = co_await impl_->objects.get(chunk);
+        if (!bytes)
+            co_return std::unexpected(bytes.error());
+        output.insert(output.end(), bytes->begin(), bytes->end());
+    }
+    co_return output;
+}
 runtime::task<readability_report> repository::readability(std::optional<change_id> revision) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));

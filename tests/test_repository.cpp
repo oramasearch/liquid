@@ -339,6 +339,28 @@ TEST(Repository, log_walks_the_full_graph_or_the_first_parent) {
     EXPECT_EQ(from_right->at(1).message, "base");
 }
 
+TEST(Repository, tree_and_blob_read_historical_records) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("directory/file", content("contents"))));
+    const auto change = liquid::runtime::block_on(repository.cut("record tree"));
+    ASSERT_TRUE(change) << change.error().message;
+    const auto snapshot = liquid::runtime::block_on(repository.at(*change));
+    ASSERT_TRUE(snapshot) << snapshot.error().message;
+    ASSERT_EQ(snapshot->root.entries.size(), 1U);
+
+    const auto directory =
+        liquid::runtime::block_on(repository.tree(snapshot->root.entries.front().ref));
+    ASSERT_TRUE(directory) << directory.error().message;
+    ASSERT_EQ(directory->entries.size(), 1U);
+    const auto contents =
+        liquid::runtime::block_on(repository.blob(directory->entries.front().ref));
+    ASSERT_TRUE(contents) << contents.error().message;
+    EXPECT_EQ(text(*contents), "contents");
+}
+
 TEST(Repository, write_undo_and_locks_are_recorded) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));

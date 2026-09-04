@@ -159,6 +159,8 @@ public:
     [[nodiscard]] result<repository_status> status();
     [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
     [[nodiscard]] runtime::task<snapshot> at(change_id id);
+    [[nodiscard]] runtime::task<tree> tree(digest id);
+    [[nodiscard]] runtime::task<std::vector<std::byte>> blob(digest id);
     [[nodiscard]] runtime::task<readability_report>
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);

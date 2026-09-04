@@ -28,7 +28,13 @@ child-before-parent topological order. Equal timestamps are ordered by change id
 `log_options::from` value selects another starting change; `first_parent` provides Git's familiar
 linear traversal for callers that need it.
 
+## Historical objects
+
+`tree(digest)` decodes a stored tree record, and `blob(digest)` resolves a stored blob record to
+its complete bytes. Together with `at(change_id)`, these operations let an exporter walk a
+historical snapshot without assuming that the working copy is at that change.
+
 ## Status
 
-`record(change_input)`, repository metadata, and full-DAG history traversal are implemented. The
-remaining importer primitives are documented here as they land.
+`record(change_input)`, repository metadata, full-DAG history traversal, and historical-object
+readers are implemented. The remaining importer primitives are documented here as they land.
