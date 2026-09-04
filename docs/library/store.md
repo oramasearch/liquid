@@ -25,15 +25,22 @@ share chunks without a file-per-object bottleneck.
 ```
 
 `open` creates missing directories and refuses a marker other than format 1 with
-`errc::unsupported`. A pack begins with its id. A chunk body is an algorithm byte, 32-byte digest,
-raw and compressed lengths, reserved bytes, and an individually zstd-compressed payload. The pack
-ends with a sorted chunk table and a footer containing the table location and checksum. The table
-carries the algorithm tag, so it remains the source for rebuilding index run sets. A damaged pack
-footer or table is a `corrupt` error; its entries are never silently ignored.
+`errc::unsupported`. A pack begins with its id. Every following chunk is one append-only frame:
+an eight-byte frame magic, raw and compressed lengths (`u32` each), an algorithm byte, the 32-byte
+digest, and an individually zstd-compressed payload. A sealed pack ends with a sorted chunk table
+and a footer containing the table location and checksum. The table carries the algorithm tag, so it
+remains the source for rebuilding index run sets.
 
-The current pack keeps a complete footer after each append. The next append removes the previous
-table and footer, appends the new compressed chunk, and writes a replacement table and footer.
-Packs roll at `store_options::pack_size`, or 64 MiB when it is zero.
+The current pack has no table or footer. Its frames are represented in memory and in the index
+memtable. When a pack reaches `store_options::pack_size` (or 64 MiB when it is zero), it is sealed:
+the table and footer are appended once and the next chunk starts a new pack. No pack is truncated or
+rewritten.
+
+On open, a valid footer selects the table as before. A pack without a valid footer is an unsealed
+pack: the store scans frames from the beginning, decompresses and hashes each one, and stops at the
+first invalid or partial frame. Earlier valid frames are recovered; the trailing bytes are left
+unchanged and a later write uses a new pack. This makes an interrupted append recoverable without
+making a partial frame visible.
 
 ## Encrypted objects
 
@@ -69,6 +76,13 @@ without a format change. Every `get` and `read` rehashes raw chunk bytes; a mism
 Pack file reads and writes use Corosio `random_access_file`; synchronous directory creation and
 atomic manifest rename are limited to filesystem metadata operations. Corosio open failures are
 converted to `errc::io` at the private boundary.
+
+`put` acknowledges a chunk after its complete frame has been written. `store_options::durable`
+defaults to `false`; setting it to `true` calls `sync_data` on the pack before acknowledgement.
+The ordering makes a process crash safe: complete frames can be found by the recovery scan, and torn
+frames are ignored. A power loss needs `durable` for the operating system to make that guarantee.
+An interrupted put may remain as an orphan: **acknowledged ⊆ visible ⊆ correct**. A visible object
+is always verified against its digest, and collection in liquid #8 reclaims orphans.
 
 ## Index
 

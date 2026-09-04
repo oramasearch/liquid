@@ -229,8 +229,12 @@ runtime::task<void> store_backend::index_packs(bool rebuild) {
     co_return std::unexpected(store_error(errc::io, caught.what(), (root_ / "packs").string()));
   }
   current_pack_ = highest == 0 ? 1 : highest;
-  if (!packs_.contains(current_pack_))
+  if (!packs_.contains(current_pack_)) {
     packs_.emplace(current_pack_, pack_contents{current_pack_, {}, 16});
+  } else if (!packs_.at(current_pack_).appendable) {
+    ++current_pack_;
+    packs_.emplace(current_pack_, pack_contents{current_pack_, {}, 16});
+  }
   if (rebuild) {
     index_.set_highest_pack_id(highest);
     co_return co_await index_.rebuild(std::move(all));
@@ -256,21 +260,14 @@ runtime::task<pack_entry> store_backend::store_chunk(
     co_return std::unexpected(present.error());
   if (*present)
     co_return pack_entry{id, **present, static_cast<std::uint32_t>(raw.size())};
-  auto& active = packs_.at(current_pack_);
   const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
-  if (!active.entries.empty() && active.data_end + raw.size() > limit) {
-    auto flushed = co_await index_.flush();
-    if (!flushed)
-      co_return std::unexpected(flushed.error());
-    ++current_pack_;
-    packs_.emplace(current_pack_, pack_contents{current_pack_, {}, 16});
-  }
-  auto& destination = packs_.at(current_pack_);
+  auto &destination = packs_.at(current_pack_);
   auto written = co_await append_pack_entry(root_ / "packs" /
                                                 ("pack-" + std::to_string(current_pack_) + ".pack"),
                                             destination, id, std::move(raw),
                                             encryption ? std::optional{encryption->chunk_encryption}
-                                                       : std::nullopt);
+                                                       : std::nullopt,
+                                            options_.durable);
   if (!written)
     co_return std::unexpected(written.error());
   destination.entries.push_back(*written);
@@ -282,6 +279,16 @@ runtime::task<pack_entry> store_backend::store_chunk(
     auto flushed = co_await index_.flush();
     if (!flushed)
       co_return std::unexpected(flushed.error());
+  }
+  if (destination.data_end >= limit) {
+    auto sealed = co_await seal_pack(root_ / "packs" /
+                                         ("pack-" + std::to_string(current_pack_) + ".pack"),
+                                     destination, options_.durable);
+    if (!sealed)
+      co_return std::unexpected(sealed.error());
+    destination.appendable = false;
+    ++current_pack_;
+    packs_.emplace(current_pack_, pack_contents{current_pack_, {}, 16});
   }
   co_return *written;
 }
@@ -394,7 +401,7 @@ runtime::task<digest> store_backend::put(std::vector<std::byte> input) {
   auto saved = co_await add_object(std::move(object));
   if (!saved)
     co_return std::unexpected(saved.error());
-  index_.set_highest_pack_id(current_pack_);
+  index_.set_highest_pack_id(descriptor_stored->location.pack_id);
   auto flushed = co_await index_.flush();
   if (!flushed)
     co_return std::unexpected(flushed.error());

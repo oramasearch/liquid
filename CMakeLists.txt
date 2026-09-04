@@ -155,6 +155,7 @@ add_library(libliquid
   src/runtime/runtime.cpp
   src/store.cpp
   src/store/chunker.cpp
+  src/store/faults.cpp
   src/store/index.cpp
   src/store/mapped_file.cpp
   src/store/pack.cpp

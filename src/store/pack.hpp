@@ -29,6 +29,7 @@ struct pack_contents {
   std::uint32_t id{};
   std::vector<pack_entry> entries;
   std::uint64_t data_end{};
+  bool appendable{true};
 };
 
 [[nodiscard]] runtime::task<std::vector<std::byte>> read_file(std::filesystem::path path);
@@ -49,7 +50,10 @@ void reset_file_write_counter() noexcept;
 [[nodiscard]] runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
                                                           pack_contents contents, digest id,
                                                           std::vector<std::byte> raw,
-                                                          std::optional<crypto_detail::key> encryption_key = std::nullopt);
+                                                          std::optional<crypto_detail::key> encryption_key,
+                                                          bool durable);
+[[nodiscard]] runtime::task<void> seal_pack(std::filesystem::path path,
+                                            const pack_contents &contents, bool durable);
 [[nodiscard]] runtime::task<std::vector<std::byte>>
 read_pack_entry(std::filesystem::path path, chunk_location location, digest expected,
                 std::optional<crypto_detail::key> encryption_key = std::nullopt);

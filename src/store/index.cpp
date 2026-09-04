@@ -1,5 +1,7 @@
 #include "index.hpp"
 
+#include "faults.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -545,7 +547,9 @@ runtime::task<void> chunk_index::write_manifest() {
     co_return std::unexpected(written.error());
   }
   try {
+    visit_fault({fault_operation::rename, fault_phase::before, temporary});
     std::filesystem::rename(temporary, root_ / "MANIFEST");
+    visit_fault({fault_operation::rename, fault_phase::after, root_ / "MANIFEST"});
   } catch (const std::exception &exception) {
     co_return std::unexpected(index_error(errc::io, exception.what(), root_ / "MANIFEST"));
   }
