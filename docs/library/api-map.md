@@ -96,7 +96,7 @@ are checked against the official implementation.
 ### `liquid/store.hpp`
 
 ```cpp
-class store {                          // the chunk store: chunks, packs, the index (RocksDB)
+class store {                          // the chunk store: chunks, packs, liquid's own index
  public:
   static result<store> open(const std::filesystem::path&, const store_options& = {});
   result<digest> put(std::span<const std::byte>);                 // chunked, deduplicated, indexed
