@@ -23,6 +23,7 @@ namespace repository_detail {
 struct build_access;
 struct testing;
 struct vfs_access;
+struct git_access;
 } // namespace repository_detail
 
 enum class encryption_mode : std::uint8_t { leaf, file };
@@ -153,6 +154,7 @@ public:
     [[nodiscard]] runtime::task<void> remove(std::string path);
     [[nodiscard]] runtime::task<change_id> cut(std::string message);
     [[nodiscard]] runtime::task<change_id> record(change_input input);
+    [[nodiscard]] runtime::task<change_id> record_from_tree(change_input input, digest root_tree);
     [[nodiscard]] runtime::task<void> set_metadata(std::string key, std::vector<std::byte> value);
     [[nodiscard]] runtime::task<std::optional<std::vector<std::byte>>> metadata(std::string key);
     [[nodiscard]] runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);
@@ -184,6 +186,7 @@ private:
     friend struct repository_detail::build_access;
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
+    friend struct repository_detail::git_access;
     struct impl;
     std::unique_ptr<impl> impl_;
 };

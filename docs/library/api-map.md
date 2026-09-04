@@ -279,6 +279,7 @@ class repository {
   runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
   // Import primitives (liquid #43; lake's importers use the same calls)
   runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
+  runtime::task<change_id> record_from_tree(change_input, digest root_tree); // records a supplied snapshot tree
   runtime::task<void> set_metadata(std::string key, std::vector<std::byte>);   // repository-document metadata map
   runtime::task<std::optional<std::vector<std::byte>>> metadata(std::string key);
   runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);

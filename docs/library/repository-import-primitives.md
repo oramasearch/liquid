@@ -14,6 +14,10 @@ sole parent and advances `main`.
 Change metadata is canonical CBOR text-to-text data. It is signed as part of the change body and
 is intended for stable foreign-format identifiers such as a Git object name.
 
+`repository::record_from_tree(change_input, digest)` has the same change and signing semantics,
+but takes an already stored tree record as its snapshot. It lets a history importer retain each
+historical snapshot without replaying that history through the working-tree documents.
+
 ## Repository metadata
 
 `set_metadata`, `metadata`, and `metadata_keys` persist opaque byte values in the repository

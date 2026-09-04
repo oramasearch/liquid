@@ -20,6 +20,7 @@
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
 #include "objects/records.hpp"
+#include "repository/git_access.hpp"
 #include "repository/merge.hpp"
 #include "repository/store_access.hpp"
 #include "repository/testing.hpp"
@@ -1908,6 +1909,17 @@ runtime::task<change_id> repository::record(change_input input) {
     auto root = co_await impl_->snapshot(impl_->current.root);
     if (!root)
         co_return std::unexpected(root.error());
+    const auto recorded = co_await record_from_tree(std::move(input), *root);
+    if (!recorded)
+        co_return std::unexpected(recorded.error());
+    auto saved = co_await impl_->checkpoint(*root);
+    if (!saved)
+        co_return std::unexpected(saved.error());
+    co_return *recorded;
+}
+runtime::task<change_id> repository::record_from_tree(change_input input, digest root) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     for (auto& parent : input.parents)
         if (std::ranges::all_of(parent.repo_id,
                                 [](std::byte value) { return value == std::byte{}; }))
@@ -1917,7 +1929,7 @@ runtime::task<change_id> repository::record(change_input input) {
     value.author = std::move(input.author);
     value.message = std::move(input.message);
     value.at = input.at;
-    value.root = *root;
+    value.root = root;
     value.metadata = std::move(input.metadata);
     value.conflicts = impl_->current.conflict_values;
     auto body = objects::encode_change_body(value);
@@ -1942,11 +1954,34 @@ runtime::task<change_id> repository::record(change_input input) {
         impl_->current.head = id;
         impl_->current.refs[*input.ref] = id;
     }
-    impl_->current.pending_drips = 0;
-    auto saved = co_await impl_->checkpoint(*root);
-    if (!saved)
-        co_return std::unexpected(saved.error());
     co_return id;
+}
+
+runtime::task<digest> repository_detail::git_access::put_blob(repository& destination,
+                                                              std::vector<std::byte> contents) {
+    if (!destination.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto content = co_await destination.impl_->objects.put(std::move(contents));
+    if (!content)
+        co_return std::unexpected(content.error());
+    auto value = repository_detail::store_access::blob_for(destination.impl_->objects, *content);
+    if (!value)
+        co_return std::unexpected(value.error());
+    auto encoded = objects::encode(*value);
+    if (!encoded)
+        co_return std::unexpected(encoded.error());
+    co_return co_await repository_detail::store_access::put_plain(destination.impl_->objects,
+                                                                  std::move(*encoded));
+}
+
+runtime::task<digest> repository_detail::git_access::put_tree(repository& destination, tree value) {
+    if (!destination.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto encoded = objects::encode(value);
+    if (!encoded)
+        co_return std::unexpected(encoded.error());
+    co_return co_await repository_detail::store_access::put_plain(destination.impl_->objects,
+                                                                  std::move(*encoded));
 }
 runtime::task<void> repository::set_metadata(std::string key, std::vector<std::byte> value) {
     if (!impl_ || key.empty())
