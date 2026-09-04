@@ -1,14 +1,18 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -55,6 +59,34 @@ auto marker(std::uint64_t seed) -> std::array<std::byte, 4096> {
     return output;
 }
 
+auto random_fixture_requested() -> bool {
+    const auto* value = std::getenv("LIQUID_40G_RANDOM");
+    return value != nullptr && std::string_view{value} == "1";
+}
+
+auto next_random_word(std::uint64_t& state) -> std::uint64_t {
+    state += 0x9e3779b97f4a7c15ULL;
+    auto value = state;
+    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31U);
+}
+
+void fill_random_bytes(std::span<std::byte> output, std::uint64_t& state) {
+    auto offset = std::size_t{};
+    while (offset + sizeof(std::uint64_t) <= output.size()) {
+        const auto word = next_random_word(state);
+        std::memcpy(output.data() + offset, &word, sizeof(word));
+        offset += sizeof(word);
+    }
+
+    if (offset == output.size())
+        return;
+
+    const auto word = next_random_word(state);
+    std::memcpy(output.data() + offset, &word, output.size() - offset);
+}
+
 void make_sparse_file(const std::filesystem::path& path,
                       std::uint64_t size,
                       std::span<const std::byte> contents) {
@@ -71,6 +103,42 @@ void make_sparse_file(const std::filesystem::path& path,
                    static_cast<std::streamsize>(contents.size()));
     }
     ASSERT_TRUE(file);
+}
+
+void make_seeded_random_file(const std::filesystem::path& path, std::uint64_t size) {
+    constexpr auto window_size = std::size_t{8} * 1024U * 1024U;
+    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+    ASSERT_TRUE(output);
+    auto window = std::vector<std::byte>(window_size);
+    auto state = std::uint64_t{116};
+    auto remaining = size;
+    while (remaining > 0) {
+        const auto bytes =
+            static_cast<std::size_t>(std::min<std::uint64_t>(remaining, window.size()));
+        fill_random_bytes(std::span{window}.first(bytes), state);
+        output.write(reinterpret_cast<const char*>(window.data()),
+                     static_cast<std::streamsize>(bytes));
+        ASSERT_TRUE(output);
+        remaining -= bytes;
+    }
+}
+
+auto read_file_range(const std::filesystem::path& path, std::uint64_t offset, std::size_t size)
+    -> std::vector<std::byte> {
+    auto input = std::ifstream{path, std::ios::binary};
+    EXPECT_TRUE(input);
+    if (!input)
+        return {};
+    input.seekg(static_cast<std::streamoff>(offset));
+    EXPECT_TRUE(input);
+    if (!input)
+        return {};
+    auto bytes = std::vector<std::byte>(size);
+    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    EXPECT_EQ(input.gcount(), static_cast<std::streamsize>(bytes.size()));
+    if (input.gcount() != static_cast<std::streamsize>(bytes.size()))
+        return {};
+    return bytes;
 }
 
 auto directory_size(const std::filesystem::path& root) -> std::uint64_t {
@@ -110,7 +178,11 @@ TEST(StoreLarge40G, StreamsFortyGiBAndFortyBytesWithBoundedMemory) {
     const auto small_source = temporary.path() / "source-40b.bin";
     const auto repository_path = temporary.path() / "repository";
     const auto expected = marker(116);
-    make_sparse_file(source, size, expected);
+    const auto random_fixture = random_fixture_requested();
+    if (random_fixture)
+        make_seeded_random_file(source, size);
+    else
+        make_sparse_file(source, size, expected);
     const auto small = std::array<std::byte, 40>{std::byte{'l'},
                                                  std::byte{'i'},
                                                  std::byte{'q'},
@@ -144,10 +216,12 @@ TEST(StoreLarge40G, StreamsFortyGiBAndFortyBytesWithBoundedMemory) {
     EXPECT_EQ(*small_read, std::vector<std::byte>(small.begin(), small.end()));
 
     const auto cache = repository_path / "LIQUID_VFS" / "chunks";
+    const auto middle_expected = read_file_range(source, size / 2, expected.size());
+    ASSERT_EQ(middle_expected.size(), expected.size());
     auto hydrated = liquid::runtime::block_on(liquid::repository_detail::testing::cached_vfs_read(
         repository, "large.bin", cache, size / 2, expected.size()));
     ASSERT_TRUE(hydrated) << hydrated.error().message;
-    EXPECT_EQ(hydrated->bytes, std::vector<std::byte>(expected.begin(), expected.end()));
+    EXPECT_EQ(hydrated->bytes, middle_expected);
     EXPECT_LT(hydrated->status.hydrated_bytes, size);
     repository = {};
 
@@ -162,7 +236,9 @@ TEST(StoreLarge40G, StreamsFortyGiBAndFortyBytesWithBoundedMemory) {
         auto read = liquid::runtime::block_on(store.read(*id, offset, range));
         ASSERT_TRUE(read) << read.error().message;
         ASSERT_EQ(*read, range.size());
-        EXPECT_EQ(range, expected);
+        const auto expected_range = read_file_range(source, offset, range.size());
+        ASSERT_EQ(expected_range.size(), range.size());
+        EXPECT_EQ(std::vector<std::byte>(range.begin(), range.end()), expected_range);
     }
     auto exported = liquid::runtime::block_on(store.get_to_file(*id, destination));
     ASSERT_TRUE(exported) << exported.error().message;
@@ -179,6 +255,7 @@ TEST(StoreLarge40G, StreamsFortyGiBAndFortyBytesWithBoundedMemory) {
     const auto peak_rss = peak_rss_bytes();
     const auto store_bytes = directory_size(repository_path / ".liquid-store");
     std::cout << "LARGE_40G_METRICS"
+              << " fixture=" << (random_fixture ? "seeded-random" : "sparse-zero-markers")
               << " write_seconds=" << write_seconds << " wall_seconds=" << wall_seconds
               << " write_mib_per_second=" << throughput_mib << " peak_rss_bytes=" << peak_rss
               << " store_bytes=" << store_bytes << '\n';

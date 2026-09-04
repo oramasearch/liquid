@@ -113,10 +113,23 @@ uses the same stored list, so both paths produce the same blob record. Raw blob 
 readable under encryption through their parent object's trust-domain key.
 
 The default suite exercises this path with a deterministic sparse 256 MiB file. The labelled
-`large-40g` test uses a deterministic sparse 40 GiB file with seeded 4 KiB data at byte 0, 20 GiB,
-and 40 GiB minus 4 KiB, plus a 40-byte file through the same `write_file` call. It verifies those
-three ranges through `store::read`, verifies the middle range through VFS hydration, exports the
-large object, re-imports the export, compares digests, and asserts peak RSS below 1 GiB.
+`large-40g` test uses a 40 GiB file and a 40-byte file through the same `write_file` call. It
+verifies three 4 KiB ranges through `store::read`, verifies the middle range through VFS hydration,
+exports the large object, re-imports the export, compares digests, and asserts peak RSS below 1
+GiB.
+
+The recorded run used the default sparse fixture: zeros throughout with three seeded 4 KiB marker
+blocks at byte 0, 20 GiB, and 40 GiB minus 4 KiB. The store deduplicated that input to about 15 MB.
+Consequently, its measurements prove bounded memory and the streaming code path over a 40 GiB
+input; they do not measure unique-data throughput.
+
+Set `LIQUID_40G_RANDOM=1` to generate the source as a streamed seeded pseudo-random byte sequence
+instead. That mode creates about 40 GiB of packs and is opt-in because it needs the corresponding
+disk capacity. For example:
+
+```sh
+LIQUID_40G_RANDOM=1 ctest --test-dir build -L large-40g --output-on-failure
+```
 
 Recorded on an Apple M3 Max with 64 GiB RAM and macOS 14.6.1:
 
@@ -129,7 +142,7 @@ Recorded on an Apple M3 Max with 64 GiB RAM and macOS 14.6.1:
 | Store on-disk logical size | 15,033,445 bytes (14.3 MiB) |
 
 The source and exported temporary files were deleted after the run. The small store size is
-expected for this sparse fixture: repeated zero chunks deduplicate and compress, while the full
+expected for the sparse fixture: repeated zero chunks deduplicate and compress, while the full
 40 GiB logical byte stream still passes through hashing, FastCDC, range reads, export, and digest
 verification.
 
