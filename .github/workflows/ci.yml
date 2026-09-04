@@ -43,6 +43,11 @@ jobs:
         shell: bash
         run: brew install cmake llvm ninja
 
+      - name: Install Windows build tools
+        if: matrix.platform == 'windows'
+        shell: cmd
+        run: choco upgrade cmake ninja --yes --no-progress
+
       - name: Verify Windows toolchain
         if: matrix.platform == 'windows'
         shell: cmd

@@ -8,13 +8,15 @@ runs CTest with failure output, and runs `liquid version` on each desktop platfo
 |---|---|---|---|
 | Linux | `ubuntu-24.04` | Clang 19 from apt.llvm.org, `libstdc++-14-dev`, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
 | macOS | `macos-15` | Homebrew LLVM, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
-| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
+| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, current Chocolatey CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer | Debug configure, build, CTest |
 
 `CMakeLists.txt` selects Homebrew LLVM on macOS, a versioned `clang++` on Linux, and `clang-cl`
 on Windows before `project()`. If no compiler is found, configuration stops with instructions for
-installing one or choosing an explicit system compiler. The Windows job initializes the Visual
-Studio developer environment so `clang-cl` uses the MSVC STL and linker.
+installing one or choosing an explicit system compiler. The Windows job updates CMake before
+configuration because the image's CMake 3.31 does not recognize `cxx_std_26` for Clang 19.1.5;
+the current package maps that requirement to `clang-cl`'s `/std:c++latest`. It initializes the
+Visual Studio developer environment so `clang-cl` uses the MSVC STL and linker.
 
 ## Platform coverage
 
