@@ -12,6 +12,7 @@
 #include <zstd.h>
 
 #include "../runtime/net.hpp"
+#include "faults.hpp"
 
 namespace liquid::store_detail {
 namespace {
@@ -25,6 +26,13 @@ constexpr std::array<std::byte, 8> pack_magic{std::byte{'L'}, std::byte{'Q'}, st
 constexpr std::array<std::byte, 8> footer_magic{std::byte{'L'}, std::byte{'Q'}, std::byte{'F'},
                                                 std::byte{'O'}, std::byte{'O'}, std::byte{'T'},
                                                 std::byte{1},   std::byte{0}};
+constexpr std::array<std::byte, 8> frame_magic{std::byte{'L'}, std::byte{'Q'}, std::byte{'F'},
+                                               std::byte{'R'}, std::byte{'A'}, std::byte{'M'},
+                                               std::byte{1},   std::byte{0}};
+constexpr std::array<std::byte, 8> encrypted_frame_magic{std::byte{'L'}, std::byte{'Q'},
+                                                         std::byte{'F'}, std::byte{'R'},
+                                                         std::byte{'A'}, std::byte{'M'},
+                                                         std::byte{1}, std::byte{1}};
 constexpr std::size_t pack_header_size = 16;
 constexpr std::size_t physical_header_size = 49;
 constexpr std::size_t table_entry_size = 53;
@@ -85,6 +93,7 @@ std::array<std::byte, 33> chunk_ad(digest id) {
 runtime::task<void> write_at(std::filesystem::path path, std::uint64_t offset,
                              std::vector<std::byte> bytes, bool truncate, bool sync = true) {
   try {
+    visit_fault({fault_operation::write, fault_phase::before, path});
     const auto executor = co_await boost::capy::this_coro::executor;
     boost::corosio::random_access_file file(executor.context());
     auto flags = boost::corosio::file_base::read_write | boost::corosio::file_base::create;
@@ -104,6 +113,7 @@ runtime::task<void> write_at(std::filesystem::path path, std::uint64_t offset,
     if (sync)
       file.sync_data();
     file.close();
+    visit_fault({fault_operation::write, fault_phase::after, path});
     co_return result<void>{};
   } catch (const std::system_error &exception) {
     co_return std::unexpected(io_error(exception.what(), path.string()));
@@ -154,6 +164,43 @@ std::vector<std::byte> encode_footer(std::uint64_t table_offset, std::uint64_t t
   put_u64(footer, table_size);
   put_u64(footer, checksum(table));
   return footer;
+}
+
+bool valid_frame(std::span<const std::byte> bytes, std::size_t offset, pack_entry &entry) {
+  if (bytes.size() - offset < physical_header_size) {
+    return false;
+  }
+  const bool encrypted =
+      std::equal(encrypted_frame_magic.begin(), encrypted_frame_magic.end(), bytes.begin() + offset);
+  if (!encrypted && !std::equal(frame_magic.begin(), frame_magic.end(), bytes.begin() + offset)) {
+    return false;
+  }
+  const auto raw_length = get_u32(bytes, offset + 8);
+  const auto compressed_length = get_u32(bytes, offset + 12);
+  const auto algorithm_byte = std::to_integer<unsigned char>(bytes[offset + 16]);
+  if (!valid_algorithm(algorithm_byte) || compressed_length > bytes.size() - offset - physical_header_size) {
+    return false;
+  }
+  digest id{static_cast<algorithm>(algorithm_byte), {}};
+  std::copy_n(bytes.begin() + offset + 17, id.bytes.size(), id.bytes.begin());
+  entry = {id, {0, offset, compressed_length}, raw_length};
+  // Encrypted frames are authenticated when an object loads them with its
+  // trust-domain key. The pack scan has no object key context.
+  if (encrypted) {
+    return true;
+  }
+  std::vector<std::byte> raw(raw_length);
+  const auto produced = ZSTD_decompress(raw.data(), raw.size(),
+                                        bytes.data() + offset + physical_header_size,
+                                        compressed_length);
+  if (ZSTD_isError(produced) || produced != raw.size()) {
+    return false;
+  }
+  const auto actual = hash(id.alg, raw);
+  if (!actual || actual->bytes != id.bytes) {
+    return false;
+  }
+  return true;
 }
 
 } // namespace
@@ -251,54 +298,66 @@ runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t
   pack_contents result{id, {}, pack_header_size};
   if (bytes.size() == pack_header_size)
     co_return result;
-  if (bytes.size() < footer_size ||
-      !std::equal(footer_magic.begin(), footer_magic.end(), bytes.end() - footer_size)) {
-    co_return std::unexpected(corrupt_error("missing or invalid pack footer", path));
-  }
-  const auto footer_at = bytes.size() - footer_size;
-  const auto table_at = get_u64(bytes, footer_at + 8);
-  const auto table_size = get_u64(bytes, footer_at + 16);
-  const auto table_hash = get_u64(bytes, footer_at + 24);
-  if (table_at < pack_header_size || table_at + table_size != footer_at ||
-      table_size % table_entry_size != 0 ||
-      checksum(bytes.subspan(table_at, table_size)) != table_hash) {
-    co_return std::unexpected(corrupt_error("invalid pack table", path));
-  }
-  result.data_end = table_at;
-  for (std::size_t at = static_cast<std::size_t>(table_at); at < footer_at;
-       at += table_entry_size) {
-    const auto alg = std::to_integer<unsigned char>(bytes[at]);
-    if (!valid_algorithm(alg))
-      co_return std::unexpected(corrupt_error("unknown digest algorithm in pack table", path));
-    pack_entry entry{};
-    entry.id.alg = static_cast<algorithm>(alg);
-    std::copy_n(bytes.begin() + at + 1, entry.id.bytes.size(), entry.id.bytes.begin());
-    entry.location = {get_u32(bytes, at + 49), get_u64(bytes, at + 33), get_u32(bytes, at + 41)};
-    entry.raw_length = get_u32(bytes, at + 45);
-    if (entry.location.offset < pack_header_size ||
-        entry.location.offset + physical_header_size + entry.location.length > table_at) {
-      co_return std::unexpected(corrupt_error("pack table location is outside data", path));
+  if (bytes.size() >= footer_size &&
+      std::equal(footer_magic.begin(), footer_magic.end(), bytes.end() - footer_size)) {
+    const auto footer_at = bytes.size() - footer_size;
+    const auto table_at = get_u64(bytes, footer_at + 8);
+    const auto table_size = get_u64(bytes, footer_at + 16);
+    const auto table_hash = get_u64(bytes, footer_at + 24);
+    if (table_at >= pack_header_size && table_at + table_size == footer_at &&
+        table_size % table_entry_size == 0 &&
+        checksum(bytes.subspan(table_at, table_size)) == table_hash) {
+      result.data_end = table_at;
+      result.appendable = false;
+      for (std::size_t at = static_cast<std::size_t>(table_at); at < footer_at;
+           at += table_entry_size) {
+        const auto alg = std::to_integer<unsigned char>(bytes[at]);
+        if (!valid_algorithm(alg))
+          co_return std::unexpected(corrupt_error("unknown digest algorithm in pack table", path));
+        pack_entry entry{};
+        entry.id.alg = static_cast<algorithm>(alg);
+        std::copy_n(bytes.begin() + at + 1, entry.id.bytes.size(), entry.id.bytes.begin());
+        entry.location = {get_u32(bytes, at + 49), get_u64(bytes, at + 33), get_u32(bytes, at + 41)};
+        entry.raw_length = get_u32(bytes, at + 45);
+        if (entry.location.offset < pack_header_size ||
+            entry.location.offset + physical_header_size + entry.location.length > table_at) {
+          co_return std::unexpected(corrupt_error("pack table location is outside data", path));
+        }
+        result.entries.push_back(entry);
+      }
+      co_return result;
     }
+  }
+
+  std::size_t offset = pack_header_size;
+  while (offset < bytes.size()) {
+    pack_entry entry{};
+    if (!valid_frame(bytes, offset, entry))
+      break;
+    entry.location.pack_id = id;
+    offset += physical_header_size + entry.location.length;
     result.entries.push_back(entry);
   }
+  result.data_end = offset;
+  result.appendable = offset == bytes.size();
   co_return result;
 }
 
 runtime::task<pack_entry> append_pack_entry(std::filesystem::path path, pack_contents contents,
                                             digest id, std::vector<std::byte> raw,
-                                            std::optional<crypto_detail::key> encryption_key) {
+                                            std::optional<crypto_detail::key> encryption_key,
+                                            bool durable) {
   if (contents.data_end < pack_header_size) {
     co_return std::unexpected(error{errc::internal, "invalid pack write position", path.string()});
   }
-  if (std::filesystem::exists(path)) {
-    auto truncation = co_await resize_file(path, contents.data_end);
-    if (!truncation)
-      co_return std::unexpected(truncation.error());
-  } else {
+  if (!contents.appendable) {
+    co_return std::unexpected(error{errc::internal, "attempted to append sealed pack", path.string()});
+  }
+  if (!std::filesystem::exists(path)) {
     std::vector<std::byte> header(pack_magic.begin(), pack_magic.end());
     put_u32(header, contents.id);
     put_u32(header, 0);
-    auto created = co_await write_file(path, std::move(header));
+    auto created = co_await write_at(path, 0, std::move(header), true, durable);
     if (!created)
       co_return std::unexpected(created.error());
   }
@@ -312,14 +371,12 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path, pack_con
     co_return std::unexpected(error{errc::internal, "zstd compression failed", path.string()});
   }
   compressed.resize(compressed_size);
-  std::uint64_t flags = 0;
   if (encryption_key) {
     const auto ad = chunk_ad(id);
     auto boxed = crypto_detail::seal(*encryption_key, ad, compressed);
     if (!boxed)
       co_return std::unexpected(boxed.error());
     compressed = std::move(*boxed);
-    flags = 1;
   }
   if (compressed.size() > std::numeric_limits<std::uint32_t>::max()) {
     co_return std::unexpected(error{errc::internal, "encrypted chunk is too large", path.string()});
@@ -329,27 +386,35 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path, pack_con
                    static_cast<std::uint32_t>(raw.size())};
   std::vector<std::byte> physical;
   physical.reserve(physical_header_size + compressed.size());
-  physical.push_back(std::byte{static_cast<unsigned char>(id.alg)});
-  physical.insert(physical.end(), id.bytes.begin(), id.bytes.end());
+  const auto &magic = encryption_key ? encrypted_frame_magic : frame_magic;
+  physical.insert(physical.end(), magic.begin(), magic.end());
   put_u32(physical, entry.raw_length);
   put_u32(physical, entry.location.length);
-  put_u64(physical, flags);
+  physical.push_back(std::byte{static_cast<unsigned char>(id.alg)});
+  physical.insert(physical.end(), id.bytes.begin(), id.bytes.end());
   physical.insert(physical.end(), compressed.begin(), compressed.end());
-  auto data_written = co_await write_at(path, contents.data_end, std::move(physical), false);
+  auto data_written = co_await write_at(path, contents.data_end, std::move(physical), false, durable);
   if (!data_written)
     co_return std::unexpected(data_written.error());
-  contents.entries.push_back(entry);
-  contents.data_end += physical_header_size + entry.location.length;
+
+  co_return entry;
+}
+
+runtime::task<void> seal_pack(std::filesystem::path path, const pack_contents &contents,
+                              bool durable) {
+  if (!contents.appendable) {
+    co_return std::unexpected(error{errc::internal, "attempted to seal closed pack", path.string()});
+  }
   const auto table = encode_table(contents);
-  auto table_written = co_await write_at(path, contents.data_end, table, false);
+  auto table_written = co_await write_at(path, contents.data_end, table, false, durable);
   if (!table_written)
     co_return std::unexpected(table_written.error());
   auto footer_written =
       co_await write_at(path, contents.data_end + table.size(),
-                        encode_footer(contents.data_end, table.size(), table), false);
+                        encode_footer(contents.data_end, table.size(), table), false, durable);
   if (!footer_written)
     co_return std::unexpected(footer_written.error());
-  co_return entry;
+  co_return result<void>{};
 }
 
 runtime::task<std::vector<std::byte>> read_pack_entry(std::filesystem::path path,
@@ -359,19 +424,27 @@ runtime::task<std::vector<std::byte>> read_pack_entry(std::filesystem::path path
   if (!header)
     co_return std::unexpected(header.error());
   const auto bytes = std::span<const std::byte>(*header);
-  if (std::to_integer<unsigned char>(bytes[0]) != static_cast<unsigned char>(expected.alg) ||
-      !std::equal(expected.bytes.begin(), expected.bytes.end(), bytes.begin() + 1)) {
+  const bool framed = std::equal(frame_magic.begin(), frame_magic.end(), bytes.begin());
+  const bool encrypted_framed =
+      std::equal(encrypted_frame_magic.begin(), encrypted_frame_magic.end(), bytes.begin());
+  const bool current_frame = framed || encrypted_framed;
+  const auto algorithm_offset = current_frame ? 16U : 0U;
+  const auto digest_offset = current_frame ? 17U : 1U;
+  const auto raw_length_offset = current_frame ? 8U : 33U;
+  const auto compressed_length_offset = current_frame ? 12U : 37U;
+  if (std::to_integer<unsigned char>(bytes[algorithm_offset]) != static_cast<unsigned char>(expected.alg) ||
+      !std::equal(expected.bytes.begin(), expected.bytes.end(), bytes.begin() + digest_offset)) {
     co_return std::unexpected(corrupt_error("chunk header digest differs from index", path));
   }
-  const auto raw_size = get_u32(bytes, 33);
-  const auto compressed_size = get_u32(bytes, 37);
-  const auto flags = get_u64(bytes, 41);
+  const auto raw_size = get_u32(bytes, raw_length_offset);
+  const auto compressed_size = get_u32(bytes, compressed_length_offset);
   if (compressed_size != location.length)
     co_return std::unexpected(corrupt_error("chunk length differs from index", path));
   auto compressed =
       co_await read_file_range(path, location.offset + physical_header_size, compressed_size);
   if (!compressed)
     co_return std::unexpected(compressed.error());
+  const auto flags = current_frame ? (encrypted_framed ? 1U : 0U) : get_u64(bytes, 41);
   if (flags > 1) {
     co_return std::unexpected(corrupt_error("unknown encrypted chunk flags", path));
   }

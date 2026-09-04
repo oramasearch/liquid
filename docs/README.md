@@ -15,4 +15,5 @@ notes so that each claim has a clear role.
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
 | [`library/store.md`](library/store.md) | Content-defined local store, on-disk formats, integrity checks, index, tuning, and rebuild. |
 | [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, key custody, on-disk envelopes, and failure behavior. |
+| [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |

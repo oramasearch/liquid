@@ -98,6 +98,22 @@ TEST(Store, PutGetReadDeduplicateAndReopen) {
     EXPECT_EQ(*got, source);
 }
 
+TEST(Store, SealedPackReopensFromItsFooter) {
+    temporary_store temporary;
+    liquid::store_options options;
+    options.pack_size = 1;
+    auto store = liquid::runtime::block_on(liquid::store::open(temporary.path(), options));
+    ASSERT_TRUE(store.has_value()) << store.error().message;
+    const auto source = bytes(4096, 45);
+    auto id = liquid::runtime::block_on(store->put(source));
+    ASSERT_TRUE(id.has_value()) << id.error().message;
+    *store = {};
+    auto reopened = open_store(temporary.path());
+    auto got = liquid::runtime::block_on(reopened.get(*id));
+    ASSERT_TRUE(got.has_value()) << got.error().message;
+    EXPECT_EQ(*got, source);
+}
+
 TEST(Store, RebuildsIndexAndReportsPackCorruption) {
     temporary_store temporary;
     auto store = open_store(temporary.path());

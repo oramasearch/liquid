@@ -20,6 +20,7 @@ struct LIQUID_EXPORT store_options {
     std::uint64_t pack_size{};
     std::shared_ptr<keyring> keys;
     std::string write_key;
+    bool durable{};
 };
 
 struct LIQUID_EXPORT collection_options {};

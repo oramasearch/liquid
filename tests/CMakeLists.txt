@@ -48,6 +48,15 @@ target_include_directories(liquid-crypto-tests PRIVATE
 target_link_libraries(liquid-crypto-tests PRIVATE liquid_blake3 liquid_monocypher GTest::gtest_main)
 gtest_discover_tests(liquid-crypto-tests)
 
+add_executable(liquid-store-sim-tests
+  sim/harness.cpp
+  sim/test_store_sim.cpp)
+target_include_directories(liquid-store-sim-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/store
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim)
+target_link_libraries(liquid-store-sim-tests PRIVATE liquid::liquid GTest::gtest_main)
+gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
+
 add_executable(liquid-header-tests
   headers/drip.cpp
   headers/error.cpp
