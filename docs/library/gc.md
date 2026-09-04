@@ -1,0 +1,99 @@
+# Store garbage collection
+
+**Status: implemented for single-process local stores (liquid #8).** Leased roots, epoch
+marking, chunk-list reference extraction, whole-pack deletion, dry runs, and retained-chunk
+explanations are available through `liquid/store.hpp` and `liquid gc`.
+
+## What and why
+
+The content store contains acknowledged objects, abandoned interrupted puts, and immutable
+chunks shared by many objects. Collection has to reclaim unreachable data without holding the
+writer lock through marking or leaving an index entry whose pack frame has already disappeared. It also has to keep
+the reference rule beside each object kind so future tree and change records cannot outlive the
+objects they name.
+
+A root is a persisted lease under `leases/`. Each record carries a root digest, an expiry, an
+owner note, and an internal generation. `store::lease_root` creates it, `lease::renew` writes a
+new durable generation, and `lease::release` removes the active generation. Destroying the C++
+handle does nothing: expiry, not process lifetime, decides whether the root is live. Renewal
+writes the replacement before removing the prior generation, so a crash can extend a lease but
+cannot shorten it.
+
+This model has deliberate limits. Leases use the local system clock, so a clock jump can extend
+or shorten retention. A holder that stops renewing can lose its root even if its process still
+exists, while a very long TTL delays reclamation after a crash. Callers choose the TTL and renew
+before it expires. `collection_options::min_lease_age` adds a grace interval after expiry. Remote
+lease authority belongs to Phase 6 and is not inferred from local files.
+
+## Epoch rule
+
+Collection snapshots unexpired leases and opens an epoch at `(pack id, frame offset)`. It marks
+reachable objects and their chunk-list descriptors, then their chunks. A registry maps an object
+kind to a byte extractor returning referenced digests. The built-in `chunk-list` extractor keeps
+an object's chunks coupled to the object; the built-in tree extractor retains each entry's object
+and reference digest; the change extractor retains its root, parents, conflict references, and
+optional symbols. Unknown kinds are safe leaves and are listed in `collection_report::unknown_kinds`.
+
+Each pack gets a bitmap indexed by physical frame position for the epoch. A set bit is live. This
+bitmap is working state only: it is never consulted by recovery or index reconstruction. Any frame
+at or after the high-water position is implicitly live, including a put that completes while
+marking is in progress; the collector asserts that it never adds such a frame to a tombstone set.
+Marking releases the store mutation lock and yields to the `io_context` between packs. The final
+sweep takes the mutation lock again, includes roots and objects created during marking, and treats
+a lease created during the epoch as after the high-water mark for this sweep.
+
+The durable order is:
+
+1. write the filtered object map and the new tombstone bitmap to temporary files, then sync them;
+2. rename `gc/MANIFEST` into place as the commit point;
+3. rebuild the chunk index without tombstoned frames and durably replace `index/MANIFEST`;
+4. delete packs whose frames are all tombstoned, then remove superseded index runs.
+
+Only the committed tombstone manifest is authoritative. A crash before its rename leaves the
+previous manifest in force and deletes nothing. A crash after the rename may leave old index runs
+or whole packs behind; the next open removes that garbage safely. If `index/` is lost,
+reconstruction treats every frame as live unless the committed tombstone bitmap names that frame.
+Pack ids are never reused after deletion, so a committed tombstone can never identify a later
+frame.
+
+Partially live packs are not rewritten. Their dead frame bytes and live fraction are reported as
+`bytes_reclaimable_in_partially_dead_packs` and `partially_dead_packs`; liquid #46 adds pack
+rewriting. This issue deletes only wholly dead packs.
+
+## API and explanations
+
+`collection_options::dry_run` computes the same mark and report without changing objects,
+manifests, leases, the index, or packs. `collection_report` returns root, object, chunk, byte,
+pack, and epoch counts. Setting `collection_options::explain` also returns each retained chunk
+with either its lease path or the epoch high-water rule as the reason.
+
+The CLI opens the supplied store path, or the current directory when omitted:
+
+```sh
+liquid gc [--explain] [store-path]
+```
+
+`--explain` prints lines such as `blake3:… retained: lease … for root blake3:…` and identifies
+chunks protected because they were written after the epoch began.
+
+## How to verify
+
+```sh
+cmake -S . -B build -G Ninja && cmake --build build
+ctest --test-dir build -R GarbageCollection --output-on-failure
+LIQUID_SIM_SEEDS=2000 ctest --test-dir build -L sim-long --output-on-failure
+```
+
+The focused tests cover two simultaneously leased roots, unrooted reclamation, expiry, renewal,
+release, shared chunks, a concurrent put, dry-run immutability, and index reconstruction. The
+seeded simulator interleaves rooted and orphan puts with renewal and collection and interrupts
+writes, renames, and pack removal. The named seed-140 regression replays a collection crash and
+verifies that a forced index reconstruction retains every root.
+
+## How to change
+
+Add an extractor when an object kind gains its canonical encoder: register the kind in
+`src/store/references.cpp`, return every digest whose lifetime is coupled to the record, and add
+a test where the referenced object is otherwise unreachable. A pack format change must preserve
+stable physical frame positions for the bitmap or version the collection manifest with a
+migration. Never reverse the manifest/index/pack-removal order.

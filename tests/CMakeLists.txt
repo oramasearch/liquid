@@ -8,6 +8,9 @@ add_executable(liquid-tests
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
+  store/test_gc.cpp
+  ${PROJECT_SOURCE_DIR}/src/objects/records.cpp
+  ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
   test_version.cpp
   test_vfs.cpp
 )
@@ -18,6 +21,23 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
+
+if(LIQUID_BUILD_CLI)
+  add_executable(liquid-gc-cli-fixture store/gc_cli_fixture.cpp)
+  target_link_libraries(liquid-gc-cli-fixture PRIVATE liquid::liquid)
+  set(LIQUID_GC_CLI_STORE ${CMAKE_CURRENT_BINARY_DIR}/gc-cli-store)
+  add_test(NAME gc-cli-setup
+    COMMAND liquid-gc-cli-fixture ${LIQUID_GC_CLI_STORE})
+  set_tests_properties(gc-cli-setup PROPERTIES FIXTURES_SETUP gc_cli)
+  add_test(NAME gc-cli-explain
+    COMMAND $<TARGET_FILE:liquid-cli> gc --explain ${LIQUID_GC_CLI_STORE})
+  set_tests_properties(gc-cli-explain PROPERTIES
+    FIXTURES_REQUIRED gc_cli
+    PASS_REGULAR_EXPRESSION "retained: lease")
+  add_test(NAME gc-cli-clean
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_GC_CLI_STORE})
+  set_tests_properties(gc-cli-clean PROPERTIES FIXTURES_CLEANUP gc_cli)
+endif()
 
 add_executable(liquid-store-large-tests test_store_large.cpp)
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
@@ -53,6 +73,7 @@ target_link_libraries(liquid-crypto-tests PRIVATE liquid_blake3 liquid_monocyphe
 gtest_discover_tests(liquid-crypto-tests)
 
 add_executable(liquid-store-sim-tests
+  store/test_gc_sim_regression.cpp
   sim/harness.cpp
   sim/test_store_sim.cpp)
 target_include_directories(liquid-store-sim-tests PRIVATE

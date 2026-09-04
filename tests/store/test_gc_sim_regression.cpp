@@ -1,0 +1,37 @@
+#include <gtest/gtest.h>
+
+#include <filesystem>
+#include <string>
+
+#include "harness.hpp"
+
+namespace {
+
+class regression_workspace {
+public:
+    regression_workspace()
+        : path_(std::filesystem::temp_directory_path() / "liquid-gc-regression-seed-140") {
+        std::filesystem::remove_all(path_);
+        std::filesystem::create_directories(path_);
+    }
+    ~regression_workspace() {
+        std::filesystem::remove_all(path_);
+    }
+
+    [[nodiscard]] const std::filesystem::path& path() const noexcept {
+        return path_;
+    }
+
+private:
+    std::filesystem::path path_;
+};
+
+TEST(CollectorRegression, Seed140Step265KeepsRootsAfterCollectionCrash) {
+    regression_workspace workspace;
+    const auto outcome = liquid::sim::run_store_simulation(140, workspace.path());
+    EXPECT_EQ(outcome.fault_step, 265U);
+    ASSERT_FALSE(outcome.failure.has_value())
+        << (outcome.failure ? outcome.failure->message : std::string{});
+}
+
+} // namespace

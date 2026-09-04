@@ -14,6 +14,7 @@ notes so that each claim has a clear role.
 | [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
 | [`library/store.md`](library/store.md) | Content-defined local store, on-disk formats, integrity checks, index, tuning, and rebuild. |
+| [`library/gc.md`](library/gc.md) | Leased roots, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
 | [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, key custody, on-disk envelopes, and failure behavior. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |
