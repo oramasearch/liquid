@@ -474,6 +474,25 @@ auto lookup(working_entry& root, const std::vector<std::string>& path) -> workin
     }
     return current;
 }
+auto directory_entry(const working_entry& value) -> crdt::entry {
+    const auto kind = value.kind == entry_kind::file        ? "blob"
+                      : value.kind == entry_kind::directory ? "tree"
+                                                            : "repo";
+    return {kind, value.node, value.mode, to_string(value.object)};
+}
+auto directory_with_node(working_entry& root, const node_id& node) -> working_entry* {
+    if (root.node == node) {
+        return &root;
+    }
+    for (auto& [name, child] : root.entries) {
+        if (child.kind != entry_kind::file) {
+            if (auto* found = directory_with_node(child, node)) {
+                return found;
+            }
+        }
+    }
+    return nullptr;
+}
 auto same_path_or_descendant(std::string_view path, std::string_view root) -> bool {
     return path == root ||
            (path.size() > root.size() && path.starts_with(root) && path[root.size()] == '/');
@@ -584,6 +603,47 @@ struct repository::impl {
     auto journal_marker() const -> std::filesystem::path {
         return root_path / "LIQUID_JOURNAL";
     }
+    runtime::task<void> restore_directory_document(node_id id, crdt::directory_document& document) {
+        auto* working_directory = directory_with_node(current.root, id);
+        if (!working_directory) {
+            co_return std::unexpected(failure(
+                errc::corrupt, "directory is missing from working tree", "repository document"));
+        }
+        auto actual = document.entries();
+        if (!actual) {
+            co_return std::unexpected(actual.error());
+        }
+        for (const auto& [name, child] : working_directory->entries) {
+            const auto expected = directory_entry(child);
+            auto existing = document.entry_at(name);
+            if (!existing) {
+                co_return std::unexpected(existing.error());
+            }
+            if (*existing && **existing == expected) {
+                continue;
+            }
+            if (*existing) {
+                auto removed = document.remove_entry(name);
+                if (!removed) {
+                    co_return std::unexpected(removed.error());
+                }
+            }
+            auto inserted = document.put_entry(name, expected);
+            if (!inserted) {
+                co_return std::unexpected(inserted.error());
+            }
+        }
+        for (const auto& entry : *actual) {
+            if (working_directory->entries.contains(entry.name)) {
+                continue;
+            }
+            auto removed = document.remove_entry(entry.name);
+            if (!removed) {
+                co_return std::unexpected(removed.error());
+            }
+        }
+        co_return result<void>{};
+    }
     runtime::task<crdt::directory_document*> directory(node_id id) {
         auto found = directory_cache.find(id);
         if (found != directory_cache.end())
@@ -597,6 +657,9 @@ struct repository::impl {
                 co_return std::unexpected(loaded.error());
             auto inserted = directory_cache.emplace(id, std::move(*loaded));
             ++directory_load_count;
+            auto restored = co_await restore_directory_document(id, inserted.first->second);
+            if (!restored)
+                co_return std::unexpected(restored.error());
             co_return &inserted.first->second;
         }
         crdt::repo_id repository{};
@@ -605,6 +668,9 @@ struct repository::impl {
         if (!created)
             co_return std::unexpected(created.error());
         auto inserted = directory_cache.emplace(id, std::move(*created));
+        auto restored = co_await restore_directory_document(id, inserted.first->second);
+        if (!restored)
+            co_return std::unexpected(restored.error());
         co_return &inserted.first->second;
     }
     runtime::task<void> persist() {

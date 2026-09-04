@@ -198,7 +198,9 @@ Release configure with `cmake --build build-measure --target liquid-crdt-measure
 written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
 is a private CRDT document cached by its `node_id`; saving a checkpoint writes the document bytes
 to the store and refreshes its `dirs` entry. A checkpoint occurs at `cut` and after the configured
-drip interval (64 by default); an uncut write is recovered from the repository journal.
+drip interval (64 by default); an uncut write is recovered from the repository journal. On open,
+each directory document is restored lazily against the journaled working tree before its next
+mutation. Matching entries are left intact, so recovery is idempotent across process restarts.
 
 File content is represented by a canonical `blob` record whose parallel chunk digest and size
 lists describe FastCDC logical chunks. The size list lets VFS range reads locate an offset without

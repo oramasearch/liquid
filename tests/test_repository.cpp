@@ -258,6 +258,31 @@ TEST(Repository, journal_replays_a_write_before_the_next_checkpoint) {
     EXPECT_EQ(text(*value), "journal");
 }
 
+TEST(Repository, journal_replay_restores_a_working_tree_for_mutation) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("first.txt", content("first"))));
+    repository = {};
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto restored = liquid::runtime::block_on(reopened->root());
+    ASSERT_TRUE(restored);
+    EXPECT_TRUE(std::ranges::any_of(restored->entries, [](const liquid::tree_entry& entry) {
+        return entry.name == "first.txt";
+    }));
+    auto moved = liquid::runtime::block_on(reopened->move("first.txt", "moved.txt"));
+    ASSERT_TRUE(moved) << moved.error().message << " (" << moved.error().context << ")";
+    auto root = liquid::runtime::block_on(reopened->root());
+    ASSERT_TRUE(root);
+    EXPECT_TRUE(std::ranges::any_of(
+        root->entries, [](const liquid::tree_entry& entry) { return entry.name == "moved.txt"; }));
+    EXPECT_FALSE(std::ranges::any_of(
+        root->entries, [](const liquid::tree_entry& entry) { return entry.name == "first.txt"; }));
+}
+
 TEST(Repository, Sha256StoreRoundTripsRecords) {
     temporary_repository location;
     const auto options = sha256_options();
