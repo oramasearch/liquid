@@ -16,6 +16,9 @@ frame size. Both connection and stream send windows are decremented for DATA and
 receiver consumes it. A message larger than an advertised stream window therefore pauses until the
 peer sends WINDOW_UPDATE rather than exceeding the window.
 
+`goaway` begins graceful connection shutdown; `wait_for_goaway` receives the peer's connection
+shutdown after active streams have completed.
+
 `hpack` implements the RFC 7541 static table, the dynamic table with eviction and size updates,
 indexed and literal header fields, never-indexed sensitive fields, and the Appendix B Huffman code.
 `grpc` implements the five-byte compressed-flag and big-endian length envelope. Initial gRPC

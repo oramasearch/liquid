@@ -571,4 +571,22 @@ auto connection::goaway() -> runtime::task<void> {
     co_return {};
 }
 
+auto connection::wait_for_goaway() -> runtime::task<void> {
+    while (!received_goaway_) {
+        auto received = co_await read_frame();
+        if (!received) {
+            co_return std::unexpected(received.error());
+        }
+        if (received->type != frame_type::settings && received->type != frame_type::ping &&
+            received->type != frame_type::window_update && received->type != frame_type::goaway) {
+            co_return std::unexpected(protocol_error("expected connection control frame"));
+        }
+        auto applied = co_await apply_control(std::move(*received));
+        if (!applied) {
+            co_return std::unexpected(applied.error());
+        }
+    }
+    co_return {};
+}
+
 } // namespace liquid::http2

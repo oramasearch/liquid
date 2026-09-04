@@ -63,6 +63,7 @@ public:
     [[nodiscard]] auto cancel(std::uint32_t stream_id) -> runtime::task<void>;
     [[nodiscard]] auto ping(std::span<const std::byte, 8> opaque) -> runtime::task<void>;
     [[nodiscard]] auto goaway() -> runtime::task<void>;
+    [[nodiscard]] auto wait_for_goaway() -> runtime::task<void>;
 
 private:
     struct stream_state {

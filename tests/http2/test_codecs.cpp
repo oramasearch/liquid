@@ -10,8 +10,8 @@
 #include <boost/corosio/endpoint.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/ipv4_address.hpp>
+#include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/tcp_socket.hpp>
-#include <boost/corosio/test/socket_pair.hpp>
 
 #include "http2/connection.hpp"
 #include "http2/frame.hpp"
@@ -62,6 +62,10 @@ auto server_session(boost::corosio::tcp_socket& socket) -> liquid::runtime::task
     if (!sent_trailers) {
         co_return std::unexpected(sent_trailers.error());
     }
+    auto peer_goaway = co_await server.wait_for_goaway();
+    if (!peer_goaway) {
+        co_return std::unexpected(peer_goaway.error());
+    }
     co_return {};
 }
 
@@ -105,25 +109,33 @@ auto client_session(boost::corosio::tcp_socket& socket) -> liquid::runtime::task
     if (!trailers) {
         co_return std::unexpected(trailers.error());
     }
+    auto sent_goaway = co_await client.goaway();
+    if (!sent_goaway) {
+        co_return std::unexpected(sent_goaway.error());
+    }
     co_return {};
 }
 
-auto h2c_round_trip(boost::corosio::io_context& context,
-                    boost::corosio::tcp_socket& server_socket,
-                    boost::corosio::tcp_socket& client_socket,
-                    liquid::result<void>* output) -> boost::capy::task<> {
-    auto server_result = std::optional<liquid::result<void>>{};
-    boost::capy::run_async(context.get_executor(), [&server_result](liquid::result<void> result) {
-        server_result.emplace(std::move(result));
-    })(server_session(server_socket));
-    *output = co_await client_session(client_socket);
-    if (*output && (!server_result || !*server_result)) {
-        *output = std::unexpected(
-            server_result
-                ? server_result->error()
-                : liquid::error{liquid::errc::internal, "server did not complete", "HTTP/2 test"});
+auto accept_and_serve(boost::corosio::tcp_acceptor& acceptor, boost::corosio::io_context& context)
+    -> liquid::runtime::task<void> {
+    auto socket = boost::corosio::tcp_socket{context};
+    const auto [accept_error] = co_await acceptor.accept(socket);
+    if (accept_error) {
+        co_return std::unexpected(
+            liquid::error{liquid::errc::io, accept_error.message(), "HTTP/2 test accept"});
     }
-    co_return;
+    co_return co_await server_session(socket);
+}
+
+auto connect_and_run(boost::corosio::io_context& context, boost::corosio::endpoint endpoint)
+    -> liquid::runtime::task<void> {
+    auto socket = boost::corosio::tcp_socket{context};
+    const auto [connect_error] = co_await socket.connect(endpoint);
+    if (connect_error) {
+        co_return std::unexpected(
+            liquid::error{liquid::errc::io, connect_error.message(), "HTTP/2 test connect"});
+    }
+    co_return co_await client_session(socket);
 }
 
 auto get_capabilities(boost::corosio::io_context& context, liquid::result<void>* output)
@@ -264,12 +276,21 @@ TEST(GrpcFraming, RoundTripsMessagesAndTrailerStatus) {
 
 TEST(Http2Connection, ExchangesFlowControlledGrpcStyleStreamOverH2c) {
     auto context = boost::corosio::io_context{};
-    auto [server_socket, client_socket] = boost::corosio::test::make_socket_pair(context);
-    auto output = liquid::result<void>{};
-    boost::capy::run_async(context.get_executor())(
-        h2c_round_trip(context, server_socket, client_socket, &output));
+    auto acceptor = boost::corosio::tcp_acceptor{
+        context, boost::corosio::endpoint{boost::corosio::ipv4_address::loopback(), 0}};
+    auto server_result = std::optional<liquid::result<void>>{};
+    auto client_result = std::optional<liquid::result<void>>{};
+    boost::capy::run_async(context.get_executor(), [&server_result](liquid::result<void> result) {
+        server_result.emplace(std::move(result));
+    })(accept_and_serve(acceptor, context));
+    boost::capy::run_async(context.get_executor(), [&client_result](liquid::result<void> result) {
+        client_result.emplace(std::move(result));
+    })(connect_and_run(context, acceptor.local_endpoint()));
     context.run();
-    ASSERT_TRUE(output.has_value()) << (output ? "" : output.error().message);
+    ASSERT_TRUE(server_result.has_value());
+    ASSERT_TRUE(client_result.has_value());
+    ASSERT_TRUE(*server_result) << server_result->error().message;
+    ASSERT_TRUE(*client_result) << client_result->error().message;
 }
 
 TEST(Http2Interop, GetsCapabilitiesFromNativeLinkOverH2c) {
