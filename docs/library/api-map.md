@@ -221,6 +221,8 @@ class repository {
 `repository_options` is a plain record with `checkpoint_interval` and `store`; its `store_options`
 member selects the object-store hash algorithm and, when configured, its key custody. Pass the
 same options to `create` and `open` so later writes and reads use the intended store settings.
+Repository change IDs are computed with that selected store algorithm, including IDs returned by
+`log` and accepted by `at`.
 
 ### `liquid/vfs.hpp`
 
