@@ -32,6 +32,7 @@ struct liquid_file {
 };
 
 constexpr std::size_t memo_limit = 1'000'000;
+constexpr std::uint64_t object_batch_commits = 64;
 
 template <typename value> class lru_map {
 public:
@@ -413,14 +414,25 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
     import_report report{};
     auto blobs = lru_map<digest>{};
     auto trees = lru_map<digest>{};
+    auto batch = repository_detail::git_access::batch(destination);
+    std::uint64_t batched_commits{};
     for (const auto* commit : ordered) {
         const auto name = git_detail::sha1_hex(commit->id);
         const auto existing = co_await destination.metadata("git.commit." + name);
         if (!existing)
             co_return std::unexpected(existing.error());
         if (*existing) {
-            ++report.skipped_commits;
-            continue;
+            const auto id = parse_digest(std::string{
+                reinterpret_cast<const char*>((*existing)->data()), (*existing)->size()});
+            if (!id)
+                co_return std::unexpected(id.error());
+            const auto snapshot = co_await destination.at(change_id{*id});
+            if (snapshot) {
+                ++report.skipped_commits;
+                continue;
+            }
+            if (snapshot.error().code != errc::not_found)
+                co_return std::unexpected(snapshot.error());
         }
         const auto root =
             co_await import_tree(destination, store, commit->tree, blobs, trees, report);
@@ -457,7 +469,18 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
         ++report.commits;
         report.peak_anonymous_bytes =
             std::max(report.peak_anonymous_bytes, anonymous_memory_bytes());
+        ++batched_commits;
+        if (batched_commits == object_batch_commits) {
+            const auto committed = co_await batch.commit();
+            if (!committed)
+                co_return std::unexpected(committed.error());
+            batch = repository_detail::git_access::batch(destination);
+            batched_commits = 0;
+        }
     }
+    const auto committed = co_await batch.commit();
+    if (!committed)
+        co_return std::unexpected(committed.error());
     for (const auto& [name, id] : *refs) {
         const auto peeled = store.peel(id);
         if (!peeled)

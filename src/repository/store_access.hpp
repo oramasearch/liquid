@@ -13,6 +13,18 @@ struct store_access {
         return source.blob_for(id);
     }
 
+    static void begin_object_batch(store& destination) {
+        destination.begin_object_batch();
+    }
+
+    static void abort_object_batch(store& destination) {
+        destination.abort_object_batch();
+    }
+
+    [[nodiscard]] static runtime::task<void> commit_object_batch(store& destination) {
+        return destination.commit_object_batch();
+    }
+
     [[nodiscard]] static runtime::task<digest> put_plain(store& destination,
                                                          std::vector<std::byte> input) {
         return destination.put_plain(std::move(input));

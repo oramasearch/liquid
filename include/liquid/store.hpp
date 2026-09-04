@@ -120,6 +120,9 @@ private:
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
                                                       std::string key_id);
+    void begin_object_batch();
+    void abort_object_batch();
+    [[nodiscard]] runtime::task<void> commit_object_batch();
 
     friend struct repository_detail::store_access;
     struct impl;

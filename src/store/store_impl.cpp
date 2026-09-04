@@ -650,6 +650,33 @@ runtime::task<void> store_backend::add_object(stored_object object) {
             chunk_keys_.try_emplace(to_string(object.descriptor), object.key_id);
     }
     objects_[to_string(object.id)] = std::move(object);
+    objects_dirty_ = true;
+    if (object_batch_depth_ != 0) {
+        co_return result<void>{};
+    }
+    objects_dirty_ = false;
+    co_return co_await save_objects();
+}
+
+void store_backend::begin_object_batch() {
+    ++object_batch_depth_;
+}
+
+void store_backend::abort_object_batch() {
+    object_batch_depth_ = 0;
+    objects_dirty_ = false;
+}
+
+runtime::task<void> store_backend::commit_object_batch() {
+    if (object_batch_depth_ == 0) {
+        co_return std::unexpected(
+            store_error(errc::invalid_argument, "object batch is not active", "store::batch"));
+    }
+    --object_batch_depth_;
+    if (object_batch_depth_ != 0 || !objects_dirty_) {
+        co_return result<void>{};
+    }
+    objects_dirty_ = false;
     co_return co_await save_objects();
 }
 

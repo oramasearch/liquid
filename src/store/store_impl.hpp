@@ -41,6 +41,9 @@ public:
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
                                                       std::string key_id);
+    void begin_object_batch();
+    void abort_object_batch();
+    [[nodiscard]] runtime::task<void> commit_object_batch();
     [[nodiscard]] runtime::task<std::vector<std::byte>> get(digest id);
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
@@ -83,6 +86,8 @@ private:
     std::map<std::string, stored_object> objects_;
     std::map<std::string, std::string> chunk_keys_;
     std::uint32_t current_pack_{};
+    std::uint64_t object_batch_depth_{};
+    bool objects_dirty_{};
     boost::capy::async_mutex mutation_;
 };
 

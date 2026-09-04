@@ -26,6 +26,12 @@ most 1,000,000 entries; an evicted tree is rebuilt only when another commit requ
 change is recorded from its stored root tree with `record_from_tree`, its mapped parents, Git
 author and timestamp, and signed `git_commit` metadata.
 
+The private store catalog batches at most 64 imported commits. Blob and tree bytes and their index
+entries are still written as each object arrives; batching avoids rewriting the complete object
+catalog for every imported record. If an interruption leaves a metadata mapping ahead of its
+catalog entry, the resumed importer verifies the mapped change snapshot and rebuilds that record
+when it is absent.
+
 After the history and refs are recorded, import applies only the selected Git head tree to the
 working copy and checkpoints it. This keeps history construction independent of directory-document
 transactions while leaving the repository ready for ordinary local edits. The pack reader retains

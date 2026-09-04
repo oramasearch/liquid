@@ -1974,6 +1974,58 @@ runtime::task<digest> repository_detail::git_access::put_blob(repository& destin
                                                                   std::move(*encoded));
 }
 
+repository_detail::git_batch::~git_batch() {
+    if (active_ && destination_)
+        repository_detail::git_access::abort_batch(*destination_);
+}
+
+repository_detail::git_batch::git_batch(git_batch&& source) noexcept
+    : destination_(std::exchange(source.destination_, nullptr)),
+      active_(std::exchange(source.active_, false)) {}
+
+auto repository_detail::git_batch::operator=(git_batch&& source) noexcept -> git_batch& {
+    if (this == &source)
+        return *this;
+    if (active_ && destination_)
+        repository_detail::git_access::abort_batch(*destination_);
+    destination_ = std::exchange(source.destination_, nullptr);
+    active_ = std::exchange(source.active_, false);
+    return *this;
+}
+
+runtime::task<void> repository_detail::git_batch::commit() {
+    if (!active_ || !destination_) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "Git object batch is not active"));
+    }
+    const auto committed = co_await repository_detail::git_access::commit_batch(*destination_);
+    if (!committed) {
+        co_return std::unexpected(committed.error());
+    }
+    active_ = false;
+    co_return result<void>{};
+}
+
+repository_detail::git_batch repository_detail::git_access::batch(repository& destination) {
+    repository_detail::store_access::begin_object_batch(destination.impl_->objects);
+    auto output = git_batch{};
+    output.destination_ = &destination;
+    output.active_ = true;
+    return output;
+}
+
+void repository_detail::git_access::abort_batch(repository& destination) {
+    if (destination.impl_)
+        repository_detail::store_access::abort_object_batch(destination.impl_->objects);
+}
+
+runtime::task<void> repository_detail::git_access::commit_batch(repository& destination) {
+    if (!destination.impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return co_await repository_detail::store_access::commit_object_batch(
+        destination.impl_->objects);
+}
+
 runtime::task<digest> repository_detail::git_access::put_tree(repository& destination, tree value) {
     if (!destination.impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
