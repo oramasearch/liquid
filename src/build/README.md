@@ -52,6 +52,10 @@ wrap hook records monotonic process entry and exit values;
 `wrap.cpp` combines them with its hash and store measurements. `cache.cpp` retains the ordered trace
 digests in the canonical action-index root.
 
+`enumeration.cpp` implements the repository's cursor pages for results, attestations, retained
+traces, and result-scoped SBOM reports. Provenance, diagnostics, SBOM graph discovery, and trace
+loading consume those public pages so command and library views share filtering and ordering.
+
 The private `repository_access.hpp` adapter is the only route from these components to repository
 storage, signing, cache and verification configuration, leases, counters, and critical alerts. Its
 export annotation gives static and shared builds the same internal test surface. Public build values

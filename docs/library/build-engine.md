@@ -184,6 +184,34 @@ Divergence is not inferred from two different output lists. `liquid why` uses on
 divergence flag stored in the action-index entry by `liquid verify`; it reports the linked verification
 attestation digest when present.
 
+### Public record enumeration
+
+Issue #166 exposes the records needed by forge and artifact pages through the repository handle:
+`results(result_filter)`, `attestations(attestation_filter)`, the subject convenience overload of
+`attestations`, `traces`, and `sboms(result_id)`. Each is a `runtime::task` returning a
+`record_page<T>`. A page holds `records`, an opaque `next` cursor when more values remain, and a
+`done` flag. The default limit is 100; limits from 1 through 1,000 are accepted. A cursor belongs to
+the exact filtered set that produced it, and an absent cursor in that set is an
+`errc::invalid_argument` rather than an accidental restart from the beginning.
+
+`repository_result` pairs the existing `action_result` with its `result_id` and, when indexed, its
+monotonic sequence, authoritative divergence flag, and verification-attestation digest. Results
+include stored unindexed records as well as cache candidates. Indexed rows retain sequence order;
+unindexed rows use `observed_at` and their digest for deterministic order. Filters select an exact
+result or action, an output path, an output content digest, or the intersection of those fields.
+
+`repository_attestation` pairs the existing typed `attestation` with its stored digest. Filters
+select record digest, subject, profile, and issuer identity; subject lookup uses the store's subject
+index. Traces are newest retained first and remain the existing `build_trace` type, whose `id` is
+filled from the record digest. `sboms(result_id)` returns the existing verified `sbom_report` values
+linked by that result in output order, SPDX then CycloneDX when present for each output. A result
+without linked SBOM records returns an empty, complete page.
+
+The `log`, `why`, `provenance`, `sbom`, and `build trace` CLI paths now consume these public
+repository operations. Their ordering, filtering, verification, and visible records are therefore
+the same contract available to a library consumer; the commands do not maintain a second record
+walk.
+
 ### Remote scheduling record
 
 `build::execute(repository&, action_input, remote_executor&)` reuses the ordinary policy, action,

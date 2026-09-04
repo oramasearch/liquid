@@ -5,7 +5,6 @@
 #include <format>
 #include <string_view>
 
-#include "build/cache.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/sbom.hpp"
@@ -288,30 +287,31 @@ runtime::task<result_id> store_result_with_provenance(repository& source,
 namespace build {
 
 runtime::task<provenance_report> verify_provenance(repository& source, result_id id) {
-    auto result_bytes = co_await repository_detail::build_access::get(source, id.value);
-    if (!result_bytes) {
-        co_return std::unexpected(result_bytes.error());
+    auto results = co_await source.results({.id = id});
+    if (!results) {
+        co_return std::unexpected(results.error());
     }
-    auto value = objects::decode_result(*result_bytes);
-    if (!value) {
-        co_return std::unexpected(value.error());
+    if (results->records.empty()) {
+        co_return std::unexpected(
+            error{errc::not_found, "build result is not indexed", to_string(id.value)});
     }
-    if (!value->provenance) {
+    const auto& value = results->records.front().value;
+    if (!value.provenance) {
         co_return std::unexpected(
             error{errc::not_found, "result has no provenance attestation", to_string(id.value)});
     }
-    auto statement_bytes =
-        co_await repository_detail::build_access::get(source, *value->provenance);
-    if (!statement_bytes) {
-        co_return std::unexpected(statement_bytes.error());
+    auto statements = co_await source.attestations({.id = *value.provenance});
+    if (!statements) {
+        co_return std::unexpected(statements.error());
     }
-    auto statement = objects::decode_attestation(*statement_bytes);
-    if (!statement) {
-        co_return std::unexpected(statement.error());
+    if (statements->records.empty()) {
+        co_return std::unexpected(error{
+            errc::not_found, "provenance attestation is not stored", to_string(*value.provenance)});
     }
+    const auto& statement = statements->records.front().value;
     auto report = provenance_report{
-        .result = id, .attestation = *value->provenance, .statement = *statement, .value = *value};
-    auto result_signature = signed_result_is_valid(*value);
+        .result = id, .attestation = *value.provenance, .statement = statement, .value = value};
+    auto result_signature = signed_result_is_valid(value);
     if (!result_signature) {
         co_return std::unexpected(result_signature.error());
     }
@@ -319,7 +319,7 @@ runtime::task<provenance_report> verify_provenance(repository& source, result_id
         report.reason = "invalid result signature";
         co_return report;
     }
-    auto statement_signature = verify_attestation(*statement);
+    auto statement_signature = verify_attestation(statement);
     if (!statement_signature) {
         co_return std::unexpected(statement_signature.error());
     }
@@ -327,19 +327,19 @@ runtime::task<provenance_report> verify_provenance(repository& source, result_id
         report.reason = statement_signature->reason;
         co_return report;
     }
-    if (statement->issuer.taap_id != value->producer.taap_id) {
+    if (statement.issuer.taap_id != value.producer.taap_id) {
         report.reason = "provenance issuer does not match result producer";
         co_return report;
     }
-    auto subject = subject_digest(*value);
+    auto subject = subject_digest(value);
     if (!subject) {
         co_return std::unexpected(subject.error());
     }
-    if (!same_digest(statement->subject, *subject)) {
+    if (!same_digest(statement.subject, *subject)) {
         report.reason = "provenance subject does not match result";
         co_return report;
     }
-    auto action_bytes = co_await repository_detail::build_access::get(source, value->action);
+    auto action_bytes = co_await repository_detail::build_access::get(source, value.action);
     if (!action_bytes) {
         co_return std::unexpected(action_bytes.error());
     }
@@ -347,9 +347,9 @@ runtime::task<provenance_report> verify_provenance(repository& source, result_id
     if (!action) {
         co_return std::unexpected(action.error());
     }
-    auto expected = make_attestation(*action, *value, *subject);
+    auto expected = make_attestation(*action, value, *subject);
     auto expected_body = objects::encode_attestation_body(expected);
-    auto actual_body = objects::encode_attestation_body(*statement);
+    auto actual_body = objects::encode_attestation_body(statement);
     if (!expected_body || !actual_body) {
         co_return std::unexpected(expected_body ? actual_body.error() : expected_body.error());
     }
@@ -369,20 +369,16 @@ runtime::task<provenance_report> verify_provenance(repository& source, std::stri
     } else if (!entry && entry.error().code != errc::not_found) {
         co_return std::unexpected(entry.error());
     }
-    auto cache = build_detail::disk_cache{source};
-    auto opened = co_await cache.open();
-    if (!opened) {
-        co_return std::unexpected(opened.error());
+    auto results =
+        co_await source.results({.output = output_path, .content = content, .page = {.limit = 1}});
+    if (!results) {
+        co_return std::unexpected(results.error());
     }
-    auto found = co_await cache.find_output(output_path, content);
-    if (!found) {
-        co_return std::unexpected(found.error());
-    }
-    if (!*found) {
+    if (results->records.empty() || results->records.front().sequence == 0) {
         co_return std::unexpected(
             error{errc::not_found, "no provenance result produces this path", output_path});
     }
-    co_return co_await verify_provenance(source, **found);
+    co_return co_await verify_provenance(source, results->records.front().id);
 }
 
 runtime::task<provenance_report> verify_wrapped_provenance(std::filesystem::path working_tree,

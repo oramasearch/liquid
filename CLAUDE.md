@@ -67,6 +67,9 @@ store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17
 and GoogleTest are used. Phase 1 (the store) is built inside libliquid. Optional developer
 benchmarks live under `bench/` and are excluded unless their build option is enabled.
 
+Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
+enumeration used by CLI record views.
+
 ### Vocabulary — use these words exactly
 
 | Term | Meaning |

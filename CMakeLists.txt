@@ -261,6 +261,7 @@ add_library(libliquid
   src/build/cache.cpp
   src/build/executor.cpp
   src/build/distribution.cpp
+  src/build/enumeration.cpp
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
@@ -301,6 +302,7 @@ add_library(libliquid
   src/reapi/messages.cpp
   src/reapi/remote_client.cpp
   src/reapi/server.cpp
+  src/repository/diff.cpp
   src/repository/merge.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp

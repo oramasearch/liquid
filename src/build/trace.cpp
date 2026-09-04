@@ -185,26 +185,15 @@ auto open_trace(std::filesystem::path working_tree,
     if (!source) {
         co_return std::unexpected(source.error());
     }
-    auto cache = build_detail::disk_cache{*source};
-    auto opened = co_await cache.open();
-    if (!opened) {
-        co_return std::unexpected(opened.error());
+    auto traces = co_await source->traces({.limit = 1});
+    if (!traces) {
+        co_return std::unexpected(traces.error());
     }
-    if (cache.traces().empty()) {
+    if (traces->records.empty()) {
         co_return std::unexpected(
             error{errc::not_found, "no recorded build trace", working_tree.string()});
     }
-    const auto id = cache.traces().back();
-    auto bytes = co_await repository_detail::build_access::get(*source, id);
-    if (!bytes) {
-        co_return std::unexpected(bytes.error());
-    }
-    auto trace = objects::decode_build_trace(*bytes);
-    if (!trace) {
-        co_return std::unexpected(trace.error());
-    }
-    trace->id = id;
-    co_return *trace;
+    co_return traces->records.front();
 }
 
 } // namespace

@@ -3188,6 +3188,11 @@ runtime::task<std::vector<std::byte>> repository::blob(digest id) {
     }
     co_return output;
 }
+runtime::task<std::vector<digest>> repository::record_ids(std::string kind) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return impl_->objects.object_ids(kind);
+}
 runtime::task<readability_report> repository::readability(std::optional<change_id> revision) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
