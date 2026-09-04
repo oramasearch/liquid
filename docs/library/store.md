@@ -69,7 +69,7 @@ the operating system.
 
 Runs are size-tiered by record count. When more than four runs share a tier, compaction performs a
 streaming k-way merge by iterating mapped input records and incrementally writing the replacement
-with Corosio. It does not load input runs into memory. The replacement is synchronized and
+with Corosio through bounded 4 MiB buffers. It does not load input runs into memory. The replacement is synchronized and
 recorded in the manifest before the old runs are unmapped and removed. The manifest itself is
 written to a temporary file, synchronized, and atomically renamed.
 

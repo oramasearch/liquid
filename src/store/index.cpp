@@ -24,7 +24,7 @@ constexpr std::size_t record_size = 48;
 constexpr std::size_t fanout_count = 65'537;
 constexpr std::size_t run_header_size =
     8 + 1 + 7 + 8 + 8 + fanout_count * sizeof(std::uint32_t) + 8;
-constexpr std::size_t write_window_size = 1024 * 1024;
+constexpr std::size_t write_window_size = 4 * 1024 * 1024;
 
 error index_error(errc code, std::string message, const std::filesystem::path &path) {
   return {code, std::move(message), path.string()};
@@ -246,16 +246,7 @@ result<void> chunk_index::insert(index_entry entry) {
   if (state.memtable.empty()) {
     state.memtable.reserve(options_.memtable_entries);
   }
-  if (state.memtable.contains(entry.id.bytes)) {
-    return {};
-  }
-  auto present = find(entry.id);
-  if (!present) {
-    return std::unexpected(present.error());
-  }
-  if (!*present) {
-    state.memtable.emplace(entry.id.bytes, entry.location);
-  }
+  state.memtable.try_emplace(entry.id.bytes, entry.location);
   return {};
 }
 
