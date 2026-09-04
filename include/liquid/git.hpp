@@ -15,7 +15,7 @@ struct LIQUID_EXPORT import_report {
     std::uint64_t commits{};
     std::uint64_t blobs{};
     std::uint64_t skipped_commits{};
-    std::uint64_t peak_rss_bytes{};
+    std::uint64_t peak_anonymous_bytes{};
     std::vector<std::string> refs;
 };
 

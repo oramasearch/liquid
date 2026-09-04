@@ -170,7 +170,7 @@ TEST(GitInteroperability, imports_exports_and_resumes_a_complete_history) {
     ASSERT_TRUE(imported) << imported.error().message;
     EXPECT_EQ(imported->commits, 50U);
 #if !defined(_WIN32)
-    EXPECT_LT(imported->peak_rss_bytes, 1024ULL * 1024ULL * 1024ULL);
+    EXPECT_LT(imported->peak_anonymous_bytes, 1024ULL * 1024ULL * 1024ULL);
 #endif
     const auto refs = liquid::runtime::block_on(repository.refs());
     ASSERT_TRUE(refs) << refs.error().message;

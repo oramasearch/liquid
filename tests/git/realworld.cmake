@@ -11,12 +11,12 @@ if(NOT import_result EQUAL 0)
   message(FATAL_ERROR "Git import failed: ${import_output}${import_error}")
 endif()
 
-string(REGEX MATCH "peak_rss_bytes=([0-9]+)" peak_match "${import_output}")
+string(REGEX MATCH "peak_anonymous_bytes=([0-9]+)" peak_match "${import_output}")
 if(NOT peak_match)
-  message(FATAL_ERROR "Git import did not report peak RSS: ${import_output}")
+  message(FATAL_ERROR "Git import did not report peak anonymous memory: ${import_output}")
 endif()
 if(CMAKE_MATCH_1 GREATER_EQUAL 1073741824)
-  message(FATAL_ERROR "Git import exceeded 1 GiB peak RSS: ${CMAKE_MATCH_1}")
+  message(FATAL_ERROR "Git import exceeded 1 GiB peak anonymous memory: ${CMAKE_MATCH_1}")
 endif()
 
 execute_process(

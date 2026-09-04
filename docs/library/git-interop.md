@@ -30,8 +30,10 @@ After the history and refs are recorded, import applies only the selected Git he
 working copy and checkpoints it. This keeps history construction independent of directory-document
 transactions while leaving the repository ready for ordinary local edits. The pack reader retains
 at most 32 MiB of resolved delta objects and verifies every object SHA-1 before it is used.
-`import_report::peak_rss_bytes` reads the process high-water mark with `getrusage` on POSIX, so
-the opt-in real-world check can enforce its 1 GiB memory limit.
+The real-world gate measures memory that the process actually owns: `phys_footprint` on macOS and
+`RssAnon` on Linux. `import_report::peak_anonymous_bytes` samples that value while history is
+recorded. This avoids treating reclaimable allocator reservations and mapped files as retained
+import memory.
 
 ## Compatibility
 
@@ -52,7 +54,7 @@ The public-header fixture compiles `liquid/git.hpp` independently.
 The real-world check is excluded from ordinary `ctest` runs. Configure with
 `-DLIQUID_REALWORLD_TESTS=ON -DLIQUID_REALWORLD_GIT_DIRECTORY=/path/to/checkout` and run
 `ctest -L realworld --output-on-failure`. It imports the supplied checkout, requires a reported
-peak RSS below 1 GiB, compares the `.liquid-store` store to three times the `.git` size, exports its
+peak anonymous memory below 1 GiB, compares the `.liquid-store` store to three times the `.git` size, exports its
 head ref, and runs `git fsck`.
 
 `liquid import git <path>` imports into a repository rooted at `<path>`; it creates the liquid

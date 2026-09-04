@@ -7,7 +7,12 @@
 #include <set>
 #include <unordered_map>
 
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#elif defined(__linux__)
+#include <charconv>
+#include <fstream>
+#elif !defined(_WIN32)
 #include <sys/resource.h>
 #endif
 
@@ -150,18 +155,34 @@ auto head_ref(const std::filesystem::path& directory) -> std::optional<std::stri
     return value.substr(prefix.size());
 }
 
-auto peak_rss_bytes() -> std::uint64_t {
-#if defined(_WIN32)
+auto anonymous_memory_bytes() -> std::uint64_t {
+#if defined(__APPLE__)
+    auto info = task_vm_info_data_t{};
+    auto count = mach_msg_type_number_t{TASK_VM_INFO_COUNT};
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) !=
+        KERN_SUCCESS)
+        return 0;
+    return info.phys_footprint;
+#elif defined(__linux__)
+    auto input = std::ifstream{"/proc/self/status"};
+    auto line = std::string{};
+    while (std::getline(input, line)) {
+        constexpr auto prefix = std::string_view{"RssAnon:"};
+        if (!line.starts_with(prefix))
+            continue;
+        auto value = std::uint64_t{};
+        const auto first = line.find_first_of("0123456789");
+        if (first == std::string::npos)
+            return 0;
+        const auto [end, code] =
+            std::from_chars(line.data() + first, line.data() + line.size(), value);
+        if (code != std::errc{} || end == line.data() + first)
+            return 0;
+        return value * 1024U;
+    }
     return 0;
 #else
-    auto usage = rusage{};
-    if (getrusage(RUSAGE_SELF, &usage) != 0)
-        return 0;
-#if defined(__APPLE__)
-    return static_cast<std::uint64_t>(usage.ru_maxrss);
-#else
-    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024U;
-#endif
+    return 0;
 #endif
 }
 
@@ -434,6 +455,8 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
         if (!reverse)
             co_return std::unexpected(reverse.error());
         ++report.commits;
+        report.peak_anonymous_bytes =
+            std::max(report.peak_anonymous_bytes, anonymous_memory_bytes());
     }
     for (const auto& [name, id] : *refs) {
         const auto peeled = store.peel(id);
@@ -472,7 +495,7 @@ runtime::task<import_report> import_git(repository& destination, std::filesystem
         if (!checkpointed)
             co_return std::unexpected(checkpointed.error());
     }
-    report.peak_rss_bytes = peak_rss_bytes();
+    report.peak_anonymous_bytes = std::max(report.peak_anonymous_bytes, anonymous_memory_bytes());
     co_return report;
 }
 

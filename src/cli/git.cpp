@@ -34,11 +34,11 @@ auto git_import(int argc, char** argv) -> int {
     if (!report) {
         return fail(report.error());
     }
-    std::println("commits={} blobs={} skipped={} peak_rss_bytes={}",
+    std::println("commits={} blobs={} skipped={} peak_anonymous_bytes={}",
                  report->commits,
                  report->blobs,
                  report->skipped_commits,
-                 report->peak_rss_bytes);
+                 report->peak_anonymous_bytes);
     return 0;
 }
 
