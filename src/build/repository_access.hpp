@@ -25,6 +25,8 @@ struct LIQUID_EXPORT build_access {
         -> runtime::task<std::optional<change_attribution>>;
     [[nodiscard]] static auto root_path(repository& source) -> result<std::filesystem::path>;
     [[nodiscard]] static auto contains(repository& source, digest id) -> runtime::task<bool>;
+    [[nodiscard]] static auto attestations(repository& source, digest subject)
+        -> std::vector<digest>;
     [[nodiscard]] static auto sign_result(repository& source, action_result& value)
         -> runtime::task<void>;
     [[nodiscard]] static auto sign_attestation(repository& source, attestation& value)
@@ -35,6 +37,7 @@ struct LIQUID_EXPORT build_access {
     [[nodiscard]] static auto release_cache_root(repository& source) -> runtime::task<void>;
     [[nodiscard]] static bool cache_publish_enabled(repository& source) noexcept;
     [[nodiscard]] static std::uint32_t verification_rate(repository& source) noexcept;
+    [[nodiscard]] static auto policy(repository& source) -> result<policy_config>;
     static void record_cache_lookup(repository& source,
                                     digest result,
                                     cache_status status,

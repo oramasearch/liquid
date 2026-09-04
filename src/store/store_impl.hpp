@@ -13,6 +13,7 @@
 #include "index.hpp"
 #include "leases.hpp"
 #include "liquid/store.hpp"
+#include "subject_index.hpp"
 
 namespace liquid::store_detail {
 
@@ -48,6 +49,7 @@ public:
     [[nodiscard]] runtime::task<std::uint64_t>
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<bool> contains(digest id);
+    [[nodiscard]] std::vector<digest> attestations(digest subject) const;
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>> lease_root(digest id,
                                                                          std::chrono::seconds ttl);
@@ -57,6 +59,7 @@ public:
 private:
     explicit store_backend(std::filesystem::path root, store_options options);
     [[nodiscard]] runtime::task<void> load_objects();
+    [[nodiscard]] runtime::task<void> rebuild_subject_index();
     [[nodiscard]] runtime::task<void> save_objects();
     [[nodiscard]] runtime::task<void> stage_objects();
     [[nodiscard]] runtime::task<void> publish_staged_objects();
@@ -85,6 +88,7 @@ private:
     std::map<std::uint32_t, pack_contents> packs_;
     std::map<std::string, stored_object> objects_;
     std::map<std::string, std::string> chunk_keys_;
+    subject_index subjects_;
     std::uint32_t current_pack_{};
     std::uint64_t object_batch_depth_{};
     bool objects_dirty_{};

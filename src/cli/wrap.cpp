@@ -41,6 +41,8 @@ auto reason_name(liquid::cache_miss_reason reason) -> std::string_view {
         return "divergent result quarantined";
     case liquid::cache_miss_reason::unknown:
         return "unknown";
+    case liquid::cache_miss_reason::policy_refused:
+        return "policy refused";
     }
     return "unknown";
 }
@@ -178,6 +180,9 @@ auto wrap(int argc, char** argv) -> int {
     if (options.explain) {
         for (const auto& miss : result->why)
             print_miss(miss);
+    }
+    for (const auto& warning : result->policy_warnings) {
+        std::println(stderr, "warning: {}", warning);
     }
     return result->exit;
 }

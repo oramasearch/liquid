@@ -67,7 +67,8 @@ enum class cache_miss_reason : std::uint8_t {
     sandbox_changed,
     never_built,
     divergent_result_quarantined,
-    unknown
+    unknown,
+    policy_refused
 };
 
 struct LIQUID_EXPORT line_change {
@@ -81,6 +82,60 @@ struct LIQUID_EXPORT change_attribution {
     digest drip;
     actor by;
     std::chrono::sys_seconds at{};
+};
+
+enum class policy_scope : std::uint8_t { paths, toolchain, all_inputs };
+
+enum class policy_on_missing : std::uint8_t { refuse, warn };
+
+struct LIQUID_EXPORT policy_requirement {
+    std::string profile;
+    std::vector<std::string> from;
+    std::uint32_t min_count{1};
+
+    auto operator==(const policy_requirement&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT policy_rule {
+    policy_scope scope{policy_scope::all_inputs};
+    std::vector<std::string> paths;
+    std::vector<policy_requirement> require;
+    policy_on_missing on_missing{policy_on_missing::refuse};
+
+    auto operator==(const policy_rule&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT policy_config {
+    std::vector<std::string> approved_builders;
+    std::vector<policy_rule> rules;
+
+    auto operator==(const policy_config&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT policy_requirement_result {
+    policy_requirement requirement;
+    std::vector<std::string> identities;
+    std::uint32_t count{};
+    bool satisfied{};
+    std::string reason;
+};
+
+struct LIQUID_EXPORT policy_input_result {
+    std::string input;
+    digest subject;
+    bool toolchain{};
+    std::uint64_t rule{};
+    policy_on_missing on_missing{policy_on_missing::refuse};
+    std::vector<policy_requirement_result> requirements;
+    bool satisfied{};
+};
+
+struct LIQUID_EXPORT policy_report {
+    policy_config config;
+    digest policy;
+    bool allowed{true};
+    std::vector<policy_input_result> inputs;
+    std::vector<std::string> warnings;
 };
 
 struct LIQUID_EXPORT cache_miss {
@@ -211,6 +266,7 @@ struct LIQUID_EXPORT wrap_report {
     std::uint64_t processes_started{};
     cache_status outer{cache_status::miss};
     std::vector<cache_miss> why;
+    std::vector<std::string> policy_warnings;
     bool verification_scheduled{};
     cache_report cache;
     std::optional<digest> trace;
@@ -295,6 +351,15 @@ why_slow(std::filesystem::path working_tree,
          std::string target,
          std::optional<std::filesystem::path> cache_directory = {});
 [[nodiscard]] LIQUID_EXPORT liquid::result<std::string> chrome_trace(const build_trace& trace);
+[[nodiscard]] LIQUID_EXPORT runtime::task<policy_report> check_policy(repository& source,
+                                                                      const action_input& input);
+[[nodiscard]] LIQUID_EXPORT runtime::task<policy_report> check_policy(repository& source,
+                                                                      result_id target);
+[[nodiscard]] LIQUID_EXPORT runtime::task<policy_report>
+check_policy(std::filesystem::path working_tree, std::string target);
+[[nodiscard]] LIQUID_EXPORT liquid::result<policy_report> explain_policy(repository& source);
+[[nodiscard]] LIQUID_EXPORT runtime::task<policy_report>
+explain_policy(std::filesystem::path working_tree);
 
 } // namespace build
 

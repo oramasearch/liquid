@@ -123,6 +123,7 @@ private:
     void begin_object_batch();
     void abort_object_batch();
     [[nodiscard]] runtime::task<void> commit_object_batch();
+    [[nodiscard]] std::vector<digest> attestations(digest subject) const;
 
     friend struct repository_detail::store_access;
     struct impl;

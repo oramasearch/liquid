@@ -7,14 +7,15 @@ root. Divergence and the signed verification reference are durable index fields,
 serves a divergent row. `materialise.cpp` reconstructs toolchain and replay trees from store
 records. `verify.cpp` owns sampling, fresh-sandbox replay, digest comparison, attestations, alerts,
 and background scheduling.
-signed result creation. `cache.cpp` owns candidate-key derivation, current-tree manifest validation,
-signature and referenced-object checks, the sorted disk action index, and its store-backed recovery
-root. Divergence and the signed verification reference are durable index fields, and lookup never
-serves a divergent row. `materialise.cpp` reconstructs toolchain and replay trees from store
-records. `verify.cpp` owns sampling, fresh-sandbox replay, digest comparison, attestations, alerts,
-and background scheduling. `provenance.cpp` derives the SLSA predicate from each action/result pair,
+`provenance.cpp` derives the SLSA predicate from each action/result pair,
 signs and stores its TAAP attestation, binds it to the signed result, verifies that graph, and writes
 native or DSSE/in-toto JSON. `cache.cpp` also verifies result provenance and owns output-path lookup.
+`policy.cpp` validates and digests repository policy, walks source and toolchain input trees, verifies
+subject-indexed attestations, counts distinct approved issuers, and produces refusal or warning
+reports before cache lookup and execution.
+
+`why.cpp` re-evaluates that policy for a recorded action before classifying a hit or ordinary miss,
+and reports the first unsatisfied refuse rule as a typed policy cause.
 
 `wrap.cpp` snapshots an existing working tree, uses the persistent project cache and toolchain pin,
 validates saved actions, launches one writable observed mount, derives child actions from process

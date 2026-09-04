@@ -34,6 +34,10 @@ struct store_access {
     put_encrypted(store& destination, std::vector<std::byte> input, std::string key_id) {
         return destination.put_encrypted(std::move(input), std::move(key_id));
     }
+
+    [[nodiscard]] static std::vector<digest> attestations(const store& source, digest subject) {
+        return source.attestations(subject);
+    }
 };
 
 } // namespace liquid::repository_detail

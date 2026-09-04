@@ -17,9 +17,6 @@ frames, rebuilds the index, and compacts only affected packs. It is separate fro
 reachability collection so unrelated repository objects remain available.
 
 Build-cache collection roots are canonical `action-index-root` records under the same store. The
-reference registry traverses root to result, result to action/output/stdout/stderr, and action to
-input/toolchain/sandbox. It also traverses root to the verification attestation, so an indexed
-result, its trust evidence, and the bytes needed to use it remain one reachable graph.
 reference registry traverses root to result, result to action/output/stdout/stderr/provenance, and
 action to input/toolchain/sandbox. It also traverses root to the verification attestation, so an
 indexed result, its trust evidence, and the bytes needed to use and verify it remain one reachable
@@ -28,3 +25,6 @@ graph.
 Build observability adds `build_trace` to the reference registry. The action-index root retains each
 trace digest, and each trace retains its named results, including results from wraps that did not
 publish cache entries.
+`subject_index.cpp` maps an attestation's signed subject digest to its canonical attestation record
+digest. The map updates when records are stored and rebuilds from attestation objects when the store
+opens; build-input policy still loads and verifies every indexed record before counting it.

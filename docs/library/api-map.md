@@ -275,8 +275,10 @@ class repository {
   runtime::task<void> undo(op_id);                       // #41: the operation log
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
+  runtime::task<digest> store_attestation(attestation);    // store canonical evidence; no trust implied
   runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
   runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
+  runtime::task<void> set_policy(policy_config);           // validate and checkpoint config.policy
   // Import primitives (liquid #43; lake's importers use the same calls)
   runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
   runtime::task<change_id> record_from_tree(change_input, digest root_tree); // records a supplied snapshot tree
@@ -301,8 +303,8 @@ normalization, enforcement, and JSON Pointer key paths.
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
-`repository_options` is a plain record with `checkpoint_interval`, `store`, `encrypt`, `cache`, and
-`verify`; its `store_options`
+`repository_options` is a plain record with `checkpoint_interval`, `store`, `encrypt`, `cache`,
+`verify`, and `policy`; its `store_options`
 member selects the object-store hash algorithm and, when configured, its key custody. Pass the
 same options to `create` and `open` so later writes and reads use the intended store settings.
 Repository change IDs are computed with that selected store algorithm, including IDs returned by
@@ -318,6 +320,13 @@ open repository handle. `action_result::cache` is `cache_status::hit`, `cache_st
 `cache_status::divergent`; on a validation miss, `why` contains the first differing path and optional
 expected/actual digests. These fields are request diagnostics rather than part of the signed immutable
 result record.
+
+`policy_config` is the typed build-input rule set documented in [policy.md](policy.md). It is
+persisted at creation and replaced atomically through `repository::set_policy`; validation rejects
+unknown profiles or impossible quorums before the repository document changes.
+`repository::store_attestation` imports a canonical attestation into the repository object store
+and returns its digest. Storage does not imply trust: policy reloads the record and verifies its
+signature and registered profile each time it is evaluated.
 
 `key_readability` is `{ key_id, version, readable }`. `revision_readability` is a `change_id` and
 the sorted key-version set used by its blobs. `readability_report` contains those revision rows and
@@ -367,9 +376,27 @@ under `src/vfs/`; see [`vfs.md`](vfs.md).
 ```cpp
 enum class cache_status : std::uint8_t { miss, hit, divergent };
 enum class cache_miss_reason { input_changed, command_changed, environment_changed,
-  toolchain_changed, sandbox_changed, never_built, divergent_result_quarantined, unknown };
+  toolchain_changed, sandbox_changed, never_built, divergent_result_quarantined, unknown,
+  policy_refused };
 struct cache_miss { cache_miss_reason reason; std::string path;
   std::optional<digest> expected, actual; /* argv, environment, tool, line, attribution, detail */ };
+enum class policy_scope : std::uint8_t { paths, toolchain, all_inputs };
+enum class policy_on_missing : std::uint8_t { refuse, warn };
+struct policy_requirement { std::string profile; std::vector<std::string> from;
+                            std::uint32_t min_count; };
+struct policy_rule { policy_scope scope; std::vector<std::string> paths;
+                     std::vector<policy_requirement> require; policy_on_missing on_missing; };
+struct policy_config { std::vector<std::string> approved_builders;
+                       std::vector<policy_rule> rules; };
+struct policy_requirement_result { policy_requirement requirement;
+                                   std::vector<std::string> identities;
+                                   std::uint32_t count; bool satisfied; std::string reason; };
+struct policy_input_result { std::string input; digest subject; bool toolchain;
+                             std::uint64_t rule; policy_on_missing on_missing;
+                             std::vector<policy_requirement_result> requirements; bool satisfied; };
+struct policy_report { policy_config config; digest policy; bool allowed;
+                       std::vector<policy_input_result> inputs;
+                       std::vector<std::string> warnings; };
 struct reproducibility_difference {
   std::string output; std::optional<digest> cached, reexecuted;
   std::optional<std::uint64_t> byte_offset;
@@ -432,10 +459,16 @@ runtime::task<build_trace> latest_trace(std::filesystem::path,
 runtime::task<why_slow_report> why_slow(std::filesystem::path, std::string,
                                         std::optional<std::filesystem::path> cache = {});
 liquid::result<std::string> chrome_trace(const build_trace&);
+runtime::task<policy_report> check_policy(repository&, const action_input&);
+runtime::task<policy_report> check_policy(repository&, result_id);
+runtime::task<policy_report> check_policy(std::filesystem::path, std::string target);
+result<policy_report> explain_policy(repository&);
+runtime::task<policy_report> explain_policy(std::filesystem::path);
 }
 ```
 
-The candidate key covers command, cwd, environment, toolchain, sandbox definition, and platform.
+The candidate key covers command, cwd, environment, toolchain, sandbox definition, platform, and
+the canonical policy digest.
 `execute` returns an indexed result only after the result's signed action derives that same key,
 all observed paths match the current input tree, and all referenced blobs exist. Producer and `sig`
 are immutable record fields; cache status and miss detail describe the current request.
@@ -445,12 +478,16 @@ index entry is permanently excluded from lookup. See
 [`build-engine.md`](build-engine.md#reproducibility-verification) and [provenance.md](provenance.md)
 for the SLSA mapping and interim object subject.
 `why` accepts an output path, action digest, or result digest and returns the selected lookup plus
-current/prior identifiers and a typed cause. `wrap_report` includes action counts, its per-wrap
-`cache_report`, typed miss details, the retained trace digest, phase totals, achieved parallelism,
-and the dependency-aware critical path. `latest_trace`, `why_slow`, and `chrome_trace` query and
-project only recorded trace/result data. The path-taking `cache_stats`
+current/prior identifiers and a typed cause. It re-evaluates current policy before classifying a
+hit or ordinary miss and uses `cache_miss_reason::policy_refused` for an unsatisfied refuse rule.
+`wrap_report` includes action counts, its per-wrap `cache_report`, typed miss details, the retained
+trace digest, phase totals, achieved parallelism, and the dependency-aware critical path.
+`latest_trace`, `why_slow`, and `chrome_trace` query and project only recorded trace/result data.
+The path-taking `cache_stats`
 returns cumulative completed-wrap statistics; the repository member remains scoped to its open
 handle.
+`check_policy` returns a complete per-rule report without executing an action; build entry points
+turn an unsatisfied `refuse` rule into `errc::unauthorized` before lookup or sandbox launch.
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 

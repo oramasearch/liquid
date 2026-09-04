@@ -83,6 +83,12 @@ Policy — "every dependency must have provenance from an approved builder", "no
 artifact without a reproducibility attestation from two independent builders" — is
 expressible and enforced at build time, not discovered in an audit six months later.
 
+The implemented `config.policy` form selects repository paths, the toolchain, or all inputs;
+requires registered TAAP profiles from named identities or the repository's approved-builder list;
+counts distinct issuers; and refuses or warns when evidence is missing. Its exact language,
+fail-closed behavior, cache binding, and inspection commands are in
+[`../library/policy.md`](../library/policy.md).
+
 This is the lesson of 3CX and xz: the attacker targets your *inputs*.
 
 ## The attacks this structurally prevents
@@ -116,5 +122,3 @@ should not imply otherwise.
 - **Dependence on an OIDC provider and a transparency log** for keyless signing, and
   what the offline/air-gapped story is.
 - **How much divergence sampling is enough**, and who pays for it.
-- **Policy language** for input verification — expressive enough to be useful,
-  simple enough to be audited.

@@ -109,6 +109,10 @@ runtime::task<void> store::commit_object_batch() {
     co_return co_await impl_->value->commit_object_batch();
 }
 
+std::vector<digest> store::attestations(digest subject) const {
+    return impl_ ? impl_->value->attestations(subject) : std::vector<digest>{};
+}
+
 runtime::task<std::vector<std::byte>> store::get(digest id) {
     if (!impl_)
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});

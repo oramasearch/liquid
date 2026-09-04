@@ -55,6 +55,7 @@ struct LIQUID_EXPORT repository_options {
     encryption_config encrypt{};
     cache_config cache{};
     verify_config verify{};
+    policy_config policy{};
 };
 
 struct LIQUID_EXPORT log_options {
@@ -176,6 +177,8 @@ public:
     [[nodiscard]] runtime::task<void> undo(op_id operation);
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
+    [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
+    [[nodiscard]] runtime::task<void> set_policy(policy_config policy);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<cache_report> cache_stats();
 
