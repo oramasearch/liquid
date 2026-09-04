@@ -211,6 +211,9 @@ set_target_properties(liquid_metadata_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
 add_library(libliquid
+  src/capture/coalesce.cpp
+  src/capture/cursor.cpp
+  src/capture/reconcile.cpp
   src/drip.cpp
   src/error.cpp
   src/hash.cpp
@@ -242,6 +245,14 @@ add_library(libliquid
   src/vfs/materialise.cpp
   src/vfs/request_queue.cpp
 )
+if(APPLE)
+  target_sources(libliquid PRIVATE src/capture/macos_watcher.cpp)
+  target_link_libraries(libliquid PRIVATE "-framework CoreServices")
+elseif(UNIX)
+  target_sources(libliquid PRIVATE src/capture/linux_watcher.cpp)
+elseif(WIN32)
+  target_sources(libliquid PRIVATE src/capture/windows_watcher.cpp)
+endif()
 target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 add_library(liquid::liquid ALIAS libliquid)
 set_target_properties(libliquid PROPERTIES

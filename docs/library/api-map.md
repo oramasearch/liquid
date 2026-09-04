@@ -59,7 +59,7 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #46 | implemented | `store`: content in, digests out; encrypted trust domains; leases, collection, and pack compaction |
 | `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #40, #41, #42 | implemented | `repository`: open, read, write, recorded moves/removals, cuts, refs, status, history, nest/split/combine, conflicts, undo, locks |
-| `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
+| `liquid/drip.hpp` | #4, #5, #48 | implemented (#5); declared (#4, #48) | `drip`, `capture`: the journal as a subscription, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #111 | implemented (#4, #7, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
@@ -87,9 +87,11 @@ template <class T> using task = boost::capy::task<result<T>>;   // every I/O fun
 using boost::capy::io_result;  using boost::capy::when_all;  using boost::capy::timeout;  using boost::capy::delay;
 template <class T> boost::capy::io_task<result<T>> as_io(task<T>); // adapt a liquid task for Capy composition
 class context;                        // owns a Corosio io_context and its threads; opaque
+boost::capy::any_executor context::executor() const;
+context& default_context();           // process-wide shared context for spawned I/O work
 template <class T> result<T> block_on(task<T>);                // run to completion on a private context (CLI, tests)
-void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared pool
-template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking work on the pool; resumes on the caller's executor
+void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared runtime context
+template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking CPU work on the compute pool; resumes on the caller's executor
 }
 ```
 
@@ -97,6 +99,13 @@ Corosio never appears here; `src/runtime/net.hpp` is the private adapter TUs inc
 sockets, timers and files. Coroutine functions take their parameters **by value** and are never
 capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard]]`; after
 `offload` the continuation is back on the caller's executor before any Corosio object is touched.
+`block_on` is for synchronous entry points only and must not be called from a coroutine.
+
+| Entry point | Intended use | Executor / ownership |
+|---|---|---|
+| `block_on` | CLI and tests | a new private context, run to task completion |
+| `spawn` | long-lived I/O work | the process-wide shared runtime context |
+| `offload` | blocking CPU work | the compute pool; resumes on the caller executor |
 
 ### `liquid/hash.hpp`
 
@@ -273,6 +282,9 @@ struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
 struct capture_options { std::vector<std::string> exclude;            // glob patterns from config
                          std::chrono::milliseconds coalesce_window{200};
                          bool attribution{false}; };                   // Phase 2 turns it on
+struct journal_cursor { std::string token; };
+struct capture_status { enum class state { running, paused } state; std::uint64_t pending_drips;
+                        std::uint64_t overflow_count; std::uint64_t recrawl_count; journal_cursor last_cursor; };
 class capture {                        // the journal, as a subscription
  public:
   static runtime::task<capture> open(std::filesystem::path workspace, capture_options = {});   // starts the watcher
@@ -303,6 +315,10 @@ class passphrase_provider final : public key_provider { public: result<std::arra
 class key_file_provider final : public key_provider { public: static runtime::task<std::shared_ptr<key_file_provider>> open(std::filesystem::path); };
 class keyring { public: result<void> add(std::string, std::shared_ptr<key_provider>); result<std::string> default_key_id() const; result<void> set_default_key_id(std::string); runtime::task<void> rewrap(std::string, std::shared_ptr<key_provider>); };
 ```
+
+`capture_status` makes overflow and recrawl visible because watcher events are hints, not a
+complete account of workspace state. The `drip_filter` insertion point between coalescing and
+journal append is intentionally a no-op until liquid #50 supplies inline secret scanning.
 
 Object subjects (attestations *about* a drip or artifact) wait on the TAAP spec change
 (liquid-bridge #1); the `actor` type is written so an object-subject form can be added beside it.

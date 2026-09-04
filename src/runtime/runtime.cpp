@@ -1,6 +1,7 @@
 #include "liquid/runtime.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -15,6 +16,10 @@ namespace {
 
 unsigned runtime_threads() noexcept {
     return std::max(4u, std::thread::hardware_concurrency());
+}
+
+unsigned shared_runtime_threads() noexcept {
+    return std::max(2u, std::thread::hardware_concurrency() / 2);
 }
 
 net::io_context_options runtime_options() noexcept {
@@ -45,27 +50,60 @@ boost::capy::task<> complete_spawn(task<void> coroutine,
     co_return;
 }
 
-}  // namespace
+} // namespace
 
 struct context::impl {
-    impl() : io(runtime_options(), runtime_threads()) {}
+    impl(unsigned count, bool keep_alive) : io(runtime_options(), count), runners(count) {
+        if (!keep_alive)
+            return;
+        guard.emplace(boost::capy::make_work_guard(io.get_executor()));
+        try {
+            for (unsigned index = 0; index < runners; ++index)
+                threads.emplace_back([this] { io.run(); });
+        } catch (...) {
+            io.stop();
+            for (auto& thread : threads)
+                thread.join();
+            throw;
+        }
+    }
+
+    ~impl() {
+        io.stop();
+        for (auto& thread : threads)
+            thread.join();
+        guard.reset();
+    }
 
     net::io_context io;
+    std::optional<boost::capy::work_guard<net::io_context::executor_type>> guard;
+    std::vector<std::thread> threads;
+    unsigned runners;
 };
 
-context::context() : impl_(std::make_unique<impl>()) {}
+context::context() : context(runtime_threads(), false) {}
+context::context(unsigned runners, bool keep_alive)
+    : impl_(std::make_unique<impl>(runners, keep_alive)) {}
 context::~context() = default;
 context::context(context&&) noexcept = default;
 context& context::operator=(context&&) noexcept = default;
 
+auto context::executor() const -> boost::capy::any_executor {
+    return impl_->io.get_executor();
+}
+
+auto default_context() -> context& {
+    static context shared{shared_runtime_threads(), true};
+    return shared;
+}
+
 void context::run(boost::capy::task<> coroutine) {
-    const auto count = runtime_threads();
     boost::capy::run_async(impl_->io.get_executor())(std::move(coroutine));
 
     std::vector<std::thread> runners;
-    runners.reserve(count - 1);
+    runners.reserve(impl_->runners - 1);
     try {
-        for (unsigned index = 1; index < count; ++index) {
+        for (unsigned index = 1; index < impl_->runners; ++index) {
             runners.emplace_back([this] { impl_->io.run(); });
         }
     } catch (...) {
@@ -85,10 +123,11 @@ void run_on_pool(boost::capy::task<> coroutine) {
     boost::capy::run_async(shared_pool().get_executor())(std::move(coroutine));
 }
 
-}  // namespace detail
+} // namespace detail
 
 void spawn(task<void> coroutine, std::function<void(result<void>)> on_done) {
-    detail::run_on_pool(complete_spawn(std::move(coroutine), std::move(on_done)));
+    boost::capy::run_async(default_context().executor())(
+        complete_spawn(std::move(coroutine), std::move(on_done)));
 }
 
-}  // namespace liquid::runtime
+} // namespace liquid::runtime
