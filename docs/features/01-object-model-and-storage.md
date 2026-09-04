@@ -82,8 +82,8 @@ Node types:
 The chunk index must scale to **billions of entries**. It maps chunk hash →
 (pack, offset, length), plus reference metadata for garbage collection.
 
-Backed by an embedded key-value store (RocksDB or LMDB; the choice will be made by
-measurement, not preference). It is explicitly **not** a directory of files —
+Backed by an embedded key-value store: **RocksDB**, chosen by measurement
+(`../library/chunk-index-benchmark.md`). It is explicitly **not** a directory of files —
 that is the design error that makes naive content-addressed stores unusable.
 
 ## Lazy materialisation
@@ -137,8 +137,9 @@ so deduplication works without exposing a convergent-encryption oracle. See
 
 ## Open questions
 
-- **RocksDB vs LMDB** for the index — write amplification versus mmap simplicity.
-  To be settled by benchmark against a realistic chunk population.
+- ~~RocksDB vs LMDB~~ **Resolved: RocksDB**, by benchmark
+  (`../library/chunk-index-benchmark.md`; `CLAUDE.md` *Decisions* 8), provisional until the
+  100M-entry Linux run.
 - **Pack compaction policy.** Packs accumulate dead chunks as history is collected;
   compaction is a write-amplification/space tradeoff not yet decided.
 - **Chunk size tuning per content type.** 64 KiB is a reasonable default; source

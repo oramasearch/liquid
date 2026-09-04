@@ -240,6 +240,14 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    Everything under `include/liquid/` is public API and must stay free of Zetta and, where
    feasible, of third-party types (Boost stays behind the boundary). The CLI never carries
    behaviour the library lacks.
+8. **The chunk index is RocksDB** (2026-09-03, from the benchmark in
+   `docs/library/chunk-index-benchmark.md`, liquid #45 / PR #88). At 10M entries on macOS,
+   RocksDB tuned (bloom filter, sized block cache) inserts at 1.16M/s against LMDB's 55k/s
+   durable, and uses half the disk (576 MB vs 1.17 GB); LMDB reads about 2x faster. The index
+   is write-heavy at ingest and must hold a billion entries, so write throughput, write
+   amplification and footprint decide it. Provisional until the documented 100M-entry Linux run
+   confirms the direction; the index sits behind the store interface either way, so the engine
+   is replaceable without touching callers.
 
 **Still open:**
 

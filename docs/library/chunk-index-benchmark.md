@@ -153,6 +153,15 @@ On Linux the executable opens every regular database file and issues
 `cache_drop=linux_posix_fadvise_files=<nonzero count>`; otherwise the reopen numbers are not
 confirmed cold-cache results. Do not reuse directories between runs.
 
+## Decision
+
+**RocksDB, tuned** (bloom filter, sized block cache), recorded in `CLAUDE.md` *Decisions* 8 on
+2026-09-03. The index is write-heavy at ingest and must reach a billion entries: RocksDB's
+durable insert rate is 21x LMDB's synchronous rate and 4.3x its `MDB_NOSYNC` rate, at half the
+disk. LMDB's roughly 2x read advantage does not outweigh that for this workload. Provisional
+until the 100M-entry Linux run below confirms the direction; the engine lives behind the
+store interface, so it is replaceable without touching callers.
+
 ## What the numbers say
 
 At this population, RocksDB's default insert rate was 14.5 times LMDB's synchronous rate. Enabling
