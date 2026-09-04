@@ -882,4 +882,29 @@ TEST(Repository, WriteFileMatchesWriteBlobAndRecordsOneDrip) {
     EXPECT_EQ(*read, bytes);
 }
 
+TEST(Repository, RemoteConfigurationPersistsAcrossOpen) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.remote = liquid::remote_config{.endpoint = "https://cache.example.test:443",
+                                           .instance_name = "liquid",
+                                           .tls = {.enabled = true,
+                                                   .verify_peer = true,
+                                                   .certificate_authority = "ca.pem",
+                                                   .client_certificate = "client.pem",
+                                                   .client_key = "client-key.pem"},
+                                           .headers = {{"authorization", "Bearer test-token"}},
+                                           .deadline = std::chrono::milliseconds{2500},
+                                           .batch_blob_limit = 1024,
+                                           .publish = true};
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created) << created.error().message;
+    ASSERT_TRUE(created->remote_configuration());
+    EXPECT_EQ(*created->remote_configuration(), *options.remote);
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    ASSERT_TRUE(reopened->remote_configuration());
+    EXPECT_EQ(*reopened->remote_configuration(), *options.remote);
+}
+
 } // namespace

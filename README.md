@@ -63,8 +63,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
 > misses with digest, argv, environment,
-> toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk hit
-> rates and output bytes avoided versus rebuilt. Memory and network remote-cache tiers remain separate work;
+> toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk and
+> remote hit rates and output bytes avoided versus rebuilt. The memory cache tier remains separate work;
 > macOS needs macFUSE and Windows returns its documented unsupported result.
 > Each result records non-overlapping queued, sandbox, exec, hash, and store phases. Every wrap
 > retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
@@ -74,9 +74,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > queue depth, and cache locality. Four or more short actions share one supported remote batch; a
 > race cancels its loser and publishes only its winner. Results, `liquid why`, retained traces, and
 > Chrome events preserve the decision and every model input. The dependency-free protobuf codec,
-> REAPI v2.3 messages, and native tree/action/result conversions are implemented. Private HTTP/2
-> and gRPC framing now have h2c and TLS ALPN interoperability; HTTP/2 client integration, production workers,
-> the remote cache tier, and measured transfer timing remain Phase 3 work.
+> REAPI v2.3 messages, and native tree/action/result conversions are implemented. The Corosio
+> REAPI client provides CAS, ByteStream, ActionCache, and Execution RPCs; `wrap` and `build --profile`
+> use its validated remote cache tier, and `liquid serve reapi` exposes liquid's CAS and ActionCache.
+> Production workers and measured transfer timing remain Phase 3 work.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -85,7 +86,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > refuses to execute an uncached probe for a foreign target.
 > Typed retention rules keep matching refs and cost-weighted results through computed reachability;
 > a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
-> names the responsible rule and lease. Memory and network remote-cache tiers remain separate work; macOS needs
+> names the responsible rule and lease. The memory cache tier remains separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
 
 > **Phase 3 build-without-bytes is implemented behind a transport-neutral remote blob source.**
@@ -93,9 +94,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > VFS hydration, and materialisation fetch verified logical chunks only on demand, while `liquid
 > status` reports current-tree bytes that remain remote. Actions carry an opt-in remote-eligibility
 > flag, default off; on Linux, eligible actions refuse and name reads outside their input and
-> toolchain trees before dispatch. Cost-based scheduling and the REAPI record codec are implemented;
-> private HTTP/2 and gRPC framing with h2c and TLS ALPN interoperability are implemented, while HTTP/2 client integration remains separate
-> Phase 3 work.
+> toolchain trees before dispatch. Cost-based scheduling, the REAPI record codec, the Corosio client,
+> and the validated read-only remote cache tier are implemented. NativeLink and BuildBarn match the
+> local 100% second-run fixture hit rate, and stock Bazel reads and writes `liquid serve reapi`.
 
 > **Phase 3 now includes explicit local replay.** `liquid replay <action|result>` reconstructs a
 > recorded action from its input tree, toolchain, environment, and sandbox, then compares exit
@@ -103,8 +104,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > successful reproductions, and differences report the first unequal byte. Replay does not publish
 > its local result or change quarantine state unless `--record` requests an ordinary verification
 > sample. Registered remote inputs and expected outputs hydrate through their recorded
-> `remote_blob_location` and the repository's configured `remote_blob_source`; tests use its
-> on-disk double while the REAPI client integration remains separate work.
+> `remote_blob_location` and the repository's configured `remote_blob_source`; tests cover both its
+> on-disk double and the REAPI client.
 
 > **Phase 3 delta delivery is implemented.** `liquid delta create` stores a zstd reference patch,
 > content-addressed delta record, and signed `delta/1` attestation. Apply and fetch verify source,
@@ -153,8 +154,9 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
-- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
+- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.
+- [`docs/library/reapi.md`](docs/library/reapi.md) — the REAPI client, remote cache tier, CAS/ActionCache server, configuration, CLI, API map, and peer proof.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.

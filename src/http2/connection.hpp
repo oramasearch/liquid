@@ -57,6 +57,7 @@ public:
                                  bool end_stream) -> runtime::task<void>;
     [[nodiscard]] auto receive_headers(std::uint32_t stream_id)
         -> runtime::task<std::vector<header_field>>;
+    [[nodiscard]] auto receive_stream() -> runtime::task<std::uint32_t>;
     [[nodiscard]] auto receive_data(std::uint32_t stream_id)
         -> runtime::task<std::vector<std::byte>>;
     [[nodiscard]] auto cancel(std::uint32_t stream_id) -> runtime::task<void>;

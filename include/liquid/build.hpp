@@ -288,6 +288,7 @@ struct LIQUID_EXPORT wrap_options {
     std::optional<std::string> target;
     std::optional<std::filesystem::path> cache_directory;
     std::optional<std::filesystem::path> fact_directory;
+    std::optional<remote_config> remote;
 };
 
 struct LIQUID_EXPORT critical_action {
@@ -421,6 +422,7 @@ struct LIQUID_EXPORT why_report {
     std::optional<digest> previous_action;
     cache_miss cause;
     std::optional<execution_schedule> schedule;
+    cache_report cache;
 };
 
 namespace build {

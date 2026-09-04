@@ -53,6 +53,15 @@ struct Operation {
     UnknownFields unknown_fields;
 };
 
+struct Empty {
+    UnknownFields unknown_fields;
+};
+
+struct CancelOperationRequest {
+    std::string name;
+    UnknownFields unknown_fields;
+};
+
 struct SemVer {
     std::int32_t major{};
     std::int32_t minor{};
@@ -514,6 +523,8 @@ LIQUID_REAPI_CODEC(Duration);
 LIQUID_REAPI_CODEC(UInt32Value);
 LIQUID_REAPI_CODEC(Status);
 LIQUID_REAPI_CODEC(Operation);
+LIQUID_REAPI_CODEC(Empty);
+LIQUID_REAPI_CODEC(CancelOperationRequest);
 LIQUID_REAPI_CODEC(SemVer);
 LIQUID_REAPI_CODEC(DigestFunction);
 LIQUID_REAPI_CODEC(Digest);

@@ -282,14 +282,21 @@ void print_why_json(const liquid::why_report& report) {
     } else {
         std::print("\"line_change\":null,");
     }
-    std::print("\"tool\":{},\"drip\":{},\"by\":{},\"at\":{},\"detail\":{},\"schedule\":{}}}\n",
+    std::print("\"tool\":{},\"drip\":{},\"by\":{},\"at\":{},\"detail\":{},\"schedule\":{},"
+               "\"cache\":{{\"disk_hits\":{},\"disk_misses\":{},"
+               "\"remote_available\":{},\"remote_hits\":{},\"remote_misses\":{}}}}}\n",
                cause.tool.empty() ? "null" : json_string(cause.tool),
                cause.changed_by ? json_string(liquid::to_string(cause.changed_by->drip)) : "null",
                cause.changed_by ? json_string(cause.changed_by->by.taap_id) : "null",
                cause.changed_by ? std::to_string(cause.changed_by->at.time_since_epoch().count())
                                 : "null",
                cause.detail.empty() ? "null" : json_string(cause.detail),
-               schedule_json(report.schedule));
+               schedule_json(report.schedule),
+               report.cache.disk.hits,
+               report.cache.disk.misses,
+               report.cache.remote.available,
+               report.cache.remote.hits,
+               report.cache.remote.misses);
 }
 
 auto rate(std::uint64_t hits, std::uint64_t misses) -> double {
@@ -338,6 +345,12 @@ auto why(int argc, char** argv) -> int {
             std::println("previous action: {}", liquid::to_string(*report->previous_action));
         }
         print_schedule(report->schedule);
+        std::println("cache tiers: disk={}/{} remote={}/{}{}",
+                     report->cache.disk.hits,
+                     report->cache.disk.misses,
+                     report->cache.remote.hits,
+                     report->cache.remote.misses,
+                     report->cache.remote.available ? "" : " (unavailable)");
         print_cause(report->cause);
     }
     return 0;
@@ -360,17 +373,27 @@ auto cache(int argc, char** argv) -> int {
         std::print("{{\"hits\":{},\"misses\":{},\"disk\":{{\"available\":true,"
                    "\"hits\":{},\"misses\":{},\"hit_rate\":{:.2f},"
                    "\"bytes_transferred\":{},\"bytes_avoided\":{}}},"
-                   "\"memory\":{{\"available\":false}},"
-                   "\"remote\":{{\"available\":false}},\"bytes_rebuilt\":{},"
-                   "\"misses_by_reason\":{{",
+                   "\"memory\":{{\"available\":false}},",
                    report->hits,
                    report->misses,
                    report->disk.hits,
                    report->disk.misses,
                    rate(report->disk.hits, report->disk.misses),
                    report->disk.bytes_transferred,
-                   report->disk.bytes_avoided,
-                   report->bytes_rebuilt);
+                   report->disk.bytes_avoided);
+        if (report->remote.available) {
+            std::print("\"remote\":{{\"available\":true,\"hits\":{},\"misses\":{},"
+                       "\"hit_rate\":{:.2f},\"bytes_transferred\":{},"
+                       "\"bytes_avoided\":{}}},",
+                       report->remote.hits,
+                       report->remote.misses,
+                       rate(report->remote.hits, report->remote.misses),
+                       report->remote.bytes_transferred,
+                       report->remote.bytes_avoided);
+        } else {
+            std::print("\"remote\":{{\"available\":false}},");
+        }
+        std::print("\"bytes_rebuilt\":{},\"misses_by_reason\":{{", report->bytes_rebuilt);
         auto first = true;
         for (const auto& [reason, count] : report->misses_by_reason) {
             if (!first)
@@ -386,7 +409,14 @@ auto cache(int argc, char** argv) -> int {
                      report->disk.hits,
                      report->disk.misses);
         std::println("memory: unavailable");
-        std::println("remote: unavailable");
+        if (report->remote.available) {
+            std::println("remote: hit_rate={:.2f}% hits={} misses={}",
+                         rate(report->remote.hits, report->remote.misses),
+                         report->remote.hits,
+                         report->remote.misses);
+        } else {
+            std::println("remote: unavailable");
+        }
         std::println("bytes_transferred={} bytes_avoided={} bytes_rebuilt={}",
                      report->disk.bytes_transferred,
                      report->disk.bytes_avoided,

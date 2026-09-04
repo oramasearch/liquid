@@ -102,7 +102,9 @@ auto run_wrap(const std::filesystem::path& project,
               const std::filesystem::path& cache,
               std::vector<std::string> command,
               bool explain = false,
-              std::uint32_t jobs = 0) -> liquid::result<liquid::wrap_report> {
+              std::uint32_t jobs = 0,
+              std::optional<liquid::remote_config> remote = {})
+    -> liquid::result<liquid::wrap_report> {
     return liquid::runtime::block_on(
         liquid::build::wrap(project,
                             std::move(command),
@@ -111,7 +113,8 @@ auto run_wrap(const std::filesystem::path& project,
                                                  .explain = explain,
                                                  .verify = false,
                                                  .cache_directory = cache,
-                                                 .fact_directory = cache.parent_path() / "facts"}));
+                                                 .fact_directory = cache.parent_path() / "facts",
+                                                 .remote = std::move(remote)}));
 }
 
 auto shell_quote(std::string_view value) -> std::string {
@@ -311,6 +314,42 @@ TEST(BuildWrap, recursive_make_is_split_into_actions) {
         run_wrap(make_fixture.project(), make_fixture.cache(), {"make", "-C", "sub"}, false, 3);
     ASSERT_TRUE(made_again) << made_again.error().message;
     EXPECT_EQ(made_again->outer, liquid::cache_status::hit);
+}
+
+TEST(BuildWrap, reapi_action_cache_matches_the_local_second_run_hit_rate) {
+    const auto* endpoint = std::getenv("LIQUID_REAPI_ENDPOINT");
+    if (!endpoint) {
+        GTEST_SKIP() << "LIQUID_REAPI_ENDPOINT is not configured";
+    }
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("make") || !available("clang")) {
+        GTEST_SKIP() << "make or clang is absent";
+    }
+    wrap_directory fixture{"make"};
+    auto remote = liquid::remote_config{.endpoint = endpoint, .publish = true};
+    auto first = run_wrap(fixture.project(), fixture.cache(), {"make"}, false, 3, remote);
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    ASSERT_EQ(first->exit, 0);
+    ASSERT_GT(first->misses, 0U);
+
+    const auto actions = fixture.cache() / "repository/.liquid-store/actions";
+    auto code = std::error_code{};
+    EXPECT_TRUE(std::filesystem::remove(actions / "INDEX", code));
+    ASSERT_FALSE(code) << code.message();
+    EXPECT_TRUE(std::filesystem::remove(actions / "ROOT", code));
+    ASSERT_FALSE(code) << code.message();
+
+    remote.publish = false;
+    auto second = run_wrap(fixture.project(), fixture.cache(), {"make"}, false, 3, remote);
+    ASSERT_TRUE(second) << second.error().message << ": " << second.error().context;
+    EXPECT_EQ(second->exit, 0);
+    EXPECT_EQ(second->outer, liquid::cache_status::hit);
+    EXPECT_EQ(second->hits, second->actions);
+    EXPECT_EQ(second->misses, 0U);
+    EXPECT_EQ(second->cache.remote.hits, 1U);
+    EXPECT_EQ(second->cache.remote.misses, 0U);
 }
 
 TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {

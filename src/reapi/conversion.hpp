@@ -81,6 +81,7 @@ struct BlobResolver {
                                    const BlobResolver& blobs) -> result<ActionResult>;
 [[nodiscard]] auto from_reapi_result(const ActionResult& value,
                                      liquid::digest action,
-                                     algorithm hash_algorithm) -> result<action_result>;
+                                     algorithm hash_algorithm,
+                                     bool validate_action = true) -> result<action_result>;
 
 } // namespace liquid::reapi

@@ -48,6 +48,7 @@ auto facts(int argc, char** argv) -> int;
 auto delta(int argc, char** argv) -> int;
 auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
+auto serve(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -184,13 +185,15 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::sbom},
     {"wrap",
-     "wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> "
+     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>] [remote options] "
+     "[--no-cache] [--no-verify] [--explain] <command> "
      "[args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build --profile <command> [args...] | build trace [--chrome]",
+     "build --profile [--remote <endpoint>] [remote options] <command> [args...] | build trace "
+     "[--chrome]",
      "profile a build or export its trace",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::build},
@@ -214,6 +217,11 @@ constexpr auto commands = std::to_array<command>({
      "inspect or export configure facts",
      "available",
      liquid_cli::facts},
+    {"serve",
+     "serve reapi --listen <address> [--instance <name>]",
+     "serve the repository CAS and action cache over REAPI",
+     "available",
+     liquid_cli::serve},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},

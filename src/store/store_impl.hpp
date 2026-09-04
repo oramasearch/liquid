@@ -40,6 +40,8 @@ public:
     [[nodiscard]] runtime::task<void> get_to_file(digest id, std::filesystem::path destination);
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
+                                                  algorithm hash_algorithm);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
                                                       std::string key_id);
     void begin_object_batch();
@@ -88,7 +90,8 @@ private:
     read_remote(const blob& value, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<void> add_object(stored_object object);
     [[nodiscard]] runtime::task<digest> put_selected(std::vector<std::byte> input,
-                                                     std::optional<std::string> key_id);
+                                                     std::optional<std::string> key_id,
+                                                     algorithm hash_algorithm);
 
     friend class collector;
     friend class compactor;

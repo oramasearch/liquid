@@ -243,7 +243,13 @@ auto decode_result_metadata(const Any& value) -> result<action_result> {
     if (!record) {
         return std::unexpected(failure(errc::corrupt, "result metadata is missing its record"));
     }
-    return objects::decode_result(*record);
+    auto decoded = objects::decode_result(*record);
+    if (!decoded) {
+        return std::unexpected(failure(decoded.error().code,
+                                       decoded.error().message + " in metadata record of " +
+                                           std::to_string(record->size()) + " bytes"));
+    }
+    return decoded;
 }
 
 auto resolve_blob(const BlobResolver& blobs, liquid::digest value)
@@ -566,8 +572,10 @@ auto to_reapi_result(const action_result& value,
     return output;
 }
 
-auto from_reapi_result(const ActionResult& value, liquid::digest action, algorithm hash_algorithm)
-    -> result<action_result> {
+auto from_reapi_result(const ActionResult& value,
+                       liquid::digest action,
+                       algorithm hash_algorithm,
+                       bool validate_action) -> result<action_result> {
     if (value.execution_metadata) {
         for (const auto& metadata : value.execution_metadata->auxiliary_metadata) {
             if (metadata.type_url != result_metadata_type) {
@@ -577,7 +585,7 @@ auto from_reapi_result(const ActionResult& value, liquid::digest action, algorit
             if (!decoded) {
                 return std::unexpected(decoded.error());
             }
-            if (!same_digest(decoded->action, action)) {
+            if (validate_action && !same_digest(decoded->action, action)) {
                 return std::unexpected(
                     failure(errc::corrupt, "result metadata belongs to another action"));
             }

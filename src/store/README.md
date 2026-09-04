@@ -34,6 +34,10 @@ through the configured source before verifying and writing them through the ordi
 Once a chunk is local, reads load that verified chunk directly; this also handles one-chunk blobs
 whose content and chunk digests are identical without resolving the remote registration again.
 
+REAPI negotiation may require SHA-256 objects in a repository whose ordinary identity is BLAKE3.
+The repository and REAPI adapters can insert verified raw objects under an explicit supported
+algorithm; the object map and pack path retain both identities without changing the store default.
+
 Delta records are detected as their own kind and retain source, target, and patch-blob digests.
 `delta/1` attestations retain their delta record, and the subject index provides the signed target
 catalog. Delta fetch uses ordinary registered remote blobs for a missing patch or target.

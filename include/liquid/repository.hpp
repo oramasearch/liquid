@@ -99,6 +99,7 @@ struct LIQUID_EXPORT repository_options {
     verify_config verify{};
     policy_config policy{};
     retention_config retention{};
+    std::optional<remote_config> remote;
 };
 
 struct LIQUID_EXPORT log_options {
@@ -232,6 +233,7 @@ public:
     [[nodiscard]] runtime::task<sync_export> export_drips(journal_cursor cursor,
                                                           std::span<sync_item> output);
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
+    [[nodiscard]] std::optional<remote_config> remote_configuration() const;
 
 private:
     [[nodiscard]] runtime::task<void>

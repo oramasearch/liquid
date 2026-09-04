@@ -76,6 +76,7 @@ struct repository_document {
     std::uint32_t verification_rate{20};
     policy_config policy;
     retention_config retention{};
+    std::optional<remote_config> remote;
     std::uint64_t pending_drips{};
 };
 
@@ -290,6 +291,32 @@ auto encode_repository_document(const repository_document& value)
             },
             configured);
     }
+    auto remote = cbor::value{cbor::null{}};
+    if (value.remote) {
+        auto headers = cbor::value::array{};
+        for (const auto& [name, header_value] : value.remote->headers) {
+            headers.push_back(
+                map({{"name", cbor::value{name}}, {"value", cbor::value{header_value}}}));
+        }
+        auto tls = cbor::value::map{{"enabled", cbor::value{value.remote->tls.enabled}},
+                                    {"verify_peer", cbor::value{value.remote->tls.verify_peer}}};
+        const auto add_path = [&](std::string name,
+                                  const std::optional<std::filesystem::path>& path) {
+            tls.emplace_back(std::move(name),
+                             path ? cbor::value{path->string()} : cbor::value{cbor::null{}});
+        };
+        add_path("certificate_authority", value.remote->tls.certificate_authority);
+        add_path("client_certificate", value.remote->tls.client_certificate);
+        add_path("client_key", value.remote->tls.client_key);
+        remote = map({{"endpoint", cbor::value{value.remote->endpoint}},
+                      {"instance_name", cbor::value{value.remote->instance_name}},
+                      {"tls", cbor::value{std::move(tls)}},
+                      {"headers", cbor::value{std::move(headers)}},
+                      {"deadline_ms",
+                       cbor::value{static_cast<std::uint64_t>(value.remote->deadline.count())}},
+                      {"batch_blob_limit", cbor::value{value.remote->batch_blob_limit}},
+                      {"publish", cbor::value{value.remote->publish}}});
+    }
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
@@ -297,7 +324,8 @@ auto encode_repository_document(const repository_document& value)
              {"policy",
               map({{"approved_builders", cbor::value{std::move(approved_builders)}},
                    {"rules", cbor::value{std::move(policy_rules)}}})},
-             {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})}});
+             {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})},
+             {"remote", std::move(remote)}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
@@ -516,6 +544,89 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     failure(errc::corrupt, "invalid verification config", "repository document"));
             }
             output.verification_rate = static_cast<std::uint32_t>(*value);
+        }
+        if (const auto* remote = find(*config, "remote");
+            remote && !std::holds_alternative<cbor::null>(remote->data)) {
+            const auto* endpoint_value = find(*remote, "endpoint");
+            const auto* instance_value = find(*remote, "instance_name");
+            const auto* tls_value = find(*remote, "tls");
+            const auto* headers_value = find(*remote, "headers");
+            const auto* deadline_value = find(*remote, "deadline_ms");
+            const auto* limit_value = find(*remote, "batch_blob_limit");
+            const auto* publish_value = find(*remote, "publish");
+            const auto* endpoint =
+                endpoint_value ? std::get_if<std::string>(&endpoint_value->data) : nullptr;
+            const auto* instance =
+                instance_value ? std::get_if<std::string>(&instance_value->data) : nullptr;
+            const auto* headers =
+                headers_value ? std::get_if<cbor::value::array>(&headers_value->data) : nullptr;
+            const auto* deadline =
+                deadline_value ? std::get_if<std::uint64_t>(&deadline_value->data) : nullptr;
+            const auto* limit =
+                limit_value ? std::get_if<std::uint64_t>(&limit_value->data) : nullptr;
+            const auto* publish = publish_value ? std::get_if<bool>(&publish_value->data) : nullptr;
+            if (!endpoint || endpoint->empty() || !instance || !tls_value || !headers ||
+                !deadline || *deadline == 0 ||
+                *deadline > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+                !limit || *limit == 0 || !publish) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid remote config", "repository document"));
+            }
+            auto configured = remote_config{.endpoint = *endpoint,
+                                            .instance_name = *instance,
+                                            .deadline = std::chrono::milliseconds{*deadline},
+                                            .batch_blob_limit = *limit,
+                                            .publish = *publish};
+            const auto* tls_enabled_value = find(*tls_value, "enabled");
+            const auto* verify_peer_value = find(*tls_value, "verify_peer");
+            const auto* tls_enabled =
+                tls_enabled_value ? std::get_if<bool>(&tls_enabled_value->data) : nullptr;
+            const auto* verify_peer =
+                verify_peer_value ? std::get_if<bool>(&verify_peer_value->data) : nullptr;
+            if (!tls_enabled || !verify_peer) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid remote TLS config", "repository document"));
+            }
+            configured.tls.enabled = *tls_enabled;
+            configured.tls.verify_peer = *verify_peer;
+            const auto read_path =
+                [&](std::string_view name) -> result<std::optional<std::filesystem::path>> {
+                const auto* field = find(*tls_value, name);
+                if (!field || std::holds_alternative<cbor::null>(field->data)) {
+                    return std::optional<std::filesystem::path>{};
+                }
+                const auto* text = std::get_if<std::string>(&field->data);
+                if (!text || text->empty()) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid remote TLS path", "repository document"));
+                }
+                return std::filesystem::path{*text};
+            };
+            auto authority = read_path("certificate_authority");
+            auto certificate = read_path("client_certificate");
+            auto key = read_path("client_key");
+            if (!authority || !certificate || !key) {
+                return std::unexpected(!authority     ? authority.error()
+                                       : !certificate ? certificate.error()
+                                                      : key.error());
+            }
+            configured.tls.certificate_authority = std::move(*authority);
+            configured.tls.client_certificate = std::move(*certificate);
+            configured.tls.client_key = std::move(*key);
+            for (const auto& header : *headers) {
+                const auto* name_value = find(header, "name");
+                const auto* value_value = find(header, "value");
+                const auto* name =
+                    name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+                const auto* value =
+                    value_value ? std::get_if<std::string>(&value_value->data) : nullptr;
+                if (!name || name->empty() || !value) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid remote header", "repository document"));
+                }
+                configured.headers.insert_or_assign(*name, *value);
+            }
+            output.remote = std::move(configured);
         }
         if (const auto* policy = find(*config, "policy")) {
             const auto* approved = find(*policy, "approved_builders");
@@ -2029,6 +2140,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.verification_rate = options.verify.rate;
     document.policy = std::move(options.policy);
     document.retention = std::move(options.retention);
+    document.remote = std::move(options.remote);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -2100,6 +2212,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!checkpointed)
         co_return std::unexpected(checkpointed.error());
     co_return output;
+}
+
+std::optional<remote_config> repository::remote_configuration() const {
+    return impl_ ? impl_->current.remote : std::nullopt;
 }
 runtime::task<::liquid::tree> repository::root() {
     if (!impl_)
@@ -3919,6 +4035,16 @@ runtime::task<digest> repository_detail::build_access::put_record(repository& so
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return co_await repository_detail::store_access::put_plain(source.impl_->objects,
                                                                   std::move(bytes));
+}
+
+runtime::task<digest> repository_detail::build_access::put_record(repository& source,
+                                                                  std::vector<std::byte> bytes,
+                                                                  algorithm hash_algorithm) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return co_await repository_detail::store_access::put_plain(
+        source.impl_->objects, std::move(bytes), hash_algorithm);
 }
 
 runtime::task<digest> repository_detail::build_access::put_file(repository& source,
