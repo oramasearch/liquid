@@ -184,7 +184,7 @@ add_library(libliquid
   src/object.cpp
   src/objects/records.cpp
   src/remote.cpp
-  src/repository.cpp
+  src/repository/repository_impl.cpp
   src/runtime/runtime.cpp
   src/store.cpp
   src/store/chunker.cpp

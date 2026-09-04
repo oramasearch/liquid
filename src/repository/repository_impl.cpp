@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <fstream>
 #include <map>
 #include <random>
 #include <string_view>
@@ -12,6 +11,7 @@
 #include "crdt/document.hpp"
 #include "encoding/cbor.hpp"
 #include "objects/records.hpp"
+#include "store/pack.hpp"
 
 namespace liquid {
 namespace {
@@ -313,10 +313,13 @@ struct repository::impl {
   std::filesystem::path root_path;
   store objects;
   state current;
+  std::uint64_t checkpoint_interval{64};
   std::map<node_id, crdt::directory_document> directory_cache;
-  impl(std::filesystem::path path, store value, state document)
-      : root_path(std::move(path)), objects(std::move(value)), current(std::move(document)) {}
+  impl(std::filesystem::path path, store value, state document, std::uint64_t interval = 64)
+      : root_path(std::move(path)), objects(std::move(value)), current(std::move(document)),
+        checkpoint_interval(std::max(std::uint64_t{1}, interval)) {}
   auto marker() const -> std::filesystem::path { return root_path / "LIQUID_REPO"; }
+  auto journal_marker() const -> std::filesystem::path { return root_path / "LIQUID_JOURNAL"; }
   runtime::task<crdt::directory_document *> directory(node_id id) {
     auto found = directory_cache.find(id);
     if (found != directory_cache.end())
@@ -357,13 +360,13 @@ struct repository::impl {
       co_return std::unexpected(stored.error());
     auto temporary = marker();
     temporary += ".tmp";
-    {
-      auto output = std::ofstream{temporary, std::ios::binary | std::ios::trunc};
-      if (!output)
-        co_return std::unexpected(
-            failure(errc::io, "cannot write repository marker", temporary.string()));
-      output << to_string(*stored) << '\n';
-    }
+    const auto text = to_string(*stored) + "\n";
+    auto marker_bytes =
+        std::vector<std::byte>{reinterpret_cast<const std::byte *>(text.data()),
+                               reinterpret_cast<const std::byte *>(text.data() + text.size())};
+    auto written = co_await store_detail::write_file(temporary, std::move(marker_bytes));
+    if (!written)
+      co_return std::unexpected(written.error());
     auto code = std::error_code{};
     std::filesystem::rename(temporary, marker(), code);
     if (code) {
@@ -374,6 +377,14 @@ struct repository::impl {
     if (code)
       co_return std::unexpected(failure(errc::io, code.message(), marker().string()));
     co_return result<void>{};
+  }
+  runtime::task<void> checkpoint_or_journal() {
+    if (current.pending_drips >= checkpoint_interval)
+      co_return co_await persist();
+    auto encoded = encode_state(current);
+    if (!encoded)
+      co_return std::unexpected(encoded.error());
+    co_return co_await store_detail::write_file(journal_marker(), std::move(*encoded));
   }
   runtime::task<digest> snapshot(working_entry &entry) {
     tree value{};
@@ -415,7 +426,8 @@ repository::repository() noexcept = default;
 repository::~repository() = default;
 repository::repository(repository &&) noexcept = default;
 auto repository::operator=(repository &&) noexcept -> repository & = default;
-runtime::task<repository> repository::create(std::filesystem::path path, repository_options) {
+runtime::task<repository> repository::create(std::filesystem::path path,
+                                             repository_options options) {
   auto code = std::error_code{};
   std::filesystem::create_directories(path, code);
   if (code)
@@ -430,19 +442,20 @@ runtime::task<repository> repository::create(std::filesystem::path path, reposit
   document.repository = random_id();
   document.root.node = random_id();
   repository output;
-  output.impl_ = std::make_unique<impl>(std::move(path), std::move(*objects), std::move(document));
+  output.impl_ = std::make_unique<impl>(std::move(path), std::move(*objects), std::move(document),
+                                        options.checkpoint_interval);
   auto saved = co_await output.impl_->persist();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return output;
 }
 runtime::task<repository> repository::open(std::filesystem::path path) {
-  auto input = std::ifstream{path / "LIQUID_REPO", std::ios::binary};
-  if (!input)
-    co_return std::unexpected(
-        failure(errc::not_found, "repository marker is missing", path.string()));
-  auto text = std::string{};
-  std::getline(input, text);
+  auto marker = co_await store_detail::read_file(path / "LIQUID_REPO");
+  if (!marker)
+    co_return std::unexpected(marker.error());
+  auto text = std::string{reinterpret_cast<const char *>(marker->data()), marker->size()};
+  if (const auto newline = text.find('\n'); newline != std::string::npos)
+    text.resize(newline);
   auto document_id = parse_digest(text);
   if (!document_id)
     co_return std::unexpected(document_id.error());
@@ -455,6 +468,15 @@ runtime::task<repository> repository::open(std::filesystem::path path) {
   auto document = decode_state(*saved);
   if (!document)
     co_return std::unexpected(document.error());
+  if (std::filesystem::exists(path / "LIQUID_JOURNAL")) {
+    auto journal = co_await store_detail::read_file(path / "LIQUID_JOURNAL");
+    if (!journal)
+      co_return std::unexpected(journal.error());
+    auto replayed = decode_state(*journal);
+    if (!replayed)
+      co_return std::unexpected(replayed.error());
+    document = std::move(replayed);
+  }
   repository output;
   output.impl_ = std::make_unique<impl>(std::move(path), std::move(*objects), std::move(*document));
   co_return output;
@@ -518,22 +540,19 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
   auto parent = parent_for(impl_->current.root, *parts, true);
   if (!parent)
     co_return std::unexpected(parent.error());
+  auto found = (*parent)->entries.find(parts->back());
+  std::optional<working_entry> prior;
+  if (found != (*parent)->entries.end() && found->second.kind != entry_kind::file)
+    co_return std::unexpected(failure(errc::invalid_argument, "cannot overwrite directory", path));
   auto directory = co_await impl_->directory((*parent)->node);
   if (!directory)
     co_return std::unexpected(directory.error());
-  auto recorded = (*directory)
-                      ->transact({crdt::operation{.kind = crdt::operation_kind::write,
-                                                  .path = parts->back(),
-                                                  .ref = to_string(*reference),
-                                                  .mode = 0100644}});
+  const auto existing_id = found == (*parent)->entries.end() ? node_id{} : found->second.node;
+  auto recorded =
+      (*directory)->put_entry(parts->back(), {"blob", existing_id, 0100644, to_string(*reference)});
   if (!recorded)
     co_return std::unexpected(recorded.error());
-  auto found = (*parent)->entries.find(parts->back());
-  std::optional<working_entry> prior;
   if (found != (*parent)->entries.end()) {
-    if (found->second.kind != entry_kind::file)
-      co_return std::unexpected(
-          failure(errc::invalid_argument, "cannot overwrite directory", path));
     prior = found->second;
     found->second.object = *reference;
   } else
@@ -547,7 +566,7 @@ runtime::task<void> repository::write(std::string path, std::vector<std::byte> c
     co_return std::unexpected(operation_hash.error());
   impl_->current.operations.push_back({op_id{*operation_hash}, "write", path, {}, prior});
   ++impl_->current.pending_drips;
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
@@ -579,27 +598,20 @@ runtime::task<void> repository::move(std::string from, std::string to) {
   if (!source_document)
     co_return std::unexpected(source_document.error());
   if ((*source_parent)->node == (*destination_parent)->node) {
-    auto recorded = (*source_document)
-                        ->transact({crdt::operation{.kind = crdt::operation_kind::move,
-                                                    .path = source->back(),
-                                                    .to = destination->back()}});
+    auto recorded = (*source_document)->rename_entry(source->back(), destination->back());
     if (!recorded)
       co_return std::unexpected(recorded.error());
   } else {
     auto destination_document = co_await impl_->directory((*destination_parent)->node);
     if (!destination_document)
       co_return std::unexpected(destination_document.error());
-    auto removed = (*source_document)
-                       ->transact({crdt::operation{.kind = crdt::operation_kind::remove,
-                                                   .path = source->back()}});
+    auto removed = (*source_document)->remove_entry(source->back());
     if (!removed)
       co_return std::unexpected(removed.error());
-    auto inserted = (*destination_document)
-                        ->transact({crdt::operation{.kind = crdt::operation_kind::write,
-                                                    .path = destination->back(),
-                                                    .ref = to_string(found->second.object),
-                                                    .mode = found->second.mode,
-                                                    .entry_id = found->second.node}});
+    auto inserted =
+        (*destination_document)
+            ->put_entry(destination->back(), {"blob", found->second.node, found->second.mode,
+                                              to_string(found->second.object)});
     if (!inserted)
       co_return std::unexpected(inserted.error());
   }
@@ -611,7 +623,7 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     co_return std::unexpected(hash_value.error());
   impl_->current.operations.push_back({op_id{*hash_value}, "move", from, to, std::nullopt});
   ++impl_->current.pending_drips;
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
@@ -633,9 +645,7 @@ runtime::task<void> repository::remove(std::string path) {
   auto directory = co_await impl_->directory((*parent)->node);
   if (!directory)
     co_return std::unexpected(directory.error());
-  auto recorded = (*directory)
-                      ->transact({crdt::operation{.kind = crdt::operation_kind::remove,
-                                                  .path = parts->back()}});
+  auto recorded = (*directory)->remove_entry(parts->back());
   if (!recorded)
     co_return std::unexpected(recorded.error());
   auto prior = found->second;
@@ -645,7 +655,7 @@ runtime::task<void> repository::remove(std::string path) {
     co_return std::unexpected(hash_value.error());
   impl_->current.operations.push_back({op_id{*hash_value}, "remove", path, {}, prior});
   ++impl_->current.pending_drips;
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
@@ -677,6 +687,8 @@ runtime::task<change_id> repository::cut(std::string message) {
   auto saved = co_await impl_->persist();
   if (!saved)
     co_return std::unexpected(saved.error());
+  std::error_code cleanup;
+  std::filesystem::remove(impl_->journal_marker(), cleanup);
   co_return id;
 }
 runtime::task<std::vector<ref>> repository::refs() {
@@ -692,7 +704,7 @@ runtime::task<void> repository::set_ref(std::string name, change_id id) {
     co_return std::unexpected(
         failure(errc::invalid_argument, "invalid repository reference", name));
   impl_->current.refs[std::move(name)] = id;
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
@@ -763,7 +775,7 @@ runtime::task<void> repository::nest(repository source, std::string path) {
   nested.kind = entry_kind::nested_repository;
   (*parent)->entries.emplace(parts->back(), std::move(nested));
   ++impl_->current.pending_drips;
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
@@ -787,7 +799,7 @@ runtime::task<repository> repository::split(std::string path, std::filesystem::p
   entry->kind = entry_kind::nested_repository;
   entry->object = child_change->value;
   ++impl_->current.pending_drips;
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return std::move(*destination);
@@ -810,7 +822,7 @@ runtime::task<void> repository::combine(repository other, std::optional<std::str
     (*parent)->entries.emplace(parts->back(), std::move(copy));
   }
   ++impl_->current.pending_drips;
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
@@ -842,7 +854,7 @@ runtime::task<void> repository::undo(op_id operation) {
       co_return std::unexpected(parent.error());
     (*parent)->entries[parts->back()] = *found->prior;
     ++impl_->current.pending_drips;
-    auto saved = co_await impl_->persist();
+    auto saved = co_await impl_->checkpoint_or_journal();
     if (!saved)
       co_return std::unexpected(saved.error());
   } else if (found->kind == "write") {
@@ -857,7 +869,7 @@ runtime::task<void> repository::undo(op_id operation) {
     else
       (*parent)->entries.erase(parts->back());
     ++impl_->current.pending_drips;
-    auto saved = co_await impl_->persist();
+    auto saved = co_await impl_->checkpoint_or_journal();
     if (!saved)
       co_return std::unexpected(saved.error());
   } else
@@ -872,7 +884,7 @@ runtime::task<void> repository::lock(std::string path) {
     co_return std::unexpected(parts.error());
   if (std::ranges::find(impl_->current.locks, path) == impl_->current.locks.end())
     impl_->current.locks.push_back(std::move(path));
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};
@@ -881,7 +893,7 @@ runtime::task<void> repository::unlock(std::string path) {
   if (!impl_)
     co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
   std::erase(impl_->current.locks, path);
-  auto saved = co_await impl_->persist();
+  auto saved = co_await impl_->checkpoint_or_journal();
   if (!saved)
     co_return std::unexpected(saved.error());
   co_return result<void>{};

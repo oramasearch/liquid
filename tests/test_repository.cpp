@@ -95,6 +95,22 @@ TEST(Repository, write_undo_and_locks_are_recorded) {
   ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("replacement"))));
 }
 
+TEST(Repository, journal_replays_a_write_before_the_next_checkpoint) {
+  temporary_repository location;
+  auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+  ASSERT_TRUE(created);
+  auto repository = std::move(*created);
+  ASSERT_TRUE(liquid::runtime::block_on(repository.write("pending.txt", content("journal"))));
+  EXPECT_TRUE(std::filesystem::exists(location.path() / "LIQUID_JOURNAL"));
+  repository = {};
+
+  auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+  ASSERT_TRUE(reopened) << reopened.error().message;
+  auto value = liquid::runtime::block_on(reopened->read("pending.txt"));
+  ASSERT_TRUE(value) << value.error().message;
+  EXPECT_EQ(text(*value), "journal");
+}
+
 TEST(Repository, split_nest_and_combine_are_composable) {
   temporary_repository parent_path;
   temporary_repository child_path;

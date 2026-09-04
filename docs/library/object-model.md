@@ -187,11 +187,10 @@ Release configure with `cmake --build build-measure --target liquid-crdt-measure
 ## Implementation notes
 
 `LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
-written to a sibling temporary file and atomically renamed. The checkpoint holds refs, locks, the
-operation log, the working-tree values, and the `dirs` indirection. Each loaded directory is a
-private CRDT document cached by its `node_id`; saving a checkpoint writes the document bytes to
-the store and refreshes its `dirs` entry. The implementation checkpoints after every mutation,
-which is the configured interval used by the local repository implementation.
+written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
+is a private CRDT document cached by its `node_id`; saving a checkpoint writes the document bytes
+to the store and refreshes its `dirs` entry. A checkpoint occurs at `cut` and after the configured
+drip interval (64 by default); an uncut write is recovered from the repository journal.
 
 File content is represented by a canonical `blob` record whose chunk list currently contains the
 content-store object written by `store::put`. Trees and changes are canonical records as well;
