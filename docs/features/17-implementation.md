@@ -133,7 +133,7 @@ depend on them.
 | **Coroutines and networking** | **Boost.Capy** for coroutines, **Corosio** for networking — decided. The same stack Zetta and oramacore-cpp use; Zetta vendors both. Requires **Clang 17+**. |
 | **Thread pool** | Taskflow or TBB |
 | **RPC / serialisation** | Protobuf + gRPC where REAPI and OCI demand it; Cap'n Proto or FlatBuffers internally |
-| **Chunk index** | **RocksDB** — decided by benchmark (`../library/chunk-index-benchmark.md`), tuned with a bloom filter and a sized block cache |
+| **Chunk index** | **liquid's own**, built from scratch (a fixed-width LSM, rebuildable from the packs); the RocksDB/LMDB benchmark (`../library/chunk-index-benchmark.md`) is the bar |
 | **TLS** | OpenSSL 3.x or BoringSSL |
 | **Signing** | libsodium / Ed25519, pluggable for post-quantum ML-DSA |
 | **Source parsing** | tree-sitter |
@@ -161,8 +161,7 @@ depend on them.
 
 - **CRDT history compaction.** The largest unresolved risk. What does archival of old
   operation history look like, and what is lost?
-- ~~RocksDB vs LMDB~~ **Resolved: RocksDB** (benchmark, 2026-09-03), provisional until the
-  100M-entry Linux run.
+- ~~RocksDB vs LMDB~~ **Resolved: neither** (Steve, 2026-09-03): liquid owns its index.
 - ~~Boost.Capy vs stdexec~~ **Resolved:** Capy for coroutines, Corosio for networking,
   matching Zetta and oramacore-cpp.
 - **Where the Automerge/chunk-store boundary sits exactly** for very large trees:

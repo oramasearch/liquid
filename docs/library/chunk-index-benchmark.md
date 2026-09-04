@@ -155,12 +155,12 @@ confirmed cold-cache results. Do not reuse directories between runs.
 
 ## Decision
 
-**RocksDB, tuned** (bloom filter, sized block cache), recorded in `CLAUDE.md` *Decisions* 8 on
-2026-09-03. The index is write-heavy at ingest and must reach a billion entries: RocksDB's
-durable insert rate is 21x LMDB's synchronous rate and 4.3x its `MDB_NOSYNC` rate, at half the
-disk. LMDB's roughly 2x read advantage does not outweigh that for this workload. Provisional
-until the 100M-entry Linux run below confirms the direction; the engine lives behind the
-store interface, so it is replaceable without touching callers.
+**liquid's own index, built from scratch** (Steve, 2026-09-03), recorded in `CLAUDE.md`
+*Decisions* 8. Neither engine ships inside liquid; these measurements are the **bar** the
+from-scratch index must meet at 10M entries: RocksDB-tuned's insert rate (1.16M/s) and point rate
+(438k/s) and no more than its on-disk footprint (589 MB). `--engine liquid` joins this benchmark
+when the index exists so the comparison is run the same way. (An earlier decision the same day
+chose RocksDB from these numbers; it was withdrawn in favour of owning the engine.)
 
 ## What the numbers say
 
