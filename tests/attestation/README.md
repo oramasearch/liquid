@@ -5,3 +5,4 @@ rejection, freshness, selective disclosure commitments, signatures, structured S
 and the legacy `scan_result/1` digest fixture. The reproducibility case pins its verifier, sandbox,
 and agreement schema. The `sbom/1` example pins the required document digest and mutually exclusive
 derived/inferred flags while retaining selective disclosure for component claims.
+The `delta/1` example pins source, target, algorithm, and delta-record attributes.

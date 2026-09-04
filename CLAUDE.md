@@ -44,7 +44,8 @@ materialisation, remote-byte status, metadata-only remote result recording, and 
 refusal for remote-eligible actions. The REAPI transport and scheduling policy remain later Phase 3
 work. Liquid #19 adds explicit local replay of recorded actions and results, byte-level comparison,
 and optional verification recording; remote inputs hydrate through the registered transport-neutral
-blob source. The repository object model,
+blob source. Liquid #64 adds signed zstd delta delivery with verified local and registered-remote
+blob fetch plus chunk fallback. The repository object model,
 internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Full materialisation works on every platform; lazy VFS mounts use

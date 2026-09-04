@@ -39,6 +39,7 @@ that the table and `liquid --help` name the same commands.
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
+| `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
@@ -68,6 +69,12 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`delta create <source> <target>` stores both artifacts, a `zstd-patch` blob, its delta record, and
+a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <delta> <source>
+<destination>` checks the source, patch blob, and reconstructed target before writing. `delta fetch
+<target> <source> <destination>` uses a matching local signed catalog record and the store's
+registered remote blobs when necessary, then reports `method=delta` or `method=chunks`.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
 number of uncached feature probes observed, plus the outer action's status. `--explain`
@@ -192,6 +199,9 @@ liquid retain explain blake3:<object-digest>
 liquid identity rotate
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
+liquid delta create release-1.tar release-2.tar
+liquid delta apply blake3:<delta-record> release-1.tar release-2.tar
+liquid delta fetch blake3:<target> release-1.tar release-2.tar
 liquid verify --all
 liquid verify --changed --explain
 liquid replay blake3:<action-or-result-digest>
@@ -226,8 +236,8 @@ Run the static and shared build proof from the repository root. The `cli-scenari
 two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
 combines it, reads JSON history and operations, undoes the move, verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
-`cli-help-docs` compares the
-documented command names to `--help`.
+`cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
+and fetches a delta through the built executable and compares the produced files by digest.
 The privileged Linux build fixtures also invoke `replay --json` for an indexed action and require
 agreement without recording a verification sample.
 

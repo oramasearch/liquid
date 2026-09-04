@@ -44,7 +44,13 @@ container filesystem.
 Delta encoding is an optimisation layered on top, not a replacement. `zstd
 --patch-from` where a known base exists; executable-aware delta reserved for the
 generate-once/apply-many cases — published releases and OTA-style updates — where
-the asymmetric cost pays for itself.
+the asymmetric cost pays for itself. The implemented delivery path indexes signed `delta/1`
+attestations by target digest, reads a matching patch through the local store (including a
+registered remote blob), and falls back to ordinary chunks when none exists. Both patch apply and
+chunk fallback verify the complete target digest before publishing bytes. The executable-aware
+algorithm id is reserved but not emitted because the measured Mach-O section candidate did not
+beat the generic patch; the measurements and threshold are in
+[distribution.md](../library/distribution.md#recorded-savings).
 
 ## Transparency log
 

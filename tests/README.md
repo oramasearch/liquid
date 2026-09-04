@@ -13,6 +13,9 @@ portable suite.
 
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
+Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
+catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
+the same source's target chunks, and reject patch-blob or final-target digest mismatches.
 The `formats/` cases cover
 the strict JSON and `.env` codecs used by structured configuration encryption; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,

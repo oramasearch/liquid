@@ -45,6 +45,7 @@ auto git_export(int argc, char** argv) -> int;
 auto build(int argc, char** argv) -> int;
 auto why_slow(int argc, char** argv) -> int;
 auto facts(int argc, char** argv) -> int;
+auto delta(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -140,6 +141,11 @@ constexpr auto commands = std::to_array<command>({
      "show or verify an attestation",
      "available",
      liquid_cli::attestation},
+    {"delta",
+     "delta <create|apply|fetch> ...",
+     "create, apply, or fetch an artifact delta",
+     "available",
+     liquid_cli::delta},
     {"verify",
      "verify <action|--all|--changed> [--explain]",
      "re-execute and compare cached actions",

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 
+#include "liquid/delta.hpp"
 #include "objects/records.hpp"
 
 namespace liquid::store_detail {
@@ -133,17 +134,28 @@ std::vector<digest> extract_result(std::span<const std::byte> bytes) {
 
 std::vector<digest> extract_attestation(std::span<const std::byte> bytes) {
     const auto value = objects::decode_attestation(bytes);
-    if (!value || value->profile != "sbom/1")
+    if (!value)
         return {};
-    const auto document =
-        std::ranges::find(value->attributes, "document", &attestation_attribute::name);
-    if (document == value->attributes.end())
+    const auto field =
+        value->profile == "sbom/1" ? std::string_view{"document"} : std::string_view{"delta"};
+    if (value->profile != "sbom/1" && value->profile != "delta/1")
         return {};
-    const auto* text = std::get_if<std::string>(&document->value);
+    const auto reference =
+        std::ranges::find(value->attributes, field, &attestation_attribute::name);
+    if (reference == value->attributes.end())
+        return {};
+    const auto* text = std::get_if<std::string>(&reference->value);
     if (!text)
         return {};
     auto id = parse_digest(*text);
     return id ? std::vector<digest>{*id} : std::vector<digest>{};
+}
+
+std::vector<digest> extract_delta(std::span<const std::byte> bytes) {
+    const auto value = decode_delta(bytes);
+    if (!value)
+        return {};
+    return {value->source, value->target, value->blob};
 }
 
 std::vector<digest> extract_action_index_root(std::span<const std::byte> bytes) {
@@ -188,6 +200,7 @@ reference_registry::reference_registry() {
     register_kind("action-index-root", extract_action_index_root);
     register_kind("build_trace", extract_build_trace);
     register_kind("attestation", extract_attestation);
+    register_kind("delta", extract_delta);
     register_kind("sbom", [](std::span<const std::byte>) { return std::vector<digest>{}; });
 }
 
@@ -239,6 +252,8 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "change";
     if (objects::decode_attestation(bytes))
         return "attestation";
+    if (decode_delta(bytes))
+        return "delta";
     if (objects::decode_action(bytes))
         return "action";
     if (objects::decode_result(bytes))
