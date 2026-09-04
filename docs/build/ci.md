@@ -41,3 +41,26 @@ when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device,
 that FUSE is unavailable and is skipped rather than silently substituting the materialisation
 path. The private submodule token remains an earlier gate: without `ORAMA_SUBMODULES_TOKEN`, CI
 stops at checkout before any FUSE proof can run.
+
+## Local Linux verification
+
+Hosted CI cannot build while the org submodule token is missing, and macOS builds hide two
+classes of Linux difference: libc++ supplies some standard headers transitively where libstdc++
+does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
+`std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same
+toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3). Build it once
+and run the whole suite against a worktree; `--privileged` with `/dev/fuse` lets the mount and
+sandbox tests run for real:
+
+```sh
+docker build -t liquid-linux-ci tools/linux-ci
+docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-linux-ci \
+  bash -c 'cmake -S . -B build-linux -G Ninja && cmake --build build-linux -- -k 0 \
+           && ctest --test-dir build-linux --output-on-failure -LE "large|sim-long|realworld"'
+```
+
+`-k 0` keeps building past the first failure so one run lists every portability error. As of this
+change `main` compiles on Linux; the mount test and the drip restart test still fail there and are
+tracked in https://github.com/oramasearch/liquid/issues/130. To change
+the toolchain, edit the Dockerfile and the workflow together; they must agree on the compiler
+version.
