@@ -303,19 +303,22 @@ auto connection::next_for_stream(std::uint32_t stream_id) -> runtime::task<frame
         }
         if (received->type == frame_type::data) {
             const auto size = static_cast<std::uint32_t>(received->payload.size());
-            if (size > connection_receive_window_) {
-                co_return std::unexpected(protocol_error("connection receive window is exhausted"));
+            if (size != 0) {
+                if (size > connection_receive_window_) {
+                    co_return std::unexpected(
+                        protocol_error("connection receive window is exhausted"));
+                }
+                connection_receive_window_ -= size;
+                auto connection_update = co_await send_window_update(0, size);
+                if (!connection_update) {
+                    co_return std::unexpected(connection_update.error());
+                }
+                auto stream_update = co_await send_window_update(received->stream_id, size);
+                if (!stream_update) {
+                    co_return std::unexpected(stream_update.error());
+                }
+                connection_receive_window_ += size;
             }
-            connection_receive_window_ -= size;
-            auto connection_update = co_await send_window_update(0, size);
-            if (!connection_update) {
-                co_return std::unexpected(connection_update.error());
-            }
-            auto stream_update = co_await send_window_update(received->stream_id, size);
-            if (!stream_update) {
-                co_return std::unexpected(stream_update.error());
-            }
-            connection_receive_window_ += size;
         }
         if ((received->flags & flag_end_stream) != 0) {
             streams_[received->stream_id].received_end_stream = true;

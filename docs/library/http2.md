@@ -79,4 +79,5 @@ prints a skip diagnostic when Docker is unavailable.
 server. NativeLink and BuildBarn exercise the client; stock Bazel 8.3.1 exercises strict server
 preface ordering, client-streamed ByteStream writes, CAS, and ActionCache. The client recognizes a
 trailers-only gRPC response, including an ActionCache miss, without waiting for a DATA frame that
-will never arrive.
+will never arrive. Zero-length DATA frames consume no flow-control credit and do not produce an
+invalid zero-increment WINDOW_UPDATE response.
