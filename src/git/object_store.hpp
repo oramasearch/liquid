@@ -38,6 +38,11 @@ struct tree_entry {
     sha1 id;
 };
 
+struct pack_index_entry {
+    std::uint64_t offset{};
+    sha1 id{};
+};
+
 class object_store {
 public:
     explicit object_store(std::filesystem::path directory);
@@ -53,6 +58,8 @@ private:
     std::filesystem::path directory_;
     std::map<std::string, object> delta_cache_;
     std::uint64_t delta_cache_bytes_{};
+    std::filesystem::path indexed_pack_;
+    std::vector<pack_index_entry> indexed_objects_;
 };
 
 [[nodiscard]] auto git_directory(const std::filesystem::path& source)
