@@ -17,6 +17,7 @@
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "liquid/sync.hpp"
 
 namespace liquid {
 
@@ -25,6 +26,7 @@ struct build_access;
 struct testing;
 struct vfs_access;
 struct git_access;
+struct sync_access;
 } // namespace repository_detail
 
 enum class encryption_mode : std::uint8_t { leaf, file };
@@ -227,6 +229,9 @@ public:
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);
     [[nodiscard]] runtime::task<cache_report> cache_stats();
+    [[nodiscard]] runtime::task<sync_export> export_drips(journal_cursor cursor,
+                                                          std::span<sync_item> output);
+    [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
 
 private:
     [[nodiscard]] runtime::task<void>
@@ -236,6 +241,7 @@ private:
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     friend struct repository_detail::git_access;
+    friend struct repository_detail::sync_access;
     struct impl;
     std::unique_ptr<impl> impl_;
 };

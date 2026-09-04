@@ -61,12 +61,13 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #17, #40, #41, #42, #50, #52, #53, #58, #116 | implemented | `repository`: open, encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, typed retention policy, and retention explanations |
+| `liquid/repository.hpp` | #2, #11, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160 | implemented | `repository`: open, encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, cache statistics, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local executor, remote-result recording, wrapper, disk cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, SBOMs, and remote scheduling | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | #17, #18, Phase 6 | implemented blob and executor interfaces; declared service handle | `remote_blob_location`, transport-neutral instance-aware source operations, `remote_executor` scheduling contract, and later hosted `remote` push/pull |
+| `liquid/sync.hpp` | #160, Phase 6 | implemented | signed metadata items and reports, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
 
@@ -214,6 +215,31 @@ class remote_executor {
 The interfaces are transport-neutral. A later REAPI or hosted implementation stays behind them;
 the store and VFS depend only on range reads and digest verification.
 
+### `liquid/sync.hpp`
+
+```cpp
+enum class sync_item_kind : std::uint8_t { drip = 1, change = 2, directory = 3, reference = 4 };
+struct sync_item;       // signed actor/body, repository and directory IDs, root marker, ref value
+struct sync_export { journal_cursor cursor; std::size_t count; bool done; std::vector<digest> objects; };
+struct sync_report { journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received; };
+class sync_session {
+ public:
+  runtime::task<sync_transfer_report> send(std::span<const digest> roots);
+  runtime::task<sync_transfer_report> receive(std::span<const digest> roots);
+};
+class sync_endpoint final : public remote_blob_source {
+ public:
+  explicit sync_endpoint(std::string repository_url, sync_endpoint_options = {});
+  runtime::task<sync_report> push(repository&);
+  runtime::task<sync_report> pull(repository&);
+};
+```
+
+`repository::export_drips(cursor, span)` emits bounded pages of journal records, signed changes,
+upstream directory sync messages, refs, and referenced object roots. `import_drips(span)` verifies
+and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
+in [sync.md](sync.md); pack frames remain private wire data.
+
 ### `liquid/delta.hpp`
 
 ```cpp
@@ -345,6 +371,8 @@ class repository {
   runtime::task<retention_explanation> retain_explain(digest);       // live rule/lease or eviction
   runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
   runtime::task<void> set_policy(policy_config);           // validate and checkpoint config.policy
+  runtime::task<sync_export> export_drips(journal_cursor, std::span<sync_item>);
+  runtime::task<sync_import_report> import_drips(std::span<const sync_item>);
   // Import primitives (liquid #43; lake's importers use the same calls)
   runtime::task<change_id> record(change_input);                 // a change with explicit parents, author, time, message, metadata, ref
   runtime::task<change_id> record_from_tree(change_input, digest root_tree); // records a supplied snapshot tree
@@ -737,13 +765,15 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 
 `src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/crdt/` (checked automerge-cpp
 access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
+`src/sync/` (canonical metadata and pack wire codecs plus the Corosio/Boost.HTTP client),
 `src/capture/` (the journal, OS watchers, coalescing), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
 
 ## ABI policy
 
-- **Boost.Capy is a public dependency** (`Boost::capy` linked `PUBLIC`); Corosio is private.
+- **Boost.Capy is a public dependency** (`Boost::capy` linked `PUBLIC`); Corosio and the
+  `oramasearch/http` client module at `af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4` are private.
   Consumers get Capy transitively and may await liquid tasks from their own Capy coroutines.
 - **Static by default.** One binary to ship; liquify and lake link `liquid::liquid` as a pinned
   submodule and take API changes as deliberate pin bumps. No compatibility promise exists between

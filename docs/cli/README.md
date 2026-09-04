@@ -22,6 +22,8 @@ that the table and `liquid --help` name the same commands.
 | `log` | `log [--json]` | Show change history. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
+| `push` | `push <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
+| `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
@@ -61,6 +63,9 @@ that the table and `liquid --help` name the same commands.
 `--json`; `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
 remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
 chunk.
+`push` and `pull` print metadata item, object, byte, and cursor counts. They use `LIQUID_TOKEN` as
+an optional bearer credential and never print it. A URL must use HTTP or HTTPS and identify one
+lake repository.
 `version --json` is also available for scripts. Text output is line-oriented and stable. A library
 error always has this shape and exits with status 1:
 
@@ -187,6 +192,8 @@ liquid status --json
 liquid log --json
 liquid cut "import existing files"
 liquid refs --json
+LIQUID_TOKEN="$token" liquid push https://lake.example/repositories/project
+LIQUID_TOKEN="$token" liquid pull https://lake.example/repositories/project
 liquid move notes.txt archive/notes.txt
 liquid rm archive/notes.txt
 liquid nest ../shared-assets vendor/assets

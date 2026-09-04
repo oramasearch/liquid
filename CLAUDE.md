@@ -54,7 +54,9 @@ transport-neutral blob source. Liquid #64 adds signed zstd delta delivery with v
 registered-remote blob fetch plus chunk fallback. The repository object model,
 internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
-patch-based remote observation. Full materialisation works on every platform; lazy VFS mounts use
+patch-based remote observation. Liquid #160 adds atomic signed repository metadata import/export,
+missing-object sessions, the HTTP/1.1 lake client, and CLI push/pull. Full materialisation works on
+every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
 and GoogleTest are used. Phase 1 (the store) is built inside libliquid. Optional developer

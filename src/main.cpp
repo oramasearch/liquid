@@ -46,6 +46,8 @@ auto build(int argc, char** argv) -> int;
 auto why_slow(int argc, char** argv) -> int;
 auto facts(int argc, char** argv) -> int;
 auto delta(int argc, char** argv) -> int;
+auto sync_push(int argc, char** argv) -> int;
+auto sync_pull(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -72,6 +74,16 @@ constexpr auto commands = std::to_array<command>({
     {"log", "log [--json]", "show change history", "available", liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
+    {"push",
+     "push <url>",
+     "push repository changes and objects",
+     "available",
+     liquid_cli::sync_push},
+    {"pull",
+     "pull <url>",
+     "pull repository changes and objects",
+     "available",
+     liquid_cli::sync_pull},
     {"move", "move <from> <to>", "record a path move", "available", liquid_cli::tree_move},
     {"rm", "rm <path>", "record a path removal", "available", liquid_cli::tree_remove},
     {"nest",
