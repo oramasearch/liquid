@@ -23,8 +23,11 @@
 #include "capture/watcher.hpp"
 #include "crdt/document.hpp"
 #include "crdt/journal.hpp"
+#include "identity/taap.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/store.hpp"
+#include "objects/records.hpp"
+#include "store/chunker.hpp"
 
 namespace liquid {
 namespace {
@@ -82,7 +85,10 @@ auto public_drip(const crdt::drip_record& record) -> drip {
                        .ops = {},
                        .by = {"taap:local:capture"},
                        .signature = record.signature.value_or(std::vector<std::byte>{}),
-                       .at = std::chrono::sys_seconds{std::chrono::seconds{record.at}}};
+                       .at = std::chrono::sys_seconds{std::chrono::seconds{record.at}},
+                       .scan_attestation = record.scan_attestation,
+                       .block = std::nullopt,
+                       .redacted = record.redacted};
     output.ops.reserve(record.ops.size());
     for (const auto& operation : record.ops)
         output.ops.push_back({operation.path});
@@ -112,11 +118,14 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
     std::optional<crdt::journal> journal;
     std::optional<crdt::document> document;
     std::optional<store> objects;
+    std::optional<signer> scanning_key;
     std::unique_ptr<capture_detail::watcher> watcher;
     std::shared_ptr<impl> shared;
     capture_detail::workspace_state workspace_state;
     capture_detail::capture_cursor cursor;
+    std::map<std::string, std::vector<digest>> scanned_chunks;
     capture_detail::allow_all_filter filter;
+    capture_detail::secret_filter scanner;
     executor_type executor;
     std::mutex mutex;
     std::mutex journal_mutex;
@@ -126,6 +135,8 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
     std::uint64_t next_subscription{1};
     std::uint64_t overflows{0};
     std::uint64_t recrawls{0};
+    std::uint64_t blocked_drips{0};
+    std::optional<scan_block> last_block;
     bool paused{false};
     bool closed{false};
     std::atomic<bool> stopped{false};
@@ -133,6 +144,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
     std::atomic<bool> wake_pending{false};
     std::atomic<std::uint64_t> event_count{0};
     std::atomic<std::uint64_t> last_append_ns{0};
+    std::atomic<std::uint64_t> last_scan_ns{0};
 
     impl() : executor(runtime::default_context().executor()) {}
 
@@ -252,15 +264,21 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         }
     }
 
-    [[nodiscard]] runtime::task<void>
+    [[nodiscard]] runtime::task<bool>
     append(std::vector<capture_detail::watch_event> events_to_append) {
         auto accepted = filter.accept(events_to_append);
         if (!accepted)
             co_return std::unexpected(accepted.error());
         if (!*accepted || events_to_append.empty())
-            co_return {};
+            co_return true;
 
         auto operations = std::vector<crdt::operation>{};
+        auto detector_ids = std::vector<std::string>{};
+        auto allowances = std::vector<scan_allowance>{};
+        auto findings_count = std::uint64_t{};
+        auto scan_duration = std::chrono::nanoseconds{};
+        auto scanned_updates = std::map<std::string, std::vector<digest>>{};
+        auto removed_paths = std::vector<std::string>{};
         for (const auto& event : events_to_append) {
             const auto relative = event.path.lexically_relative(workspace).empty()
                                       ? event.path
@@ -274,6 +292,7 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
                 operations.push_back({.id = *id,
                                       .kind = crdt::operation_kind::remove,
                                       .path = relative.generic_string()});
+                removed_paths.push_back(relative.generic_string());
                 continue;
             }
             auto absolute = workspace / relative;
@@ -292,6 +311,54 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
             }
             if (!bytes)
                 continue;
+            if (options.scan) {
+                const auto scan_started = std::chrono::steady_clock::now();
+                auto chunk_ids = std::vector<digest>{};
+                auto changed = std::vector<scan_detail::byte_range>{};
+                const auto ranges = store_detail::fastcdc(*bytes);
+                const auto previous = scanned_chunks.find(relative.generic_string());
+                for (std::size_t index = 0; index != ranges.size(); ++index) {
+                    const auto& range = ranges[index];
+                    auto id =
+                        hash(algorithm::blake3,
+                             std::span<const std::byte>{bytes->data() + range.offset, range.size});
+                    if (!id)
+                        co_return std::unexpected(id.error());
+                    const auto differs = previous == scanned_chunks.end() ||
+                                         index >= previous->second.size() ||
+                                         to_string(previous->second[index]) != to_string(*id);
+                    if (differs)
+                        changed.push_back({range.offset, range.size});
+                    chunk_ids.push_back(*id);
+                }
+                auto scanned =
+                    scanner.inspect(relative.generic_string(), *bytes, std::span{changed});
+                scan_duration += std::chrono::steady_clock::now() - scan_started;
+                detector_ids = scanned.detectors;
+                if (!scanned.blocked.empty()) {
+                    const auto& finding = scanned.blocked.front();
+                    auto block = scan_block{.code = errc::unauthorized,
+                                            .path = relative.generic_string(),
+                                            .detector = finding.detector,
+                                            .line = finding.line};
+                    {
+                        std::lock_guard lock(mutex);
+                        ++blocked_drips;
+                        last_block = block;
+                    }
+                    notify(drip{.block = std::move(block)});
+                    last_scan_ns.store(scan_duration.count(), std::memory_order_release);
+                    co_return false;
+                }
+                scanned_updates[relative.generic_string()] = std::move(chunk_ids);
+                findings_count += scanned.allowed.size();
+                for (const auto& allowed : scanned.allowed) {
+                    allowances.push_back({relative.generic_string(),
+                                          allowed.value.detector,
+                                          allowed.value.line,
+                                          allowed.reason});
+                }
+            }
             auto id = co_await runtime::offload([relative] { return path_id(relative); });
             if (!id)
                 co_return std::unexpected(id.error());
@@ -306,21 +373,48 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
                                   .entry_id = *id});
         }
         if (operations.empty())
-            co_return {};
+            co_return true;
+        last_scan_ns.store(scan_duration.count(), std::memory_order_release);
         auto base = document->heads();
         if (!base)
             co_return std::unexpected(base.error());
         auto applied = document->transact(std::move(operations));
         if (!applied)
             co_return std::unexpected(applied.error());
-        auto record =
-            crdt::drip_record{.id = applied->front().id,
-                              .base = *base,
-                              .ops = *applied,
-                              .by = document->actor(),
-                              .at = std::chrono::duration_cast<std::chrono::seconds>(
-                                        std::chrono::system_clock::now().time_since_epoch())
-                                        .count()};
+        const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        auto record = crdt::drip_record{.id = applied->front().id,
+                                        .base = *base,
+                                        .ops = *applied,
+                                        .by = document->actor(),
+                                        .at = at.time_since_epoch().count()};
+        if (options.scan) {
+            auto subject = digest{algorithm::blake3, {}};
+            std::ranges::copy(record.id, subject.bytes.begin());
+            auto scan_record = attestation{.subject = subject,
+                                           .profile = "scan_result/1",
+                                           .detectors = std::move(detector_ids),
+                                           .findings_count = findings_count,
+                                           .at = at,
+                                           .issuer = scanning_key->identity(),
+                                           .allowances = std::move(allowances)};
+            auto body = objects::encode_attestation_body(scan_record);
+            if (!body)
+                co_return std::unexpected(body.error());
+            auto signed_value = co_await scanning_key->sign("attestation", *body);
+            if (!signed_value)
+                co_return std::unexpected(signed_value.error());
+            auto signature = identity_detail::canonical_signature(*signed_value);
+            if (!signature)
+                co_return std::unexpected(signature.error());
+            scan_record.signature = std::move(*signature);
+            auto encoded = objects::encode(scan_record);
+            if (!encoded)
+                co_return std::unexpected(encoded.error());
+            auto stored = co_await objects->put(std::move(*encoded));
+            if (!stored)
+                co_return std::unexpected(stored.error());
+            record.scan_attestation = *stored;
+        }
         {
             std::lock_guard lock(journal_mutex);
             const auto append_started = std::chrono::steady_clock::now();
@@ -344,7 +438,11 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         if (!*persisted)
             co_return std::unexpected(persisted->error());
         notify(public_drip(record));
-        co_return {};
+        for (auto& [path, chunks] : scanned_updates)
+            scanned_chunks[path] = std::move(chunks);
+        for (const auto& path : removed_paths)
+            scanned_chunks.erase(path);
+        co_return true;
     }
 
     [[nodiscard]] runtime::task<void> recrawl(bool report) {
@@ -365,6 +463,8 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
         auto appended = co_await append(std::move((**scanned).changes));
         if (!appended)
             co_return std::unexpected(appended.error());
+        if (!*appended)
+            co_return result<void>{};
         workspace_state = std::move((**scanned).state);
         auto saved = co_await runtime::offload([path = control / "state", state = workspace_state] {
             return capture_detail::save_workspace_state(path, state);
@@ -407,6 +507,7 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
         state->workspace = std::move(workspace);
         state->control = state->workspace / ".liquid" / "capture";
         state->options = std::move(options);
+        state->scanner = capture_detail::secret_filter{state->options.scan_config};
         if (state->options.coalesce_window.count() < 0 ||
             state->options.reconcile_interval.count() < 0)
             co_return std::unexpected(capture_error(
@@ -519,6 +620,10 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
             if (!opened_store)
                 co_return std::unexpected(opened_store.error());
             state->objects.emplace(std::move(*opened_store));
+            auto scanning_key = co_await identity_detail::local_signer();
+            if (!scanning_key)
+                co_return std::unexpected(scanning_key.error());
+            state->scanning_key.emplace(std::move(*scanning_key));
             auto [initial_delay_error] = co_await runtime::delay(state->options.coalesce_window);
             if (initial_delay_error)
                 co_return std::unexpected(
@@ -685,6 +790,8 @@ result<capture_status> capture::status() {
                           .pending_drips = impl_->shared->events.size(),
                           .overflow_count = impl_->shared->overflows,
                           .recrawl_count = impl_->shared->recrawls,
+                          .blocked_drips = impl_->shared->blocked_drips,
+                          .last_block = impl_->shared->last_block,
                           .last_cursor = {token(impl_->shared->cursor)}};
 }
 
@@ -699,6 +806,14 @@ auto capture_detail::last_journal_append_duration_for_test(const capture& handle
         return {};
     return std::chrono::nanoseconds{
         handle.impl_->shared->last_append_ns.load(std::memory_order_acquire)};
+}
+
+auto capture_detail::last_scan_duration_for_test(const capture& handle)
+    -> std::chrono::nanoseconds {
+    if (!handle.impl_ || !handle.impl_->shared)
+        return {};
+    return std::chrono::nanoseconds{
+        handle.impl_->shared->last_scan_ns.load(std::memory_order_acquire)};
 }
 
 } // namespace liquid

@@ -22,12 +22,14 @@ the interval before the watcher is armed. Capture recognizes a
 temporary-file rename by reconciling its final target, so the temporary
 path does not appear in history. File identity is derived from the target path and remains stable
 across this form of save. A batch of paths found in one configured coalescing window is one drip
-with multiple operations. Before append, every batch crosses the private `drip_filter` stage. Its
-default accepts every batch; liquid #50 replaces that filter with inline secret scanning before a
-drip can be journaled.
+with multiple operations. Before append, every batch crosses the private `drip_filter` stage and
+then the inline secret scanner. The scanner examines lines intersecting changed FastCDC chunks,
+blocks findings by default, and writes the signed attestation before the drip can be journaled.
+See [`secret-scanning.md`](secret-scanning.md).
 
 `capture_options::exclude` is the declared glob list for paths that must not drip.
-`coalesce_window` defaults to 200 ms. `attribution` is present for Phase 2 and remains false;
+`coalesce_window` defaults to 200 ms. `scan` defaults to true; path-and-detector rules and the
+literal line marker are in `scan_config`. `attribution` is present for Phase 2 and remains false;
 foreign build output is governed only by declared exclusions in this phase.
 
 `reconcile_interval` defaults to two seconds; set it to zero to disable this backstop. A ticker
@@ -38,7 +40,8 @@ path. Hints make capture fast; reconcile makes it correct. Pausing suppresses em
 ticker.
 
 `capture_status` reports running or paused state, queued work, overflow count, recrawl count,
-and the latest public journal cursor token. Events are hints, so overflow and recrawl must be
+blocked-drip count, the last safe block coordinates, and the latest public journal cursor token.
+Events are hints, so overflow and recrawl must be
 visible rather than silently repaired. `pause()` retains the observed window without appending;
 `resume()` reconciles that window and replays it.
 
@@ -84,6 +87,11 @@ and notification:
 |---|---:|
 | 200 ms | 329 / 329 µs | 304 / 304 ms |
 | 20 ms | 245 / 245 µs | 37 / 37 ms |
+
+With inline scanning enabled, the current 100-file Release measurement at a 20 ms window records
+130.386 µs of scanner work, 220.917 µs for the append, and 43.9578 ms until subscriber visibility.
+See the complete command output and interpretation in
+[`secret-scanning.md`](secret-scanning.md#verification-and-measured-cost).
 
 The single-digit capture-path budget applies to the journal append, not save-to-drip-visible.
 The latter intentionally includes the coalescing policy and is reported separately. If a watcher

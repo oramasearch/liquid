@@ -61,6 +61,12 @@ Partially live packs report their dead frame bytes and live fraction as
 liquid #46 may compact those below `collection_options::compact_below`; the exact copy, manifest,
 recovery, and reader rules are in [store.md](store.md#pack-compaction).
 
+Repository redaction uses a narrower committed-manifest operation. It removes the selected blob
+and unshared content objects from the object map, tombstones their frames immediately, rebuilds
+the index, and sends only affected packs through compaction. It then proves the old blob digest
+returns `not_found`. This is not an epoch reachability collection and does not disturb unrelated
+unleased repository objects. See [`secret-scanning.md`](secret-scanning.md#redaction).
+
 ## API and explanations
 
 `collection_options::dry_run` computes the same mark and report without changing objects,

@@ -91,4 +91,42 @@ TEST(CrdtJournal, reads_records_from_a_plain_cursor) {
     std::filesystem::remove_all(directory);
 }
 
+TEST(CrdtJournal, redaction_marker_changes_the_logical_view_without_rewriting) {
+    auto repository = liquid::crdt::repo_id{};
+    repository[0] = std::byte{0x20};
+    auto document = liquid::crdt::document::create(repository, "taap:user:steve", "laptop");
+    ASSERT_TRUE(document);
+    auto directory = std::filesystem::temp_directory_path() / "liquid-crdt-journal-redaction-test";
+    std::filesystem::create_directories(directory);
+    auto path = directory / "drips.cbor";
+    std::filesystem::remove(path);
+    std::filesystem::remove(path.string() + ".cut");
+    auto journal = liquid::crdt::journal{path};
+    ASSERT_TRUE(journal.cut(*document, 1));
+    auto base = document->heads();
+    ASSERT_TRUE(base);
+    auto applied = document->transact({{.kind = liquid::crdt::operation_kind::write,
+                                        .path = "settings.env",
+                                        .ref = "blake3:redaction",
+                                        .mode = 0100644}});
+    ASSERT_TRUE(applied);
+    const auto drip = applied->front().id;
+    ASSERT_TRUE(journal.append({.id = drip,
+                                .base = *base,
+                                .ops = *applied,
+                                .by = document->actor(),
+                                .at = 1'788'400'000}));
+    const auto before = std::filesystem::file_size(path);
+    ASSERT_TRUE(journal.append_redaction(drip, "settings.env", 1'788'400'001));
+    EXPECT_GT(std::filesystem::file_size(path), before);
+    auto records = journal.read({}, 10);
+    ASSERT_TRUE(records) << records.error().message;
+    ASSERT_EQ(records->first.size(), 1U);
+    EXPECT_TRUE(records->first.front().redacted);
+    auto replayed = journal.replay("taap:user:steve", "laptop");
+    ASSERT_TRUE(replayed) << replayed.error().message;
+    EXPECT_EQ(*replayed->heads(), *document->heads());
+    std::filesystem::remove_all(directory);
+}
+
 } // namespace

@@ -15,6 +15,7 @@ namespace {
 
 struct sample {
     std::chrono::nanoseconds append;
+    std::chrono::nanoseconds scan;
     std::chrono::nanoseconds visible;
 };
 
@@ -100,6 +101,7 @@ auto run_sample(std::chrono::milliseconds window, unsigned index) -> std::option
     {
         std::lock_guard lock(mutex);
         output.emplace(liquid::capture_detail::last_journal_append_duration_for_test(*capture),
+                       liquid::capture_detail::last_scan_duration_for_test(*capture),
                        *observed - started);
     }
     auto closed = liquid::runtime::block_on(capture->close());
@@ -113,17 +115,23 @@ auto run_sample(std::chrono::milliseconds window, unsigned index) -> std::option
 
 void report(std::chrono::milliseconds window, const std::vector<sample>& samples) {
     auto appends = std::vector<std::chrono::nanoseconds>{};
+    auto scans = std::vector<std::chrono::nanoseconds>{};
     auto visible = std::vector<std::chrono::nanoseconds>{};
     for (const auto& value : samples) {
         appends.push_back(value.append);
+        scans.push_back(value.scan);
         visible.push_back(value.visible);
     }
     const auto append_p50 = percentile(appends, 50);
     const auto append_p99 = percentile(std::move(appends), 99);
+    const auto scan_p50 = percentile(scans, 50);
+    const auto scan_p99 = percentile(std::move(scans), 99);
     const auto visible_p50 = percentile(visible, 50);
     const auto visible_p99 = percentile(std::move(visible), 99);
     std::cout << "window=" << window.count() << "ms append-p50=" << append_p50.count() / 1000.0
               << "us append-p99=" << append_p99.count() / 1000.0
+              << "us scan-p50=" << scan_p50.count() / 1000.0
+              << "us scan-p99=" << scan_p99.count() / 1000.0
               << "us visible-p50=" << visible_p50.count() / 1000000.0
               << "ms visible-p99=" << visible_p99.count() / 1000000.0 << "ms\n";
 }

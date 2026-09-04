@@ -57,9 +57,9 @@ owning issue in `error::context`.
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/store.hpp` | #1, #7, #8, #46, #53, #116 | implemented | `store`: memory and streaming-file content in, memory and streaming-file content out; encrypted trust domains and key-version lookup; leases, collection, and pack compaction |
-| `liquid/object.hpp` | #2 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #40, #41, #42, #53, #116 | implemented | `repository`: open, read, memory and streaming-file writes, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks |
-| `liquid/drip.hpp` | #4, #5, #48 | declared; internal journal implemented | `drip`, `capture`: the journal as a subscription, pause and resume |
+| `liquid/object.hpp` | #2, #50 | implemented | node kinds and canonical record values: `blob`, `tree`, `change`, `scan_result/1` attestation, repository references, conflicts, and reserved symbols |
+| `liquid/repository.hpp` | #2, #40, #41, #42, #50, #53, #116 | implemented | `repository`: open, read, memory and streaming-file writes, redaction, recorded moves/removals, cuts, refs, status, history, readability, nest/split/combine, conflicts, undo, locks |
+| `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
@@ -193,14 +193,20 @@ struct tree   { std::vector<tree_entry> entries; };                   // sorted 
 struct change { change_id id; std::vector<change_id> parents; actor author;
                 std::string message; std::chrono::sys_seconds at; digest root; };
 struct change_id { digest value; };    // stable across rebase and transplant (features/02)
+struct scan_allowance { std::string path, detector; std::uint64_t line; std::string reason; };
+struct attestation { digest subject; std::string profile; std::vector<std::string> detectors;
+                     std::uint64_t findings_count; std::chrono::sys_seconds at; actor issuer;
+                     std::vector<scan_allowance> allowances; std::vector<std::byte> signature; };
+result<bool> verify(const attestation&);
 ```
 
 `chunk_sizes` is appended to the blob value and canonical record so a range reader can locate the
 covering logical chunks without reading every preceding chunk. The decoder accepts the earlier
 single-chunk record and derives its one size, preserving repositories written before liquid #6.
 
-`action`, `result_`, `attestation` and `repo` are declared as kinds now and given their records in
-Phases 2, 2, 2 and 1 respectively. Two fields are reserved from the first commit because they
+`attestation` has its first concrete record and `scan_result/1` profile in Phase 1. `action` and
+`result_` remain reserved for Phase 2; `repo` is implemented in Phase 1. Two fields are reserved
+from the first commit because they
 cannot be added later: an optional `symbols` reference on built artifacts (liquid #47) and an
 optional `conflict` record on a change (liquid #40).
 
@@ -219,6 +225,9 @@ class repository {
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
+  runtime::task<void> redact(std::string path, std::optional<change_id> = {});
+  runtime::task<void> redact(std::string path, std::vector<std::byte> replacement,
+                             std::optional<change_id> = {});
   runtime::task<void> write_file(std::string path, std::filesystem::path source);   // streams a large file in; one drip
   runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
   runtime::task<void> remove(std::string path);
@@ -289,13 +298,19 @@ under `src/vfs/`; see [`vfs.md`](vfs.md).
 
 ```cpp
 struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
-              std::vector<std::byte> signature; std::chrono::sys_seconds at; };
+              std::vector<std::byte> signature; std::chrono::sys_seconds at;
+              std::optional<digest> scan_attestation; std::optional<scan_block> block; bool redacted; };
+struct scan_allow_rule { std::string path; std::vector<std::string> detectors; };
+struct scan_configuration { std::vector<scan_allow_rule> allow;
+                            std::string ignore_lines{"liquid:allow-secret"}; };
 struct capture_options { std::vector<std::string> exclude;            // glob patterns from config
                          std::chrono::milliseconds coalesce_window{200};
+                         bool scan{true}; scan_configuration scan_config;
                          bool attribution{false}; };                   // Phase 2 turns it on
 struct journal_cursor { std::string token; };
 struct capture_status { enum class state { running, paused } state; std::uint64_t pending_drips;
-                        std::uint64_t overflow_count; std::uint64_t recrawl_count; journal_cursor last_cursor; };
+                        std::uint64_t overflow_count, recrawl_count, blocked_drips;
+                        std::optional<scan_block> last_block; journal_cursor last_cursor; };
 class capture {                        // the journal, as a subscription
  public:
   static runtime::task<capture> open(std::filesystem::path workspace, capture_options = {});   // starts the watcher

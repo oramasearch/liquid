@@ -33,6 +33,9 @@ system reduces to.
 | This drip passed secret scanning | the scanner | **the drip** | `scan_result/1` |
 | Two builders independently produced identical bytes | the verifier | **the artifact** | `reproducibility/1` |
 
+`scan_result/1` is implemented for local capture in Phase 1; its canonical record and verification
+rules are in [`../library/secret-scanning.md`](../library/secret-scanning.md#scan_result1).
+
 **Users, agents, documents, artifacts, drips, changes — all subjects.** That is the whole
 point, and it is why TAAP is the security model rather than a signing library.
 

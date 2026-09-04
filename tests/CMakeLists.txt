@@ -8,6 +8,10 @@ add_executable(liquid-tests
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
+  scan/test_capture.cpp
+  scan/test_detectors.cpp
+  scan/test_redaction.cpp
+  ${PROJECT_SOURCE_DIR}/src/scan/detectors.cpp
   store/test_gc.cpp
   ${PROJECT_SOURCE_DIR}/src/store/chunker.cpp
   ${PROJECT_SOURCE_DIR}/src/objects/records.cpp

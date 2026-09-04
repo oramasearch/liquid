@@ -58,6 +58,26 @@ struct LIQUID_EXPORT conflict {
     std::vector<digest> refs;
 };
 
+struct LIQUID_EXPORT scan_allowance {
+    std::string path;
+    std::string detector;
+    std::uint64_t line{};
+    std::string reason;
+};
+
+struct LIQUID_EXPORT attestation {
+    digest subject{};
+    std::string profile;
+    std::vector<std::string> detectors;
+    std::uint64_t findings_count{};
+    std::chrono::sys_seconds at{};
+    actor issuer;
+    std::vector<scan_allowance> allowances;
+    std::vector<std::byte> signature;
+};
+
+[[nodiscard]] LIQUID_EXPORT result<bool> verify(const attestation& value);
+
 struct LIQUID_EXPORT change {
     change_id id;
     std::vector<change_id> parents;

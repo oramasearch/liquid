@@ -18,6 +18,8 @@
 
 namespace liquid {
 
+class repository;
+
 struct LIQUID_EXPORT store_options {
     algorithm hash_algorithm{algorithm::blake3};
     std::uint64_t pack_size{};
@@ -111,7 +113,7 @@ private:
     friend class repository;
 
     [[nodiscard]] result<blob> blob_for(digest id) const;
-
+    [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
     struct impl;
     std::unique_ptr<impl> impl_;
 };

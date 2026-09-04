@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,8 @@ namespace capture_detail {
 LIQUID_EXPORT void inject_overflow_for_test(capture& handle);
 [[nodiscard]] LIQUID_EXPORT auto last_journal_append_duration_for_test(const capture& handle)
     -> std::chrono::nanoseconds;
+[[nodiscard]] LIQUID_EXPORT auto last_scan_duration_for_test(const capture& handle)
+    -> std::chrono::nanoseconds;
 } // namespace capture_detail
 
 struct LIQUID_EXPORT drip_id {
@@ -31,6 +34,13 @@ struct LIQUID_EXPORT path_op {
     std::string path;
 };
 
+struct LIQUID_EXPORT scan_block {
+    errc code{errc::unauthorized};
+    std::string path;
+    std::string detector;
+    std::uint64_t line{};
+};
+
 struct LIQUID_EXPORT drip {
     drip_id id;
     change_id base;
@@ -38,6 +48,19 @@ struct LIQUID_EXPORT drip {
     actor by;
     std::vector<std::byte> signature;
     std::chrono::sys_seconds at;
+    std::optional<digest> scan_attestation;
+    std::optional<scan_block> block;
+    bool redacted{};
+};
+
+struct LIQUID_EXPORT scan_allow_rule {
+    std::string path;
+    std::vector<std::string> detectors;
+};
+
+struct LIQUID_EXPORT scan_configuration {
+    std::vector<scan_allow_rule> allow;
+    std::string ignore_lines{"liquid:allow-secret"};
 };
 
 struct LIQUID_EXPORT capture_options {
@@ -45,6 +68,8 @@ struct LIQUID_EXPORT capture_options {
     std::chrono::milliseconds coalesce_window{200};
     std::chrono::milliseconds reconcile_interval{2000};
     bool attribution{false};
+    bool scan{true};
+    scan_configuration scan_config{};
 };
 
 struct LIQUID_EXPORT journal_cursor {
@@ -56,6 +81,8 @@ struct LIQUID_EXPORT capture_status {
     std::uint64_t pending_drips{0};
     std::uint64_t overflow_count{0};
     std::uint64_t recrawl_count{0};
+    std::uint64_t blocked_drips{0};
+    std::optional<scan_block> last_block;
     journal_cursor last_cursor;
 };
 
@@ -97,6 +124,8 @@ private:
     friend class subscription;
     friend void capture_detail::inject_overflow_for_test(capture& handle);
     friend auto capture_detail::last_journal_append_duration_for_test(const capture& handle)
+        -> std::chrono::nanoseconds;
+    friend auto capture_detail::last_scan_duration_for_test(const capture& handle)
         -> std::chrono::nanoseconds;
 };
 

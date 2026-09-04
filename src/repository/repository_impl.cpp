@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <random>
+#include <set>
 #include <string_view>
 #include <utility>
 
@@ -473,6 +474,30 @@ struct repository::impl {
         current.drips.push_back({std::move(*body), std::move(*encoded_signature)});
         co_return result<void>{};
     }
+    runtime::task<void>
+    append_redaction(std::string path, const node_id& node, const digest& target) {
+        const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        auto body = cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+                                      {"kind", "redaction"},
+                                      {"author", cbor::value{signing_key.identity().taap_id}},
+                                      {"at", cbor::value{at.time_since_epoch().count()}},
+                                      {"node", bytes(node)},
+                                      {"path", cbor::value{std::move(path)}},
+                                      {"target", digest_value(target)}}));
+        if (!body) {
+            co_return std::unexpected(body.error());
+        }
+        auto signed_value = co_await signing_key.sign("drip", *body);
+        if (!signed_value) {
+            co_return std::unexpected(signed_value.error());
+        }
+        auto encoded_signature = identity_detail::canonical_signature(*signed_value);
+        if (!encoded_signature) {
+            co_return std::unexpected(encoded_signature.error());
+        }
+        current.drips.push_back({std::move(*body), std::move(*encoded_signature)});
+        co_return result<void>{};
+    }
     runtime::task<digest> snapshot(working_entry& entry) {
         tree value{};
         for (auto& [name, child] : entry.entries) {
@@ -503,6 +528,47 @@ struct repository::impl {
         if (!saved)
             co_return std::unexpected(saved.error());
         co_return objects::decode_tree(*saved);
+    }
+    runtime::task<digest> object_at(change_id change, const std::vector<std::string>& path) {
+        auto encoded_change = co_await objects.get(change.value);
+        if (!encoded_change) {
+            co_return std::unexpected(encoded_change.error());
+        }
+        auto record = objects::decode_change(*encoded_change);
+        if (!record) {
+            co_return std::unexpected(record.error());
+        }
+        auto current = record->root;
+        for (std::size_t index = 0; index != path.size(); ++index) {
+            auto encoded_tree = co_await objects.get(current);
+            if (!encoded_tree) {
+                co_return std::unexpected(encoded_tree.error());
+            }
+            auto tree = objects::decode_tree(*encoded_tree);
+            if (!tree) {
+                co_return std::unexpected(tree.error());
+            }
+            const auto entry = std::ranges::find(tree->entries, path[index], &tree_entry::name);
+            if (entry == tree->entries.end()) {
+                co_return std::unexpected(
+                    failure(errc::not_found, "redaction path is absent from change", path[index]));
+            }
+            if (index + 1 == path.size()) {
+                if (entry->kind != node_kind::blob) {
+                    co_return std::unexpected(failure(
+                        errc::invalid_argument, "redaction path is not a file", path[index]));
+                }
+                co_return entry->ref;
+            }
+            if (entry->kind != node_kind::tree) {
+                co_return std::unexpected(failure(errc::invalid_argument,
+                                                  "redaction path parent is not a directory",
+                                                  path[index]));
+            }
+            current = entry->ref;
+        }
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "redaction path is empty", "repository::redact"));
     }
     auto locked(std::string_view path) const -> bool {
         return std::ranges::any_of(current.locks, [&](const auto& pattern) {
@@ -702,6 +768,192 @@ runtime::task<void> repository::write_file(std::string path, std::filesystem::pa
     if (!record)
         co_return std::unexpected(record.error());
     co_return co_await impl_->record_blob(std::move(path), std::move(*record));
+}
+
+runtime::task<void> repository::redact(std::string path, std::optional<change_id> change) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    auto* current = lookup(impl_->current.root, *parts);
+    if (!current || current->kind != entry_kind::file) {
+        co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
+    }
+    auto target = std::optional<digest>{};
+    if (change) {
+        auto historical = co_await impl_->object_at(*change, *parts);
+        if (!historical) {
+            co_return std::unexpected(historical.error());
+        }
+        target = *historical;
+    } else {
+        for (auto operation = impl_->current.operations.rbegin();
+             operation != impl_->current.operations.rend();
+             ++operation) {
+            if (operation->kind == "write" && operation->from == path && operation->prior &&
+                to_string(operation->prior->object) != to_string(current->object)) {
+                target = operation->prior->object;
+                break;
+            }
+        }
+    }
+    if (!target) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "redacted content or a change id is required", path));
+    }
+    auto replacement = co_await read(path);
+    if (!replacement) {
+        co_return std::unexpected(replacement.error());
+    }
+    co_return co_await redact_impl(std::move(path), std::move(*replacement), *target);
+}
+
+runtime::task<void> repository::redact(std::string path,
+                                       std::vector<std::byte> replacement,
+                                       std::optional<change_id> change) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    auto* current = lookup(impl_->current.root, *parts);
+    if (!current || current->kind != entry_kind::file) {
+        co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
+    }
+    auto target = current->object;
+    if (change) {
+        auto historical = co_await impl_->object_at(*change, *parts);
+        if (!historical) {
+            co_return std::unexpected(historical.error());
+        }
+        target = *historical;
+    } else {
+        auto current_contents = co_await read(path);
+        if (!current_contents) {
+            co_return std::unexpected(current_contents.error());
+        }
+        if (*current_contents == replacement) {
+            co_return std::unexpected(
+                failure(errc::invalid_argument, "redacted content is unchanged", path));
+        }
+    }
+    co_return co_await redact_impl(std::move(path), std::move(replacement), target);
+}
+
+runtime::task<void>
+repository::redact_impl(std::string path, std::vector<std::byte> replacement, digest target) {
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    auto* original = lookup(impl_->current.root, *parts);
+    if (!original || original->kind != entry_kind::file) {
+        co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
+    }
+    auto target_references = std::size_t{};
+    auto entries = std::vector<const working_entry*>{&impl_->current.root};
+    while (!entries.empty()) {
+        const auto* entry = entries.back();
+        entries.pop_back();
+        if (entry->kind == entry_kind::file && to_string(entry->object) == to_string(target)) {
+            ++target_references;
+        }
+        for (const auto& item : entry->entries) {
+            entries.push_back(&item.second);
+        }
+    }
+    const auto replaced_reference = to_string(original->object) == to_string(target) ? 1U : 0U;
+    if (target_references > replaced_reference) {
+        co_return std::unexpected(
+            failure(errc::busy, "redaction target remains at another working path", path));
+    }
+    auto encoded_target = co_await impl_->objects.get(target);
+    if (!encoded_target) {
+        co_return std::unexpected(encoded_target.error());
+    }
+    auto old_blob = objects::decode_blob(*encoded_target);
+    if (!old_blob) {
+        co_return std::unexpected(old_blob.error());
+    }
+    auto written = co_await write(path, std::move(replacement));
+    if (!written) {
+        co_return std::unexpected(written.error());
+    }
+    auto* current = lookup(impl_->current.root, *parts);
+    if (!current || current->kind != entry_kind::file) {
+        co_return std::unexpected(failure(errc::internal, "redacted file disappeared", path));
+    }
+    if (to_string(current->object) == to_string(target)) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "redacted content preserves the old digest", path));
+    }
+    auto encoded_replacement = co_await impl_->objects.get(current->object);
+    if (!encoded_replacement) {
+        co_return std::unexpected(encoded_replacement.error());
+    }
+    auto new_blob = objects::decode_blob(*encoded_replacement);
+    if (!new_blob) {
+        co_return std::unexpected(new_blob.error());
+    }
+    auto live_content = std::set<std::string>{};
+    auto pending_entries = std::vector<const working_entry*>{&impl_->current.root};
+    while (!pending_entries.empty()) {
+        const auto* entry = pending_entries.back();
+        pending_entries.pop_back();
+        if (entry->kind == entry_kind::file) {
+            auto encoded = co_await impl_->objects.get(entry->object);
+            if (!encoded) {
+                co_return std::unexpected(encoded.error());
+            }
+            auto value = objects::decode_blob(*encoded);
+            if (!value) {
+                co_return std::unexpected(value.error());
+            }
+            for (const auto& chunk : value->chunks) {
+                live_content.insert(to_string(chunk));
+            }
+            continue;
+        }
+        for (const auto& [name, child] : entry->entries) {
+            pending_entries.push_back(&child);
+        }
+    }
+    auto purge = std::vector<digest>{target};
+    for (const auto& chunk : old_blob->chunks) {
+        if (!live_content.contains(to_string(chunk))) {
+            purge.push_back(chunk);
+        }
+    }
+    auto operation_hash = hash(impl_->hash_algorithm, std::span<const std::byte>{target.bytes});
+    if (!operation_hash) {
+        co_return std::unexpected(operation_hash.error());
+    }
+    auto prior = working_entry{entry_kind::file, current->node, current->mode, target, {}};
+    impl_->current.operations.push_back(
+        {op_id{*operation_hash}, "redaction", path, {}, current->node, prior});
+    auto recorded = co_await impl_->append_redaction(path, current->node, target);
+    if (!recorded) {
+        co_return std::unexpected(recorded.error());
+    }
+    ++impl_->current.pending_drips;
+    auto saved = co_await impl_->checkpoint_or_journal();
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    auto removed = co_await impl_->objects.redact(std::move(purge));
+    if (!removed) {
+        co_return std::unexpected(removed.error());
+    }
+    auto verification = co_await impl_->objects.get(target);
+    if (verification || verification.error().code != errc::not_found) {
+        co_return std::unexpected(failure(errc::internal, "redaction verification failed", path));
+    }
+    co_return result<void>{};
 }
 runtime::task<void> repository::move(std::string from, std::string to) {
     if (!impl_)

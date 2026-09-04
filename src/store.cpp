@@ -123,4 +123,11 @@ runtime::task<collection_report> store::collect(collection_options options) {
     co_return co_await impl_->value->collect(options);
 }
 
+runtime::task<void> store::redact(std::vector<digest> ids) {
+    if (!impl_)
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::redact"});
+    co_return co_await impl_->value->redact(std::move(ids));
+}
+
 } // namespace liquid

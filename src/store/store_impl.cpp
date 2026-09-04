@@ -1148,4 +1148,8 @@ runtime::task<collection_report> store_backend::collect(collection_options optio
     co_return co_await collector(*this).run(options);
 }
 
+runtime::task<void> store_backend::redact(std::vector<digest> ids) {
+    co_return co_await collector(*this).redact(ids);
+}
+
 } // namespace liquid::store_detail
