@@ -226,6 +226,9 @@ target_include_directories(liquid-crdt-measure PRIVATE ${PROJECT_SOURCE_DIR}/src
 target_link_libraries(liquid-crdt-measure PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp)
 
+add_executable(liquid-repository-open-measure EXCLUDE_FROM_ALL repository/measure_open.cpp)
+target_link_libraries(liquid-repository-open-measure PRIVATE liquid::liquid)
+
 add_executable(liquid-record-tests
   objects/test_records.cpp
   ${PROJECT_SOURCE_DIR}/src/objects/records.cpp

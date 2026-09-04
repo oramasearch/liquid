@@ -801,7 +801,7 @@ TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_val
     temporary_repository left_path;
     temporary_repository right_path;
     auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
-    ASSERT_TRUE(source);
+    ASSERT_TRUE(source) << source.error().message << ": " << source.error().context;
     ASSERT_TRUE(liquid::runtime::block_on(source->write("a.txt", content("base"))));
     ASSERT_TRUE(liquid::runtime::block_on(source->cut("base")));
     auto left = liquid::runtime::block_on(
@@ -812,7 +812,10 @@ TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_val
     ASSERT_TRUE(right);
     ASSERT_TRUE(liquid::runtime::block_on(left->write("a.txt", content("left"))));
     ASSERT_TRUE(liquid::runtime::block_on(right->write("a.txt", content("right"))));
-    ASSERT_TRUE(liquid::runtime::block_on(liquid::repository_detail::testing::sync(*left, *right)));
+    auto synchronized =
+        liquid::runtime::block_on(liquid::repository_detail::testing::sync(*left, *right));
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
 
     auto left_conflicts = liquid::runtime::block_on(left->conflicts());
     auto right_conflicts = liquid::runtime::block_on(right->conflicts());
