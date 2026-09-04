@@ -13,8 +13,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
+#include <future>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -87,6 +90,26 @@ auto send_all(int socket, std::string_view value) -> bool {
         sent += static_cast<std::size_t>(count);
     }
     return true;
+}
+
+template <class T>
+liquid::runtime::task<void>
+complete_async(liquid::runtime::task<T> operation,
+               std::shared_ptr<std::promise<liquid::result<T>>> completion) {
+    try {
+        completion->set_value(co_await std::move(operation));
+    } catch (...) {
+        completion->set_value(std::unexpected(liquid::runtime::detail::exception_error(
+            std::current_exception(), "sync test transport")));
+    }
+    co_return liquid::result<void>{};
+}
+
+template <class T> auto wait_async(liquid::runtime::task<T> operation) -> liquid::result<T> {
+    auto completion = std::make_shared<std::promise<liquid::result<T>>>();
+    auto future = completion->get_future();
+    liquid::runtime::spawn(complete_async(std::move(operation), completion), {});
+    return future.get();
 }
 
 class sync_http_server {
@@ -199,11 +222,11 @@ private:
     }
 
     void find_missing(int connection, std::span<const std::byte> body) {
-        respond(connection, liquid::runtime::block_on(server_->handle_find_missing(body)));
+        respond(connection, wait_async(server_->handle_find_missing(body)));
     }
 
     void store_chunks(int connection, std::span<const std::byte> body) {
-        auto stored = liquid::runtime::block_on(server_->handle_chunks(body));
+        auto stored = wait_async(server_->handle_chunks(body));
         if (!stored) {
             respond(connection, stored.error());
             return;
@@ -212,11 +235,11 @@ private:
     }
 
     void push(int connection, std::span<const std::byte> body) {
-        respond(connection, liquid::runtime::block_on(server_->handle_push(body)));
+        respond(connection, wait_async(server_->handle_push(body)));
     }
 
     void pull(int connection, std::span<const std::byte> body) {
-        respond(connection, liquid::runtime::block_on(server_->handle_pull(body)));
+        respond(connection, wait_async(server_->handle_pull(body)));
     }
 
     void read_range(int connection, std::string_view target) {
@@ -248,7 +271,7 @@ private:
             return;
         }
         auto output = std::vector<std::byte>(static_cast<std::size_t>(length));
-        auto read = liquid::runtime::block_on(server_->handle_chunks(*id, offset, output));
+        auto read = wait_async(server_->handle_chunks(*id, offset, output));
         if (!read) {
             respond(connection, read.error());
             return;

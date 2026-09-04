@@ -36,11 +36,11 @@ Focused CRDT cases verify commit metadata, compact checkpoint journal replay, co
 atomicity, and upstream sync convergence; the repository replica case also covers distinct clone
 actors and multi-round sync.
 The Unix integration case in `test_sync.cpp` exchanges two disk repositories through the public
-server behind a small socket transport, measures missing-object bytes across repeated pushes,
-pulls into an empty repository, and rejects both a corrupted TAAP signature and an authorization
-callback without changing state. Its CLI case starts the real `serve sync` process and invokes the
-real push and pull commands. The private wire codec stays in libliquid. Header compilation keeps
-the public sync API covered on every platform.
+server behind a small socket transport dispatched on the shared runtime, measures missing-object
+bytes across repeated pushes, pulls into an empty repository, and rejects both a corrupted TAAP
+signature and an authorization callback without changing state. Its CLI case starts the real
+`serve sync` process and invokes the real push and pull commands. The private wire codec stays in
+libliquid. Header compilation keeps the public sync API covered on every platform.
 
 Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,
