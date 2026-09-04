@@ -22,6 +22,7 @@ identities in the same store. The client implements:
 Every RPC carries `grpc-timeout`. The local Capy deadline also cancels resolver, connection, TLS,
 HTTP/2, and response waits. Custom headers are marked sensitive for HPACK when they are credentials.
 TLS supports system or explicit trust roots and an optional client certificate and key.
+TLS connections require the peer to negotiate `h2` with ALPN before any REAPI request is sent.
 
 Before execution, the input tree, toolchain tree, blob records, and content chunks are converted to
 REAPI directories and uploaded only when absent. Results return as `action_result`; stdout, stderr,

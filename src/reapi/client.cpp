@@ -282,7 +282,7 @@ grpc_client::call_unbounded(std::string method, std::vector<std::byte> request) 
         co_return std::unexpected(
             rpc_error(errc::unavailable, handshake_error.message(), endpoint->authority));
     }
-    auto valid_protocol = http2::validate_tls_protocol(secure, true);
+    auto valid_protocol = http2::validate_tls_protocol(secure);
     if (!valid_protocol) {
         co_return std::unexpected(valid_protocol.error());
     }
