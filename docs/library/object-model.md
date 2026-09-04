@@ -28,7 +28,7 @@ operations that consume this layer remain liquid #2.
 | Holds | chunks; and the **records** below, serialised canonically | the live namespace: the working tree, refs, locks, configuration, nested-repository pointers, the operation log |
 | Mutability | immutable, content-addressed by `digest` | mutable, converged by automerge-cpp |
 | Identity | the digest | liquid's own `node_id` per path (below), automerge `ObjId` internally |
-| Scale | billions of chunks | one document per repository in Phase 1 (see *Document boundary*) |
+| Scale | billions of chunks | one small repository document plus one document per directory (see *Document boundary*) |
 | References | records reference each other by digest; never the document | the document references content by digest text; never the reverse |
 
 ## Records in the store
@@ -68,7 +68,7 @@ chunk, because the store is one.
 
 ## The metadata document
 
-One automerge document per repository (Phase 1). Its root map:
+The **repository document** (one per repository; directories are their own documents, see *Document boundary*). Its root map:
 
 ```
 {
@@ -129,36 +129,45 @@ Rules liquid's wrapper enforces on top of automerge-cpp, until the upstream issu
 
 ## Document boundary
 
-Phase 1 keeps one document per repository. The measured million-entry document completed on the
-test machine, so the per-directory-document fallback is not selected. The growth is strongly
-nonlinear, however: the million-entry case used 10.4 GiB peak RSS and load replay took
-708,573.076 ms. This makes one document a functional Phase 1 boundary, not evidence that it is an
-unbounded one.
+**Decided (2026-09-04): one automerge document per directory.** The measurement below, made for
+liquid #3 with one document per repository, rules that layout out: a million-entry document costs
+2.1 ms per write, a 708-second load and 10.6 GiB resident, and the growth is nonlinear because
+`load()` replays the whole history (automerge-cpp issue 4 and 9 on
+https://github.com/oramasearch/automerge-cpp/issues/13). Directories are small; repositories are
+not.
 
-Hardware: Apple M3 Max (`Mac15,9`), 16 logical CPUs, 64 GiB RAM, macOS 14.6.1 (23G93), Homebrew
-Clang 22.1.8. The measurement used a Release build. `liquid-crdt-measure` created a flat working
-tree with one blob entry and one operation-log record per write. It submitted 1,000 writes per
-transaction, used deterministic 16-byte operation and node identifiers plus one fixed BLAKE3
-reference, and divided total transaction wall time by the number of writes. Save and load were
-timed with `std::chrono::steady_clock`; peak process RSS came from `getrusage` and includes the
-original and loaded documents resident together. Each case was one uninterrupted process.
+The layout from here:
+
+- The **repository document** holds `repo`, `format`, `refs`, `locks`, `nested`, `config`, `ops`
+  and the `node_id` of the root directory. It is small and always loaded.
+- **Each directory is its own automerge document**, stored as a blob in the content store under
+  a key derived from its `node_id`, holding one directory map of entries (`{kind, id, mode, ref}`
+  for files; `{kind: "dir", id}` for subdirectories, whose own document is found by that `id`).
+  Documents load lazily on first access and are cached by `node_id`.
+- A **move within a directory** is one transaction on that document. A **move across
+  directories** is two transactions (remove in the source, put in the target) carrying the same
+  `node_id`; the operation log records it as one move, and a cut that observes only one half is
+  a torn move the next cut completes (the `ops` record names both halves).
+- **Drips** name the directory document(s) they touched; the journal is per repository.
+- **Cutting a change** walks directory documents from the root and emits `tree` records
+  bottom-up as before; unchanged subtrees reuse their previous `tree` digest without loading
+  their documents (the parent entry records the child's last tree digest, refreshed at cut).
+- **Sync** exchanges the repository document and the directory documents that changed since the
+  peer's heads, each with its own `sync_state`; the framing carries the `node_id` of the document
+  a message belongs to.
+
+Measured envelope of one document (M3 Max, 64 GiB, Release, `liquid-crdt-measure`):
 
 | Entries | Transaction per write | `save()` size | `save()` time | `load()` time | Peak RSS |
 |---:|---:|---:|---:|---:|---:|
 | 100,000 | 117.179 µs | 2,046,818 bytes | 338.496 ms | 3,800.777 ms | 1,171.562 MiB |
 | 1,000,000 | 2,086.627 µs | 20,176,218 bytes | 3,944.885 ms | 708,573.076 ms | 10,613.234 MiB |
 
-Reproduce either row after a Release configure with:
-
-```sh
-cmake --build build-measure --target liquid-crdt-measure
-./build-measure/tests/liquid-crdt-measure 100000 1000
-./build-measure/tests/liquid-crdt-measure 1000000 1000
-```
-
-The per-directory-document design (one automerge document per directory, referenced by
-`node_id`) remains the fallback if production trees exceed this measured envelope. The schema is
-written so a directory map can be lifted into its own document without changing entry shapes.
+A directory above roughly 10,000 entries is the warning threshold; `liquid status` reports such
+directories so the cost is visible, and a later sharding of a single huge directory stays
+possible because entries are addressed by `node_id`, not by position. Reproduce a row after a
+Release configure with `cmake --build build-measure --target liquid-crdt-measure &&
+./build-measure/tests/liquid-crdt-measure 100000 1000`.
 
 ## How to verify
 
