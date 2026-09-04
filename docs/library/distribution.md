@@ -203,8 +203,11 @@ liquid owning its transport, which #63 (liquid's own scheduler and workers) need
 conformance proof is a real backend: the tests run NativeLink and BuildBarn in Docker and drive
 the Phase 2 fixture builds against them.
 
-This decision is Steve's; it is recorded in the bridge's `docs/decisions.md` when made, and #16
-and #63 do not start before it. #17, #18, #19 and #64 do not depend on it: they are built against
+**Decided (Steve, 2026-09-05; bridge decision 9): option 2.** The transport is built as two issues
+in parallel, #155 (HTTP/2 client and server with gRPC framing on Corosio) and #156 (protobuf wire
+codec and the REAPI v2 message set with the record conversions); #16 integrates them into the
+remote tier and the `remote_executor`, and proves conformance against NativeLink and BuildBarn in
+Docker; #63 follows. #17, #18, #19 and #64 do not depend on it: they are built against
 the local executor and the store, with the remote location abstracted behind one interface
 (`remote_blob_source`: `find_missing`, `read_range`, `write`) that the REAPI client implements
 later.
