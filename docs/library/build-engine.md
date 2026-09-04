@@ -15,9 +15,9 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, #14, and #15 implement the local action path,
-disk cache, `liquid wrap`, reproducibility verification, automatic SLSA provenance, and cache
-diagnostics:
+**Implementation status.** Issues #10, #11, #12, #13, #14, #15, and #57 implement the local
+action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA provenance,
+cache diagnostics, and build observability:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -44,10 +44,19 @@ action  { v, kind:"action", inputs: digest(tree), command: [argv…], cwd, env: 
           platform: { os, arch }, toolchain: digest(tree), sandbox: digest(sandbox definition), timeout_s? }
 result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, blob: digest } … ],
           stdout: digest, stderr: digest, manifest: [ { path, digest } … ],   # everything the action read, with content hashes
-          timing: { queued_ms, sandbox_ms, exec_ms, upload_ms }, worker: string, observed_at: time,
+          timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
           started_at: time, finished_at: time, provenance: digest(attestation),
           producer: actor, sig: TAAP-signature }
+build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outputs, cache,
+              start_ms, timing } … ], edges: [ { dependency, dependent } … ],
+              cache: { hits, misses, bytes_served, bytes_rebuilt, bytes_avoided } }
 ```
+
+New result records use version 2. Its phase durations are non-overlapping and their sum is the
+recorded action duration: queue wait, sandbox preparation, tool execution, result analysis and
+hashing, then local-store writes. The decoder continues to accept version-1 results and maps their
+`upload_ms` value to the version-2 store phase. Remote transfer is not folded into local store time;
+Phase 3 will add its own transfer measurement.
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
   materialised into the sandbox from the store and addressed by content; the `toolchain`
@@ -143,8 +152,11 @@ rather than inferred.
 
 The adjacent `stats` file is a recoverable projection of completed wrap reports. It totals actions,
 miss reasons, bytes avoided by disk hits, and bytes rebuilt from output blob sizes. Memory and
-remote tier fields are explicitly unavailable. Result timing fields, when non-zero, yield the five
-longest actions in a wrap report; dependency-aware critical-path calculation remains #57.
+remote tier fields are explicitly unavailable. Every wrap also stores a `build_trace` record. An
+edge exists when one recorded action reads a path produced by another action in that wrap. Longest
+path analysis sums the five recorded phases along those edges, and `why_slow` selects the narrowest
+action that produced the requested output so the driver's aggregate outer action does not hide the
+tool chain.
 
 Divergence is not inferred from two different output lists. `liquid why` uses only the authoritative
 divergence flag stored in the action-index entry by `liquid verify`; it reports the linked verification
@@ -204,6 +216,11 @@ run pays 256 KiB for its 65,537-entry fanout before storing one record; at 114 b
 fewer action candidates than chunks, and publication is explicitly opt-in, so atomic rewrite is the
 smaller disk and implementation cost for this phase. The root record preserves a migration path to
 runs without changing candidate keys or collector reachability.
+
+The canonical action-index root also retains the ordered build-trace digests. The collector follows
+root to trace and trace to every named result, so traces from `--no-cache` wraps remain queryable for
+the same 30-day lease as the cache root. Reopening from `ROOT` restores the trace list even when the
+fixed-width `INDEX` projection is already valid.
 
 Trust (features/05): developer machines read; only signed writers publish (the signature is
 the producer's TAAP identity on the result record, the same `sig` field as changes); CI and
@@ -289,6 +306,9 @@ No query graph beyond actions (Phase 4 turns queries and actions into one engine
 tier (Phase 3), no daemon (Phase 4), no per-definition granularity (Phase 4). Actions are the
 coarse end of the spectrum features/04 describes; the fine end arrives when the graph does.
 
+Remote transfer timing remains Phase 3 work. Continuous daemon profiles remain Phase 4 work. The
+stored local trace and its Chrome trace-event projection do not invent either measurement.
+
 ## How to verify
 
 - An unmodified CMake, Autotools, or Make project builds under `liquid wrap`; a second checkout at a
@@ -306,6 +326,9 @@ coarse end of the spectrum features/04 describes; the fine end arrives when the 
   Portable record tests cover command, environment, toolchain, sandbox, never-built, imported-index,
   authoritative divergence quarantine, and cumulative-stat explanations. The privileged Linux wrap
   test proves the observed header and completed-wrap statistics end to end.
+- A two-action sleeping-tool fixture produces a dependency edge from its intermediate output to its
+  final output. Its phase sums equal each action duration, `why_slow` returns the dependent chain,
+  and the Chrome trace-event projection parses as JSON.
 
 ## How to change
 

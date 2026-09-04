@@ -28,3 +28,8 @@ parallel compilation-database seeding, and sandbox-only hook variables. The Linu
 
 The real identical-execution cache test verifies every result's provenance and asserts that a hit
 reuses the original attestation digest.
+
+`sleep_copy.c` is a dynamic test tool used only by the privileged Linux wrap scenario. Two
+invocations with different sleeps form a known output dependency. The scenario verifies the
+longest dependent chain, exact phase-sum accounting, retained trace loading, Chrome JSON structure,
+and `why_slow` target selection.

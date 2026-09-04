@@ -38,8 +38,10 @@ that the table and `liquid --help` name the same commands.
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup for an output, action, or result. | available |
+| `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
@@ -76,8 +78,10 @@ writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible e
 from the same canonical TAAP record.
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, the outer
 action's status, the disk hit rate, bytes transferred, bytes avoided, bytes rebuilt, and miss counts
-by reason. When timing records contain non-zero durations it also prints the five longest actions;
-issue #57 will turn those durations into a dependency-aware critical path. `--explain` adds the
+by reason. Its observability line names wall and critical-path durations, achieved parallelism, the
+totals for queued, sandbox, exec, hash, and store phases, bytes served versus rebuilt, and the
+persisted trace digest. Following `critical_action` lines are the longest dependent chain, not a
+list sorted only by individual duration. `--explain` adds the
 recorded cause for every miss. Input changes carry the path, old and new digests, a line hunk for
 UTF-8 text, and the repository drip's digest, TAAP actor, and time when the path is tracked. Command
 changes print an indexed argv diff; environment changes name the key; toolchain and sandbox changes
@@ -85,6 +89,17 @@ print their old and new tree digests, with the changed tool path when its tree e
 `--jobs` sets driver parallelism and the compilation-database seed width; `--no-cache` executes and
 records the observation without publishing or serving cache entries. The persistent project cache
 defaults to the platform cache directory and can be relocated with `LIQUID_WRAP_CACHE`.
+
+`liquid build --profile <command> [args...]` is the profiled build spelling of `wrap`; every wrap is
+profiled, so existing `liquid wrap` callers receive the same stored record and summary. `liquid
+build trace` describes the latest trace retained by the project's cache root. `--chrome` writes a
+Chrome trace-event JSON object with one complete event for every action phase. The export reads only
+the recorded trace and result graph.
+
+`liquid why-slow <target>` accepts an output path, action digest, or result digest from the latest
+trace. It prints the longest dependency path ending at that action, followed by queued, sandbox,
+exec, hash, and store durations for every action. When both an inner tool action and the outer driver
+record the target, the command selects the inner action with the narrower output set.
 
 `liquid why <target>` accepts an output path, an action digest, or a result digest. It selects the
 most recent recorded lookup for that target and compares only the action, result, manifest, input
@@ -132,8 +147,11 @@ liquid provenance blake3:<result-digest>
 liquid provenance --dsse build/output.o
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --jobs 8 --explain cmake --build build
+liquid build --profile cmake --build build
+liquid build trace --chrome > build-trace.json
 liquid why build/CMakeFiles/app.dir/main.cpp.o
 liquid why blake3:<action-or-result-digest> --json
+liquid why-slow build/app
 liquid cache stats --json
 liquid pause
 liquid resume

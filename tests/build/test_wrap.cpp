@@ -12,6 +12,7 @@
 #include <unistd.h>
 #endif
 
+#include "formats/json.hpp"
 #include "liquid/build.hpp"
 #include "liquid/runtime.hpp"
 
@@ -234,6 +235,95 @@ TEST(BuildWrap, recursive_make_is_split_into_actions) {
         run_wrap(make_fixture.project(), make_fixture.cache(), {"make", "-C", "sub"}, false, 3);
     ASSERT_TRUE(made_again) << made_again.error().message;
     EXPECT_EQ(made_again->outer, liquid::cache_status::hit);
+}
+
+TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    wrap_directory fixture{"make"};
+    const auto tool = fixture.project() / "sleep-tool";
+    auto code = std::error_code{};
+    std::filesystem::copy_file(
+        LIQUID_WRAP_SLEEP_TOOL, tool, std::filesystem::copy_options::overwrite_existing, code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::permissions(tool,
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace,
+                                 code);
+    ASSERT_FALSE(code) << code.message();
+    {
+        auto input = std::ofstream{fixture.project() / "trace-input.txt"};
+        input << "critical path\n";
+    }
+    const auto script = "./sleep-tool trace-input.txt trace-middle.txt 80 && "
+                        "./sleep-tool trace-middle.txt trace-final.txt 30";
+    auto cache_environment = scoped_environment{"LIQUID_WRAP_CACHE", fixture.cache().string()};
+    ASSERT_TRUE(cache_environment.valid());
+    auto wrapped = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(),
+                            {"/bin/sh", "-c", script},
+                            liquid::wrap_options{.cache = true, .verify = false}));
+    ASSERT_TRUE(wrapped) << wrapped.error().message << ": " << wrapped.error().context;
+    ASSERT_EQ(wrapped->exit, 0);
+    ASSERT_TRUE(wrapped->trace);
+    auto trace = liquid::runtime::block_on(liquid::build::latest_trace(fixture.project()));
+    ASSERT_TRUE(trace) << trace.error().message;
+    EXPECT_EQ(liquid::to_string(trace->id), liquid::to_string(*wrapped->trace));
+    ASSERT_EQ(trace->actions.size(), 2U);
+    EXPECT_GE(trace->edges.size(), 1U);
+    auto explanation =
+        liquid::runtime::block_on(liquid::build::why_slow(fixture.project(), "trace-final.txt"));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    ASSERT_EQ(explanation->critical_path.size(), 2U);
+    EXPECT_GE(explanation->duration.count(), 100);
+    EXPECT_TRUE(
+        std::ranges::any_of(explanation->critical_path.front().outputs,
+                            [](const auto& output) { return output == "trace-middle.txt"; }));
+    EXPECT_TRUE(
+        std::ranges::any_of(explanation->critical_path.back().outputs,
+                            [](const auto& output) { return output == "trace-final.txt"; }));
+    for (const auto& action : trace->actions) {
+        const auto phases = action.timing.queued + action.timing.sandbox + action.timing.exec +
+                            action.timing.hash + action.timing.store;
+        const auto found = std::ranges::find_if(explanation->critical_path, [&](const auto& item) {
+            return liquid::to_string(item.action) == liquid::to_string(action.action);
+        });
+        if (found != explanation->critical_path.end()) {
+            EXPECT_EQ(found->duration, phases);
+        }
+        if (std::ranges::find(action.outputs, "trace-middle.txt") != action.outputs.end()) {
+            EXPECT_GE(action.timing.exec.count(), 70);
+        }
+        if (std::ranges::find(action.outputs, "trace-final.txt") != action.outputs.end()) {
+            EXPECT_GE(action.timing.exec.count(), 20);
+        }
+    }
+    auto chrome = liquid::build::chrome_trace(*trace);
+    ASSERT_TRUE(chrome) << chrome.error().message;
+    auto json = liquid::formats::json::parse(*chrome);
+    ASSERT_TRUE(json) << json.error().message;
+    const auto* object = std::get_if<liquid::formats::json::value::object>(&json->data);
+    ASSERT_NE(object, nullptr);
+    EXPECT_NE(std::ranges::find(*object,
+                                "traceEvents",
+                                [](const auto& item) { return std::string_view{item.first}; }),
+              object->end());
+#if defined(LIQUID_CLI)
+    const auto output = fixture.project().parent_path() / "why-slow-output";
+    const auto command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                         shell_quote(LIQUID_CLI) + " why-slow trace-final.txt >" +
+                         shell_quote(output.string()) + " 2>&1";
+    const auto status = std::system(command.c_str());
+    auto input = std::ifstream{output};
+    const auto text =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    ASSERT_EQ(status, 0) << text;
+    EXPECT_NE(text.find("output=trace-middle.txt"), std::string::npos) << text;
+    EXPECT_NE(text.find("output=trace-final.txt"), std::string::npos) << text;
+#endif
 }
 
 #if defined(LIQUID_CLI)

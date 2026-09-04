@@ -112,7 +112,8 @@ Input explanations carry both stored digests, a UTF-8 line hunk, and recorded dr
 command, environment, toolchain, sandbox, never-built, and unknown results have distinct output.
 `--json` exposes the same fields. `wrap --explain` and `cache stats` report miss reasons, the disk
 hit rate, and output bytes rebuilt versus avoided. The memory and remote tier rows remain explicitly
-unavailable, and #57 owns dependency-aware critical-path refinement. A divergent result is reported
+unavailable. #57 adds retained per-wrap traces, dependency-aware critical paths, phase attribution,
+and `liquid why-slow`; remote transfer timing remains Phase 3 work. A divergent result is reported
 only when `liquid verify` has set the action-index divergence flag; diagnostics do not infer
 quarantine from differing bytes.
 

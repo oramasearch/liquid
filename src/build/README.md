@@ -23,6 +23,12 @@ Action boundaries are output-producing leaf processes from the discovered toolch
 names. Completed output snapshots make each recorded action independently replayable.
 names. Completed output snapshots make each recorded action independently replayable.
 
+`trace.cpp` derives dependency edges when a result manifest reads another action's output, stores a
+`build_trace` record for every wrap, computes longest paths, loads the latest retained trace, and
+exports Chrome trace-event JSON. The wrap hook records monotonic process entry and exit values;
+`wrap.cpp` combines them with its hash and store measurements. `cache.cpp` retains the ordered trace
+digests in the canonical action-index root.
+
 The private `repository_access.hpp` adapter is the only route from these components to repository
 storage, signing, cache and verification configuration, leases, counters, and critical alerts. Public
 build values and operations stay

@@ -53,7 +53,8 @@ struct LIQUID_EXPORT action_timing {
     std::chrono::milliseconds queued{};
     std::chrono::milliseconds sandbox{};
     std::chrono::milliseconds exec{};
-    std::chrono::milliseconds upload{};
+    std::chrono::milliseconds hash{};
+    std::chrono::milliseconds store{};
 };
 
 enum class cache_status : std::uint8_t { miss, hit, divergent };
@@ -151,6 +152,7 @@ struct LIQUID_EXPORT action_result {
     std::optional<std::chrono::sys_seconds> started_at;
     std::optional<std::chrono::sys_seconds> finished_at;
     std::optional<digest> provenance;
+    std::uint64_t record_version{2};
 };
 
 struct LIQUID_EXPORT provenance_report {
@@ -171,9 +173,34 @@ struct LIQUID_EXPORT wrap_options {
 };
 
 struct LIQUID_EXPORT critical_action {
+    result_id result;
     digest action;
     std::chrono::milliseconds duration{};
+    action_timing timing;
+    cache_status cache{cache_status::miss};
     std::vector<std::string> outputs;
+};
+
+struct LIQUID_EXPORT build_trace_action {
+    result_id result;
+    digest action;
+    std::vector<std::string> outputs;
+    action_timing timing;
+    cache_status cache{cache_status::miss};
+    std::chrono::milliseconds start_offset{};
+};
+
+struct LIQUID_EXPORT build_trace_edge {
+    digest dependency;
+    digest dependent;
+};
+
+struct LIQUID_EXPORT build_trace {
+    digest id;
+    std::chrono::milliseconds wall_time{};
+    std::vector<build_trace_action> actions;
+    std::vector<build_trace_edge> edges;
+    cache_report cache;
 };
 
 struct LIQUID_EXPORT wrap_report {
@@ -186,6 +213,18 @@ struct LIQUID_EXPORT wrap_report {
     std::vector<cache_miss> why;
     bool verification_scheduled{};
     cache_report cache;
+    std::optional<digest> trace;
+    std::chrono::milliseconds wall_time{};
+    action_timing phase_totals;
+    double parallelism{};
+    std::vector<critical_action> critical_path;
+    std::vector<build_trace_action> trace_actions;
+};
+
+struct LIQUID_EXPORT why_slow_report {
+    std::string target;
+    digest trace;
+    std::chrono::milliseconds duration{};
     std::vector<critical_action> critical_path;
 };
 
@@ -248,6 +287,14 @@ why(std::filesystem::path working_tree,
 [[nodiscard]] LIQUID_EXPORT runtime::task<cache_report>
 cache_stats(std::filesystem::path working_tree,
             std::optional<std::filesystem::path> cache_directory = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<build_trace>
+latest_trace(std::filesystem::path working_tree,
+             std::optional<std::filesystem::path> cache_directory = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<why_slow_report>
+why_slow(std::filesystem::path working_tree,
+         std::string target,
+         std::optional<std::filesystem::path> cache_directory = {});
+[[nodiscard]] LIQUID_EXPORT liquid::result<std::string> chrome_trace(const build_trace& trace);
 
 } // namespace build
 

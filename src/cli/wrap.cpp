@@ -145,12 +145,35 @@ auto wrap(int argc, char** argv) -> int {
                  result->cache.disk.bytes_transferred,
                  result->cache.disk.bytes_avoided,
                  result->cache.bytes_rebuilt);
+    auto critical_path_time = std::chrono::milliseconds{};
+    for (const auto& action : result->critical_path) {
+        critical_path_time += action.duration;
+    }
+    std::println("wall_ms={} critical_path_ms={} parallelism={:.2f} queued_ms={} sandbox_ms={} "
+                 "exec_ms={} hash_ms={} store_ms={} bytes_served={} bytes_rebuilt={} trace={}",
+                 result->wall_time.count(),
+                 critical_path_time.count(),
+                 result->parallelism,
+                 result->phase_totals.queued.count(),
+                 result->phase_totals.sandbox.count(),
+                 result->phase_totals.exec.count(),
+                 result->phase_totals.hash.count(),
+                 result->phase_totals.store.count(),
+                 result->cache.bytes_served,
+                 result->cache.bytes_rebuilt,
+                 result->trace ? liquid::to_string(*result->trace) : "unavailable");
     for (const auto& [reason, count] : result->cache.misses_by_reason)
         std::println("misses[{}]={}", reason_name(reason), count);
     for (const auto& action : result->critical_path) {
-        std::println("critical_action={} duration_ms={}",
+        std::println("critical_action={} duration_ms={} queued_ms={} sandbox_ms={} exec_ms={} "
+                     "hash_ms={} store_ms={}",
                      liquid::to_string(action.action),
-                     action.duration.count());
+                     action.duration.count(),
+                     action.timing.queued.count(),
+                     action.timing.sandbox.count(),
+                     action.timing.exec.count(),
+                     action.timing.hash.count(),
+                     action.timing.store.count());
     }
     if (options.explain) {
         for (const auto& miss : result->why)

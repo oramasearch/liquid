@@ -24,3 +24,7 @@ reference registry traverses root to result, result to action/output/stdout/stde
 action to input/toolchain/sandbox. It also traverses root to the verification attestation, so an
 indexed result, its trust evidence, and the bytes needed to use and verify it remain one reachable
 graph.
+
+Build observability adds `build_trace` to the reference registry. The action-index root retains each
+trace digest, and each trace retains its named results, including results from wraps that did not
+publish cache entries.

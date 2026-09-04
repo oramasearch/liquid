@@ -38,6 +38,8 @@ auto why(int argc, char** argv) -> int;
 auto cache(int argc, char** argv) -> int;
 auto git_import(int argc, char** argv) -> int;
 auto git_export(int argc, char** argv) -> int;
+auto build(int argc, char** argv) -> int;
+auto why_slow(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -143,11 +145,21 @@ constexpr auto commands = std::to_array<command>({
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
+    {"build",
+     "build --profile <command> [args...] | build trace [--chrome]",
+     "profile a build or export its trace",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::build},
     {"why",
      "why <target> [--json]",
      "explain the latest cache lookup",
      "available",
      liquid_cli::why},
+    {"why-slow",
+     "why-slow <target>",
+     "show the critical path to a build target",
+     "available",
+     liquid_cli::why_slow},
     {"cache",
      "cache stats [--json]",
      "show build-cache statistics",

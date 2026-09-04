@@ -52,7 +52,9 @@ public:
     [[nodiscard]] runtime::task<void>
     record_verification(digest result, digest attestation, bool divergent);
     [[nodiscard]] const std::vector<objects::action_index_entry>& entries() const noexcept;
+    [[nodiscard]] const std::vector<digest>& traces() const noexcept;
     [[nodiscard]] bool divergent(digest result) const noexcept;
+    [[nodiscard]] runtime::task<void> record_trace(digest trace);
     [[nodiscard]] result<void>
     record_lookup(cache_status status, result_id id, std::optional<result_id> previous = {});
 
@@ -60,6 +62,7 @@ private:
     repository& source_;
     action_index index_;
     std::filesystem::path directory_;
+    std::vector<digest> traces_;
 
     [[nodiscard]] runtime::task<std::optional<digest>> load_root_pointer();
     [[nodiscard]] runtime::task<void> save_root_pointer(digest root);

@@ -39,3 +39,5 @@ rate-one sampling, and CLI verification of every wrapped action.
 Portable build
 diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
 statistics, and the JSON forms of `why` and `cache stats`.
+Mount-backed observability coverage constructs a two-action sleeping dependency chain and verifies
+result timing, durable trace edges, critical-path queries, and Chrome trace-event JSON.

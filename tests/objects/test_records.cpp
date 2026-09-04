@@ -100,7 +100,8 @@ TEST(Records, result_records_round_trip_positive_observed_time) {
         .timing = {.queued = std::chrono::milliseconds{1},
                    .sandbox = std::chrono::milliseconds{2},
                    .exec = std::chrono::milliseconds{3},
-                   .upload = std::chrono::milliseconds{4}},
+                   .hash = std::chrono::milliseconds{4},
+                   .store = std::chrono::milliseconds{5}},
         .worker = "linux/x86_64",
         .observed_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'000}}};
     auto complete = record;
@@ -115,11 +116,76 @@ TEST(Records, result_records_round_trip_positive_observed_time) {
     ASSERT_EQ(decoded->outputs.size(), 1U);
     EXPECT_EQ(decoded->outputs.front().path, "out/hello.o");
     EXPECT_EQ(decoded->timing.exec, std::chrono::milliseconds{3});
+    EXPECT_EQ(decoded->timing.hash, std::chrono::milliseconds{4});
+    EXPECT_EQ(decoded->timing.store, std::chrono::milliseconds{5});
     EXPECT_EQ(decoded->observed_at, complete.observed_at);
     EXPECT_EQ(decoded->started_at, complete.started_at);
     EXPECT_EQ(decoded->finished_at, complete.finished_at);
     ASSERT_TRUE(decoded->provenance);
     EXPECT_EQ(liquid::to_string(*decoded->provenance), liquid::to_string(*complete.provenance));
+}
+
+TEST(Records, build_trace_round_trips_actions_edges_timing_and_cache_outcome) {
+    const auto trace =
+        liquid::build_trace{.wall_time = std::chrono::milliseconds{42},
+                            .actions = {{.result = {example_digest(0x01)},
+                                         .action = example_digest(0x02),
+                                         .outputs = {"middle.o"},
+                                         .timing = {.queued = std::chrono::milliseconds{1},
+                                                    .sandbox = std::chrono::milliseconds{2},
+                                                    .exec = std::chrono::milliseconds{20},
+                                                    .hash = std::chrono::milliseconds{3},
+                                                    .store = std::chrono::milliseconds{4}},
+                                         .cache = liquid::cache_status::miss,
+                                         .start_offset = std::chrono::milliseconds{5}},
+                                        {.result = {example_digest(0x03)},
+                                         .action = example_digest(0x04),
+                                         .outputs = {"final.o"},
+                                         .timing = {.exec = std::chrono::milliseconds{10}},
+                                         .cache = liquid::cache_status::hit,
+                                         .start_offset = std::chrono::milliseconds{25}}},
+                            .edges = {{example_digest(0x02), example_digest(0x04)}},
+                            .cache = {.hits = 1,
+                                      .misses = 1,
+                                      .bytes_served = 7,
+                                      .bytes_rebuilt = 9,
+                                      .disk = {.available = true, .bytes_avoided = 11}}};
+    auto encoded = liquid::objects::encode(trace);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_build_trace(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(decoded->wall_time, trace.wall_time);
+    ASSERT_EQ(decoded->actions.size(), 2U);
+    EXPECT_EQ(decoded->actions.front().timing.exec, std::chrono::milliseconds{20});
+    EXPECT_EQ(decoded->actions.back().cache, liquid::cache_status::hit);
+    ASSERT_EQ(decoded->edges.size(), 1U);
+    EXPECT_EQ(liquid::to_string(decoded->edges.front().dependency),
+              liquid::to_string(trace.edges.front().dependency));
+    EXPECT_EQ(decoded->cache.disk.bytes_avoided, 11U);
+}
+
+TEST(Records, legacy_result_reencodes_its_original_signing_body) {
+    auto legacy = liquid::action_result{.action = example_digest(0x01),
+                                        .stdout_output = example_digest(0x02),
+                                        .stderr_output = example_digest(0x03),
+                                        .timing = {.queued = std::chrono::milliseconds{1},
+                                                   .sandbox = std::chrono::milliseconds{2},
+                                                   .exec = std::chrono::milliseconds{3},
+                                                   .store = std::chrono::milliseconds{4}},
+                                        .worker = "legacy",
+                                        .record_version = 1};
+    auto encoded = liquid::objects::encode_result_body(legacy);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto signed_bytes = liquid::objects::encode(legacy);
+    ASSERT_TRUE(signed_bytes) << signed_bytes.error().message;
+    auto decoded = liquid::objects::decode_result(*signed_bytes);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(decoded->record_version, 1U);
+    EXPECT_EQ(decoded->timing.hash, std::chrono::milliseconds{});
+    EXPECT_EQ(decoded->timing.store, std::chrono::milliseconds{4});
+    auto reencoded = liquid::objects::encode_result_body(*decoded);
+    ASSERT_TRUE(reencoded) << reencoded.error().message;
+    EXPECT_EQ(*reencoded, *encoded);
 }
 
 } // namespace

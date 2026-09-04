@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15 | implemented local executor, wrapper, disk cache, verification, provenance, and diagnostics | action execution and results, typed cache explanations, critical alerts, reproducibility verification, provenance verification, JSON/DSSE projection, tier and byte reports; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #57 | implemented local executor, wrapper, disk cache, verification, provenance, diagnostics, and observability | action execution and results, typed cache explanations, critical alerts, reproducibility verification, provenance verification, retained build traces, critical paths, Chrome export, tier and byte reports; no sandbox or index implementation types are public |
 | `liquid/remote.hpp` | Phase 6 | declared | `remote`: push and pull; declared with the protocol, implemented with lake |
 
 ### `liquid/error.hpp`
@@ -390,8 +390,15 @@ struct action_result {
   std::chrono::sys_seconds observed_at; actor producer; std::vector<std::byte> sig;
   cache_status cache; std::optional<cache_miss> why;
   std::optional<std::chrono::sys_seconds> started_at, finished_at;
-  std::optional<digest> provenance;
+  std::optional<digest> provenance; std::uint64_t record_version;
 };
+struct build_trace_action { result_id result; digest action; std::vector<std::string> outputs;
+  action_timing timing; cache_status cache; std::chrono::milliseconds start_offset; };
+struct build_trace_edge { digest dependency, dependent; };
+struct build_trace { digest id; std::chrono::milliseconds wall_time;
+  std::vector<build_trace_action> actions; std::vector<build_trace_edge> edges; cache_report cache; };
+struct why_slow_report { std::string target; digest trace; std::chrono::milliseconds duration;
+  std::vector<critical_action> critical_path; };
 struct provenance_report {
   result_id result; digest attestation; liquid::attestation statement; action_result value;
   bool verified; std::string reason;
@@ -420,6 +427,11 @@ runtime::task<why_report> why(std::filesystem::path, std::string,
                               std::optional<std::filesystem::path> cache = {});
 runtime::task<cache_report> cache_stats(std::filesystem::path,
                                         std::optional<std::filesystem::path> cache = {});
+runtime::task<build_trace> latest_trace(std::filesystem::path,
+                                        std::optional<std::filesystem::path> cache = {});
+runtime::task<why_slow_report> why_slow(std::filesystem::path, std::string,
+                                        std::optional<std::filesystem::path> cache = {});
+liquid::result<std::string> chrome_trace(const build_trace&);
 }
 ```
 
@@ -434,7 +446,9 @@ index entry is permanently excluded from lookup. See
 for the SLSA mapping and interim object subject.
 `why` accepts an output path, action digest, or result digest and returns the selected lookup plus
 current/prior identifiers and a typed cause. `wrap_report` includes action counts, its per-wrap
-`cache_report`, typed miss details, and non-zero timing leaders. The path-taking `cache_stats`
+`cache_report`, typed miss details, the retained trace digest, phase totals, achieved parallelism,
+and the dependency-aware critical path. `latest_trace`, `why_slow`, and `chrome_trace` query and
+project only recorded trace/result data. The path-taking `cache_stats`
 returns cumulative completed-wrap statistics; the repository member remains scoped to its open
 handle.
 

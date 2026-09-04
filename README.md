@@ -45,9 +45,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > history and its identity mapping; `liquid export git` writes a standalone Git repository and reports
 > compatibility losses.
 
-> **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
-> reproducibility verification, signed SLSA provenance, and record-derived cache diagnostics.**
+> reproducibility verification, signed SLSA provenance, record-derived cache diagnostics, and
+> dependency-aware build observability.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -59,12 +59,15 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and every output digest, signs a `reproducibility/1` attestation, and permanently quarantines a
 > divergent result. `wrap` schedules a one-in-20 local sample on the shared runtime by default.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
-> in-toto Statement. Memory and remote tiers remain separate work; macOS needs macFUSE and Windows
-> returns its documented unsupported result.
-> store root. `liquid why` explains output, action, and result misses with digest, argv, environment,
+> in-toto Statement. `liquid why` explains output, action, and result misses with digest, argv,
+> environment,
 > toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk hit
 > rates and output bytes avoided versus rebuilt. Memory and remote tiers remain separate work;
 > macOS needs macFUSE and Windows returns its documented unsupported result.
+> Each result records non-overlapping queued, sandbox, exec, hash, and store phases. Every wrap
+> retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
+> totals, and supports `liquid build trace --chrome` and `liquid why-slow <target>`. Remote transfer
+> timing remains Phase 3 work.
 
 ## Where this sits
 

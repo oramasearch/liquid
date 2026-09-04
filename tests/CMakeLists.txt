@@ -44,6 +44,12 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
+if(UNIX)
+  add_executable(liquid-wrap-sleep-tool build/sleep_copy.c)
+  add_dependencies(liquid-tests liquid-wrap-sleep-tool)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_WRAP_SLEEP_TOOL="$<TARGET_FILE:liquid-wrap-sleep-tool>")
+endif()
 
 if(LIQUID_BUILD_CLI)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")

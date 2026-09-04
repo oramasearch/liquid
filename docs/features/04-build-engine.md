@@ -152,6 +152,12 @@ than executed.
 - Time attribution: analysis vs execution vs I/O vs transfer.
 - **Per-action cache-miss explanation** naming the specific input that differed.
 
+The local Phase 2 path is implemented by #57 beside #15's cache explanation. Every action result
+records queued, sandbox, exec, hash, and store durations; every wrap retains observed action edges
+and cache outcomes in a `build_trace` record. `liquid why-slow <target>` reports the longest
+dependent chain, and `liquid build trace --chrome` exports the same record. Remote transfer timing
+arrives with Phase 3 rather than being inferred from local store work.
+
 The last is the feature everyone wants and almost nobody ships. Without it users
 cannot fix their own hit rates, and "the cache doesn't work" is what kills adoption.
 
