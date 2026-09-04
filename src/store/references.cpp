@@ -110,6 +110,34 @@ std::vector<digest> extract_blob(std::span<const std::byte> bytes) {
     return blob->chunks;
 }
 
+std::vector<digest> extract_action(std::span<const std::byte> bytes) {
+    const auto action = objects::decode_action(bytes);
+    if (!action)
+        return {};
+    return {action->input.inputs, action->input.toolchain, action->sandbox};
+}
+
+std::vector<digest> extract_result(std::span<const std::byte> bytes) {
+    const auto result = objects::decode_result(bytes);
+    if (!result)
+        return {};
+    auto output = std::vector<digest>{result->action, result->stdout_output, result->stderr_output};
+    for (const auto& action_output : result->outputs)
+        append_once(output, action_output.blob);
+    return output;
+}
+
+std::vector<digest> extract_action_index_root(std::span<const std::byte> bytes) {
+    const auto root = objects::decode_action_index_root(bytes);
+    if (!root)
+        return {};
+    auto output = std::vector<digest>{};
+    output.reserve(root->entries.size());
+    for (const auto& entry : root->entries)
+        append_once(output, entry.result);
+    return output;
+}
+
 } // namespace
 
 reference_registry::reference_registry() {
@@ -117,6 +145,9 @@ reference_registry::reference_registry() {
     register_kind("blob", extract_blob);
     register_kind("tree", extract_tree);
     register_kind("change", extract_change);
+    register_kind("action", extract_action);
+    register_kind("result", extract_result);
+    register_kind("action-index-root", extract_action_index_root);
     register_kind("attestation", [](std::span<const std::byte>) { return std::vector<digest>{}; });
 }
 
@@ -168,6 +199,12 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "change";
     if (objects::decode_attestation(bytes))
         return "attestation";
+    if (objects::decode_action(bytes))
+        return "action";
+    if (objects::decode_result(bytes))
+        return "result";
+    if (objects::decode_action_index_root(bytes))
+        return "action-index-root";
     return "unknown";
 }
 

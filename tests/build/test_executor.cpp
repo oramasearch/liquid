@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "build/cache.hpp"
 #include "build/repository_access.hpp"
+#include "identity/taap.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
 #include "objects/records.hpp"
@@ -72,8 +74,11 @@ struct action_fixture {
     liquid::repository repository;
     liquid::digest root;
 
-    action_fixture() {
-        auto opened = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    explicit action_fixture(bool publish = true) {
+        auto options = liquid::repository_options{};
+        options.cache.publish = publish;
+        auto opened =
+            liquid::runtime::block_on(liquid::repository::create(location.path(), options));
         EXPECT_TRUE(opened) << opened.error().message;
         repository = std::move(*opened);
         EXPECT_TRUE(liquid::runtime::block_on(repository.write("input.txt", bytes("input"))));
@@ -91,6 +96,13 @@ struct action_fixture {
         EXPECT_TRUE(snapshot);
         auto log = liquid::runtime::block_on(repository.log());
         EXPECT_TRUE(log);
+        root = log->front().root;
+    }
+
+    void cut(std::string message) {
+        EXPECT_TRUE(liquid::runtime::block_on(repository.cut(std::move(message))));
+        auto log = liquid::runtime::block_on(repository.log());
+        ASSERT_TRUE(log);
         root = log->front().root;
     }
 
@@ -120,6 +132,60 @@ struct action_fixture {
 #endif
     }
 };
+
+auto example_digest(unsigned char value) -> liquid::digest {
+    auto output = liquid::digest{liquid::algorithm::blake3, {}};
+    output.bytes.front() = std::byte{value};
+    return output;
+}
+
+TEST(BuildCache, action_index_survives_reopen_and_rebuild) {
+    temporary_repository location;
+    auto index = liquid::build_detail::action_index{location.path()};
+    ASSERT_TRUE(liquid::runtime::block_on(index.open()));
+    ASSERT_TRUE(index.insert(example_digest(1), example_digest(2)));
+    ASSERT_TRUE(liquid::runtime::block_on(index.persist(example_digest(3))));
+
+    auto reopened = liquid::build_detail::action_index{location.path()};
+    ASSERT_TRUE(liquid::runtime::block_on(reopened.open()));
+    ASSERT_EQ(reopened.candidates(example_digest(1)).size(), 1U);
+    EXPECT_EQ(liquid::to_string(reopened.candidates(example_digest(1)).front()),
+              liquid::to_string(example_digest(2)));
+
+    auto rebuilt_entries = reopened.entries();
+    std::filesystem::remove(location.path() / "INDEX");
+    auto rebuilt = liquid::build_detail::action_index{location.path()};
+    ASSERT_TRUE(
+        liquid::runtime::block_on(rebuilt.rebuild(std::move(rebuilt_entries), example_digest(3))));
+    ASSERT_EQ(rebuilt.candidates(example_digest(1)).size(), 1U);
+}
+
+TEST(BuildCache, publish_is_refused_by_the_read_only_default) {
+    temporary_repository location;
+    auto opened = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(opened);
+    auto cache = liquid::build_detail::disk_cache{*opened};
+    ASSERT_TRUE(liquid::runtime::block_on(cache.open()));
+    auto published = liquid::runtime::block_on(cache.publish(
+        example_digest(1), liquid::result_id{example_digest(2)}, liquid::action_result{}));
+    ASSERT_FALSE(published);
+    EXPECT_EQ(published.error().code, liquid::errc::unauthorized);
+}
+
+TEST(BuildCache, unsigned_publish_is_refused_when_writes_are_enabled) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.cache.publish = true;
+    auto opened = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(opened);
+    auto cache = liquid::build_detail::disk_cache{*opened};
+    ASSERT_TRUE(liquid::runtime::block_on(cache.open()));
+    auto published = liquid::runtime::block_on(cache.publish(
+        example_digest(1), liquid::result_id{example_digest(2)}, liquid::action_result{}));
+    ASSERT_FALSE(published);
+    EXPECT_EQ(published.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(published.error().message, "cache result signature is invalid");
+}
 
 #if LIQUID_BUILD_HAS_FUSE
 auto blob_contents(liquid::repository& repository, liquid::digest id)
@@ -237,6 +303,178 @@ TEST(Build, preserves_pure_action_results_except_timing) {
     EXPECT_EQ(first_result->manifest.front().path, second_result->manifest.front().path);
     EXPECT_EQ(liquid::to_string(first_result->manifest.front().content),
               liquid::to_string(second_result->manifest.front().content));
+}
+
+TEST(BuildCache, identical_second_execution_is_a_hit_without_a_spawn) {
+    action_fixture fixture;
+    const auto input =
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    liquid::build_detail::testing::reset_sandbox_spawn_count();
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(liquid::to_string(first->value), liquid::to_string(second->value));
+    EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 0U);
+    auto value = liquid::runtime::block_on(liquid::build::result(fixture.repository, *second));
+    ASSERT_TRUE(value);
+    EXPECT_EQ(value->cache, liquid::cache_status::hit);
+    auto statistics = liquid::runtime::block_on(fixture.repository.cache_stats());
+    ASSERT_TRUE(statistics);
+    EXPECT_EQ(statistics->hits, 1U);
+    EXPECT_EQ(statistics->misses, 1U);
+    EXPECT_GT(statistics->bytes_served, 0U);
+    EXPECT_GT(statistics->bytes_stored, 0U);
+}
+
+TEST(BuildCache, changing_an_undeclared_read_header_names_both_digests) {
+    action_fixture fixture;
+    auto input = fixture.input({"fixture", "copy", "other.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    auto first_value = liquid::runtime::block_on(liquid::build::result(fixture.repository, *first));
+    ASSERT_TRUE(first_value);
+    ASSERT_EQ(first_value->manifest.size(), 1U);
+    const auto expected = first_value->manifest.front().content;
+
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.repository.write("other.txt", bytes("changed"))));
+    fixture.cut("change observed header");
+    input.inputs = fixture.root;
+    liquid::build_detail::testing::reset_sandbox_spawn_count();
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 1U);
+    auto second_value =
+        liquid::runtime::block_on(liquid::build::result(fixture.repository, *second));
+    ASSERT_TRUE(second_value);
+    ASSERT_TRUE(second_value->why);
+    EXPECT_EQ(second_value->why->path, "other.txt");
+    ASSERT_TRUE(second_value->why->expected);
+    ASSERT_TRUE(second_value->why->actual);
+    EXPECT_EQ(liquid::to_string(*second_value->why->expected), liquid::to_string(expected));
+    EXPECT_EQ(liquid::to_string(*second_value->why->actual),
+              liquid::to_string(second_value->manifest.front().content));
+    EXPECT_NE(liquid::to_string(*second_value->why->expected),
+              liquid::to_string(*second_value->why->actual));
+}
+
+TEST(BuildCache, changing_an_unread_input_remains_a_hit) {
+    action_fixture fixture;
+    auto input = fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.repository.write("other.txt", bytes("changed"))));
+    fixture.cut("change unread input");
+    input.inputs = fixture.root;
+    liquid::build_detail::testing::reset_sandbox_spawn_count();
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(liquid::to_string(first->value), liquid::to_string(second->value));
+    EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 0U);
+}
+
+TEST(BuildCache, collected_output_is_not_served) {
+    action_fixture fixture;
+    const auto input =
+        fixture.input({"fixture", "copy-tagged", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    auto first_value = liquid::runtime::block_on(liquid::build::result(fixture.repository, *first));
+    ASSERT_TRUE(first_value);
+    ASSERT_EQ(first_value->outputs.size(), 1U);
+    const auto output_blob = first_value->outputs.front().blob;
+    ASSERT_TRUE(liquid::runtime::block_on(
+        liquid::build_detail::testing::release_cache_root(fixture.repository)));
+    auto collected = liquid::runtime::block_on(fixture.repository.collect());
+    ASSERT_TRUE(collected) << collected.error().message;
+    auto output_present = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::contains(fixture.repository, output_blob));
+    ASSERT_TRUE(output_present);
+    EXPECT_FALSE(*output_present);
+    liquid::build_detail::testing::reset_sandbox_spawn_count();
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 1U);
+}
+
+TEST(BuildCache, result_signature_verifies_against_the_device_identity) {
+    action_fixture fixture;
+    auto ran = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository,
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"})));
+    ASSERT_TRUE(ran) << ran.error().message;
+    auto raw = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(fixture.repository, ran->value));
+    ASSERT_TRUE(raw);
+    auto value = liquid::objects::decode_result(*raw);
+    ASSERT_TRUE(value);
+    auto body = liquid::objects::encode_result_body(*value);
+    ASSERT_TRUE(body);
+    auto signature = liquid::identity_detail::parse_signature(value->sig);
+    ASSERT_TRUE(signature);
+    auto verified = liquid::verify(value->producer, "result", *body, *signature);
+    ASSERT_TRUE(verified);
+    EXPECT_TRUE(*verified);
+}
+
+TEST(BuildCache, unsigned_newest_candidate_is_never_served) {
+    action_fixture fixture;
+    const auto input =
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    auto raw = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(fixture.repository, first->value));
+    ASSERT_TRUE(raw);
+    auto value = liquid::objects::decode_result(*raw);
+    ASSERT_TRUE(value);
+    auto action_raw = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(fixture.repository, value->action));
+    ASSERT_TRUE(action_raw);
+    auto action = liquid::objects::decode_action(*action_raw);
+    ASSERT_TRUE(action);
+    value->sig.clear();
+    auto unsigned_bytes = liquid::objects::encode(*value);
+    ASSERT_TRUE(unsigned_bytes);
+    auto unsigned_id =
+        liquid::runtime::block_on(liquid::repository_detail::build_access::put_record(
+            fixture.repository, std::move(*unsigned_bytes)));
+    ASSERT_TRUE(unsigned_id);
+
+    auto cache = liquid::build_detail::disk_cache{fixture.repository};
+    ASSERT_TRUE(liquid::runtime::block_on(cache.open()));
+    auto candidate = cache.candidate_key(input, action->sandbox);
+    ASSERT_TRUE(candidate);
+    auto index =
+        liquid::build_detail::action_index{fixture.location.path() / ".liquid-store" / "actions"};
+    ASSERT_TRUE(liquid::runtime::block_on(index.open()));
+    ASSERT_TRUE(index.insert(*candidate, *unsigned_id));
+    ASSERT_TRUE(liquid::runtime::block_on(index.persist(index.root())));
+
+    liquid::build_detail::testing::reset_sandbox_spawn_count();
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(liquid::to_string(second->value), liquid::to_string(first->value));
+    EXPECT_NE(liquid::to_string(second->value), liquid::to_string(*unsigned_id));
+    EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 0U);
+}
+
+TEST(BuildCache, action_index_hits_after_repository_reopen_and_index_rebuild) {
+    action_fixture fixture;
+    const auto input =
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(first) << first.error().message;
+    fixture.repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(fixture.location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    fixture.repository = std::move(*reopened);
+    std::filesystem::remove(fixture.location.path() / ".liquid-store" / "actions" / "INDEX");
+    liquid::build_detail::testing::reset_sandbox_spawn_count();
+    auto second = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(liquid::to_string(first->value), liquid::to_string(second->value));
+    EXPECT_EQ(liquid::build_detail::testing::sandbox_spawn_count(), 0U);
 }
 
 TEST(Build, terminates_the_process_group_on_timeout) {

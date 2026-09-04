@@ -11,6 +11,7 @@
 #include <unistd.h>
 #endif
 
+#include "build/cache.hpp"
 #include "build/materialise.hpp"
 #include "build/repository_access.hpp"
 #include "objects/records.hpp"
@@ -256,6 +257,21 @@ runtime::task<result_id> execute(repository& source, action_input input) {
         co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
     if (!action_id)
         co_return std::unexpected(action_id.error());
+    auto cache = build_detail::disk_cache{source};
+    auto cache_opened = co_await cache.open();
+    if (!cache_opened)
+        co_return std::unexpected(cache_opened.error());
+    auto candidate = cache.candidate_key(input, *sandbox_id);
+    if (!candidate)
+        co_return std::unexpected(candidate.error());
+    auto cached = co_await cache.lookup(input, *sandbox_id);
+    if (!cached)
+        co_return std::unexpected(cached.error());
+    if (cached->hit) {
+        repository_detail::build_access::record_cache_lookup(
+            source, cached->hit->value, cache_status::hit, {}, cached->bytes_served);
+        co_return *cached->hit;
+    }
     auto root = repository_detail::build_access::root_path(source);
     if (!root)
         co_return std::unexpected(root.error());
@@ -311,6 +327,7 @@ runtime::task<result_id> execute(repository& source, action_input input) {
                                                   .environment = environment->values,
                                                   .outputs = input.outputs,
                                                   .timeout = input.timeout};
+    build_detail::testing::record_sandbox_spawn();
     auto launched = co_await runtime::offload(
         [launch_request] { return sandbox_detail::launch(launch_request); });
     const auto execution_finished = std::chrono::steady_clock::now();
@@ -367,6 +384,12 @@ runtime::task<result_id> execute(repository& source, action_input input) {
                                                                                    upload_started)},
         .worker = input.platform.os + "/" + input.platform.arch,
         .observed_at = *source_time};
+    auto signed_result =
+        co_await repository_detail::build_access::sign_result(source, action_result_value);
+    if (!signed_result) {
+        static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
+        co_return std::unexpected(signed_result.error());
+    }
     auto result_bytes = objects::encode(action_result_value);
     if (!result_bytes) {
         static_cast<void>(co_await runtime::offload([paths] { return remove_run(paths); }));
@@ -381,6 +404,14 @@ runtime::task<result_id> execute(repository& source, action_input input) {
         co_return std::unexpected(removed.error());
     if (!*removed)
         co_return std::unexpected(removed->error());
+    repository_detail::build_access::record_cache_lookup(
+        source, *stored, cache_status::miss, cached->why, 0);
+    if (repository_detail::build_access::cache_publish_enabled(source)) {
+        auto published =
+            co_await cache.publish(*candidate, result_id{*stored}, action_result_value);
+        if (!published)
+            co_return std::unexpected(published.error());
+    }
     co_return result_id{*stored};
 #endif
 }
@@ -389,7 +420,11 @@ runtime::task<action_result> result(repository& source, result_id id) {
     auto bytes = co_await repository_detail::build_access::get(source, id.value);
     if (!bytes)
         co_return std::unexpected(bytes.error());
-    co_return objects::decode_result(*bytes);
+    auto decoded = objects::decode_result(*bytes);
+    if (!decoded)
+        co_return std::unexpected(decoded.error());
+    repository_detail::build_access::apply_cache_lookup(source, id.value, *decoded);
+    co_return decoded;
 }
 
 } // namespace liquid::build

@@ -423,7 +423,8 @@ auto encode(const action_record& value) -> result<std::vector<std::byte>> {
     return cbor::encode(cbor::value{std::move(fields)});
 }
 
-auto encode(const action_result& value) -> result<std::vector<std::byte>> {
+auto encode_result_value(const action_result& value, bool include_signature)
+    -> result<std::vector<std::byte>> {
     auto outputs = cbor::value::array{};
     for (const auto& output : value.outputs) {
         outputs.push_back(map({{"path", cbor::value{output.path}},
@@ -437,25 +438,38 @@ auto encode(const action_result& value) -> result<std::vector<std::byte>> {
     }
     const auto exit_value = value.exit < 0 ? cbor::value{static_cast<std::int64_t>(value.exit)}
                                            : cbor::value{static_cast<std::uint64_t>(value.exit)};
-    return cbor::encode(map(
-        {{"v", cbor::value{std::uint64_t{1}}},
-         {"kind", "result"},
-         {"action", encode_digest(value.action)},
-         {"exit", exit_value},
-         {"outputs", cbor::value{std::move(outputs)}},
-         {"stdout", encode_digest(value.stdout_output)},
-         {"stderr", encode_digest(value.stderr_output)},
-         {"manifest", cbor::value{std::move(manifest)}},
-         {"timing",
-          map({{"queued_ms", cbor::value{static_cast<std::uint64_t>(value.timing.queued.count())}},
-               {"sandbox_ms",
-                cbor::value{static_cast<std::uint64_t>(value.timing.sandbox.count())}},
-               {"exec_ms", cbor::value{static_cast<std::uint64_t>(value.timing.exec.count())}},
-               {"upload_ms",
-                cbor::value{static_cast<std::uint64_t>(value.timing.upload.count())}}})},
-         {"worker", cbor::value{value.worker}},
-         {"observed_at",
-          cbor::value{static_cast<std::int64_t>(value.observed_at.time_since_epoch().count())}}}));
+    auto fields = cbor::value::map{
+        {"v", cbor::value{std::uint64_t{1}}},
+        {"kind", "result"},
+        {"action", encode_digest(value.action)},
+        {"exit", exit_value},
+        {"outputs", cbor::value{std::move(outputs)}},
+        {"stdout", encode_digest(value.stdout_output)},
+        {"stderr", encode_digest(value.stderr_output)},
+        {"manifest", cbor::value{std::move(manifest)}},
+        {"timing",
+         map({{"queued_ms", cbor::value{static_cast<std::uint64_t>(value.timing.queued.count())}},
+              {"sandbox_ms", cbor::value{static_cast<std::uint64_t>(value.timing.sandbox.count())}},
+              {"exec_ms", cbor::value{static_cast<std::uint64_t>(value.timing.exec.count())}},
+              {"upload_ms",
+               cbor::value{static_cast<std::uint64_t>(value.timing.upload.count())}}})},
+        {"worker", cbor::value{value.worker}},
+        {"observed_at",
+         cbor::value{static_cast<std::int64_t>(value.observed_at.time_since_epoch().count())}},
+        {"producer", encode_actor(value.producer)},
+    };
+    if (include_signature) {
+        fields.emplace_back("sig", byte_string(value.sig));
+    }
+    return cbor::encode(cbor::value{std::move(fields)});
+}
+
+auto encode(const action_result& value) -> result<std::vector<std::byte>> {
+    return encode_result_value(value, true);
+}
+
+auto encode_result_body(const action_result& value) -> result<std::vector<std::byte>> {
+    return encode_result_value(value, false);
 }
 
 auto encode(const sandbox_record& value) -> result<std::vector<std::byte>> {
@@ -471,6 +485,18 @@ auto encode(const sandbox_record& value) -> result<std::vector<std::byte>> {
                              {"temporary_root", cbor::value{value.temporary_root}},
                              {"fixed_environment", cbor::value{std::move(environment)}},
                              {"network", cbor::value{value.network}}}));
+}
+
+auto encode(const action_index_root& value) -> result<std::vector<std::byte>> {
+    auto entries = cbor::value::array{};
+    for (const auto& entry : value.entries) {
+        entries.push_back(map({{"candidate", encode_digest(entry.candidate)},
+                               {"result", encode_digest(entry.result)},
+                               {"sequence", cbor::value{entry.sequence}}}));
+    }
+    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+                             {"kind", "action-index-root"},
+                             {"entries", cbor::value{std::move(entries)}}}));
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
@@ -851,11 +877,18 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* timing_value = find(*source, "timing");
     const auto* worker_value = find(*source, "worker");
     const auto* observed_value = find(*source, "observed_at");
+    const auto* producer_value = find(*source, "producer");
+    const auto* signature_value = find(*source, "sig");
     const auto* outputs =
         output_values ? std::get_if<cbor::value::array>(&output_values->data) : nullptr;
     const auto* manifest =
         manifest_values ? std::get_if<cbor::value::array>(&manifest_values->data) : nullptr;
     const auto* worker = worker_value ? std::get_if<std::string>(&worker_value->data) : nullptr;
+    auto producer = producer_value
+                        ? decode_actor(*producer_value)
+                        : result<actor>{std::unexpected(corrupt("result producer missing"))};
+    const auto* signature =
+        signature_value ? std::get_if<cbor::value::bytes>(&signature_value->data) : nullptr;
     auto observed = std::optional<std::int64_t>{};
     if (const auto* signed_observed =
             observed_value ? std::get_if<std::int64_t>(&observed_value->data) : nullptr) {
@@ -868,14 +901,16 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
         observed = static_cast<std::int64_t>(*unsigned_observed);
     }
     if (!action || !stdout_output || !stderr_output || !exit || !outputs || !manifest ||
-        !timing_value || !worker || !observed)
+        !timing_value || !worker || !observed || !producer || !signature)
         return std::unexpected(corrupt("invalid result record"));
     action_result output{.action = *action,
                          .exit = *exit,
                          .stdout_output = *stdout_output,
                          .stderr_output = *stderr_output,
                          .worker = *worker,
-                         .observed_at = std::chrono::sys_seconds{std::chrono::seconds{*observed}}};
+                         .observed_at = std::chrono::sys_seconds{std::chrono::seconds{*observed}},
+                         .producer = std::move(*producer),
+                         .sig = *signature};
     for (const auto& item : *outputs) {
         const auto* path_value = find(item, "path");
         const auto* mode_value = find(item, "mode");
@@ -922,6 +957,38 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     if (!queued || !sandbox_timing || !exec || !upload)
         return std::unexpected(corrupt("invalid result timing"));
     output.timing = {*queued, *sandbox_timing, *exec, *upload};
+    return output;
+}
+
+auto decode_action_index_root(std::span<const std::byte> bytes) -> result<action_index_root> {
+    auto source = decode(bytes, "action-index-root");
+    if (!source) {
+        return std::unexpected(source.error());
+    }
+    const auto* entries_value = find(*source, "entries");
+    const auto* entries =
+        entries_value ? std::get_if<cbor::value::array>(&entries_value->data) : nullptr;
+    if (!entries) {
+        return std::unexpected(corrupt("invalid action index root"));
+    }
+    auto output = action_index_root{};
+    output.entries.reserve(entries->size());
+    for (const auto& item : *entries) {
+        const auto* candidate_value = find(item, "candidate");
+        const auto* result_value = find(item, "result");
+        const auto* sequence_value = find(item, "sequence");
+        auto candidate = candidate_value
+                             ? decode_digest(*candidate_value)
+                             : result<digest>{std::unexpected(corrupt("candidate missing"))};
+        auto result_id = result_value ? decode_digest(*result_value)
+                                      : result<digest>{std::unexpected(corrupt("result missing"))};
+        const auto* sequence =
+            sequence_value ? std::get_if<std::uint64_t>(&sequence_value->data) : nullptr;
+        if (!candidate || !result_id || !sequence || *sequence == 0) {
+            return std::unexpected(corrupt("invalid action index entry"));
+        }
+        output.entries.push_back({*candidate, *result_id, *sequence});
+    }
     return output;
 }
 

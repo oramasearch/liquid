@@ -21,9 +21,10 @@ readability reports, liquid #8's leased-root garbage collection with pack compac
 deterministic crash simulator, liquid #116's bounded-memory file and repository streaming, liquid
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
 verified
-redaction, and liquid #52's JSON/`.env` leaf encryption with structural key diff are implemented,
-and liquid #10 provides local sandboxed action execution through `liquid::build` on Linux;
-while operations owned by later issues return
+redaction, and liquid #52's JSON/`.env` leaf encryption with structural key diff are implemented;
+liquid #10 provides local sandboxed action execution through `liquid::build` on Linux, and liquid
+#11 provides its signed, manifest-validated persistent disk cache with read-only publication by
+default; operations owned by later issues return
 `errc::unsupported`. The repository object model, internal CRDT metadata document, canonical CBOR codec
 and drip journal are implemented. Full materialisation works on every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/object.hpp"
@@ -38,13 +39,18 @@ struct LIQUID_EXPORT encryption_config {
     std::vector<encryption_path_rule> paths;
 };
 
+struct LIQUID_EXPORT cache_config {
+    bool publish{};
+};
+
 struct LIQUID_EXPORT repository_options {
     std::uint64_t checkpoint_interval{64};
     store_options store{};
     encryption_config encrypt{};
+    cache_config cache{};
 };
 
-struct LIQUID_EXPORT log_options{};
+struct LIQUID_EXPORT log_options {};
 
 struct LIQUID_EXPORT ref {
     std::string name;
@@ -138,6 +144,7 @@ public:
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
+    [[nodiscard]] runtime::task<cache_report> cache_stats();
 
 private:
     [[nodiscard]] runtime::task<void>
