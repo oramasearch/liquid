@@ -11,6 +11,7 @@
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -51,6 +52,11 @@ auto text_bytes(std::string_view text) -> std::vector<std::byte> {
 auto node_for(const liquid::tree& root, std::string_view name) -> liquid::node_id {
     const auto found = std::ranges::find(root.entries, name, &liquid::tree_entry::name);
     return found == root.entries.end() ? liquid::node_id{} : found->node;
+}
+
+auto mode_for(const liquid::tree& root, std::string_view name) -> std::uint32_t {
+    const auto found = std::ranges::find(root.entries, name, &liquid::tree_entry::name);
+    return found == root.entries.end() ? 0U : found->mode;
 }
 
 TEST(VfsMount, hydrates_captures_and_reuses_cache) {
@@ -111,6 +117,24 @@ TEST(VfsMount, hydrates_captures_and_reuses_cache) {
     EXPECT_EQ(liquid::repository_detail::testing::last_operation_node(repository), written_node);
     EXPECT_GT(repository.status()->pending_drips, pending_before_write);
 
+    const auto executable_path = mountpoint.path() / "executable";
+    const auto executable = ::open(executable_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    ASSERT_GE(executable, 0) << std::strerror(errno);
+    ASSERT_EQ(::write(executable, "first", 5), 5);
+    ASSERT_EQ(::close(executable), 0);
+    root = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(root);
+    EXPECT_EQ(mode_for(*root, "executable"), 0100755U);
+
+    ASSERT_EQ(::chmod(executable_path.c_str(), 0700), 0) << std::strerror(errno);
+    const auto rewritten = ::open(executable_path.c_str(), O_WRONLY | O_TRUNC);
+    ASSERT_GE(rewritten, 0) << std::strerror(errno);
+    ASSERT_EQ(::write(rewritten, "second", 6), 6);
+    ASSERT_EQ(::close(rewritten), 0);
+    root = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(root);
+    EXPECT_EQ(mode_for(*root, "executable"), 0100700U);
+
     const auto pending_before_move = repository.status()->pending_drips;
     std::filesystem::rename(mountpoint.path() / "written.txt", mountpoint.path() / "renamed.txt");
     EXPECT_EQ(repository.status()->pending_drips, pending_before_move + 1);
@@ -129,6 +153,7 @@ TEST(VfsMount, hydrates_captures_and_reuses_cache) {
     EXPECT_TRUE(std::filesystem::is_directory(mountpoint.path() / "empty"));
     std::filesystem::remove(mountpoint.path() / "empty");
     std::filesystem::remove(mountpoint.path() / "renamed.txt");
+    std::filesystem::remove(executable_path);
 
     auto active = handle.status();
     ASSERT_TRUE(active);

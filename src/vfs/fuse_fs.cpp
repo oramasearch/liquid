@@ -436,7 +436,7 @@ open_request(fuse_backend* state, std::string path, std::int64_t pid, int flags)
         co_return -EROFS;
     }
     if (!state->read_only() && (flags & O_TRUNC) != 0) {
-        auto written = co_await state->source().write(path, {});
+        auto written = co_await state->source().write(path, {}, {.mode = entry->mode});
         if (!written)
             co_return fuse_error(written.error());
         state->cache().invalidate(entry->node);
@@ -471,13 +471,10 @@ create_request(fuse_backend* state, std::string path, std::int64_t pid, std::uin
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
-    auto written = co_await state->source().write(path, {});
+    const auto file_mode = static_cast<std::uint32_t>(S_IFREG) | (mode & 0777U);
+    auto written = co_await state->source().write(path, {}, {.mode = file_mode});
     if (!written)
         co_return fuse_error(written.error());
-    auto mode_set = co_await repository_detail::vfs_access::set_mode(
-        state->source(), path, static_cast<std::uint32_t>(S_IFREG) | mode);
-    if (!mode_set)
-        co_return fuse_error(mode_set.error());
     state->captured();
     state->touch(path);
     state->observe(observed_operation::write, std::move(path), pid);
@@ -505,7 +502,8 @@ runtime::task<int> write_request(fuse_backend* state,
     if (end > contents->size())
         contents->resize(static_cast<std::size_t>(end));
     std::copy(input.begin(), input.end(), contents->begin() + static_cast<std::size_t>(offset));
-    auto written = co_await state->source().write(path, std::move(*contents));
+    auto written =
+        co_await state->source().write(path, std::move(*contents), {.mode = entry->mode});
     if (!written)
         co_return fuse_error(written.error());
     state->cache().invalidate(entry->node);
@@ -590,7 +588,7 @@ mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
         co_return -EROFS;
     }
     auto created = co_await repository_detail::vfs_access::make_directory(
-        state->source(), path, static_cast<std::uint32_t>(S_IFDIR) | mode);
+        state->source(), path, static_cast<std::uint32_t>(S_IFDIR) | (mode & 0777U));
     if (!created)
         co_return fuse_error(created.error());
     state->captured();
@@ -612,7 +610,8 @@ truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::u
     if (!contents)
         co_return fuse_error(contents.error(), true);
     contents->resize(static_cast<std::size_t>(size));
-    auto written = co_await state->source().write(path, std::move(*contents));
+    auto written =
+        co_await state->source().write(path, std::move(*contents), {.mode = entry->mode});
     if (!written)
         co_return fuse_error(written.error());
     state->cache().invalidate(entry->node);
@@ -631,7 +630,7 @@ chmod_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
     auto entry = co_await repository_detail::vfs_access::entry(state->source(), path);
     if (!entry)
         co_return fuse_error(entry.error());
-    const auto type = entry->kind == node_kind::blob ? S_IFREG : S_IFDIR;
+    const auto type = entry->mode & static_cast<std::uint32_t>(S_IFMT);
     auto changed = co_await repository_detail::vfs_access::set_mode(
         state->source(), path, static_cast<std::uint32_t>(type) | (mode & 0777U));
     if (!changed)
