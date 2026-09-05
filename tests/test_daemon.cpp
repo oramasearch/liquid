@@ -322,7 +322,7 @@ TEST(Daemon, stalled_target_pauses_above_high_watermark_and_resumes_after_delive
     }
     ASSERT_TRUE(paused->flow.paused);
     EXPECT_EQ(paused->flow.reason, liquid::flow_pause_reason::consumers);
-    EXPECT_GT(paused->flow.consumer_lag, repository_options.flow.pause_above);
+    EXPECT_EQ(paused->flow.consumer_lag, 2U);
 
     stalled->release();
     auto delivered = wait_for_delivery(*started, 0);
@@ -433,7 +433,16 @@ TEST(DaemonFanout, ordered_targets_advance_once_for_duplicate_delivery) {
     const auto id = fingerprint("drip");
     auto delivery =
         liquid::daemon_delivery{.value = {.id = {id}, .ops = {{"a.cpp"}}}, .cursor = {"42:0"}};
+    ASSERT_TRUE(fanout.observe(delivery.cursor));
+    auto pending = fanout.target_status();
+    ASSERT_EQ(pending.size(), 2U);
+    EXPECT_EQ(pending.front().behind, 1U);
+    EXPECT_EQ(pending.back().behind, 1U);
     EXPECT_TRUE(liquid::runtime::block_on(fanout.deliver(delivery)));
+    auto delivered = fanout.target_status();
+    ASSERT_EQ(delivered.size(), 2U);
+    EXPECT_EQ(delivered.front().behind, 0U);
+    EXPECT_EQ(delivered.back().behind, 0U);
     EXPECT_TRUE(liquid::runtime::block_on(fanout.deliver(delivery)));
     EXPECT_EQ(order, (std::vector<std::string>{"first", "second"}));
     EXPECT_EQ(first->deliveries(), 1);

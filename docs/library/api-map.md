@@ -1338,8 +1338,8 @@ All waiting operations are Capy tasks. A host owns capture, persists the graph o
 shutdown, and processes targets in vector order. Cursor publication follows successful target
 delivery. During otherwise idle slices, the host validates one pending graph target through the
 supplied query registry. `daemon_status` contains capture telemetry, the last invalidated paths,
-every target's cursor distance and error, graph key, resident-value, byte-use, and ceiling counts,
-plus validation backlog, the most recent divergence, and flow-control lag and buckets. Named
+every target's undelivered drip count and error, graph key, resident-value, byte-use, and ceiling
+counts, plus validation backlog, the most recent divergence, and flow-control lag and buckets. Named
 in-process consumers report backlog through `report_consumer_lag` without becoming delivery
 targets. The local
 wire payload is canonical CBOR in the sync protocol's five-byte frame. Build sessions accept the

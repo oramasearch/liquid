@@ -1250,13 +1250,11 @@ struct service_state {
 };
 
 auto current_status(const std::shared_ptr<service_state>& state) -> daemon_status {
-    auto capture_cursor = journal_cursor{};
     auto current_capture = capture_status{};
     if (state->capture_handle) {
         auto status = state->capture_handle->status();
         if (status) {
             current_capture = *status;
-            capture_cursor = status->last_cursor;
         }
     }
     const auto graph_status = state->query_graph.statistics();
@@ -1266,7 +1264,7 @@ auto current_status(const std::shared_ptr<service_state>& state) -> daemon_statu
 #else
     const auto process_id = static_cast<std::uint64_t>(::getpid());
 #endif
-    auto targets = state->fanout->target_status(capture_cursor);
+    auto targets = state->fanout->target_status();
     auto consumer_lag = std::uint64_t{};
     for (const auto& target : targets) {
         consumer_lag = std::max(consumer_lag, target.behind);
@@ -1318,6 +1316,13 @@ auto current_status(const std::shared_ptr<service_state>& state) -> daemon_statu
 }
 
 auto service_state::enqueue(daemon_delivery delivery) -> void {
+    auto observed = fanout->observe(delivery.cursor);
+    if (!observed) {
+        std::lock_guard lock(completion_mutex);
+        completion_error = observed.error();
+        stopping.store(true, std::memory_order_release);
+        return;
+    }
     {
         std::lock_guard lock(queue_mutex);
         queue.push_back(std::move(delivery));
