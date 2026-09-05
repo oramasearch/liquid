@@ -3,6 +3,8 @@
 Each source file maps one command group to public libliquid calls. `wrap.cpp` parses build-wrapper
 options, calls `liquid::build::wrap`, prints action and cache counts, per-tier action and byte
 counts, phase attribution, the critical path, and record-derived miss details for `--explain`.
+It also prints incompatible library reports and applies `--fail-on-abi-break` after a successful
+build.
 `trace.cpp` implements profiled build invocation, Chrome trace export, and `why-slow` entirely
 through the public observability API. Text and Chrome trace projections include the recorded
 execution decision and every cost-model input. `why.cpp` implements `liquid why` and `liquid cache
@@ -38,6 +40,8 @@ The same command group implements `replay`: it parses an action or result plus `
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
 `sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
 API, and uses the public foreign-binary path only when no producing result exists.
+`abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
+the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
 
 `policy.cpp` implements `policy check` and `policy explain` through public build APIs. It prints
 canonical rule configuration and per-input verified-identity counts without reading the store

@@ -6,8 +6,9 @@ the dependency-free protobuf messages used between matching liquid schedulers an
 
 `worker.cpp` hydrates native input and toolchain graphs into a co-located repository, invokes the
 Phase 2 executor, uploads output graphs, and completes with the worker's TAAP-signed result,
-provenance, and SBOMs. `control.cpp` contains the isolated fixed route registry for health,
-readiness, Prometheus metrics, REST discovery, OpenAPI, and MCP discovery.
+provenance, SBOMs, ABI descriptors, and ABI compatibility attestations. `control.cpp` contains the
+isolated fixed route registry for health, readiness, Prometheus metrics, REST discovery, OpenAPI,
+and MCP discovery.
 
 The worker detects an existing repository through its `LIQUID_REPO` marker. Reusing a worker root
 therefore reopens the co-located CAS and preserves the TAAP identity used to sign results.

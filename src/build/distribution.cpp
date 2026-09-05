@@ -229,6 +229,20 @@ runtime::task<void> hydrate_result(repository& destination,
             co_return std::unexpected(hydrated.error());
         }
     }
+    for (const auto& id : value.abis) {
+        auto hydrated = co_await hydrate_object(
+            destination, source, instance, id, graph_object_kind::bytes, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    for (const auto& id : value.abi_compatibility) {
+        auto hydrated = co_await hydrate_object(
+            destination, source, instance, id, graph_object_kind::bytes, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
     co_return liquid::result<void>{};
 }
 
@@ -520,7 +534,7 @@ runtime::task<result_id> execute_selected(repository& source,
     if (!value->schedule) {
         value->schedule = std::move(selected);
     }
-    value->record_version = 3;
+    value->record_version = 4;
     co_return co_await finish_action(source, *prepared, std::move(*value));
 }
 
@@ -656,7 +670,7 @@ execute_batch(repository& source, std::vector<action_input> inputs, remote_execu
                 co_return std::unexpected(hydrated.error());
             }
             value.schedule = action.schedule;
-            value.record_version = 3;
+            value.record_version = 4;
         }
         for (auto index = std::size_t{}; index != batched.size(); ++index) {
             auto& action = pending[batched[index]];

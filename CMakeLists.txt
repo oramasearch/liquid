@@ -358,7 +358,9 @@ set_target_properties(liquid_metadata_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
 add_library(libliquid
+  src/abi.cpp
   src/attestation/registry.cpp
+  src/build/abi.cpp
   src/build/cache.cpp
   src/build/events.cpp
   src/build/executor.cpp
@@ -386,6 +388,9 @@ add_library(libliquid
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
+  src/formats/binary/elf.cpp
+  src/formats/binary/macho.cpp
+  src/formats/binary/pe.cpp
   src/formats/json.cpp
   src/frontend/graph.cpp
   src/frontend/module.cpp
@@ -516,6 +521,7 @@ endif()
 if(LIQUID_BUILD_CLI)
   add_executable(liquid-cli
     src/main.cpp
+    src/cli/abi.cpp
     src/cli/anchor.cpp
     src/cli/attestation.cpp
     src/cli/capture.cpp

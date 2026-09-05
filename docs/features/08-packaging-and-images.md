@@ -2,6 +2,9 @@
 
 > Research: [10-os-packaging](../research/10-os-packaging/) ·
 > [11-container-images](../research/11-container-images/)
+>
+> **Status:** the `abi/1` input and compatibility verdict required by package projection are
+> implemented in issue #27. Package-format projection and dependency metadata remain issue #28.
 
 ## Projection, not translation
 
