@@ -2,6 +2,11 @@
 
 > Research: [03-structural-diff-and-formats](../research/03-structural-diff-and-formats/) ·
 > [01-version-control](../research/01-version-control/)
+>
+> **Container status: implemented by liquid #29.** The registry, ZIP/tar/HDF5/Parquet/SQLite
+> codecs, format-aware repository and CLI diff, archive search, derived-entry storage, and
+> deterministic tar writer are available. Source syntax diff and structured-binary merge remain
+> separate work.
 
 ## Structural diff for source
 
@@ -71,11 +76,11 @@ pretend to repack what cannot be repacked.
 
 | Format | Treatment |
 |---|---|
-| **zip / jar / OOXML / ODF** | Unpack entries; canonicalise XML namespaces and attribute order; compare media separately. Relationship IDs and member order are noise. |
-| **tar / ar / cpio** | Header and member comparison, recursing into members. |
+| **zip / jar** | Implemented for STORED and DEFLATE members, including ZIP64 and data descriptors. XML-aware OOXML/ODF handling is later work. |
+| **tar** | Implemented for ustar, pax, GNU long names/links, gzip and zstd wrappers, plus deterministic uncompressed output. `ar` and cpio are later work. |
 | **HDF5 / NetCDF-4** | Logical object comparison in the manner of `h5diff` — groups, datasets, ranks, dimensions, dtypes, values, with tolerances. Not physical bytes: HDF5's layout is not part of its logical contract. |
-| **Parquet / ORC / Arrow / Zarr** | Row groups, column chunks, stripes, record batches, chunks. Zarr is already ideal — one object per chunk. |
-| **SQLite** | Content comparison in the manner of `sqldiff`, not pages or free lists. |
+| **Parquet** | Implemented for row groups, column chunks, statistics, PLAIN/RLE/dictionary encoding, and uncompressed/gzip/zstd pages. Snappy is reported opaque. |
+| **SQLite** | Implemented for ordinary rowid table schemas and records; comparison ignores free lists and page placement. |
 | **ELF / Mach-O / PE** | Sections, symbols, relocations, disassembly — so an address shift is not a total rewrite ([15](15-consumer-sync-and-web.md) is unrelated; see research 15). |
 | **`.deb` / `.rpm` / `.apk` / wheels** | Decompose into files plus metadata. |
 | **PDF** | Extracted text, normalised object tree, metadata, rendered pages. |
@@ -93,8 +98,9 @@ whole stream.
 
 All of the above is a **plugin registry**, not a fixed list. A codec declares:
 recognise, unpack, canonicalise, diff, optionally merge, and optionally repack
-deterministically. Plugins load across a stable non-C++ ABI
-([17](17-implementation.md)).
+deterministically. Plugins load across the C11 `liquid_format_module_v1` ABI with canonical-CBOR
+operation values, owned output bytes, and progress and cancellation callbacks. Built-ins register
+through the same descriptor. See [formats.md](../library/formats.md).
 
 The registry is a core service, not a diff feature. It also serves:
 

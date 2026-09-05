@@ -52,6 +52,21 @@ auto bytes(std::string_view value) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(value.data() + value.size())};
 }
 
+auto format_fixture(std::string_view name) -> std::vector<std::byte> {
+    const auto path = std::filesystem::path{LIQUID_FORMAT_FIXTURES} / name;
+    auto input = std::ifstream{path, std::ios::binary};
+    if (!input) {
+        throw std::runtime_error("format fixture is absent: " + path.string());
+    }
+    const auto characters = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+    auto output = std::vector<std::byte>{};
+    output.reserve(characters.size());
+    for (const auto character : characters) {
+        output.push_back(std::byte{static_cast<unsigned char>(character)});
+    }
+    return output;
+}
+
 auto document(std::string path, std::string contents) -> liquid::search_detail::document {
     auto raw = bytes(contents);
     auto id = liquid::hash(liquid::algorithm::blake3, raw);
@@ -127,6 +142,24 @@ TEST(SearchIndex, repository_search_indexes_shared_blob_once) {
     ASSERT_TRUE(path_hit) << (path_hit ? "" : path_hit.error().message);
     ASSERT_EQ(path_hit->size(), 1);
     EXPECT_EQ(path_hit->front().path, "nested/two.txt");
+}
+
+TEST(SearchIndex, repositorySearchFindsDecompressedArchiveEntries) {
+    temporary_directory location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << (created ? "" : created.error().message);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("archive.zip", format_fixture("archive-a.zip"))));
+
+    auto hits = liquid::runtime::block_on(repository.search("original archive value"));
+    ASSERT_TRUE(hits) << (hits ? "" : hits.error().message);
+    const auto found =
+        std::ranges::find(*hits, "archive.zip!/deflated.txt", &liquid::search_hit::path);
+    ASSERT_NE(found, hits->end());
+    auto expected = liquid::hash(liquid::algorithm::blake3, bytes("original archive value\n"));
+    ASSERT_TRUE(expected) << expected.error().message;
+    EXPECT_EQ(liquid::to_string(found->blob), liquid::to_string(*expected));
 }
 
 TEST(SearchIndex, repository_search_selects_named_reference) {
@@ -370,4 +403,42 @@ TEST(SearchIndex, duplicate_cursor_advances_search_target_once) {
         location.path() / ".liquid" / "index", "working", "duplicate", 20);
     ASSERT_TRUE(hits) << (hits ? "" : hits.error().message);
     ASSERT_EQ(hits->size(), 1);
+}
+
+TEST(SearchIndex, daemonTargetReplacesArchiveEntryDocuments) {
+    temporary_directory location;
+    const auto archive_path = location.path() / "archive.zip";
+    auto write_archive = [&](std::string_view name) {
+        const auto contents = format_fixture(name);
+        auto output = std::ofstream{archive_path, std::ios::binary | std::ios::trunc};
+        output.write(reinterpret_cast<const char*>(contents.data()),
+                     static_cast<std::streamsize>(contents.size()));
+        return output.good();
+    };
+    ASSERT_TRUE(write_archive("archive-a.zip"));
+    const auto target = liquid::search_detail::make_daemon_target(location.path());
+    auto delivered = liquid::runtime::block_on(
+        target->deliver({.value = {.id = {fingerprint("archive-a")}, .ops = {{"archive.zip"}}},
+                         .cursor = {"1:0"}}));
+    ASSERT_TRUE(delivered) << delivered.error().message;
+
+    const auto index = location.path() / ".liquid" / "index";
+    auto old_hits =
+        liquid::search_detail::query(index, "working", "\"original archive value\"", 20);
+    ASSERT_TRUE(old_hits) << old_hits.error().message;
+    ASSERT_EQ(old_hits->size(), 1);
+    EXPECT_EQ(old_hits->front().path, "archive.zip!/deflated.txt");
+
+    ASSERT_TRUE(write_archive("archive-b.zip"));
+    delivered = liquid::runtime::block_on(
+        target->deliver({.value = {.id = {fingerprint("archive-b")}, .ops = {{"archive.zip"}}},
+                         .cursor = {"2:0"}}));
+    ASSERT_TRUE(delivered) << delivered.error().message;
+    old_hits = liquid::search_detail::query(index, "working", "\"original archive value\"", 20);
+    ASSERT_TRUE(old_hits) << old_hits.error().message;
+    EXPECT_TRUE(old_hits->empty());
+    auto new_hits = liquid::search_detail::query(index, "working", "\"changed archive value\"", 20);
+    ASSERT_TRUE(new_hits) << new_hits.error().message;
+    ASSERT_EQ(new_hits->size(), 1);
+    EXPECT_EQ(new_hits->front().path, "archive.zip!/deflated.txt");
 }

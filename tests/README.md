@@ -50,7 +50,8 @@ repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
-exclusion, and parse the CLI explanation contract. The opt-in measurement target records scan and
+exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI
+explanation contract. The opt-in measurement target records scan and
 index costs across working-set sizes.
 `liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and
 measures a fresh-process repository open for the automerge-cpp adoption comparison.

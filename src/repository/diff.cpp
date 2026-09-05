@@ -358,6 +358,136 @@ auto attach_hunks(repository& source, std::vector<tree_diff_entry>& entries)
     co_return result<void>{};
 }
 
+auto public_container_diff(const format_diff& input) -> container_diff {
+    auto output =
+        container_diff{.codec = input.codec, .tier = input.tier, .truncated = input.truncated};
+    output.entries.reserve(input.entries.size());
+    for (const auto& entry : input.entries) {
+        auto nested = std::shared_ptr<container_diff>{};
+        if (entry.nested) {
+            nested = std::make_shared<container_diff>(public_container_diff(*entry.nested));
+        }
+        const auto kind = entry.kind == format_diff_kind::added     ? container_diff_kind::added
+                          : entry.kind == format_diff_kind::removed ? container_diff_kind::removed
+                                                                    : container_diff_kind::modified;
+        output.entries.push_back({.path = entry.path,
+                                  .kind = kind,
+                                  .old_digest = entry.old_digest,
+                                  .new_digest = entry.new_digest,
+                                  .nested = std::move(nested)});
+    }
+    return output;
+}
+
+auto compare_containers(std::vector<std::byte> old_bytes,
+                        std::vector<std::byte> new_bytes,
+                        std::string path) -> result<std::optional<container_diff>> {
+    auto& registry = format_registry::global();
+    auto old_recognition =
+        old_bytes.empty()
+            ? result<std::pair<const format_codec*, format_recognition>>{std::unexpected(
+                  diff_error(errc::not_found, "empty old blob"))}
+            : registry.recognise(old_bytes, path);
+    auto new_recognition =
+        new_bytes.empty()
+            ? result<std::pair<const format_codec*, format_recognition>>{std::unexpected(
+                  diff_error(errc::not_found, "empty new blob"))}
+            : registry.recognise(new_bytes, path);
+    const auto old_found = old_recognition.has_value();
+    const auto new_found = new_recognition.has_value();
+    if (!old_found && old_recognition.error().code != errc::not_found) {
+        return std::unexpected(old_recognition.error());
+    }
+    if (!new_found && new_recognition.error().code != errc::not_found) {
+        return std::unexpected(new_recognition.error());
+    }
+    if (!old_found && !new_found) {
+        return std::optional<container_diff>{};
+    }
+    const auto* selected = old_found ? old_recognition->first : new_recognition->first;
+    if (old_found && new_found &&
+        old_recognition->first->descriptor().name != new_recognition->first->descriptor().name) {
+        return std::optional<container_diff>{};
+    }
+    const auto tier = old_found && new_found
+                          ? static_cast<format_tier>(
+                                std::max(static_cast<std::uint8_t>(old_recognition->second.tier),
+                                         static_cast<std::uint8_t>(new_recognition->second.tier)))
+                      : old_found ? old_recognition->second.tier
+                                  : new_recognition->second.tier;
+    auto old_tree = format_tree{.codec = selected->descriptor().name, .tier = tier};
+    if (old_found) {
+        auto unpacked = registry.unpack(old_bytes, path, selected->descriptor().limits);
+        if (!unpacked) {
+            return std::unexpected(unpacked.error());
+        }
+        old_tree = std::move(*unpacked);
+    }
+    auto new_tree = format_tree{.codec = selected->descriptor().name, .tier = tier};
+    if (new_found) {
+        auto unpacked = registry.unpack(new_bytes, path, selected->descriptor().limits);
+        if (!unpacked) {
+            return std::unexpected(unpacked.error());
+        }
+        new_tree = std::move(*unpacked);
+    }
+    auto old_canonical = selected->canonicalise(old_tree);
+    if (!old_canonical) {
+        return std::unexpected(old_canonical.error());
+    }
+    auto new_canonical = selected->canonicalise(new_tree);
+    if (!new_canonical) {
+        return std::unexpected(new_canonical.error());
+    }
+    auto difference = selected->diff(*old_canonical, *new_canonical);
+    if (!difference) {
+        return std::unexpected(difference.error());
+    }
+    difference->tier = tier;
+    return std::optional<container_diff>{public_container_diff(*difference)};
+}
+
+auto attach_containers(repository& source, std::vector<tree_diff_entry>& entries)
+    -> runtime::task<void> {
+    for (auto& entry : entries) {
+        const auto content_changed = has_change(entry, tree_diff_kind::added) ||
+                                     has_change(entry, tree_diff_kind::removed) ||
+                                     has_change(entry, tree_diff_kind::modified);
+        if (!content_changed || (!entry.old_blob && !entry.new_blob)) {
+            continue;
+        }
+        auto old_bytes = std::vector<std::byte>{};
+        if (entry.old_blob) {
+            auto loaded = co_await source.blob(*entry.old_blob);
+            if (!loaded) {
+                co_return std::unexpected(loaded.error());
+            }
+            old_bytes = std::move(*loaded);
+        }
+        auto new_bytes = std::vector<std::byte>{};
+        if (entry.new_blob) {
+            auto loaded = co_await source.blob(*entry.new_blob);
+            if (!loaded) {
+                co_return std::unexpected(loaded.error());
+            }
+            new_bytes = std::move(*loaded);
+        }
+        auto compared = co_await runtime::offload([old_bytes = std::move(old_bytes),
+                                                   new_bytes = std::move(new_bytes),
+                                                   path = entry.path]() mutable {
+            return compare_containers(std::move(old_bytes), std::move(new_bytes), std::move(path));
+        });
+        if (!compared) {
+            co_return std::unexpected(compared.error());
+        }
+        if (!*compared) {
+            co_return std::unexpected(compared->error());
+        }
+        entry.container = std::move(**compared);
+    }
+    co_return result<void>{};
+}
+
 auto compare(repository& source,
              liquid::tree old_tree,
              liquid::tree new_tree,
@@ -415,6 +545,12 @@ auto compare(repository& source,
     std::ranges::sort(output, {}, &tree_diff_entry::path);
     if (options.text) {
         auto attached = co_await attach_hunks(source, output);
+        if (!attached) {
+            co_return std::unexpected(attached.error());
+        }
+    }
+    if (options.formats) {
+        auto attached = co_await attach_containers(source, output);
         if (!attached) {
             co_return std::unexpected(attached.error());
         }

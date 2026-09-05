@@ -99,6 +99,7 @@ if(UNIX)
 endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+  LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
   LIQUID_SOURCE_ROOT="${PROJECT_SOURCE_DIR}"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
@@ -195,6 +196,15 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_DELTA_ROOT=${CMAKE_CURRENT_BINARY_DIR}/delta-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/delta.cmake)
+  add_executable(liquid-format-diff-fixture cli/format_diff_fixture.cpp)
+  target_link_libraries(liquid-format-diff-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-format-diff
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_FORMAT_DIFF_FIXTURE=$<TARGET_FILE:liquid-format-diff-fixture>
+      -DLIQUID_FORMAT_DIFF_ROOT=${CMAKE_CURRENT_BINARY_DIR}/format-diff-cli
+      -DLIQUID_FORMAT_FIXTURES=${PROJECT_SOURCE_DIR}/tests/fixtures/formats
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/format-diff.cmake)
   add_test(NAME cli-why-json
     COMMAND ${CMAKE_COMMAND} -E env
       LIQUID_WRAP_CACHE=${CMAKE_CURRENT_BINARY_DIR}/why-cli-cache

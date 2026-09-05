@@ -653,12 +653,16 @@ struct revision_readability { change_id revision; std::vector<key_readability> k
 struct readability_report { std::vector<revision_readability> revisions;
                             std::vector<std::string> limits; };
 enum class tree_diff_kind { added, removed, modified, moved, mode_changed, conflicted };
-struct tree_diff_options { bool text; };
+struct tree_diff_options { bool text; bool formats; };
+enum class container_diff_kind { added, removed, modified };
+struct container_diff_entry;
+struct container_diff { std::string codec; format_tier tier;
+                        std::vector<container_diff_entry> entries; bool truncated; };
 struct tree_diff_entry {
   std::string path; std::optional<std::string> old_path; node_id node; node_kind kind;
   std::vector<tree_diff_kind> changes; std::optional<std::uint32_t> old_mode, new_mode;
   std::optional<digest> old_blob, new_blob; std::optional<std::vector<line_change>> line_hunks;
-  std::vector<digest> old_conflicts, new_conflicts;
+  std::vector<digest> old_conflicts, new_conflicts; std::optional<container_diff> container;
 };
 struct text_anchor { change_id change; std::string path; std::uint64_t line, column; };
 struct mapped_anchor { change_id change; std::string path; std::uint64_t line, column;

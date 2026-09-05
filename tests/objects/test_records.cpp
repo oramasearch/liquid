@@ -58,6 +58,19 @@ TEST(Records, blob_records_carry_range_addressable_chunk_sizes) {
     EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
 }
 
+TEST(Records, blobRecordsRetainDerivedFormatEntries) {
+    const auto chunk = example_digest(0x42);
+    const auto entry = example_digest(0x24);
+    const auto original =
+        liquid::blob{.chunks = {chunk}, .size = 42, .chunk_sizes = {42}, .format_entries = {entry}};
+    auto encoded = liquid::objects::encode(original);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_blob(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    ASSERT_EQ(decoded->format_entries.size(), 1);
+    EXPECT_EQ(liquid::to_string(decoded->format_entries.front()), liquid::to_string(entry));
+}
+
 TEST(Records, remote_blob_records_carry_content_and_location) {
     const auto chunk = example_digest(0x42);
     const auto original =

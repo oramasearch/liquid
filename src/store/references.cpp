@@ -108,7 +108,11 @@ std::vector<digest> extract_blob(std::span<const std::byte> bytes) {
     const auto blob = objects::decode_blob(bytes);
     if (!blob)
         return {};
-    return blob->chunks;
+    auto output = blob->chunks;
+    for (const auto& entry : blob->format_entries) {
+        append_once(output, entry);
+    }
+    return output;
 }
 
 std::vector<digest> extract_action(std::span<const std::byte> bytes) {

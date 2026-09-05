@@ -527,6 +527,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/daemon.cpp
     src/cli/compose.cpp
     src/cli/delta.cpp
+    src/cli/diff.cpp
     src/cli/gc.cpp
     src/cli/facts.cpp
     src/cli/git.cpp

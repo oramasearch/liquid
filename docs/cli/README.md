@@ -39,6 +39,7 @@ that the table and `liquid --help` name the same commands.
 | `split` | `split <path> <into>` | Split a subtree into a repository. | available |
 | `combine` | `combine <repository> [--at <path>]` | Combine another repository. | available |
 | `ops` | `ops [--json]` | List recorded operations, newest first. | available |
+| `diff` | `diff <a> <b> [path] [--text] [--formats] [--json]` | Compare refs or change digests, optionally decoding changed containers. | available |
 | `undo` | `undo [op-id]` | Undo the newest or named operation. | available |
 | `lock` | `lock <path>` | Advisory-lock a path. | available |
 | `unlock` | `unlock <path>` | Remove an advisory lock. | available |
@@ -111,6 +112,12 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`diff` accepts each side as a ref name or change digest. Without opt-ins it prints one line per
+changed tree entry. `--text` computes line hunks, and `--formats` prints the container path with its
+codec and observed tier followed by indented added, removed, or modified logical entries. Nested
+containers are indented again. An optional path selects that entry or subtree. `--json` returns an
+array whose entries carry `path`, `changes`, and an optional recursive `container` value.
 
 `delta create <source> <target>` stores both artifacts, a `zstd-patch` blob, its delta record, and
 a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <delta> <source>

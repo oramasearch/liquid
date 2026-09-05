@@ -42,9 +42,10 @@ shortest integers) so the same value always has the same digest on every platfor
 starts with a `kind` and a `v` (format version).
 
 ```
-blob/1      { v:1, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…] }
+blob/1      { v:1, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…],
+              format_entries?:[digest…] }
 blob/2      { v:2, kind:"blob", digest, size, chunks:[digest…], chunk_sizes:[uint…],
-              remote?:{source,instance} }
+              remote?:{source,instance}, format_entries?:[digest…] }
 tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo, id:node_id, ref:digest | repo_ref } … ] }   # sorted by name, bytewise
 change      { v, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), heads:[bytes…], conflicts?:[conflict…], symbols?:digest, sig:bytes }
@@ -66,6 +67,11 @@ keys are canonical CBOR; dependencies retain read order. Query values are separa
 so opening the graph loads root and node metadata while value bytes remain shallow until demand.
 Only a completed query replaces `ROOT`; interrupted computations leave the previous complete graph
 readable.
+
+`format_entries` retains logical blobs decoded from a Tier 1 or Tier 2 container. It is absent for
+ordinary and legacy blob records, preserving their canonical encoding. Collection follows these
+digests while the parent container is reachable; the container's original chunks remain the
+authoritative bytes.
 
 - **`node_id`** is 16 random bytes minted when a path is created. It is stored in the tree entry
   and in the document entry, and it is what survives a move: a move deletes the old key and puts
@@ -211,8 +217,12 @@ not materialise blob contents. With it, added, removed, and modified blobs are c
 receive `line_hunks`, using the existing `line_change` shape from build diagnostics. Binary values
 leave `line_hunks` disengaged. The line algorithm returns separate hunks for separated edits; for inputs
 whose line matrix would exceed 4,000,000 cells it returns the exact common-prefix/common-suffix
-envelope as one bounded-memory hunk. The value type can gain Phase 4's syntax-aware `structural`
-field without changing these path, identity, conflict, or text fields.
+envelope as one bounded-memory hunk.
+
+Container work is independently opt-in through `tree_diff_options::formats`. A recognised changed
+blob receives a `container_diff` naming the codec and observed tier, then added, removed, and
+modified logical paths with optional nested container diffs. The name `structural` remains reserved
+for source syntax work. Format details and limits are in [formats.md](formats.md).
 
 ## Anchors
 

@@ -59,6 +59,7 @@ auto daemon_command(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
+auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
@@ -93,6 +94,11 @@ constexpr auto commands = std::to_array<command>({
      "search paths and contents",
      "available",
      liquid_cli::search},
+    {"diff",
+     "diff <a> <b> [path] [--text] [--formats] [--json]",
+     "compare two repository changes",
+     "available",
+     liquid_cli::diff},
     {"log", "log [--json]", "show change history", "available", liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},

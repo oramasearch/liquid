@@ -2,8 +2,10 @@
 #include "liquid/store.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <map>
@@ -83,6 +85,77 @@ struct repository_document {
 
 auto failure(errc code, std::string message, std::string context = {}) -> error {
     return {code, std::move(message), std::move(context)};
+}
+
+void collect_format_entry_bytes(const format_tree& tree,
+                                std::vector<std::vector<std::byte>>& output) {
+    if (tree.tier == format_tier::chunk_only) {
+        return;
+    }
+    for (const auto& entry : tree.entries) {
+        if (entry.kind != format_entry_kind::directory) {
+            output.push_back(entry.bytes);
+        }
+        if (entry.nested) {
+            collect_format_entry_bytes(*entry.nested, output);
+        }
+    }
+}
+
+auto unpack_format_entries(std::span<const std::byte> contents, std::string path)
+    -> result<std::vector<std::vector<std::byte>>> {
+    auto tree = format_registry::global().unpack(contents, path);
+    if (!tree) {
+        if (tree.error().code == errc::not_found) {
+            return std::vector<std::vector<std::byte>>{};
+        }
+        return std::unexpected(tree.error());
+    }
+    auto output = std::vector<std::vector<std::byte>>{};
+    collect_format_entry_bytes(*tree, output);
+    return output;
+}
+
+auto store_format_entries(store& objects, std::span<const std::byte> contents, std::string path)
+    -> runtime::task<std::vector<digest>> {
+    auto unpacked = co_await runtime::offload(
+        [contents, path = std::move(path)] { return unpack_format_entries(contents, path); });
+    if (!unpacked) {
+        co_return std::unexpected(unpacked.error());
+    }
+    if (!*unpacked) {
+        co_return std::unexpected(unpacked->error());
+    }
+    auto output = std::vector<digest>{};
+    output.reserve((**unpacked).size());
+    for (auto& entry : **unpacked) {
+        auto stored = co_await objects.put(std::move(entry));
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        if (std::ranges::none_of(output, [&](const digest& value) {
+                return value.alg == stored->alg && value.bytes == stored->bytes;
+            })) {
+            output.push_back(*stored);
+        }
+    }
+    co_return output;
+}
+
+auto format_file_candidate(std::string_view repository_path, const std::filesystem::path& source)
+    -> bool {
+    auto& registry = format_registry::global();
+    if (!registry.find_by_extension(repository_path).empty()) {
+        return true;
+    }
+    auto input = std::ifstream{source, std::ios::binary};
+    if (!input) {
+        return false;
+    }
+    auto prefix = std::array<std::byte, 512>{};
+    input.read(reinterpret_cast<char*>(prefix.data()), static_cast<std::streamsize>(prefix.size()));
+    const auto size = static_cast<std::size_t>(input.gcount());
+    return !registry.find_by_magic(std::span{prefix}.first(size)).empty();
 }
 auto bytes(std::span<const std::byte> value) -> cbor::value {
     return cbor::value{cbor::value::bytes{value.begin(), value.end()}};
@@ -2407,6 +2480,14 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
         co_return std::unexpected(prepared.error());
     }
     contents = std::move(*prepared);
+    auto format_entries = std::vector<digest>{};
+    if (!encryption_rule) {
+        auto stored_entries = co_await store_format_entries(impl_->objects, contents, path);
+        if (!stored_entries) {
+            co_return std::unexpected(stored_entries.error());
+        }
+        format_entries = std::move(*stored_entries);
+    }
     auto content = encryption_rule && encryption_rule->mode == encryption_mode::file
                        ? co_await repository_detail::store_access::put_encrypted(
                              impl_->objects, std::move(contents), encryption_rule->key_id)
@@ -2418,6 +2499,7 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
     auto record = impl_->objects.blob_for(*content);
     if (!record)
         co_return std::unexpected(record.error());
+    record->format_entries = std::move(format_entries);
     co_return co_await impl_->record_blob(std::move(path), std::move(*record), options.mode);
 }
 runtime::task<void> repository::write_file(std::string path, std::filesystem::path source) {
@@ -2427,6 +2509,18 @@ runtime::task<void> repository::write_file(std::string path, std::filesystem::pa
         auto contents = co_await store_detail::read_file(source);
         if (!contents)
             co_return std::unexpected(contents.error());
+        co_return co_await write(std::move(path), std::move(*contents));
+    }
+    auto candidate =
+        co_await runtime::offload([path, source] { return format_file_candidate(path, source); });
+    if (!candidate) {
+        co_return std::unexpected(candidate.error());
+    }
+    if (*candidate) {
+        auto contents = co_await store_detail::read_file(source);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
         co_return co_await write(std::move(path), std::move(*contents));
     }
     auto content = co_await impl_->objects.put_file(std::move(source));

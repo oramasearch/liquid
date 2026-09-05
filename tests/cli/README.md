@@ -16,6 +16,9 @@ flags.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 
+`format-diff.cmake` creates two changes through the public repository API and proves that
+`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and tier.
+
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.
 
