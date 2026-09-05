@@ -10,6 +10,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "daemon/fanout.hpp"
 #include "liquid/daemon.hpp"
 #include "liquid/hash.hpp"
@@ -25,8 +26,8 @@ static_assert(std::is_aggregate_v<liquid::search_hit>);
 class temporary_directory {
 public:
     temporary_directory()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-search-test-" + std::to_string(next_.fetch_add(1)))) {
+        : path_(liquid::test::fixture_path("liquid-search-test-" +
+                                           std::to_string(next_.fetch_add(1)))) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
     }

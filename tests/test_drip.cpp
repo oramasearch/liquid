@@ -12,6 +12,8 @@
 
 #include "capture/watcher.hpp"
 #include "liquid/drip.hpp"
+#include "temporary_directory.hpp"
+
 TEST(Drip, PublicHandleAndStatusShapes) {
     static_assert(sizeof(liquid::capture) == sizeof(void*));
     static_assert(sizeof(liquid::subscription) == sizeof(void*));
@@ -32,8 +34,8 @@ auto wait_for_capture(std::chrono::milliseconds duration) -> liquid::runtime::ta
 class workspace {
 public:
     workspace()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-capture-test-" + std::to_string(next_id_.fetch_add(1)))) {
+        : path_(liquid::test::fixture_path("liquid-capture-test-" +
+                                           std::to_string(next_id_.fetch_add(1)))) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
     }

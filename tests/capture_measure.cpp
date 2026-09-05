@@ -10,6 +10,7 @@
 
 #include "capture/watcher.hpp"
 #include "liquid/drip.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
@@ -53,10 +54,9 @@ auto percentile(std::vector<std::chrono::nanoseconds> values, unsigned percent)
 }
 
 auto run_sample(std::chrono::milliseconds window, unsigned index) -> std::optional<sample> {
-    const auto workspace =
-        std::filesystem::temp_directory_path() /
-        ("liquid-capture-measure-" + std::to_string(window.count()) + "-" + std::to_string(index) +
-         "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto workspace = liquid::test::fixture_path(
+        "liquid-capture-measure-" + std::to_string(window.count()) + "-" + std::to_string(index) +
+        "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::remove_all(workspace);
     std::filesystem::create_directories(workspace);
     auto capture =

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "../temporary_directory.hpp"
 #include "git/object_store.hpp"
 #include "git/tree_order.hpp"
 #include "liquid/git.hpp"
@@ -14,8 +15,7 @@ namespace {
 class temporary_directory {
 public:
     temporary_directory()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-git-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-git-test-" + std::to_string(next_++))) {
         std::error_code code;
         std::filesystem::remove_all(path_, code);
         std::filesystem::create_directories(path_ / "objects", code);

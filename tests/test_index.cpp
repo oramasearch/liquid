@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "index.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
@@ -23,12 +24,17 @@ using liquid::store_detail::reset_file_read_counter;
 
 class temporary_directory {
 public:
-    temporary_directory() : path_(std::filesystem::temp_directory_path() /
-                                  ("liquid-index-test-" + std::to_string(++next_))) {
+    temporary_directory()
+        : path_(liquid::test::fixture_path("liquid-index-test-" + std::to_string(++next_))) {
         std::filesystem::remove_all(path_);
     }
-    ~temporary_directory() { std::filesystem::remove_all(path_); }
-    const std::filesystem::path& path() const { return path_; }
+    ~temporary_directory() {
+        std::filesystem::remove_all(path_);
+    }
+    const std::filesystem::path& path() const {
+        return path_;
+    }
+
 private:
     inline static unsigned next_{};
     std::filesystem::path path_;
@@ -44,10 +50,12 @@ digest make_digest(std::uint64_t value, algorithm alg = algorithm::blake3) {
 task<void> insert_all(chunk_index& index, const std::vector<index_entry>& entries) {
     for (const auto& entry : entries) {
         auto inserted = index.insert(entry);
-        if (!inserted) co_return std::unexpected(inserted.error());
+        if (!inserted)
+            co_return std::unexpected(inserted.error());
         if (index.needs_flush(entry.id.alg)) {
             auto flushed = co_await index.flush();
-            if (!flushed) co_return std::unexpected(flushed.error());
+            if (!flushed)
+                co_return std::unexpected(flushed.error());
         }
     }
     co_return liquid::result<void>{};
@@ -56,16 +64,19 @@ task<void> insert_all(chunk_index& index, const std::vector<index_entry>& entrie
 task<void> check_all(chunk_index& index, const std::vector<index_entry>& entries) {
     for (const auto& entry : entries) {
         auto found = index.find(entry.id);
-        if (!found) co_return std::unexpected(found.error());
+        if (!found)
+            co_return std::unexpected(found.error());
         if (!*found || (**found).pack_id != entry.location.pack_id)
-            co_return std::unexpected(liquid::error{liquid::errc::corrupt, "index lookup mismatch", {}});
+            co_return std::unexpected(
+                liquid::error{liquid::errc::corrupt, "index lookup mismatch", {}});
     }
     co_return liquid::result<void>{};
 }
 
 liquid::result<bool> find_present(chunk_index& index, digest id) {
     auto found = index.find(id);
-    if (!found) return std::unexpected(found.error());
+    if (!found)
+        return std::unexpected(found.error());
     return found->has_value();
 }
 
@@ -74,7 +85,8 @@ TEST(ChunkIndex, ReopenReadsHeadersAndBloomOnly) {
     std::vector<index_entry> entries;
     entries.reserve(1'000'000);
     for (std::uint64_t i = 0; i != 1'000'000; ++i)
-        entries.push_back({make_digest(i), {static_cast<std::uint32_t>(i / 1024), i * 48, 64 * 1024}});
+        entries.push_back(
+            {make_digest(i), {static_cast<std::uint32_t>(i / 1024), i * 48, 64 * 1024}});
     {
         chunk_index index(directory.path());
         ASSERT_TRUE(block_on(index.open()).has_value());
@@ -113,4 +125,4 @@ TEST(ChunkIndex, CompactionPreservesRandomKeysAndMisses) {
     ASSERT_TRUE(block_on(index.close()).has_value());
 }
 
-}  // namespace
+} // namespace

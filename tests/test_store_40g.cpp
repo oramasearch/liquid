@@ -8,12 +8,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <unistd.h>
 #include <fstream>
 #include <iostream>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -24,14 +24,13 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "repository/testing.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class large_tree {
 public:
-    large_tree()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-large-40g-" + std::to_string(::getpid()))) {   // one directory per process: parallel runs never collide
+    large_tree() : path_(liquid::test::fixture_path("liquid-large-40g")) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
         std::filesystem::create_directories(path_, code);

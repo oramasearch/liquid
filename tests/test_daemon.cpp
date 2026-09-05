@@ -18,14 +18,15 @@
 #include "liquid/hash.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-daemon-test-" + std::to_string(next_.fetch_add(1)))) {
+        : path_(liquid::test::fixture_path("liquid-daemon-test-" +
+                                           std::to_string(next_.fetch_add(1)))) {
         std::filesystem::remove_all(path_);
         auto created = liquid::runtime::block_on(liquid::repository::create(path_));
         if (!created) {
@@ -276,7 +277,7 @@ TEST(Daemon, windows_reports_missing_named_pipe_transport) {
 #endif
 
 TEST(DaemonFanout, ordered_targets_advance_once_for_duplicate_delivery) {
-    const auto directory = std::filesystem::temp_directory_path() / "liquid-daemon-fanout-test";
+    const auto directory = liquid::test::fixture_path("liquid-daemon-fanout-test");
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
     auto order = std::vector<std::string>{};
@@ -303,7 +304,7 @@ TEST(DaemonFanout, ordered_targets_advance_once_for_duplicate_delivery) {
 }
 
 TEST(DaemonGraph, least_recently_demanded_eviction_keeps_metadata_and_persists) {
-    const auto directory = std::filesystem::temp_directory_path() / "liquid-daemon-graph-test";
+    const auto directory = liquid::test::fixture_path("liquid-daemon-graph-test");
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
     auto first_fingerprint = liquid::digest{};

@@ -12,6 +12,7 @@
 
 #include "remote_blob_source.hpp"
 
+#include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/repository_access.hpp"
 #include "identity/taap.hpp"
@@ -27,8 +28,7 @@ namespace {
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-build-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-build-test-" + std::to_string(next_++))) {
         std::error_code code;
         std::filesystem::remove_all(path_, code);
     }

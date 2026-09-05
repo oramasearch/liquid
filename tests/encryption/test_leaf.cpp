@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "../temporary_directory.hpp"
 #include "encryption/leaf.hpp"
 #include "formats/dotenv.hpp"
 #include "formats/json.hpp"
@@ -16,8 +17,7 @@ namespace {
 class temporary_store {
 public:
     temporary_store()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-leaf-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-leaf-test-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

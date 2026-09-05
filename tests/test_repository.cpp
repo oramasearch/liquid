@@ -13,14 +13,14 @@
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
 #include "repository/testing.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-repository-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-repository-test-" + std::to_string(next_++))) {
         std::error_code code;
         std::filesystem::remove_all(path_, code);
     }
