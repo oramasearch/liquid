@@ -72,8 +72,8 @@ checkout, excluding `.git`, `.liquid-build`, and build directories, then reopene
 the graph. On an Apple M3 Max macOS host on 2026-09-04:
 
 ```text
-graph cold-start validation: files=3714 fingerprint_reads=3714 executions=0 hits=3714 elapsed_ms=9841
-graph clean-rebuild validation: targets=3714 divergences=0 backlog=0 elapsed_ms=131687
+graph cold-start validation: files=3753 fingerprint_reads=3753 executions=0 hits=3753 elapsed_ms=780
+graph clean-rebuild validation: targets=3753 divergences=0 backlog=0 elapsed_ms=102465
 ```
 
 Run it with `cmake --build build --target liquid-graph-measure`, followed by
@@ -82,9 +82,9 @@ Run it with `cmake --build build --target liquid-graph-measure`, followed by
 The complete release proof for this implementation reported:
 
 ```text
-macOS static: 100% tests passed, 0 tests failed out of 269; Total Test time (real) = 199.52 sec
-macOS shared: 100% tests passed, 0 tests failed out of 269; Total Test time (real) = 209.20 sec
-Linux container: 100% tests passed, 0 tests failed out of 301; Total Test time (real) = 456.35 sec
+macOS static: 100% tests passed, 0 tests failed out of 284; Total Test time (real) = 217.15 sec
+macOS shared: 100% tests passed, 0 tests failed out of 284; Total Test time (real) = 208.07 sec
+Linux container: 100% tests passed, 0 tests failed out of 316; Total Test time (real) = 371.39 sec
 ```
 
 **Cancellation.** A keystroke cancels in-flight queries that depend on the changed volatile input;
