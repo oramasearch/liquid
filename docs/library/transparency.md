@@ -32,6 +32,9 @@ value.
 
 ## Implementation checkpoint
 
-The public headers, command-line operations, recorded fixtures, and verification implementation
-are delivered by liquid issue #210. This page records the cryptography decision before that work
-starts and will be updated with the completed API and proof.
+`liquid/asn1.hpp` exposes the strict DER reader. It refuses indefinite and non-minimal lengths,
+non-minimal high tag numbers, truncated values, negative or padded unsigned integers, malformed
+object identifiers, and trailing data after a requested single element. Each returned element
+retains both its content span and its complete encoded span. The remaining public headers,
+command-line operations, recorded fixtures, and verification implementation are delivered by
+liquid issue #210.

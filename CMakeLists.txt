@@ -358,6 +358,7 @@ set_target_properties(liquid_metadata_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
 add_library(libliquid
+  src/asn1.cpp
   src/attestation/registry.cpp
   src/build/cache.cpp
   src/build/events.cpp

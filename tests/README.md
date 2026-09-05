@@ -5,6 +5,9 @@ collection cases and its CLI flags live in `store/`; deterministic crash schedul
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
 
+Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
+identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
+
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
 Linux, reports a clear error when the temporary root is not writable, and removes the directory at

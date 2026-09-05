@@ -6,6 +6,7 @@ set(LIQUID_HTTP2_TEST_SOURCES
 
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
+  test_asn1.cpp
   test_drip.cpp
   test_delta.cpp
   test_daemon.cpp

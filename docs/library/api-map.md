@@ -57,6 +57,7 @@ owning issue in `error::context`.
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
+| `liquid/asn1.hpp` | #210 | implemented | strict DER element reader with exact encoded spans plus unsigned-integer and object-identifier decoding |
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
 | `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
