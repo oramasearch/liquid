@@ -295,6 +295,9 @@ auto document::inspect(std::string_view path) const -> result<std::optional<entr
 auto document::entries() const -> result<std::vector<entry>> {
     return schema::entries(impl_->value);
 }
+auto document::entry_names() const -> result<std::vector<std::string>> {
+    return schema::entry_names(impl_->value);
+}
 auto document::operations() const -> result<std::vector<operation>> {
     return schema::operations(impl_->value);
 }
@@ -399,30 +402,17 @@ auto directory_document::load_sync(std::span<const std::byte> bytes,
 }
 
 auto directory_document::entries() const -> result<std::vector<named_entry>> {
-    auto operations = document_.operations();
-    if (!operations)
-        return std::unexpected(operations.error());
-    auto names = std::map<std::string, entry>{};
-    for (const auto& operation : *operations) {
-        if (operation.kind == operation_kind::remove) {
-            names.erase(operation.path);
-        } else if (operation.kind == operation_kind::move) {
-            auto found = names.find(operation.path);
-            if (found != names.end()) {
-                names.emplace(operation.to, std::move(found->second));
-                names.erase(found);
-            }
-        } else {
-            auto value = document_.inspect(operation.path);
-            if (!value)
-                return std::unexpected(value.error());
-            if (*value)
-                names[operation.path] = **value;
-        }
-    }
+    auto names = document_.entry_names();
+    if (!names)
+        return std::unexpected(names.error());
     auto output = std::vector<named_entry>{};
-    for (auto& [name, value] : names)
-        output.push_back({std::move(name), std::move(value)});
+    for (auto& name : *names) {
+        auto value = document_.inspect(name);
+        if (!value)
+            return std::unexpected(value.error());
+        if (*value)
+            output.push_back({std::move(name), std::move(**value)});
+    }
     return output;
 }
 
@@ -438,6 +428,7 @@ auto directory_document::put_entry(std::string name, entry value, commit_options
     if (name.empty() || name.contains('/') || value.ref.empty())
         return std::unexpected(error{errc::invalid_argument, "directory entry is invalid", name});
     auto applied = document_.transact({operation{.kind = operation_kind::write,
+                                                 .value_kind = std::move(value.kind),
                                                  .path = std::move(name),
                                                  .ref = std::move(value.ref),
                                                  .mode = value.mode,
@@ -473,6 +464,9 @@ auto directory_document::rename_entry(std::string from, std::string to, commit_o
 
 auto directory_document::save() const -> result<std::vector<std::byte>> {
     return document_.save_compact();
+}
+auto directory_document::save_full() const -> result<std::vector<std::byte>> {
+    return document_.save();
 }
 auto directory_document::save_sync() const -> result<std::vector<std::byte>> {
     return document_.save_compact();
