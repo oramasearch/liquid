@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
+#include <charconv>
+#include <chrono>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <map>
@@ -23,6 +27,7 @@
 #include <oramacore/tokenize.hpp>
 
 #include "encoding/cbor.hpp"
+#include "store/mapped_file.hpp"
 
 namespace liquid::search_detail {
 namespace {
@@ -539,10 +544,10 @@ auto publish_updates(const std::filesystem::path& directory,
     if (existing != manifest->slots.end() && existing->second.generation == generation) {
         return {};
     }
-    auto new_documents = std::vector<document>{};
+    auto catalog_documents = std::vector<document>{};
     for (const auto& update : updates) {
-        if (update.value && !std::filesystem::exists(blob_path(directory, update.value->blob))) {
-            new_documents.push_back(*update.value);
+        if (update.value) {
+            catalog_documents.push_back(*update.value);
         }
     }
     auto stored = store_documents(directory, updates);
@@ -561,7 +566,7 @@ auto publish_updates(const std::filesystem::path& directory,
     if (!segment_written) {
         return segment_written;
     }
-    auto catalog_written = write_catalog_segment(directory, *file_name, new_documents);
+    auto catalog_written = write_catalog_segment(directory, *file_name, catalog_documents);
     if (!catalog_written) {
         return catalog_written;
     }
@@ -574,8 +579,13 @@ auto publish_updates(const std::filesystem::path& directory,
     return publish_manifest(directory, *manifest);
 }
 
-auto active_paths(const std::filesystem::path& directory, const std::string& slot)
-    -> result<std::map<std::string, digest>> {
+struct index_snapshot {
+    std::map<std::string, digest> paths;
+    std::vector<std::string> segments;
+};
+
+auto active_snapshot(const std::filesystem::path& directory, const std::string& slot)
+    -> result<index_snapshot> {
     auto manifest = load_manifest(directory);
     if (!manifest) {
         return std::unexpected(manifest.error());
@@ -584,7 +594,8 @@ auto active_paths(const std::filesystem::path& directory, const std::string& slo
     if (selected == manifest->slots.end()) {
         return std::unexpected(error{errc::not_found, "search index slot is absent", slot});
     }
-    auto output = std::map<std::string, digest>{};
+    auto output = index_snapshot{};
+    output.segments = selected->second.segments;
     for (const auto& name : selected->second.segments) {
         auto encoded = read_file(directory / "segments" / name);
         if (!encoded) {
@@ -596,13 +607,22 @@ auto active_paths(const std::filesystem::path& directory, const std::string& slo
         }
         for (const auto& [path, blob] : *updates) {
             if (blob) {
-                output[path] = *blob;
+                output.paths[path] = *blob;
             } else {
-                output.erase(path);
+                output.paths.erase(path);
             }
         }
     }
     return output;
+}
+
+auto active_paths(const std::filesystem::path& directory, const std::string& slot)
+    -> result<std::map<std::string, digest>> {
+    auto snapshot = active_snapshot(directory, slot);
+    if (!snapshot) {
+        return std::unexpected(snapshot.error());
+    }
+    return std::move(snapshot->paths);
 }
 
 auto load_blob(const std::filesystem::path& directory, const digest& id) -> result<std::string> {
@@ -762,79 +782,9 @@ auto normalized_query_terms(std::string_view text) -> std::vector<std::string> {
     return {unique.begin(), unique.end()};
 }
 
-auto indexed_contiguous_positions(const std::filesystem::path& path,
-                                  const std::vector<std::string>& keys) -> result<bool> {
-    if (keys.empty()) {
-        return true;
-    }
-    auto input = std::ifstream{path, std::ios::binary};
-    if (!input) {
-        return std::unexpected(failure(errc::not_found, "trigram index is absent", path));
-    }
-    constexpr auto expected = std::array<char, 8>{'L', 'Q', 'T', 'R', 'I', '0', '1', '\0'};
-    auto magic = std::array<char, 8>{};
-    input.read(magic.data(), static_cast<std::streamsize>(magic.size()));
-    if (!input || magic != expected) {
-        return std::unexpected(failure(errc::corrupt, "invalid trigram index", path));
-    }
-    auto count = read_u32(input);
-    if (!count) {
-        return std::unexpected(count.error());
-    }
-    auto wanted = std::unordered_set<std::string>{keys.begin(), keys.end()};
-    auto matches = std::unordered_map<std::string, std::vector<std::uint32_t>>{};
-    for (auto entry = std::uint32_t{}; entry != *count; ++entry) {
-        auto key = std::array<char, 3>{};
-        input.read(key.data(), static_cast<std::streamsize>(key.size()));
-        if (!input) {
-            return std::unexpected(failure(errc::corrupt, "truncated trigram key", path));
-        }
-        auto positions = read_u32(input);
-        if (!positions) {
-            return std::unexpected(positions.error());
-        }
-        const auto text = std::string{key.data(), key.size()};
-        if (!wanted.contains(text)) {
-            input.seekg(static_cast<std::streamoff>(*positions) * 4, std::ios::cur);
-            if (!input) {
-                return std::unexpected(failure(errc::corrupt, "truncated trigram positions", path));
-            }
-            continue;
-        }
-        auto& output = matches[text];
-        output.reserve(*positions);
-        for (auto position = std::uint32_t{}; position != *positions; ++position) {
-            auto value = read_u32(input);
-            if (!value) {
-                return std::unexpected(value.error());
-            }
-            output.push_back(*value);
-        }
-    }
-    const auto initial = matches.find(keys.front());
-    if (initial == matches.end()) {
-        return false;
-    }
-    for (const auto position : initial->second) {
-        auto found = true;
-        for (std::size_t offset = 1; offset != keys.size(); ++offset) {
-            const auto next = matches.find(keys[offset]);
-            if (next == matches.end() ||
-                !std::ranges::binary_search(next->second,
-                                            position + static_cast<std::uint32_t>(offset))) {
-                found = false;
-                break;
-            }
-        }
-        if (found) {
-            return true;
-        }
-    }
-    return false;
-}
-
 auto catalog_candidates(const std::filesystem::path& directory,
-                        const std::vector<std::string>& keys)
+                        const std::vector<std::string>& keys,
+                        const std::vector<std::string>& segments)
     -> result<std::unordered_set<std::string>> {
     auto wanted = std::unordered_set<std::string>{keys.begin(), keys.end()};
     auto postings = std::unordered_map<std::string, std::unordered_set<std::string>>{};
@@ -846,49 +796,71 @@ auto catalog_candidates(const std::filesystem::path& directory,
     if (!std::filesystem::exists(catalog)) {
         return std::unordered_set<std::string>{};
     }
-    auto code = std::error_code{};
-    for (const auto& entry : std::filesystem::directory_iterator{catalog, code}) {
-        if (code) {
-            return std::unexpected(failure(errc::io, code.message(), catalog));
+    constexpr auto header_size = std::size_t{12};
+    constexpr auto record_size = std::size_t{36};
+    constexpr auto expected = std::string_view{"LQTCAT1\0", 8};
+    for (auto segment : segments) {
+        if (segment.ends_with(".cbor")) {
+            segment.resize(segment.size() - 5);
         }
-        const auto name = entry.path().filename().string();
-        if (!entry.is_regular_file() || std::ranges::none_of(suffixes, [&](const auto& suffix) {
-                return name.ends_with(suffix);
-            })) {
-            continue;
-        }
-        auto input = std::ifstream{entry.path(), std::ios::binary};
-        constexpr auto expected = std::array<char, 8>{'L', 'Q', 'T', 'C', 'A', 'T', '1', '\0'};
-        auto magic = std::array<char, 8>{};
-        input.read(magic.data(), static_cast<std::streamsize>(magic.size()));
-        if (!input || magic != expected) {
-            return std::unexpected(failure(errc::corrupt, "invalid trigram catalog", entry.path()));
-        }
-        auto count = read_u32(input);
-        if (!count) {
-            return std::unexpected(count.error());
-        }
-        for (auto record = std::uint32_t{}; record != *count; ++record) {
-            auto key = std::array<char, 3>{};
-            auto algorithm_value = std::uint8_t{};
-            auto digest_bytes = std::array<std::byte, 32>{};
-            input.read(key.data(), static_cast<std::streamsize>(key.size()));
-            input.read(reinterpret_cast<char*>(&algorithm_value), 1);
-            input.read(reinterpret_cast<char*>(digest_bytes.data()),
-                       static_cast<std::streamsize>(digest_bytes.size()));
-            if (!input || algorithm_value < 1 || algorithm_value > 3) {
-                return std::unexpected(
-                    failure(errc::corrupt, "truncated trigram catalog", entry.path()));
+        for (const auto& suffix : suffixes) {
+            const auto path = catalog / (segment + suffix);
+            if (!std::filesystem::exists(path)) {
+                continue;
             }
-            const auto text = std::string{key.data(), key.size()};
-            if (wanted.contains(text)) {
-                postings[text].insert(
-                    to_string(digest{static_cast<algorithm>(algorithm_value), digest_bytes}));
+            auto mapped = store_detail::mapped_file{};
+            auto opened = mapped.open(path);
+            if (!opened) {
+                return std::unexpected(opened.error());
+            }
+            const auto bytes = mapped.bytes();
+            if (bytes.size() < header_size) {
+                return std::unexpected(failure(errc::corrupt, "invalid trigram catalog", path));
+            }
+            const auto magic =
+                std::string_view{reinterpret_cast<const char*>(bytes.data()), expected.size()};
+            if (magic != expected) {
+                return std::unexpected(failure(errc::corrupt, "invalid trigram catalog", path));
+            }
+            auto count = std::uint32_t{};
+            for (auto index = std::size_t{}; index != 4; ++index) {
+                count |= static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[8 + index]))
+                         << (index * 8U);
+            }
+            if (bytes.size() != header_size + static_cast<std::size_t>(count) * record_size) {
+                return std::unexpected(failure(errc::corrupt, "truncated trigram catalog", path));
+            }
+            const auto record_key = [&](std::size_t record) {
+                const auto offset = header_size + record * record_size;
+                return std::string_view{reinterpret_cast<const char*>(bytes.data() + offset), 3};
+            };
+            for (const auto& key : wanted) {
+                if (suffix != shard_suffix(std::byte{static_cast<std::uint8_t>(key.front())})) {
+                    continue;
+                }
+                auto begin = std::size_t{};
+                auto end = static_cast<std::size_t>(count);
+                while (begin < end) {
+                    const auto middle = begin + (end - begin) / 2;
+                    if (record_key(middle) < key) {
+                        begin = middle + 1;
+                    } else {
+                        end = middle;
+                    }
+                }
+                for (auto record = begin; record != count && record_key(record) == key; ++record) {
+                    const auto offset = header_size + record * record_size;
+                    const auto algorithm_value = std::to_integer<std::uint8_t>(bytes[offset + 3]);
+                    if (algorithm_value < 1 || algorithm_value > 3) {
+                        return std::unexpected(
+                            failure(errc::corrupt, "invalid trigram catalog digest", path));
+                    }
+                    auto id = digest{static_cast<algorithm>(algorithm_value), {}};
+                    std::ranges::copy(bytes.subspan(offset + 4, id.bytes.size()), id.bytes.begin());
+                    postings[key].insert(to_string(id));
+                }
             }
         }
-    }
-    if (code) {
-        return std::unexpected(failure(errc::io, code.message(), catalog));
     }
     const auto initial = postings.find(keys.front());
     if (initial == postings.end()) {
@@ -906,16 +878,29 @@ auto catalog_candidates(const std::filesystem::path& directory,
     return output;
 }
 
-auto regex_literal(const std::string& expression) -> std::string {
-    constexpr auto metacharacters = std::string_view{"^$|()[]{}*+?.\\"};
-    auto output = std::string{};
+auto regex_literal_core(const std::string& expression) -> std::string {
+    if (expression.find('|') != std::string::npos || expression.find('(') != std::string::npos ||
+        expression.find(')') != std::string::npos || expression.find('[') != std::string::npos ||
+        expression.find(']') != std::string::npos || expression.find('{') != std::string::npos ||
+        expression.find('}') != std::string::npos) {
+        return {};
+    }
+    auto longest = std::string{};
+    auto current = std::string{};
     auto escaped = false;
+    const auto flush = [&] {
+        if (current.size() > longest.size()) {
+            longest = current;
+        }
+        current.clear();
+    };
     for (const auto character : expression) {
         if (escaped) {
-            if (!metacharacters.contains(character)) {
+            if (std::string_view{"^$|()[]{}*+?.\\/"}.contains(character)) {
+                current.push_back(character);
+            } else {
                 return {};
             }
-            output.push_back(character);
             escaped = false;
             continue;
         }
@@ -923,22 +908,84 @@ auto regex_literal(const std::string& expression) -> std::string {
             escaped = true;
             continue;
         }
-        if (metacharacters.contains(character)) {
-            return {};
+        if (character == '*' || character == '?') {
+            if (!current.empty()) {
+                current.pop_back();
+            }
+            flush();
+            continue;
         }
-        output.push_back(character);
+        if (character == '.' || character == '^' || character == '$') {
+            flush();
+            continue;
+        }
+        if (character == '+') {
+            flush();
+            continue;
+        }
+        current.push_back(character);
     }
     if (escaped) {
         return {};
     }
-    return output;
+    flush();
+    return longest;
 }
 
-auto snippet_for(const std::string& content, const std::string& needle) -> std::string {
-    auto at = content.find(needle);
-    if (at == std::string::npos) {
-        at = 0;
+struct query_plan {
+    bool regex{};
+    bool substring{};
+    std::string needle;
+    std::string literal_core;
+    std::optional<std::regex> expression;
+};
+
+struct match_position {
+    std::size_t offset{};
+    std::size_t length{};
+};
+
+auto locate_match(const std::string& content, const query_plan& plan) -> match_position {
+    if (plan.regex) {
+        auto match = std::smatch{};
+        if (std::regex_search(content, match, *plan.expression)) {
+            return {static_cast<std::size_t>(match.position()),
+                    static_cast<std::size_t>(match.length())};
+        }
+        return {};
     }
+    if (plan.substring) {
+        const auto at = content.find(plan.needle);
+        return {at == std::string::npos ? 0 : at, plan.needle.size()};
+    }
+    const auto terms = normalized_query_terms(plan.needle);
+    if (!terms.empty()) {
+        auto lowered = content;
+        std::ranges::transform(lowered, lowered.begin(), [](unsigned char value) {
+            return static_cast<char>(std::tolower(value));
+        });
+        const auto at = lowered.find(terms.front());
+        return {at == std::string::npos ? 0 : at, terms.front().size()};
+    }
+    return {};
+}
+
+auto line_column(const std::string& content, std::size_t offset)
+    -> std::pair<std::uint64_t, std::uint64_t> {
+    auto line = std::uint64_t{1};
+    auto column = std::uint64_t{1};
+    for (auto index = std::size_t{}; index < std::min(offset, content.size()); ++index) {
+        if (content[index] == '\n') {
+            ++line;
+            column = 1;
+        } else {
+            ++column;
+        }
+    }
+    return {line, column};
+}
+
+auto snippet_for(const std::string& content, std::size_t at) -> std::string {
     const auto begin = at > 48 ? at - 48 : 0;
     const auto length = std::min<std::size_t>(160, content.size() - begin);
     auto output = content.substr(begin, length);
@@ -963,9 +1010,31 @@ auto ignored_path(const std::filesystem::path& relative) -> bool {
            relative == "LIQUID_REPO" || relative == "LIQUID_JOURNAL";
 }
 
-auto read_document(const std::filesystem::path& checkout, const std::filesystem::path& relative)
-    -> result<document> {
+auto read_document(const std::filesystem::path& checkout,
+                   const std::filesystem::path& relative,
+                   bool retain_contents = true) -> result<document> {
     const auto path = checkout / relative;
+    if (!retain_contents) {
+        auto code = std::error_code{};
+        const auto size = std::filesystem::file_size(path, code);
+        if (code) {
+            return std::unexpected(failure(errc::io, code.message(), path));
+        }
+        auto mapped = store_detail::mapped_file{};
+        auto bytes = std::span<const std::byte>{};
+        if (size != 0) {
+            auto opened = mapped.open(path);
+            if (!opened) {
+                return std::unexpected(opened.error());
+            }
+            bytes = mapped.bytes();
+        }
+        auto id = hash(algorithm::blake3, bytes);
+        if (!id) {
+            return std::unexpected(id.error());
+        }
+        return document{relative.generic_string(), *id, {}, path};
+    }
     auto contents = read_file(path);
     if (!contents) {
         return std::unexpected(contents.error());
@@ -974,10 +1043,11 @@ auto read_document(const std::filesystem::path& checkout, const std::filesystem:
     if (!id) {
         return std::unexpected(id.error());
     }
-    return document{relative.generic_string(), *id, std::move(*contents)};
+    return document{relative.generic_string(), *id, std::move(*contents), path};
 }
 
-auto scan_checkout(const std::filesystem::path& checkout) -> result<std::vector<document>> {
+auto scan_checkout(const std::filesystem::path& checkout, bool retain_contents = true)
+    -> result<std::vector<document>> {
     auto output = std::vector<document>{};
     auto code = std::error_code{};
     for (auto iterator =
@@ -995,7 +1065,7 @@ auto scan_checkout(const std::filesystem::path& checkout) -> result<std::vector<
         if (!iterator->is_regular_file(code)) {
             continue;
         }
-        auto value = read_document(checkout, relative);
+        auto value = read_document(checkout, relative, retain_contents);
         if (!value) {
             return std::unexpected(value.error());
         }
@@ -1048,23 +1118,23 @@ public:
     }
 
     runtime::task<void> deliver(daemon_delivery delivery) override {
-        auto updated = co_await runtime::offload(
-            [checkout = checkout_, directory = directory_, value = std::move(delivery.value)] {
-                auto present = has_slot(directory, std::string{working_slot});
-                if (!present) {
-                    return result<void>{std::unexpected(present.error())};
-                }
-                const auto generation = to_string(value.id.value);
-                if (!*present) {
-                    return publish_checkout(checkout, directory, generation);
-                }
-                auto updates = checkout_updates(checkout, value);
-                if (!updates) {
-                    return result<void>{std::unexpected(updates.error())};
-                }
-                return publish_delta(
-                    directory, std::string{working_slot}, generation, std::move(*updates));
-            });
+        auto updated = co_await runtime::offload([checkout = checkout_,
+                                                  directory = directory_,
+                                                  value = std::move(delivery.value),
+                                                  cursor = std::move(delivery.cursor.token)] {
+            auto present = has_slot(directory, std::string{working_slot});
+            if (!present) {
+                return result<void>{std::unexpected(present.error())};
+            }
+            if (!*present) {
+                return publish_checkout(checkout, directory, cursor);
+            }
+            auto updates = checkout_updates(checkout, value);
+            if (!updates) {
+                return result<void>{std::unexpected(updates.error())};
+            }
+            return publish_delta(directory, std::string{working_slot}, cursor, std::move(*updates));
+        });
         if (!updated) {
             co_return std::unexpected(updated.error());
         }
@@ -1079,13 +1149,6 @@ private:
     std::filesystem::path directory_;
 };
 
-struct query_plan {
-    bool regex{};
-    bool substring{};
-    std::string needle;
-    std::optional<std::regex> expression;
-};
-
 struct query_matches {
     std::unordered_map<std::string, double> blob_scores;
     std::unordered_map<std::string, double> path_scores;
@@ -1098,6 +1161,9 @@ auto plan_query(const std::string& text) -> result<query_plan> {
     output.substring = text.size() > 1 && text.front() == '"' && text.back() == '"';
     output.needle = output.regex || output.substring ? text.substr(1, text.size() - 2) : text;
     if (!output.regex) {
+        if (output.substring) {
+            output.literal_core = output.needle;
+        }
         return output;
     }
     try {
@@ -1106,6 +1172,7 @@ auto plan_query(const std::string& text) -> result<query_plan> {
         return std::unexpected(
             error{errc::invalid_argument, "invalid search regex: " + std::string{caught.what()}});
     }
+    output.literal_core = regex_literal_core(output.needle);
     return output;
 }
 
@@ -1144,12 +1211,13 @@ auto ranked_matches(const std::filesystem::path& directory,
 
 auto positional_matches(const std::filesystem::path& directory,
                         const std::map<std::string, digest>& blobs,
+                        const std::vector<std::string>& segments,
                         const query_plan& plan) -> result<query_matches> {
-    const auto prefilter = plan.regex ? regex_literal(plan.needle) : plan.needle;
+    const auto prefilter = plan.regex ? plan.literal_core : plan.needle;
     const auto keys = trigrams(prefilter);
     auto candidates = std::unordered_set<std::string>{};
     if (!keys.empty()) {
-        auto catalog = catalog_candidates(directory, keys);
+        auto catalog = catalog_candidates(directory, keys, segments);
         if (!catalog) {
             return std::unexpected(catalog.error());
         }
@@ -1165,21 +1233,18 @@ auto positional_matches(const std::filesystem::path& directory,
         if (!candidates.contains(key)) {
             continue;
         }
-        if (!keys.empty()) {
-            auto candidate = indexed_contiguous_positions(trigram_path(directory, id), keys);
-            if (!candidate) {
-                return std::unexpected(candidate.error());
-            }
-            if (!*candidate) {
-                continue;
-            }
-        }
         auto content = load_blob(directory, id);
         if (!content) {
             return std::unexpected(content.error());
         }
-        const auto matched = plan.regex ? std::regex_search(*content, *plan.expression)
-                                        : content->find(plan.needle) != std::string::npos;
+        auto matched = false;
+        if (plan.regex) {
+            const auto passes_prefilter = plan.literal_core.size() < 3 ||
+                                          content->find(plan.literal_core) != std::string::npos;
+            matched = passes_prefilter && std::regex_search(*content, *plan.expression);
+        } else {
+            matched = content->find(plan.needle) != std::string::npos;
+        }
         if (!matched) {
             continue;
         }
@@ -1189,13 +1254,64 @@ auto positional_matches(const std::filesystem::path& directory,
     return output;
 }
 
+auto scanned_matches(const std::vector<document>& documents, const query_plan& plan)
+    -> result<std::pair<std::map<std::string, digest>, query_matches>> {
+    if (!plan.regex && !plan.substring) {
+        return std::unexpected(error{
+            errc::unsupported, "ranked text has no scan-equivalent result set", "search planner"});
+    }
+    auto paths = std::map<std::string, digest>{};
+    auto output = query_matches{};
+    for (const auto& value : documents) {
+        paths.emplace(value.path, value.blob);
+        const auto key = to_string(value.blob);
+        const auto inspect = [&](std::span<const std::byte> bytes) {
+            const auto* data = bytes.empty() ? "" : reinterpret_cast<const char*>(bytes.data());
+            const auto content = std::string_view{data, bytes.size()};
+            auto matched = false;
+            if (plan.regex) {
+                const auto passes_prefilter =
+                    plan.literal_core.size() < 3 ||
+                    content.find(plan.literal_core) != std::string_view::npos;
+                matched = passes_prefilter &&
+                          std::regex_search(content.begin(), content.end(), *plan.expression);
+            } else {
+                matched = content.find(plan.needle) != std::string_view::npos;
+            }
+            if (matched) {
+                output.blob_scores[key] = 1.0;
+                output.contents.try_emplace(key, content);
+            }
+        };
+        if (!value.source.empty()) {
+            auto code = std::error_code{};
+            const auto size = std::filesystem::file_size(value.source, code);
+            if (code) {
+                return std::unexpected(failure(errc::io, code.message(), value.source));
+            }
+            if (size != 0) {
+                auto mapped = store_detail::mapped_file{};
+                auto opened = mapped.open(value.source);
+                if (!opened) {
+                    return std::unexpected(opened.error());
+                }
+                inspect(mapped.bytes());
+            } else {
+                inspect({});
+            }
+        } else {
+            inspect(value.contents);
+        }
+    }
+    return std::pair{std::move(paths), std::move(output)};
+}
+
 auto render_hits(const std::filesystem::path& directory,
                  const std::map<std::string, digest>& paths,
                  const query_plan& plan,
                  query_matches matches,
                  std::uint64_t limit) -> result<std::vector<search_hit>> {
     auto output = std::vector<search_hit>{};
-    const auto snippet_needle = plan.regex ? regex_literal(plan.needle) : plan.needle;
     for (const auto& [path, id] : paths) {
         const auto key = to_string(id);
         const auto blob_score = matches.blob_scores.find(key);
@@ -1212,11 +1328,20 @@ auto render_hits(const std::filesystem::path& directory,
         }
         const auto score = (blob_score == matches.blob_scores.end() ? 0.0 : blob_score->second) +
                            (path_score == matches.path_scores.end() ? 0.0 : path_score->second);
-        output.push_back({path, id, snippet_for(matches.contents.at(key), snippet_needle), score});
+        const auto& content = matches.contents.at(key);
+        const auto position = locate_match(content, plan);
+        const auto [line, column] = line_column(content, position.offset);
+        const auto ranked = !plan.regex && !plan.substring;
+        output.push_back({path,
+                          id,
+                          line,
+                          column,
+                          snippet_for(content, position.offset),
+                          ranked ? std::optional<double>{score} : std::nullopt});
     }
     std::ranges::sort(output, [](const auto& left, const auto& right) {
         if (left.score != right.score) {
-            return left.score > right.score;
+            return left.score.value_or(0.0) > right.score.value_or(0.0);
         }
         return left.path < right.path;
     });
@@ -1235,6 +1360,23 @@ auto has_slot(const std::filesystem::path& directory, const std::string& slot) -
             return std::unexpected(manifest.error());
         }
         return manifest->slots.contains(slot);
+    } catch (const std::exception& caught) {
+        return std::unexpected(error{errc::internal, caught.what(), directory.string()});
+    }
+}
+
+auto slot_generation(const std::filesystem::path& directory, const std::string& slot)
+    -> result<std::optional<std::string>> {
+    try {
+        auto manifest = load_manifest(directory);
+        if (!manifest) {
+            return std::unexpected(manifest.error());
+        }
+        const auto found = manifest->slots.find(slot);
+        if (found == manifest->slots.end()) {
+            return std::optional<std::string>{};
+        }
+        return std::optional<std::string>{found->second.generation};
     } catch (const std::exception& caught) {
         return std::unexpected(error{errc::internal, caught.what(), directory.string()});
     }
@@ -1274,6 +1416,20 @@ auto query(const std::filesystem::path& directory,
            const std::string& slot,
            const std::string& text,
            std::uint64_t limit) -> result<std::vector<search_hit>> {
+    auto kind = classify(text);
+    if (!kind) {
+        return std::unexpected(kind.error());
+    }
+    const auto executor =
+        *kind == search_query_kind::ranked_text ? search_executor::bm25f : search_executor::trigram;
+    return query(directory, slot, text, limit, executor);
+}
+
+auto query(const std::filesystem::path& directory,
+           const std::string& slot,
+           const std::string& text,
+           std::uint64_t limit,
+           search_executor executor) -> result<std::vector<search_hit>> {
     try {
         if (text.empty()) {
             return std::unexpected(error{errc::invalid_argument, "search query is required"});
@@ -1282,25 +1438,330 @@ auto query(const std::filesystem::path& directory,
             return std::unexpected(
                 error{errc::invalid_argument, "search limit must be between 1 and 1000"});
         }
-        auto paths = active_paths(directory, slot);
-        if (!paths) {
-            return std::unexpected(paths.error());
+        auto snapshot = active_snapshot(directory, slot);
+        if (!snapshot) {
+            return std::unexpected(snapshot.error());
         }
         auto plan = plan_query(text);
         if (!plan) {
             return std::unexpected(plan.error());
         }
-        const auto blobs = unique_blobs(*paths);
-        auto matches = plan->regex || plan->substring
-                           ? positional_matches(directory, blobs, *plan)
-                           : ranked_matches(directory, *paths, blobs, plan->needle);
+        if (executor == search_executor::scan) {
+            return std::unexpected(
+                error{errc::invalid_argument, "scan requires working-set blobs", "search index"});
+        }
+        if (executor == search_executor::bm25f && (plan->regex || plan->substring)) {
+            return std::unexpected(error{
+                errc::invalid_argument, "BM25F cannot execute literal or regex queries", text});
+        }
+        if (executor == search_executor::trigram && !plan->regex && !plan->substring) {
+            return std::unexpected(
+                error{errc::invalid_argument, "trigrams cannot rank text queries", text});
+        }
+        const auto blobs = unique_blobs(snapshot->paths);
+        auto matches = result<query_matches>{};
+        if (executor == search_executor::trigram) {
+            matches = positional_matches(directory, blobs, snapshot->segments, *plan);
+        } else {
+            matches = ranked_matches(directory, snapshot->paths, blobs, plan->needle);
+        }
         if (!matches) {
             return std::unexpected(matches.error());
         }
-        return render_hits(directory, *paths, *plan, std::move(*matches), limit);
+        return render_hits(directory, snapshot->paths, *plan, std::move(*matches), limit);
     } catch (const std::exception& caught) {
         return std::unexpected(error{errc::internal, caught.what(), directory.string()});
     }
+}
+
+auto scan(const std::vector<document>& documents, const std::string& text, std::uint64_t limit)
+    -> result<std::vector<search_hit>> {
+    try {
+        if (text.empty()) {
+            return std::unexpected(error{errc::invalid_argument, "search query is required"});
+        }
+        if (limit == 0 || limit > 1000) {
+            return std::unexpected(
+                error{errc::invalid_argument, "search limit must be between 1 and 1000"});
+        }
+        auto plan = plan_query(text);
+        if (!plan) {
+            return std::unexpected(plan.error());
+        }
+        auto matches = scanned_matches(documents, *plan);
+        if (!matches) {
+            return std::unexpected(matches.error());
+        }
+        return render_hits({}, matches->first, *plan, std::move(matches->second), limit);
+    } catch (const std::exception& caught) {
+        return std::unexpected(error{errc::internal, caught.what(), "search scan"});
+    }
+}
+
+auto classify(const std::string& text) -> result<search_query_kind> {
+    if (text.empty()) {
+        return std::unexpected(error{errc::invalid_argument, "search query is required"});
+    }
+    auto plan = plan_query(text);
+    if (!plan) {
+        return std::unexpected(plan.error());
+    }
+    if (!plan->regex && !plan->substring) {
+        return search_query_kind::ranked_text;
+    }
+    if (plan->substring) {
+        return search_query_kind::literal;
+    }
+    return plan->literal_core.size() >= 3 ? search_query_kind::regex_with_literal_core
+                                          : search_query_kind::regex_without_literal_core;
+}
+
+auto selectivity(const std::filesystem::path& directory,
+                 const std::string& slot,
+                 const std::string& text) -> result<double> {
+    auto snapshot = active_snapshot(directory, slot);
+    if (!snapshot) {
+        return std::unexpected(snapshot.error());
+    }
+    const auto blobs = unique_blobs(snapshot->paths);
+    if (blobs.empty()) {
+        return 0.0;
+    }
+    auto plan = plan_query(text);
+    if (!plan) {
+        return std::unexpected(plan.error());
+    }
+    const auto prefilter = plan->regex ? plan->literal_core : plan->needle;
+    const auto keys = trigrams(prefilter);
+    if (keys.empty()) {
+        return 1.0;
+    }
+    auto candidates = catalog_candidates(directory, keys, snapshot->segments);
+    if (!candidates) {
+        return std::unexpected(candidates.error());
+    }
+    return static_cast<double>(candidates->size()) / static_cast<double>(blobs.size());
+}
+
+auto make_plan(const planner_inputs& inputs, search_query_kind kind) -> search_plan {
+    constexpr auto measured_index_startup_us = std::uint64_t{350};
+    constexpr auto measured_index_candidate_ns = std::uint64_t{650000};
+    const auto blobs = inputs.working_set.unique_blobs;
+    const auto scan_ns = std::max(std::uint64_t{1}, inputs.scan_nanoseconds_per_blob);
+    constexpr auto calibration_blob_bytes = std::uint64_t{64 * 1024};
+    const auto byte_units =
+        (inputs.working_set.bytes + calibration_blob_bytes - 1) / calibration_blob_bytes;
+    const auto scan_units = blobs + byte_units;
+    const auto scan_parallelism =
+        std::max(std::uint64_t{1}, std::min(inputs.scan_parallelism, scan_units));
+    const auto scan_cost = std::max(
+        std::uint64_t{1},
+        static_cast<std::uint64_t>(std::ceil(static_cast<double>(scan_ns) * scan_units /
+                                             static_cast<double>(scan_parallelism) / 1000.0)));
+    const auto candidates = static_cast<std::uint64_t>(
+        std::ceil(inputs.trigram_selectivity * static_cast<double>(blobs)));
+    const auto trigram_cost =
+        measured_index_startup_us + (measured_index_candidate_ns * candidates + 999) / 1000;
+    const auto bm25f_cost = measured_index_startup_us + blobs * 65;
+    auto output = search_plan{.query_kind = kind,
+                              .working_set_blobs = blobs,
+                              .working_set_bytes = inputs.working_set.bytes,
+                              .drips_since_index_update = inputs.drips_since_index_update,
+                              .trigram_selectivity = inputs.trigram_selectivity,
+                              .scan_nanoseconds_per_blob = scan_ns,
+                              .scan_parallelism = scan_parallelism};
+    const auto fresh_index = inputs.index_available && inputs.drips_since_index_update == 0;
+    output.alternatives.push_back(
+        {.executor = search_executor::bm25f,
+         .estimated_cost_us = bm25f_cost,
+         .eligible = kind == search_query_kind::ranked_text && fresh_index,
+         .reason = kind == search_query_kind::ranked_text
+                       ? (fresh_index ? "ranked result set" : "fresh index required")
+                       : "ranked result set differs"});
+    output.alternatives.push_back(
+        {.executor = search_executor::trigram,
+         .estimated_cost_us = trigram_cost,
+         .eligible = kind != search_query_kind::ranked_text && fresh_index,
+         .reason = fresh_index ? "identical verified result set" : "fresh index required"});
+    output.alternatives.push_back({.executor = search_executor::scan,
+                                   .estimated_cost_us = scan_cost,
+                                   .eligible = kind != search_query_kind::ranked_text,
+                                   .reason = kind == search_query_kind::ranked_text
+                                                 ? "no ranked scan equivalent"
+                                                 : "identical current result set"});
+    if (kind == search_query_kind::ranked_text) {
+        output.executor = search_executor::bm25f;
+        output.estimated_cost_us = bm25f_cost;
+        return output;
+    }
+    const auto trigram_eligible = output.alternatives[1].eligible;
+    if (trigram_eligible && trigram_cost < scan_cost) {
+        output.executor = search_executor::trigram;
+        output.estimated_cost_us = trigram_cost;
+    } else {
+        output.executor = search_executor::scan;
+        output.estimated_cost_us = scan_cost;
+    }
+    return output;
+}
+
+auto calibration(const std::filesystem::path& directory, const std::vector<document>& sample)
+    -> result<std::uint64_t> {
+    const auto path = directory / "scan-calibration";
+    if (std::filesystem::exists(path)) {
+        auto input = std::ifstream{path};
+        auto version = std::string{};
+        auto value = std::uint64_t{};
+        input >> version >> value;
+        if (!input || version != "LIQUID_SCAN_CALIBRATION_1" || value == 0) {
+            return std::unexpected(failure(errc::corrupt, "invalid scan calibration", path));
+        }
+        return value;
+    }
+    auto values = sample;
+    if (values.empty()) {
+        auto contents = std::vector<std::byte>(64 * 1024, std::byte{'x'});
+        auto id = hash(algorithm::blake3, contents);
+        if (!id) {
+            return std::unexpected(id.error());
+        }
+        values.push_back({"calibration", *id, std::move(contents)});
+    }
+    if (values.size() > 64) {
+        values.resize(64);
+    }
+    constexpr auto repetitions = std::uint64_t{16};
+    auto matches = std::uint64_t{};
+    const auto started = std::chrono::steady_clock::now();
+    for (auto repetition = std::uint64_t{}; repetition != repetitions; ++repetition) {
+        auto result = scan(values, "\"liquid-scan-calibration-miss\"", 1);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        matches += result->size();
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started);
+    const auto operations = repetitions * values.size();
+    const auto value = std::max(std::uint64_t{1},
+                                static_cast<std::uint64_t>(elapsed.count()) / operations + matches);
+    const auto text = "LIQUID_SCAN_CALIBRATION_1 " + std::to_string(value) + "\n";
+    const auto encoded = std::span{reinterpret_cast<const std::byte*>(text.data()), text.size()};
+    auto written = write_atomic(path, encoded);
+    if (!written) {
+        return std::unexpected(written.error());
+    }
+    return value;
+}
+
+auto checkout_documents(const std::filesystem::path& checkout, bool retain_contents)
+    -> result<std::vector<document>> {
+    return scan_checkout(checkout, retain_contents);
+}
+
+auto indexed_documents(const std::filesystem::path& directory, const std::string& slot)
+    -> result<std::vector<document>> {
+    auto paths = active_paths(directory, slot);
+    if (!paths) {
+        return std::unexpected(paths.error());
+    }
+    auto output = std::vector<document>{};
+    output.reserve(paths->size());
+    for (const auto& [path, id] : *paths) {
+        output.push_back({path, id, {}, blob_path(directory, id)});
+    }
+    return output;
+}
+
+auto current_generation(const std::filesystem::path& directory) -> result<std::string> {
+    const auto checkout = directory.parent_path().parent_path();
+    const auto path = checkout / ".liquid" / "capture" / "cursor";
+    if (!std::filesystem::exists(path)) {
+        return std::string{"0:0"};
+    }
+    auto input = std::ifstream{path};
+    auto offset = std::uint64_t{};
+    auto platform = std::uint64_t{};
+    input >> offset >> platform;
+    if (!input) {
+        return std::unexpected(failure(errc::corrupt, "invalid capture cursor", path));
+    }
+    return std::to_string(offset) + ":" + std::to_string(platform);
+}
+
+auto freshness(const std::filesystem::path& directory, const std::string& slot)
+    -> result<std::uint64_t> {
+    if (slot != working_slot) {
+        return std::uint64_t{};
+    }
+    auto generation = slot_generation(directory, slot);
+    if (!generation) {
+        return std::unexpected(generation.error());
+    }
+    if (!*generation) {
+        return std::uint64_t{};
+    }
+    const auto checkout = directory.parent_path().parent_path();
+    auto current = current_generation(directory);
+    if (!current) {
+        return std::unexpected(current.error());
+    }
+    const auto current_separator = current->find(':');
+    auto current_offset = std::uint64_t{};
+    const auto current_text = std::string_view{*current}.substr(0, current_separator);
+    const auto [current_end, current_code] = std::from_chars(
+        current_text.data(), current_text.data() + current_text.size(), current_offset);
+    if (current_code != std::errc{} || current_end != current_text.data() + current_text.size()) {
+        return std::unexpected(
+            failure(errc::corrupt, "invalid current search generation", checkout));
+    }
+    const auto separator = (**generation).find(':');
+    if (separator == std::string::npos) {
+        return current_offset == 0 ? std::uint64_t{} : std::uint64_t{1};
+    }
+    auto offset = std::uint64_t{};
+    const auto offset_text = std::string_view{**generation}.substr(0, separator);
+    const auto [end, code] =
+        std::from_chars(offset_text.data(), offset_text.data() + offset_text.size(), offset);
+    if (code != std::errc{} || end != offset_text.data() + offset_text.size() ||
+        offset > current_offset) {
+        return std::unexpected(
+            failure(errc::corrupt, "invalid search generation", manifest_path(directory)));
+    }
+    if (offset == current_offset) {
+        return std::uint64_t{};
+    }
+    const auto journal_path = checkout / ".liquid" / "capture" / "drips.cbor";
+    auto journal = std::ifstream{journal_path, std::ios::binary};
+    if (!journal) {
+        return std::unexpected(failure(errc::io, "cannot read capture journal", journal_path));
+    }
+    journal.seekg(static_cast<std::streamoff>(offset));
+    auto next = offset;
+    auto count = std::uint64_t{};
+    while (next < current_offset) {
+        auto length = std::uint32_t{};
+        for (auto index = 0; index != 4; ++index) {
+            const auto byte = journal.get();
+            if (byte == std::char_traits<char>::eof()) {
+                return std::unexpected(
+                    failure(errc::corrupt, "truncated capture journal", journal_path));
+            }
+            length = (length << 8U) | static_cast<unsigned char>(byte);
+        }
+        journal.seekg(static_cast<std::streamoff>(length), std::ios::cur);
+        if (!journal) {
+            return std::unexpected(
+                failure(errc::corrupt, "truncated capture journal record", journal_path));
+        }
+        next += 4 + length;
+        ++count;
+    }
+    if (next != current_offset) {
+        return std::unexpected(
+            failure(errc::corrupt, "capture cursor is not a journal boundary", checkout));
+    }
+    return count;
 }
 
 auto statistics(const std::filesystem::path& directory, const std::string& slot)

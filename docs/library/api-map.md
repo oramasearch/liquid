@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, remote reads, and content-addressed symbol records; memory, streaming-file, and remote-record writes; content-addressed working/ref search; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -646,7 +646,20 @@ struct repository_attestation { digest id; attestation value; };
 struct attestation_filter { std::optional<digest> id, subject; std::optional<std::string> profile, issuer;
                             record_page_options page; };
 struct search_options { std::optional<std::string> ref; std::uint64_t limit{20}; };
-struct search_hit { std::string path; digest blob; std::string snippet; double score; };
+enum class search_executor { bm25f, trigram, scan };
+enum class search_query_kind { ranked_text, literal, regex_with_literal_core,
+                               regex_without_literal_core };
+struct search_hit { std::string path; digest blob; std::uint64_t line, column;
+                    std::string snippet; std::optional<double> score; };
+struct search_alternative { search_executor executor; std::uint64_t estimated_cost_us;
+                            std::optional<std::uint64_t> actual_cost_us; bool eligible;
+                            std::string reason; };
+struct search_plan { search_executor executor; search_query_kind query_kind;
+                     std::uint64_t estimated_cost_us, actual_cost_us;
+                     std::uint64_t working_set_blobs, working_set_bytes,
+                                   drips_since_index_update, scan_nanoseconds_per_blob,
+                                   scan_parallelism;
+                     double trigram_selectivity; std::vector<search_alternative> alternatives; };
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
@@ -656,6 +669,7 @@ class repository {
   runtime::task<std::vector<std::byte>> read(std::string path);
   runtime::task<std::vector<std::byte>> read_decrypted(std::string path);  // explicit leaf/file decryption
   runtime::task<std::vector<search_hit>> search(std::string query, search_options = {});
+  runtime::task<search_plan> plan_search(std::string query, search_options = {});
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
   runtime::task<void> redact(std::string path, std::optional<change_id> = {});
   runtime::task<void> redact(std::string path, std::vector<std::byte> replacement,
@@ -727,11 +741,12 @@ is implemented for JSON and `.env`; [leaf-encryption.md](leaf-encryption.md) def
 normalization, enforcement, and JSON Pointer key paths.
 
 `search_options` selects the working tree by default or a named ref and limits results to 20 by
-default. Plain queries use BM25F, quoted queries use exact positional trigrams, and
-slash-delimited queries use regex with a safe literal prefilter when the pattern has no operators.
-`search_hit` carries the
-repository-relative path, content digest, one-line snippet, and score. Publication and the private
-index format are documented in [search.md](search.md).
+default. Plain queries use BM25F; quoted and slash-delimited queries let the measured planner choose
+verified trigrams or a current mapped scan. `search_hit` carries the repository-relative path,
+content digest, one-based line and column, one-line snippet, and a score only for ranked results.
+`plan_search` executes the query and returns the same choice with estimates, actual cost, measured
+inputs, and alternatives that preserve or reject the requested result set. Publication, freshness,
+and the private index format are documented in [search.md](search.md).
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.

@@ -66,6 +66,9 @@ cursor fan-out, status reporting, idle shutdown, graph persistence, and bounded 
 resident graph values; Windows reports unsupported until Corosio supplies named-pipe transport.
 Liquid #22 adds the content-addressed local BM25F and positional-trigram index, atomic segment
 publication, per-drip search fan-out target, public working/ref query API, and `liquid search`.
+Liquid #67 adds measured selection among BM25F, verified trigrams, and parallel mapped scans,
+cursor-based stale-index exclusion, common located hit records, the public executed-plan API, and
+`liquid search --explain`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and

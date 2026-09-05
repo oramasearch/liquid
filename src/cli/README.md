@@ -36,9 +36,10 @@ directly.
 `delta.cpp` implements create, digest-checked apply, and fetch through the public delta API. A
 fetch can hydrate a patch or target registered with the store's configured remote sources.
 
-`search.cpp` starts or attaches to the checkout daemon, parses optional ref and result-limit
-selectors, calls `repository::search`, and prints the public ranked hit records. It does not read
-the index files directly.
+`search.cpp` starts or attaches to the checkout daemon, parses optional ref, result-limit, and
+`--explain` selectors, and calls `repository::search` or `repository::plan_search`. Results include
+optional score and located path coordinates. Explain mode prints stable JSON with chosen and
+alternative costs plus every planner input. It does not read the index files directly.
 
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,

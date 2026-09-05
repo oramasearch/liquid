@@ -10,12 +10,15 @@
 > Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
 > a retained GPU text layer inside Dear ImGui.
 
-**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, and per-definition
-frontend granularity in #65 are implemented, including persisted red-green validation,
+**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, continuous clean
+validation in #23, per-definition frontend granularity in #65, local search index in #22, and
+measured search planner in #67 are
+implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
-bounded resident graph values, module loading, unit-keyed actions, and translation-unit assembly.
-The clean-rebuild scheduler and planner remain with their listed issues. Symbol records are
-implemented by #66.
+bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
+atomic per-drip search publication, current mapped scanning, cost explanations, and stale-index
+exclusion. Symbol records are implemented by #66. The clean-rebuild scheduler remains with its
+listed issue.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -174,11 +177,14 @@ extraction arguments. It emits one SCIP-equivalent, content-addressed symbol rec
 translation unit, with tree-sitter's syntactic symbols as the fallback. The `symbols` query
 returns the canonical record for its source blob; [`symbols.md`](symbols.md) fixes its public
 shape. Compile and relink do not demand the symbols query, so extraction remains off the edit
-path. The local search index (#22) is oramacore-cpp
-BM25F and lake's trigram index run in the daemon, updated per drip from the fan-out, indexed by
-blob once. The **planner** (#67) chooses per query among BM25F, the trigram index and a brute-force
-scan over blobs by cost (index availability, term selectivity, corpus size), and explains its
-choice the way `liquid why` explains a cache miss.
+path. The local search index (#22) uses
+oramacore-cpp BM25F and a positional-trigram format, runs in the daemon, updates per drip from
+the fan-out, and indexes each blob once. Immutable segments and an atomically replaced manifest
+make every change visible as a unit. The implementation, layout, and query interface are in
+[`search.md`](search.md). The implemented **planner** (#67) chooses per query among BM25F, the
+trigram index, and a current mapped blob scan from measured size, freshness, selectivity, and
+machine calibration inputs. Its public plan and stable CLI JSON report estimates, actual execution
+cost, and every rejected alternative.
 
 **Measurement.** On the Apple M3 Max macOS host on 2026-09-04, at
 `sysctl -n vm.loadavg` = `{ 110.96 68.28 57.47 }`, the Clang frontend extracted 41 occurrences
@@ -227,7 +233,7 @@ in-process:
    fallback), #66 (symbols), #22 (local index on drip), #23 (validation on the reference projects);
    liquify #5 (interactive analysis)
    and #1 (the editor on the graph).
-3. liquid #67 (the planner); liquify #6 (inline build, test, deploy).
+3. liquid #67 (**implemented:** the planner); liquify #6 (inline build, test, deploy).
 
 ## How to verify
 
@@ -239,8 +245,13 @@ while a one-line semantic edit executes one compile and the link and changes the
 `FrontendModule` and `FrontendGraph` prove dynamic and static registration, C fallback units, exact
 definition actions, one action plus assembly after a body edit, and every recorded reader plus
 assembly after a header edit. `liquid-frontend-measure` records the own-tree edit result in
-[`frontends.md`](frontends.md). Remaining phase exit measurements belong to the issues that add the
-daemon and editor diagnostics.
+[`frontends.md`](frontends.md).
+Issue #22's measurement over liquid's checkout indexed 3,812 paths and 3,672 unique blobs
+(46,572,788 content bytes) in 22,629 ms. Ten representative queries averaged 488,424 us. With #67's
+active catalog lookup and verified candidates, the same host measured 207,101 us over 3,820 paths
+and 3,680 unique blobs. The reproduction command, load average, query mix, and scan/index crossover
+curve are documented in [`search.md`](search.md). Remaining phase exit
+measurements belong to the issues that add editor diagnostics.
 
 ## How to change
 

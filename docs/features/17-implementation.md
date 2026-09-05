@@ -69,8 +69,9 @@ same pattern.
 
 **Current status:** the BM25F scoring core, tokenizer, and in-memory postings are implemented and
 tested upstream. Liquid #22 pins that revision and persists its own content-addressed term records,
-using the upstream tokenizer and scorer without exposing upstream types. Coroutine-shaped
-repository search is implemented at liquid's boundary; the oramacore repository remains private.
+using the upstream tokenizer and scorer without exposing upstream types. Liquid #67 implements the
+three-executor measured planner and explanations at liquid's coroutine boundary; the oramacore
+repository remains private.
 
 **What it covers, and the gap it does not.** BM25F is *ranked full-text over
 tokens*. That is the right engine for prose, documentation, and the Drive-style
@@ -79,14 +80,15 @@ regex engine, and token-based analysis mishandles exactly what matters in source
 code: punctuation, partial identifiers, `snake_case`/`camelCase` boundaries and
 operators ([research](../research/19-full-text-search/)).
 
-So liquid's search is **two engines behind one query planner**:
+So liquid's search is **three executors behind one query planner**:
 
 1. **oramacore-cpp / BM25F** — ranked full-text and relevance.
 2. **A positional trigram index** — exact substring and regex over code, in the
    Zoekt/Blackbird tradition.
 
-Plus brute-force scan for corpora changing faster than any index can follow. See
-[12](12-search.md).
+3. **Parallel mapped scan** — current literal and regex results without ingest or stale answers.
+
+See [12](12-search.md).
 
 The conventions oramacore-cpp already uses — `std::expected` at the boundary, no
 exceptions across the API, coroutines, CMake + Ninja, Catch2 — are the conventions
@@ -124,7 +126,7 @@ depend on them.
 |---|---|
 | **Datastore / metadata CRDT** | **automerge-cpp** (committed) — the same code Zetta already vendors as a submodule |
 | **Ranked full-text search** | **oramacore-cpp** / BM25F (committed) |
-| **Code substring/regex search** | Positional trigram index (to build) |
+| **Code substring/regex search** | Positional trigram index plus parallel mapped scan (implemented) |
 | **Hashing** | BLAKE3 primary; hardware SHA-256 for OCI/REAPI interop; algorithm agile |
 | **Compression** | zstd (`--patch-from`, `--rsyncable`, long-range), lz4 for hot paths |
 | **Content-defined chunking** | FastCDC |
