@@ -26,7 +26,7 @@ that the table and `liquid --help` name the same commands.
 | `status` | `status [--json]` | Show repository status. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
-| `log` | `log [--json]` | Show change history. | available |
+| `log` | `log [--ops] [--json]` | Show change history, or recorded operations newest first. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
@@ -38,8 +38,8 @@ that the table and `liquid --help` name the same commands.
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
 | `split` | `split <path> <into>` | Split a subtree into a repository. | available |
 | `combine` | `combine <repository> [--at <path>]` | Combine another repository. | available |
-| `ops` | `ops [--json]` | List recorded operations, newest first. | available |
-| `undo` | `undo [op-id]` | Undo the newest or named operation. | available |
+| `ops` | `ops [--json]` | Alias for `log --ops`. | available |
+| `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
 | `lock` | `lock <path>` | Advisory-lock a path. | available |
 | `unlock` | `unlock <path>` | Remove an advisory lock. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
@@ -73,8 +73,14 @@ that the table and `liquid --help` name the same commands.
 
 ## Output and errors
 
-`status`, `log`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache stats` accept
-`--json`; `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
+`status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
+stats` accept `--json`. Operation JSON includes the stable operation-kind vocabulary and the
+32-digit session ID. `undo` prints one `applied <op-id>` line per inverse it appended and one
+`skipped <op-id> <path> <reason>` line when newer state prevented a path from changing. A session
+may be narrowed by repeating `--path` or `--drip`; those selectors require `--session` and cannot
+be combined with a positional operation ID.
+
+`status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
 remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
@@ -265,6 +271,7 @@ liquid search 'query graph'
 liquid search '"exact substring"' --ref main --limit 50
 liquid search --explain '/query.*graph/'
 liquid log --json
+liquid log --ops --json
 liquid cut "import existing files"
 liquid refs --json
 LIQUID_TOKEN="$token" liquid push https://lake.example/repositories/project
@@ -276,7 +283,8 @@ liquid nest ../shared-assets vendor/assets
 liquid split src ../src-repository
 liquid combine ../src-repository --at imported-src
 liquid ops --json
-liquid undo
+liquid undo blake3:<operation-id>
+liquid undo --session <32-hex-id> --path src --drip blake3:<operation-id>
 liquid lock src/main.cpp
 liquid unlock src/main.cpp
 liquid mount /tmp/liquid-mount --read-only
@@ -329,7 +337,8 @@ liquid watch
 
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
 two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
-combines it, reads JSON history and operations, undoes the move, verifies a locked mutation is
+combines it, reads JSON history and `log --ops`, exercises the `ops` alias, undoes a selected
+session path, verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.

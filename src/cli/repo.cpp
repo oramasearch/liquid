@@ -18,6 +18,7 @@
 namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
+auto history_operations(int argc, char** argv) -> int;
 
 namespace {
 
@@ -339,11 +340,14 @@ auto repo_status(int argc, char** argv) -> int {
 }
 
 auto repo_log(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "--ops") {
+        return history_operations(argc - 1, argv + 1);
+    }
     auto json = false;
     if (argc == 1 && std::string_view{argv[0]} == "--json") {
         json = true;
     } else if (argc != 0) {
-        return usage("log accepts only --json");
+        return usage("log accepts --json or --ops [--json]");
     }
     auto repository = open_repository();
     if (!repository) {
