@@ -250,6 +250,20 @@ struct LIQUID_EXPORT op_id {
     digest value;
 };
 
+struct LIQUID_EXPORT import_options {
+    std::vector<std::string> ignore_patterns;
+    bool follow_symlinks{};
+    std::string message{"import tree"};
+};
+
+struct LIQUID_EXPORT tree_import_report {
+    std::optional<op_id> drip;
+    std::uint64_t files_seen{};
+    std::uint64_t changed{};
+    std::uint64_t bytes_hashed{};
+    std::uint64_t bytes_written{};
+};
+
 struct LIQUID_EXPORT operation_record {
     op_id id;
     std::string kind;
@@ -278,6 +292,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>> read_decrypted(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
     [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
+    [[nodiscard]] runtime::task<tree_import_report> import_tree(std::filesystem::path root,
+                                                                import_options options = {});
     [[nodiscard]] runtime::task<void>
     write_remote(std::string path, blob value, write_options options = {});
     [[nodiscard]] runtime::task<digest> store_remote_blob(blob value);

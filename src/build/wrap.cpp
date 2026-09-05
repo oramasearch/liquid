@@ -99,7 +99,6 @@ struct saved_action {
 };
 
 struct wrap_state {
-    std::set<std::string> sources;
     std::set<std::string> outputs;
     std::set<std::string> tools;
     std::vector<std::string> action_command;
@@ -413,12 +412,13 @@ auto read_state(const std::filesystem::path& path) -> liquid::result<wrap_state>
             output.outer_result = *id;
             continue;
         }
+        if (fields[0] == "S") {
+            continue;
+        }
         auto value = unhex(fields[1]);
         if (!value)
             return std::unexpected(value.error());
-        if (fields[0] == "S")
-            output.sources.insert(std::move(*value));
-        else if (fields[0] == "O")
+        if (fields[0] == "O")
             output.outputs.insert(std::move(*value));
         else if (fields[0] == "T")
             output.tools.insert(std::move(*value));
@@ -437,8 +437,6 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
     auto output = std::ofstream{temporary, std::ios::binary | std::ios::trunc};
     if (!output)
         return std::unexpected(wrap_error(errc::io, "cannot write wrap state", path));
-    for (const auto& source : state.sources)
-        output << "S\t" << hex(source) << '\n';
     for (const auto& item : state.outputs)
         output << "O\t" << hex(item) << '\n';
     for (const auto& tool : state.tools)
@@ -504,71 +502,26 @@ auto wrap_hook_path() -> liquid::result<std::filesystem::path> {
                                       LIQUID_WRAP_HOOK_FILENAME));
 }
 
-auto excluded_path(std::string_view path,
-                   const std::set<std::string>& outputs,
-                   const std::filesystem::path& cache,
-                   const std::filesystem::path& root) -> bool {
-    if (path == ".git" || path.starts_with(".git/") || path == ".liquid-store" ||
-        path.starts_with(".liquid-store/") || path == "LIQUID_REPO" || path == "LIQUID_JOURNAL" ||
-        path.starts_with(".liquid-build/")) {
-        return true;
-    }
-    if (outputs.contains(std::string{path}))
-        return true;
-    const auto relative_cache = cache.lexically_relative(root).generic_string();
-    return !relative_cache.empty() && !relative_cache.starts_with("../") &&
-           (path == relative_cache || path.starts_with(relative_cache + "/"));
-}
-
-auto source_files(const std::filesystem::path& root,
-                  const std::set<std::string>& outputs,
-                  const std::filesystem::path& cache)
-    -> liquid::result<std::map<std::string, std::filesystem::path>> {
-    auto result = std::map<std::string, std::filesystem::path>{};
-    auto code = std::error_code{};
-    for (std::filesystem::recursive_directory_iterator iterator{
-             root, std::filesystem::directory_options::skip_permission_denied, code};
-         !code && iterator != std::filesystem::recursive_directory_iterator{};
-         iterator.increment(code)) {
-        const auto relative = iterator->path().lexically_relative(root).generic_string();
-        if (iterator->is_directory(code) && excluded_path(relative, outputs, cache, root)) {
-            iterator.disable_recursion_pending();
-            continue;
-        }
-        if (iterator->is_regular_file(code) && !excluded_path(relative, outputs, cache, root))
-            result.emplace(relative, iterator->path());
-    }
-    if (code)
-        return std::unexpected(wrap_error(errc::io, code.message(), root));
-    return result;
-}
-
 runtime::task<void> sync_sources(repository& source,
                                  const std::filesystem::path& root,
                                  const std::filesystem::path& cache,
                                  wrap_state& state) {
-    auto files = source_files(root, state.outputs, cache);
-    if (!files)
-        co_return std::unexpected(files.error());
-    for (const auto& old : state.sources) {
-        if (files->contains(old))
-            continue;
-        auto removed = co_await source.remove(old);
-        if (!removed && removed.error().code != errc::not_found)
-            co_return std::unexpected(removed.error());
+    auto options = import_options{};
+    options.message = "synchronise wrap sources";
+    options.ignore_patterns = {
+        ".git/**", ".liquid-store/**", "LIQUID_REPO", "LIQUID_JOURNAL", ".liquid-build/**"};
+    for (const auto& output : state.outputs) {
+        options.ignore_patterns.push_back(output);
+        options.ignore_patterns.push_back(output + "/**");
     }
-    state.sources.clear();
-    for (const auto& [relative, path] : *files) {
-        auto written = co_await source.write_file(relative, path);
-        if (!written)
-            co_return std::unexpected(written.error());
-        auto status = std::filesystem::status(path);
-        auto mode = static_cast<std::uint32_t>(status.permissions()) & 0777U;
-        auto mode_set = co_await repository_detail::vfs_access::set_mode(
-            source, relative, static_cast<std::uint32_t>(S_IFREG) | mode);
-        if (!mode_set)
-            co_return std::unexpected(mode_set.error());
-        state.sources.insert(relative);
+    const auto relative_cache = cache.lexically_relative(root).generic_string();
+    if (!relative_cache.empty() && !relative_cache.starts_with("../")) {
+        options.ignore_patterns.push_back(relative_cache);
+        options.ignore_patterns.push_back(relative_cache + "/**");
+    }
+    auto imported = co_await source.import_tree(root, std::move(options));
+    if (!imported) {
+        co_return std::unexpected(imported.error());
     }
     co_return liquid::result<void>{};
 }

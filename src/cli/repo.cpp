@@ -101,30 +101,6 @@ auto join(int argc, char** argv) -> std::string {
     return output;
 }
 
-auto input_files(const std::filesystem::path& root)
-    -> liquid::result<std::vector<std::filesystem::path>> {
-    auto code = std::error_code{};
-    auto output = std::vector<std::filesystem::path>{};
-    if (!std::filesystem::exists(root, code)) {
-        if (code) {
-            return std::unexpected(liquid::error{liquid::errc::io, code.message(), root.string()});
-        }
-        return output;
-    }
-    for (std::filesystem::recursive_directory_iterator iterator{
-             root, std::filesystem::directory_options::skip_permission_denied, code};
-         !code && iterator != std::filesystem::recursive_directory_iterator{};
-         iterator.increment(code)) {
-        if (iterator->is_regular_file(code)) {
-            output.push_back(iterator->path());
-        }
-    }
-    if (code) {
-        return std::unexpected(liquid::error{liquid::errc::io, code.message(), root.string()});
-    }
-    return output;
-}
-
 auto open_repository() -> liquid::result<liquid::repository> {
     return liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
 }
@@ -136,21 +112,16 @@ auto repo_init(int argc, char** argv) -> int {
         return usage("init accepts at most one path");
     }
     const auto path = argc == 1 ? std::filesystem::path{argv[0]} : std::filesystem::current_path();
-    auto files = input_files(path);
-    if (!files) {
-        return fail(files.error());
-    }
     auto repository = liquid::runtime::block_on(liquid::repository::create(path));
     if (!repository) {
         return fail(repository.error());
     }
-    for (const auto& source : *files) {
-        auto relative = source.lexically_relative(path).generic_string();
-        auto written =
-            liquid::runtime::block_on(repository->write_file(std::move(relative), source));
-        if (!written) {
-            return fail(written.error());
-        }
+    auto options = liquid::import_options{};
+    options.message = "initial import";
+    options.ignore_patterns = {".liquid-store/**", "LIQUID_REPO", "LIQUID_JOURNAL"};
+    auto imported = liquid::runtime::block_on(repository->import_tree(path, std::move(options)));
+    if (!imported) {
+        return fail(imported.error());
     }
     std::println("initialised {}", path.string());
     return 0;

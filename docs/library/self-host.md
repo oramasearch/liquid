@@ -84,6 +84,13 @@ checkpoint interval, and requires peak RSS below 512 MiB on
 both supported desktop platforms. The test keeps the payload small so it measures buffering,
 not capacity.
 
+Wrapper source synchronization uses `repository::import_tree`, not an individual write for every
+source on every run. It streams the source directory, compares each file's blob identity with the
+private repository's current tree, and writes one drip only when entries changed. An unchanged
+tree writes no drip. Its retained state is `O(depth + changed entries + 64 KiB journal budget)`.
+The Linux self-host container has an 8 GiB memory limit; that bound applies to source import as
+well as result restoration and repository checkpoints.
+
 The self-host proof bind-mounts the checkout, `build-wrapped`, and
 `.liquid-build/self-host-cache` at `/liquid/work`. The explicit cache location matters: without
 `LIQUID_WRAP_CACHE`, the wrapper uses `/root/.cache/liquid/wrap` on Docker's writable layer, whose

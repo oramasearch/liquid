@@ -143,6 +143,8 @@ auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
     return keys;
 }
 
+void write_file(const std::filesystem::path& path, std::span<const std::byte> bytes);
+
 TEST(Repository, restores_many_journaled_outputs_with_bounded_peak_rss) {
     constexpr auto output_count = std::size_t{96};
     constexpr auto output_size = std::size_t{2048};
@@ -166,6 +168,90 @@ TEST(Repository, restores_many_journaled_outputs_with_bounded_peak_rss) {
         reopened->read("outputs/" + std::to_string(output_count - 1) + ".o"));
     ASSERT_TRUE(restored) << restored.error().message;
     EXPECT_EQ(*restored, payload);
+    EXPECT_LT(peak_rss_bytes(), rss_ceiling);
+}
+
+TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
+    temporary_repository location;
+    const auto source = location.path() / "source";
+    write_file(source / "kept.txt", content("first"));
+    write_file(source / "ignored.txt", content("ignored"));
+    write_file(source / ".liquidignore", content("ignored.txt\n"));
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+
+    const auto first = liquid::runtime::block_on(repository.import_tree(source));
+    ASSERT_TRUE(first) << first.error().message;
+    EXPECT_TRUE(first->drip.has_value());
+    EXPECT_EQ(first->files_seen, 2U);
+    EXPECT_EQ(first->changed, 2U);
+    EXPECT_GT(first->bytes_hashed, 0U);
+    EXPECT_GT(first->bytes_written, 0U);
+    const auto ignored = liquid::runtime::block_on(repository.read("ignored.txt"));
+    EXPECT_FALSE(ignored);
+
+    const auto before = repository.status();
+    ASSERT_TRUE(before) << before.error().message;
+    const auto unchanged = liquid::runtime::block_on(repository.import_tree(source));
+    ASSERT_TRUE(unchanged) << unchanged.error().message;
+    EXPECT_FALSE(unchanged->drip.has_value());
+    EXPECT_EQ(unchanged->changed, 0U);
+    const auto after = repository.status();
+    ASSERT_TRUE(after) << after.error().message;
+    EXPECT_EQ(after->pending_drips, before->pending_drips);
+}
+
+TEST(Repository, import_tree_preserves_file_identity_and_records_removals) {
+    temporary_repository location;
+    const auto source = location.path() / "source";
+    write_file(source / "changed.txt", content("before"));
+    write_file(source / "removed.txt", content("remove"));
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.import_tree(source)));
+    const auto before = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(before) << before.error().message;
+
+    write_file(source / "changed.txt", content("after"));
+    ASSERT_TRUE(std::filesystem::remove(source / "removed.txt"));
+    const auto imported = liquid::runtime::block_on(repository.import_tree(source));
+    ASSERT_TRUE(imported) << imported.error().message;
+    ASSERT_TRUE(imported->drip.has_value());
+    EXPECT_EQ(imported->changed, 2U);
+    const auto after = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(after) << after.error().message;
+    const auto changes = liquid::runtime::block_on(repository.diff(*before, *after));
+    ASSERT_TRUE(changes) << changes.error().message;
+    const auto modified =
+        std::ranges::find(*changes, "changed.txt", &liquid::tree_diff_entry::path);
+    ASSERT_NE(modified, changes->end());
+    EXPECT_TRUE(has_change(*modified, liquid::tree_diff_kind::modified));
+    const auto removed = std::ranges::find(*changes, "removed.txt", &liquid::tree_diff_entry::path);
+    ASSERT_NE(removed, changes->end());
+    EXPECT_TRUE(has_change(*removed, liquid::tree_diff_kind::removed));
+}
+
+TEST(Repository, import_tree_has_a_bounded_peak_rss) {
+    constexpr auto file_count = std::size_t{1024};
+    constexpr auto file_size = std::size_t{1024};
+    constexpr auto rss_ceiling = std::uint64_t{512 * 1024 * 1024};
+    temporary_repository location;
+    const auto source = location.path() / "source";
+    const auto payload = std::vector<std::byte>(file_size, std::byte{0x5a});
+    for (auto index = std::size_t{}; index != file_count; ++index) {
+        write_file(source / "files" / std::to_string(index), payload);
+    }
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    const auto imported = liquid::runtime::block_on(repository.import_tree(source));
+    ASSERT_TRUE(imported) << imported.error().message;
+    EXPECT_EQ(imported->files_seen, file_count);
     EXPECT_LT(peak_rss_bytes(), rss_ceiling);
 }
 

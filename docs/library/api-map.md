@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, remote-record, and streaming tree-import writes; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -648,11 +648,14 @@ class repository {
   runtime::task<tree> tree(digest);                              // a tree record from the store (historical snapshots)
   runtime::task<std::vector<std::byte>> blob(digest);            // a blob's bytes by digest
   runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);   // mode-aware
+  runtime::task<tree_import_report> import_tree(std::filesystem::path root, import_options = {});
   runtime::task<void> nest_ref(std::string path, repo_ref);      // a nested-repository placeholder without the repository present
 };
 struct change_input { std::vector<change_ref> parents; actor author; std::chrono::sys_seconds at; std::string message;
                       std::map<std::string, std::string> metadata; std::optional<std::string> ref; };
 struct write_options { std::uint32_t mode{0100644}; };
+struct import_options { std::vector<std::string> ignore_patterns; bool follow_symlinks{}; std::string message{"import tree"}; };
+struct tree_import_report { std::optional<op_id> drip; std::uint64_t files_seen, changed, bytes_hashed, bytes_written; };
 // log_options gains: std::optional<change_id> from; bool first_parent{false};  (full DAG, topological order, by default)
 ```
 

@@ -216,6 +216,27 @@ whose line matrix would exceed 4,000,000 cells it returns the exact common-prefi
 envelope as one bounded-memory hunk. The value type can gain Phase 4's syntax-aware `structural`
 field without changing these path, identity, conflict, or text fields.
 
+## Tree import
+
+`repository::import_tree(root, import_options)` walks a local directory one directory at a time,
+hashes every included regular file through the object store, and compares the resulting blob record
+identity with the current working tree. Only added, removed, content-changed, or mode-changed
+entries alter the tree. A non-empty import records one `import` drip; an unchanged tree returns no
+drip. `tree_import_report` returns that optional drip identifier plus `files_seen`, `changed`,
+`bytes_hashed`, and `bytes_written`.
+
+`import_options::ignore_patterns` supplements `.liquidignore` at the imported root. Patterns use
+the repository glob rules; a trailing slash selects the directory and its descendants. By default
+symbolic links are skipped. `follow_symlinks` follows them, and `message` is retained with the
+recorded operation. `liquid init`, local `liquid import <path>`, and `liquid wrap` use this one
+primitive; Git history import remains its separate historical-object path.
+
+The walk retains the directory stack and changed entries, never a collection of all discovered
+paths. The imported drip participates in the 64 KiB repository journal budget documented in
+[`build-engine.md`](build-engine.md); reaching that budget checkpoints the already-paged tree.
+Thus importing is bounded by `O(depth + changed entries + journal budget)`, rather than the size
+of the input tree.
+
 ## Anchors
 
 Issue #174 adds text positions that follow a file from one change to another without changing the

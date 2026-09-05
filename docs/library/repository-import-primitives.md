@@ -18,6 +18,14 @@ is intended for stable foreign-format identifiers such as a Git object name.
 but takes an already stored tree record as its snapshot. It lets a history importer retain each
 historical snapshot without replaying that history through the working-tree documents.
 
+## Local trees
+
+`repository::import_tree(path, import_options)` is the local working-tree importer shared by
+`liquid init`, `liquid import <path>`, and the build wrapper. It reports the optional one-drip
+import identifier and file and byte counts. `.liquidignore` and caller patterns exclude paths;
+links are skipped unless `follow_symlinks` is selected. The working tree is compared by blob
+identity while it is walked, so an unchanged import produces no drip.
+
 ## Repository metadata
 
 `set_metadata`, `metadata`, and `metadata_keys` persist opaque byte values in the repository
