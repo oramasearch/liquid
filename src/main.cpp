@@ -62,6 +62,7 @@ auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto edit(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -237,6 +238,11 @@ constexpr auto commands = std::to_array<command>({
      "show compiler or syntactic symbols for a source path",
      "available",
      liquid_cli::symbols},
+    {"edit",
+     "edit <rename|extract|move|apply> ... [--json] [--apply] [--agent <name>]",
+     "preview or apply a structural edit",
+     "available on macOS and Linux",
+     liquid_cli::edit},
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "

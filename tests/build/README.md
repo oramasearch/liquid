@@ -46,6 +46,13 @@ while a changed quoted header executes both recorded readers and assembly.
 CTest that performs the same count assertion against `src/store/faults.cpp` and prints its elapsed
 milliseconds.
 
+`test_edit.cpp` covers concrete syntax, compiler-record rename across two translation units,
+collision refusal, extract, move, node fingerprint refusal, exact after digests, whole-operation
+undo, daemon framing, and CLI JSON. It compiles edited sources with the configured compiler,
+including a copied `src/store/faults.cpp` and a two-file shared-header fixture.
+`liquid-edit-measure` indexes liquid's own source with tree-sitter and reports references, indexed
+files, touched files, text changes, elapsed milliseconds, and the separately sampled host load.
+
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
 executor uses #17's shared on-disk remote source to reconstruct the source and toolchain in a new

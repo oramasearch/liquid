@@ -66,6 +66,7 @@ that the table and `liquid --help` name the same commands.
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
 | `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
+| `edit` | `edit <rename\|extract\|move\|apply> ... [--json] [--apply] [--agent <name>]` | Preview or apply a structural edit through the daemon. | available on macOS and Linux |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
@@ -121,6 +122,15 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`edit rename <path>:<line>:<column> <new-name>`, `edit extract
+<path>:<start-line>-<end-line> <name> [--value]`, and `edit move
+<path>:<line>:<column> <to-path> [--at <line>]` construct their public libliquid requests. `edit
+apply <edits.cbor>` reads a canonical tree-edit request. All four preview through the checkout
+daemon. Text output is a unified diff followed by refusals; `--json` prints the versioned preview
+record. `--apply` applies that same preview, and `--agent` records the caller name. Any refusal
+exits 1 without applying accepted changes from the same preview. See
+[`../library/edit.md`](../library/edit.md) for collision, stale-node, and undo behavior.
 
 `write` is the scripted-agent file path. `--base` names the change the caller read and may append
 the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read
