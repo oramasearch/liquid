@@ -2,9 +2,10 @@
 
 GitHub Actions runs [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) for every push
 and pull request. Checkout recursively initializes the public Capy plus the private Corosio,
-automerge-cpp, and HTTP submodules using `ORAMA_SUBMODULES_TOKEN`. The repository secret must exist
+automerge-cpp, HTTP, and oramacore-cpp submodules using `ORAMA_SUBMODULES_TOKEN`. The repository secret must exist
 and grant read access to `oramasearch/corosio`, `oramasearch/automerge-cpp`, and
-`oramasearch/http`; checkout fails before the build when it is absent. Local clones should use
+`oramasearch/http`, and `oramasearch/oramacore-cpp`; checkout fails before the build when it is
+absent. Local clones should use
 `git clone --recurse-submodules`. Each job
 then builds without a dependency cache, runs CTest with failure output, and runs `liquid version`
 on each desktop platform.

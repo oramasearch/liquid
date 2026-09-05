@@ -24,6 +24,7 @@ namespace liquid {
 
 namespace repository_detail {
 struct build_access;
+struct search_access;
 struct testing;
 struct vfs_access;
 struct git_access;
@@ -259,6 +260,18 @@ struct LIQUID_EXPORT operation_record {
     std::chrono::sys_seconds at;
 };
 
+struct LIQUID_EXPORT search_options {
+    std::optional<std::string> ref;
+    std::uint64_t limit{20};
+};
+
+struct LIQUID_EXPORT search_hit {
+    std::string path;
+    digest blob{};
+    std::string snippet;
+    double score{};
+};
+
 class LIQUID_EXPORT repository {
 public:
     repository() noexcept;
@@ -305,6 +318,8 @@ public:
     [[nodiscard]] runtime::task<snapshot> at(change_id id);
     [[nodiscard]] runtime::task<tree> tree(digest id);
     [[nodiscard]] runtime::task<std::vector<std::byte>> blob(digest id);
+    [[nodiscard]] runtime::task<std::vector<search_hit>> search(std::string query,
+                                                                search_options options = {});
     [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>
     diff(change_id old_change, change_id new_change, tree_diff_options options = {});
     [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>
@@ -349,6 +364,7 @@ private:
     redact_impl(std::string path, std::vector<std::byte> replacement, digest target);
 
     friend struct repository_detail::build_access;
+    friend struct repository_detail::search_access;
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     friend struct repository_detail::git_access;

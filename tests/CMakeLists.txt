@@ -32,6 +32,8 @@ add_executable(liquid-tests
   scan/test_capture.cpp
   scan/test_detectors.cpp
   scan/test_redaction.cpp
+  search/test_index.cpp
+  ${PROJECT_SOURCE_DIR}/src/search/index.cpp
   ${PROJECT_SOURCE_DIR}/src/scan/detectors.cpp
   store/test_gc.cpp
   ${PROJECT_SOURCE_DIR}/src/store/chunker.cpp
@@ -60,6 +62,7 @@ endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid
   liquid_monocypher
+  orama::oramacore-cpp
   GTest::gtest_main
   Boost::corosio
   Boost::corosio_openssl)
@@ -347,6 +350,13 @@ target_link_libraries(liquid-crdt-measure PRIVATE
 
 add_executable(liquid-repository-open-measure EXCLUDE_FROM_ALL repository/measure_open.cpp)
 target_link_libraries(liquid-repository-open-measure PRIVATE liquid::liquid)
+
+add_executable(
+  liquid-search-measure EXCLUDE_FROM_ALL search/measure_index.cpp
+                                         ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+                                         ${PROJECT_SOURCE_DIR}/src/search/index.cpp)
+target_include_directories(liquid-search-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-search-measure PRIVATE liquid::liquid orama::oramacore-cpp)
 
 add_executable(liquid-record-tests
   objects/test_records.cpp

@@ -61,9 +61,11 @@ assembly, and unit-keyed graph invalidation. Liquid #64 adds signed zstd delta d
 verified local and registered-remote blob fetch plus chunk fallback. Liquid #21 adds the
 macOS/Linux per-checkout daemon, start-on-first-use CLI attachment, capture ownership, ordered
 cursor fan-out, status reporting, idle shutdown, graph persistence, and bounded resident graph
-values; Windows reports unsupported until Corosio supplies named-pipe transport. The repository
-object model, internal CRDT metadata document, canonical CBOR codec, and drip journal are
-implemented. Directory
+resident graph values; Windows reports unsupported until Corosio supplies named-pipe transport.
+Liquid #22 adds the content-addressed local BM25F and positional-trigram index, atomic segment
+publication, per-drip search fan-out target, public working/ref query API, and `liquid search`.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Repositories can use a caller-owned shared store with independent
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,
@@ -238,7 +240,7 @@ chosen options once they are made.
 | [`oramasearch/orama-operator`](https://github.com/oramasearch/orama-operator) | **The Orama operator** (renamed from `orama-cloud-v1-operator`; the Zetta operator). lake is deployed by adding a `Lake` CR to it — there is no separate lake operator. Running in production on AKS. |
 | [`oramasearch/k0s`](https://github.com/oramasearch/k0s) | **Private copy** of `k0sproject/k0s`, synced with upstream, modified for drips. `main` is a pristine upstream mirror; our changes live on `liquid`. See its `ORAMA-FORK.md`. |
 | [`oramasearch/automerge-cpp`](https://github.com/oramasearch/automerge-cpp) | The MIT-licensed CRDT datastore ([17](docs/features/17-implementation.md)), consumed here as a pinned private submodule. |
-| [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F search engine ([12](docs/features/12-search.md)). Private; currently a scaffold. |
+| [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F tokenizer and scorer ([12](docs/features/12-search.md)), consumed as a private pinned submodule by liquid's local index. |
 | [`oramasearch/corosio`](https://github.com/oramasearch/corosio) | **Private patch carrier** for `cppalliance/corosio` — `orama-main` carries an epoll hang-up fix that is **not upstream**. Zetta consumes it. **Consume this, never `cppalliance/corosio` directly.** (An earlier claim here that Zetta had drifted to upstream was wrong — it came from a stale standalone clone.) |
 | [`oramasearch/http`](https://github.com/oramasearch/http) | **Private patch carrier** for `cppalliance/http`, branch `zetta-patches`. Same rule: consume this, never upstream directly. |
 | `cppalliance/capy` | No private copy. Consume upstream `develop` until there is a patch to carry. |

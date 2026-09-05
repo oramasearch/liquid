@@ -11,9 +11,10 @@
 > a retained GPU text layer inside Dear ImGui.
 
 **Status:** the demand-driven query graph in #20, per-checkout daemon in #21, and per-definition
-frontend granularity in #65 are implemented, including persisted red-green validation,
+frontend granularity in #65, and local search index in #22 are implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
-bounded resident graph values, module loading, unit-keyed actions, and translation-unit assembly.
+bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
+atomic per-drip search publication.
 The clean-rebuild scheduler, symbols, and planner remain with their listed issues.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
@@ -133,8 +134,8 @@ architecture and is the only way to avoid a serialisation boundary.
 
 The built-in target order is build, search, collaborators, then lake. The build target marks only
 working-tree inputs named by the drip operations changed through #20's public graph. The remaining
-built-ins are idempotent acceptance hooks until #22 and the collaborator work bind their
-implementations.
+built-ins other than search are idempotent acceptance hooks until their owning work binds an
+implementation. Search publishes changed paths and tombstones into #22's local index.
 Callers can instead pass ordered `daemon_target` implementations. Every target persists its own
 journal cursor only after successful delivery. Replayed or duplicate cursor values are ignored;
 a failed target keeps its old cursor and error, so restart retries it. `liquid status` reports the
@@ -169,9 +170,11 @@ definitions that recorded it.
 
 Compiler-derived symbols are a byproduct of building: the frontend module emits a SCIP-equivalent
 symbol record per translation unit as an action output, content-addressed like everything else,
-with tree-sitter's syntactic symbols as the fallback. The local search index (#22) is oramacore-cpp
-BM25F and lake's trigram index run in the daemon, updated per drip from the fan-out, indexed by
-blob once. The **planner** (#67) chooses per query among BM25F, the trigram index and a brute-force
+with tree-sitter's syntactic symbols as the fallback. The local search index (#22) uses
+oramacore-cpp BM25F and lake's positional-trigram format, runs in the daemon, updates per drip from
+the fan-out, and indexes each blob once. Immutable segments and an atomically replaced manifest
+make every change visible as a unit. The implementation, layout, and query interface are in
+[`search.md`](search.md). The **planner** (#67) chooses per query among BM25F, the trigram index and a brute-force
 scan over blobs by cost (index availability, term selectivity, corpus size), and explains its
 choice the way `liquid why` explains a cache miss.
 
@@ -222,8 +225,11 @@ while a one-line semantic edit executes one compile and the link and changes the
 `FrontendModule` and `FrontendGraph` prove dynamic and static registration, C fallback units, exact
 definition actions, one action plus assembly after a body edit, and every recorded reader plus
 assembly after a header edit. `liquid-frontend-measure` records the own-tree edit result in
-[`frontends.md`](frontends.md). Remaining phase exit measurements belong to the issues that add the
-daemon and editor diagnostics.
+[`frontends.md`](frontends.md).
+Issue #22's measurement over liquid's checkout indexed 3,763 paths and 3,623 unique blobs
+(46,266,074 content bytes) in 22,596 ms. Ten representative queries averaged 262,870 us. The
+reproduction command and query mix are documented in [`search.md`](search.md). Remaining phase exit
+measurements belong to the issues that add editor diagnostics.
 
 ## How to change
 

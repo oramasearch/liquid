@@ -4,6 +4,12 @@
 >
 > **Requirement:** full-text search built in, and the ability to serve search.
 
+**Implementation status:** liquid #22 implements repository-local working-tree and named-reference
+search with content-addressed BM25F and positional trigrams, atomic publication, daemon drip
+updates, a public repository API, and `liquid search`. See
+[`docs/library/search.md`](../library/search.md). Packaged-artifact search waits for the Phase 5
+format registry; symbols and cost-based planning remain #66 and #67.
+
 ## Two engines, one query planner
 
 No single index is right for both prose and code. liquid runs two, plus a scan
@@ -92,9 +98,6 @@ Permission filtering applies in every channel, checked at query time.
 
 ## Open questions
 
-- **oramacore-cpp maturity.** Its BM25F scoring core is implemented and tested;
-  tokenization, posting lists, the two-index pattern and async search are still to
-  land. liquid's search must be sequenced around that, and the repository is private.
 - **Trigram index storage cost.** Zoekt-style positional trigrams run roughly 3× the
   corpus. Acceptable, but it must be budgeted and sharded well below the 4 GiB
   `uint32` offset ceiling that constrains Zoekt.

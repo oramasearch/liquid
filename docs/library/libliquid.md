@@ -27,7 +27,7 @@ Boost.Capy through `liquid/runtime.hpp`. The CLI never carries behaviour the lib
 
 **Consume.**
 
-Clone with both vendored runtime dependencies:
+Clone with the vendored dependencies:
 
 ```sh
 git clone --recurse-submodules git@github.com:oramasearch/liquid.git
@@ -53,6 +53,7 @@ descendant on the named branch.
 |---|---|---|
 | Capy `develop` | `ce1c7d710c4baaeeddb57fa101707c610f6eb975` | `Boost::capy`; liquid adds `modules/capy` only when the target is absent |
 | Corosio `orama-main` | `9f8e865a7b5728a4093e9345456bc077194dbeff` | `Boost::corosio`; liquid adds `modules/corosio` only when the target is absent |
+| oramacore-cpp | `9b74ce177f47d63024532ae6000c2cd62c73e0cd` | private BM25F tokenizer and scorer; liquid adds `modules/oramacore-cpp` and exposes no upstream types |
 | nlohmann/json | bundled `8167d2f64122c3ef7e5a0d9cab239fdba37aa54c`; supplied minimum 3.11.3 at `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03` | `nlohmann_json::nlohmann_json`; automerge-cpp uses a parent target when present, and the lake-shaped consumer proof supplies it before liquid |
 
 `tests/consumer/` is a separate CMake project that supplies all three targets before
