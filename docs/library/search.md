@@ -94,8 +94,8 @@ live daemon drip becoming searchable, and one cursor advance after duplicate del
 directories, then ran five representative BM25F, substring, and regex queries twice:
 
 ```text
-search index build: files=3763 unique_blobs=3623 bytes=46266382 elapsed_ms=22214
-search query mean: iterations=10 mean_us=268239
+search index build: files=3812 unique_blobs=3672 bytes=46572788 elapsed_ms=22629
+search query mean: iterations=10 mean_us=488424
 ```
 
 ## Deferred

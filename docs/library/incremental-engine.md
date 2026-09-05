@@ -226,8 +226,8 @@ while a one-line semantic edit executes one compile and the link and changes the
 definition actions, one action plus assembly after a body edit, and every recorded reader plus
 assembly after a header edit. `liquid-frontend-measure` records the own-tree edit result in
 [`frontends.md`](frontends.md).
-Issue #22's measurement over liquid's checkout indexed 3,763 paths and 3,623 unique blobs
-(46,266,382 content bytes) in 22,214 ms. Ten representative queries averaged 268,239 us. The
+Issue #22's measurement over liquid's checkout indexed 3,812 paths and 3,672 unique blobs
+(46,572,788 content bytes) in 22,629 ms. Ten representative queries averaged 488,424 us. The
 reproduction command and query mix are documented in [`search.md`](search.md). Remaining phase exit
 measurements belong to the issues that add editor diagnostics.
 
