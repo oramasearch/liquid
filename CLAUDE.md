@@ -74,7 +74,9 @@ Liquid #193 adds move-only public build handles and multi-subscriber Capy event 
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
-journal are implemented. Directory
+journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+local-intent operation and session undo reports, operation-log CLI output, and historical refs,
+locks, and nested pointers. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Repositories can use a caller-owned shared store with independent
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,
