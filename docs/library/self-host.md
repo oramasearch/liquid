@@ -96,6 +96,8 @@ Wrapper source synchronization uses `repository::import_tree`, not an individual
 source on every run. It streams the source directory, compares each file's blob identity with the
 private repository's current tree, and writes one drip only when entries changed. An unchanged
 tree writes no drip. Its retained state is `O(depth + changed entries + 64 KiB journal budget)`.
+Ignored generated entries are retained from the prior paged tree, so synchronising sources for a
+subsequent wrapped build cannot remove the configured CMake cache from the observed filesystem.
 The Linux self-host container has an 8 GiB memory limit; that bound applies to source import as
 well as result restoration and repository checkpoints.
 

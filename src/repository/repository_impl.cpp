@@ -2537,9 +2537,12 @@ struct repository::impl {
              iterator.increment(code)) {
             const auto name = iterator->path().filename().generic_string();
             const auto path = relative.empty() ? name : relative + "/" + name;
+            const auto old = std::ranges::find(prior.entries, name, &tree_entry::name);
             if (ignored(path, options)) {
-                const auto old = std::ranges::find(prior.entries, name, &tree_entry::name);
-                changed = changed || old != prior.entries.end();
+                if (old != prior.entries.end()) {
+                    output.entries.push_back(*old);
+                }
+                seen.insert(name);
                 continue;
             }
             auto status = iterator->symlink_status(code);
@@ -2556,7 +2559,6 @@ struct repository::impl {
                     break;
                 }
             }
-            const auto old = std::ranges::find(prior.entries, name, &tree_entry::name);
             seen.insert(name);
             if (std::filesystem::is_directory(status)) {
                 const auto old_root = old != prior.entries.end() && old->kind == node_kind::tree
@@ -2643,7 +2645,7 @@ struct repository::impl {
             }
             const auto path = relative.empty() ? old.name : relative + "/" + old.name;
             if (ignored(path, options)) {
-                changed = true;
+                output.entries.push_back(old);
                 continue;
             }
             changed = true;

@@ -284,6 +284,32 @@ TEST(Repository, import_tree_has_a_bounded_peak_rss) {
     EXPECT_LT(peak_rss_bytes(), rss_ceiling);
 }
 
+TEST(Repository, import_tree_preserves_ignored_entries_in_a_paged_tree) {
+    constexpr auto file_count = std::size_t{1024};
+    temporary_repository location;
+    const auto source = location.path() / "source";
+    const auto payload = std::vector<std::byte>(1024, std::byte{0x5a});
+    for (auto index = std::size_t{}; index != file_count; ++index) {
+        write_file(source / "sources" / std::to_string(index), payload);
+    }
+    write_file(source / "build" / "CMakeCache.txt", content("configured"));
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.import_tree(source)));
+
+    auto options = liquid::import_options{};
+    options.ignore_patterns = {"build/**"};
+    const auto unchanged = liquid::runtime::block_on(repository.import_tree(source, options));
+    ASSERT_TRUE(unchanged) << unchanged.error().message;
+    EXPECT_FALSE(unchanged->drip.has_value());
+    EXPECT_EQ(unchanged->changed, 0U);
+    const auto cache = liquid::runtime::block_on(repository.read("build/CMakeCache.txt"));
+    ASSERT_TRUE(cache) << cache.error().message;
+    EXPECT_EQ(*cache, content("configured"));
+}
+
 TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {
     temporary_repository location;
     auto opened_store =
