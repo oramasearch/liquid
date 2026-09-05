@@ -362,6 +362,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
    same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
    `docs/library/distribution.md`.
+10. **TSA signature verification is liquid's own, verification only** (Steve, 2026-09-05;
+    bridge decision 32). RFC 3161 and RFC 4998 verification uses liquid's strict DER, CMS, X.509,
+    RSA, and NIST-curve ECDSA readers and verifiers. It does not generate keys or signatures and
+    does not link a general-purpose cryptography library for these operations. Design:
+    `docs/library/transparency.md`.
 
 **Still open:**
 

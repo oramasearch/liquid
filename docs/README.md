@@ -28,6 +28,7 @@ notes so that each claim has a clear role.
 | [`library/hash-agility.md`](library/hash-agility.md) | Digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits. |
 | [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
 | [`library/http2.md`](library/http2.md) | Private Corosio HTTP/2 framing, HPACK, gRPC envelopes, and h2c/TLS ALPN interoperability proof. |
+| [`library/transparency.md`](library/transparency.md) | RFC 3161 timestamp and RFC 4998 evidence verification design, trust policy, and implementation notes. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
