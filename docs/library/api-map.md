@@ -60,6 +60,8 @@ owning issue in `error::context`.
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
 | `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
+| `liquid/format_abi.h` | #29 | implemented | versioned C codec descriptor, canonical-CBOR operations, owned bytes, progress/cancellation callbacks, and optional merge/repack operations |
+| `liquid/format.hpp` | #29 | implemented | fidelity tiers, descriptors, entries, trees and diffs; checked shared/static codec loading; the built-in global registry and resource limits |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
@@ -375,6 +377,19 @@ output. `frontend_graph::symbols(request)` is separate from `build(request)` and
 injected action executor only when the symbol query is demanded.
 `repository::store_symbols(record)` stores and associates a record, while
 `repository::symbols(subject)` returns the associated public value.
+
+### `liquid/format_abi.h` and `liquid/format.hpp`
+
+`liquid_format_module_v1` is the C11 descriptor for format codecs. It carries a name, best fidelity
+tier, extensions, magic prefixes, volatile fields, resource limits, canonical-CBOR operations,
+owned output bytes, and progress/cancellation callbacks. Recognition may lower an individual input
+to a less strict tier with a reason. `format_codec` checks linked and dynamically loaded
+descriptors; `format_registry::global()` exposes the five built-ins and bounded recursive unpack.
+Format trees, logical diffs, codec subsets, nested paths, and repository integration are documented
+in [formats.md](formats.md).
+
+`format_diff_options` supplies finite nonnegative absolute and relative numeric tolerances. HDF5
+applies them element-by-element to decoded floating-point datasets; zero is the exact default.
 
 ### `liquid/store.hpp`
 
@@ -1276,8 +1291,9 @@ key custody providers). Their headers live beside their sources, never under `in
 - **Shared builds are for packaging, not for stability.** Rules 2 and 3 above are what make a
   future stable ABI possible; until 1.0 they are discipline, not a promise.
 - **Frontend C ABI v1 exists before 1.0.** `liquid/frontend_abi.h` is separately versioned and does
-  not expose the C++ ABI. Language modules use it now; format codecs and package backends may adopt
-  dedicated C descriptors later without being loaded into libliquid's core.
+  not expose the C++ ABI. Language modules use it now. `liquid/format_abi.h` applies the same owned
+  bytes, canonical-CBOR, callback, and checked-loader rules to its dedicated format-codec
+  descriptor. Both built-in and external codecs enter the registry through that descriptor.
 - **At 1.0:** semantic versioning of the C++ API, `SOVERSION` bumped on breaks, still no symbol
   versioning. The C++ surface remains distinct from separately versioned module descriptors.
 

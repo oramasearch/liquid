@@ -326,6 +326,7 @@ add_executable(liquid-header-tests
   headers/delta.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/format.cpp
   headers/frontend.cpp
   headers/git.cpp
   headers/graph.cpp
@@ -349,6 +350,10 @@ add_executable(liquid-frontend-c-header headers/frontend_abi.c)
 target_include_directories(liquid-frontend-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME public-frontend-c-header COMMAND liquid-frontend-c-header)
 
+add_executable(liquid-format-c-header headers/format_abi.c)
+target_include_directories(liquid-format-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-format-c-header COMMAND liquid-format-c-header)
+
 add_executable(liquid-cbor-tests encoding/test_cbor.cpp)
 target_sources(liquid-cbor-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 target_include_directories(liquid-cbor-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -361,10 +366,17 @@ gtest_discover_tests(liquid-cbor-tests)
 add_executable(liquid-format-tests
   formats/test_dotenv.cpp
   formats/test_json.cpp
+  formats/test_registry.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
 target_include_directories(liquid-format-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(liquid-format-tests PRIVATE
+  LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_FORMAT_TEST_MODULE="$<TARGET_FILE:liquid-format-test-module>")
 target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_main)
+add_library(liquid-format-test-module MODULE formats/module.c)
+target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_dependencies(liquid-format-tests liquid-format-test-module)
 gtest_discover_tests(liquid-format-tests)
 
 add_executable(liquid-encryption-tests
