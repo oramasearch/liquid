@@ -79,6 +79,14 @@ graph clean-rebuild validation: targets=3714 divergences=0 backlog=0 elapsed_ms=
 Run it with `cmake --build build --target liquid-graph-measure`, followed by
 `build/tests/liquid-graph-measure . <empty-state-directory-outside-checkout>`.
 
+The complete release proof for this implementation reported:
+
+```text
+macOS static: 100% tests passed, 0 tests failed out of 269; Total Test time (real) = 199.52 sec
+macOS shared: 100% tests passed, 0 tests failed out of 269; Total Test time (real) = 209.20 sec
+Linux container: 100% tests passed, 0 tests failed out of 301; Total Test time (real) = 456.35 sec
+```
+
 **Cancellation.** A keystroke cancels in-flight queries that depend on the changed volatile input;
 queries are Capy coroutines, and cancellation is cooperative at every dependency read. Results of
 cancelled computations are discarded, never stored.
