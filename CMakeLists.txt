@@ -426,6 +426,7 @@ add_library(libliquid
   src/scan/detectors.cpp
   src/search/index.cpp
   src/search/repository.cpp
+  src/secret/sealed_secret.cpp
   src/store.cpp
   src/store/chunker.cpp
   src/store/collector.cpp

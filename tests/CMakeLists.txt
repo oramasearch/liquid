@@ -28,6 +28,7 @@ add_executable(liquid-tests
   test_repository.cpp
   test_stale_reasoning.cpp
   test_runtime.cpp
+  test_secret.cpp
   test_store.cpp
   test_temporary_directory.cpp
   attestation/test_registry.cpp
@@ -93,6 +94,10 @@ if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
+
+add_executable(liquid-secret-fixture-generator EXCLUDE_FROM_ALL secret_fixture.cpp)
+target_include_directories(liquid-secret-fixture-generator PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-secret-fixture-generator PRIVATE liquid::liquid)
 if(UNIX)
   add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
   target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
@@ -104,6 +109,8 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)

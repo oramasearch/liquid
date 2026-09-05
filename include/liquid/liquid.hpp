@@ -17,6 +17,7 @@
 #include "liquid/remote.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/secret.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
 #include "liquid/version.hpp"
