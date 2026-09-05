@@ -29,6 +29,7 @@ auto capture_resume(int argc, char** argv) -> int;
 auto capture_watch(int argc, char** argv) -> int;
 auto history_undo(int argc, char** argv) -> int;
 auto history_operations(int argc, char** argv) -> int;
+auto path_history(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
@@ -56,6 +57,7 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto drive(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
@@ -94,6 +96,16 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::search},
     {"log", "log [--json]", "show change history", "available", liquid_cli::repo_log},
+    {"history",
+     "history <path> [--restore <change>]",
+     "show or restore path history",
+     "available",
+     liquid_cli::path_history},
+    {"drive",
+     "drive <sync <folder> <remote> [--watch]|status [folder]>",
+     "synchronize a drive folder",
+     "available",
+     liquid_cli::drive},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
     {"push",

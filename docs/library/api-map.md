@@ -64,16 +64,17 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #57, #60, #56, #58, #61, #193 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, input policy, configure facts, retention, tests, and SBOMs | action execution and results, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
-| `liquid/daemon.hpp` | #21, #23, #193 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, build stream forwarding, attach, and shutdown |
+| `liquid/daemon.hpp` | #21, #23, #193, #195 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured drive sync, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/drive.hpp` | #195 | implemented | three-tree folder synchronization, deterministic path outcomes, conflict values, resumable transfer, per-reference results, persisted status, and bounded full-walk options |
 
 ### `liquid/error.hpp`
 
@@ -544,6 +545,47 @@ upstream directory sync messages, refs, and referenced object roots. `import_dri
 and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
 in [sync.md](sync.md); pack frames remain private wire data.
 
+### `liquid/drive.hpp`
+
+```cpp
+enum class drive_reconciliation_kind : std::uint8_t {
+  local_only, remote_only, content_conflict, moved, delete_edit, interrupted_transfer
+};
+struct drive_reconciliation {
+  std::string path; std::optional<std::string> old_path;
+  drive_reconciliation_kind kind; std::vector<digest> values;
+};
+struct drive_tree_state {
+  std::optional<digest> remote, local, base; journal_cursor remote_cursor; bool interrupted;
+};
+struct drive_status {
+  std::filesystem::path folder; std::string remote; drive_tree_state trees;
+  std::uint64_t files, state_bytes, state_memory_ceiling, full_walks;
+  std::vector<conflict> conflicts; std::vector<sync_ref_outcome> references;
+};
+struct drive_sync_report {
+  drive_status status; std::vector<drive_reconciliation> paths;
+  sync_transfer_report sent, received;
+};
+struct drive_options {
+  std::string bearer_token; std::size_t batch_items;
+  std::uint64_t state_memory_ceiling; bool durable;
+};
+class drive_client {
+ public:
+  static runtime::task<drive_client> open(std::filesystem::path, std::string, drive_options = {});
+  static runtime::task<drive_client> open(std::filesystem::path, drive_options = {});
+  runtime::task<drive_sync_report> sync();
+  runtime::task<drive_status> status();
+};
+```
+
+The overload with a remote configures a folder or verifies its existing configuration. The
+overload without one opens only a configured drive. State and the remote view live in the ordinary
+repository store; credentials remain in memory. `sync()` performs a bounded offloaded walk, pulls,
+reconciles, publishes, and pushes. It reports refusals instead of converting them to transport
+errors and advances the base only when every reference applies. See [drive.md](drive.md).
+
 ### `liquid/delta.hpp`
 
 ```cpp
@@ -675,6 +717,10 @@ struct search_plan { search_executor executor; search_query_kind query_kind;
                                    drips_since_index_update, scan_nanoseconds_per_blob,
                                    scan_parallelism;
                      double trigram_selectivity; std::vector<search_alternative> alternatives; };
+struct path_history_entry {
+  change_id change; std::string path; node_id node; std::optional<digest> value; std::uint32_t mode;
+  actor by; std::chrono::sys_seconds at; std::string message; bool deleted;
+};
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
@@ -712,6 +758,8 @@ class repository {
   runtime::task<mapped_anchor> map_anchor(text_anchor, change_id target);
   runtime::task<std::vector<mapped_anchor>> map_anchors(std::span<const text_anchor>,
                                                         change_id target);
+  runtime::task<std::vector<path_history_entry>> history(std::string path);
+  runtime::task<void> restore(std::string path, change_id source);
   runtime::task<record_page<repository_result>> results(result_filter = {});
   runtime::task<action_input> action(digest); // action or result record
   runtime::task<record_page<repository_attestation>> attestations(attestation_filter = {});
@@ -840,8 +888,9 @@ divergence, and verification fields from the action index when present. Attestat
 record id, subject, profile, and issuer. Trace and result-scoped SBOM pages return `build_trace` and
 verified `sbom_report` values from `build.hpp`. The CLI record views call these operations.
 
-The internal CRDT wrapper pins automerge-cpp at `06408d3`. Directory checkpoints call
-`save_compact()`, reopen through `load_shallow()`, and replay later journaled drips. Local
+The internal CRDT wrapper pins automerge-cpp at `06408d3`. Directory checkpoints prefer
+`save_compact()`, fall back to full history bytes when the compact form does not immediately
+round-trip, reopen sync-capable, and replay later journaled drips. Local
 automerge validation failures map to `errc::invalid_argument`; malformed checkpoint, merge, and
 sync data map to `errc::corrupt`. Apply, merge, and sync-receive expected values are checked before
 candidate state is installed, and remote observation uses the patch-returning entry points. The
@@ -1190,6 +1239,7 @@ struct daemon_options {
   std::uint32_t graph_validation_rate; std::chrono::milliseconds graph_validation_interval;
   query_registry graph_queries;
   capture_options capture; std::vector<std::shared_ptr<daemon_target>> targets;
+  std::string drive_bearer_token;
 };
 class daemon {
  public:
@@ -1218,6 +1268,8 @@ wire payload is canonical CBOR in the sync protocol's five-byte frame. Build ses
 `build_start` and `build_next` operations and forward every public event through that same frame.
 Windows entry points return
 `errc::unsupported` while Corosio lacks named-pipe transport.
+When a configured drive is a built-in target, `drive_bearer_token` is passed to its in-memory
+client and is not included in daemon state.
 
 `capture_status` makes overflow and recrawl visible because watcher events are hints, not a
 complete account of workspace state. The `drip_filter` insertion point between coalescing and
@@ -1257,7 +1309,7 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 
 `src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/frontend/` (module-handle and
 frontend-query state), `src/crdt/` (checked automerge-cpp
-access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
+access, checked compact-or-full metadata checkpoints, upstream sync framing, and patch observation),
 `src/sync/` (canonical metadata and pack wire codecs plus the Corosio/Boost.HTTP client),
 `src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/search/`
 (manifest, segments, BM25F term records, and positional trigrams), `src/vfs/` (Cloud

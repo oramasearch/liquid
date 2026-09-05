@@ -58,6 +58,45 @@ auto open_repository() -> liquid::result<liquid::repository> {
 
 } // namespace
 
+auto path_history(int argc, char** argv) -> int {
+    if (argc != 1 && argc != 3) {
+        return usage("history <path> [--restore <change>]");
+    }
+    if (argc == 3 && std::string_view{argv[1]} != "--restore") {
+        return usage("history <path> [--restore <change>]");
+    }
+    auto repository = open_repository();
+    if (!repository) {
+        return fail(repository.error());
+    }
+    if (argc == 3) {
+        auto parsed = liquid::parse_digest(argv[2]);
+        if (!parsed) {
+            return fail(parsed.error());
+        }
+        auto restored = liquid::runtime::block_on(repository->restore(argv[0], {*parsed}));
+        if (!restored) {
+            return fail(restored.error());
+        }
+        std::println("restored {} from {}", argv[0], liquid::to_string(*parsed));
+        return 0;
+    }
+    auto entries = liquid::runtime::block_on(repository->history(argv[0]));
+    if (!entries) {
+        return fail(entries.error());
+    }
+    for (const auto& entry : *entries) {
+        std::println("{} {} {} {} {} {}",
+                     liquid::to_string(entry.change.value),
+                     entry.at.time_since_epoch().count(),
+                     entry.by.taap_id,
+                     entry.deleted ? "deleted" : "version",
+                     entry.path,
+                     entry.message);
+    }
+    return 0;
+}
+
 auto history_operations(int argc, char** argv) -> int {
     auto json = false;
     if (argc == 1 && std::string_view{argv[0]} == "--json") {

@@ -75,13 +75,15 @@ forwarding, stable JSON-lines CLI output, CMake/native test target discovery, ca
 and `liquid test`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Directory
-documents use compact shallow checkpoints, upstream sync framing, checked external application, and
+documents use checked compact-or-full checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Repositories can use a caller-owned shared store with independent
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,
 missing-object sessions, the HTTP/1.1 lake client, and CLI push/pull. Liquid #165 adds the public
 repository sync server and the `serve sync` HTTP adapter; liquid #177 adds per-change and
 change-graph-derived reference authorization; liquid #189 adds per-reference accepted/refused
-outcomes and opt-in atomic pushes. Full materialisation works on
+outcomes and opt-in atomic pushes. Liquid #195 adds persisted three-tree folder reconciliation,
+named conflict values, resumed transfer, reference refusal reporting, path history and restore,
+`liquid drive`, and the daemon drive target. Full materialisation works on
 every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
@@ -340,8 +342,9 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    is `docs/library/object-model.md`**: canonical-CBOR records in the store, one small repository
    document plus one automerge document per directory (decided 2026-09-04 by measurement), liquid's own `node_id` (survives moves) and `change_id` (the digest
    of the change record, never automerge's `ChangeHash`), conflicts and symbols reserved in the
-   change record from the first commit. Directory checkpoints use automerge-cpp compact saves and
-   shallow loads; drip metadata enters `CommitOptions`, while TAAP remains the attribution authority.
+   change record from the first commit. Directory checkpoints prefer automerge-cpp compact saves,
+   fall back to full bytes when a compact load check fails, and reopen sync-capable; drip metadata
+   enters `CommitOptions`, while TAAP remains the attribution authority.
 8. **The chunk index is liquid's own storage engine, built from scratch** (Steve, 2026-09-03;
    this replaces the RocksDB choice recorded earlier that day). No third-party key-value store in
    the store: a fixed-width LSM of liquid's own (an in-memory sorted memtable flushed to immutable
