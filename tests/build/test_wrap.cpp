@@ -269,6 +269,29 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     ASSERT_TRUE(left_before_bytes);
     auto left_before_result = liquid::objects::decode_result(*left_before_bytes);
     ASSERT_TRUE(left_before_result);
+    auto compiler_action_bytes = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(*repository, left_before_result->action));
+    ASSERT_TRUE(compiler_action_bytes) << compiler_action_bytes.error().message;
+    auto compiler_action = liquid::objects::decode_action(*compiler_action_bytes);
+    ASSERT_TRUE(compiler_action) << compiler_action.error().message;
+    auto toolchain = liquid::runtime::block_on(repository->tree(compiler_action->input.toolchain));
+    ASSERT_TRUE(toolchain) << toolchain.error().message;
+    const auto bin = std::ranges::find(toolchain->entries, "bin", &liquid::tree_entry::name);
+    const auto lib = std::ranges::find(toolchain->entries, "lib", &liquid::tree_entry::name);
+    ASSERT_NE(bin, toolchain->entries.end());
+    ASSERT_NE(lib, toolchain->entries.end());
+    auto compiler_bin = liquid::runtime::block_on(repository->tree(bin->ref));
+    ASSERT_TRUE(compiler_bin) << compiler_bin.error().message;
+    const auto compiler_name =
+        std::filesystem::path{compiler_action->input.command.front()}.filename();
+    EXPECT_NE(
+        std::ranges::find(compiler_bin->entries, compiler_name.string(), &liquid::tree_entry::name),
+        compiler_bin->entries.end());
+    auto compiler_libraries = liquid::runtime::block_on(repository->tree(lib->ref));
+    ASSERT_TRUE(compiler_libraries) << compiler_libraries.error().message;
+    EXPECT_TRUE(std::ranges::any_of(compiler_libraries->entries, [](const auto& entry) {
+        return entry.name.starts_with("libclang-cpp") || entry.name.starts_with("libLLVM");
+    }));
     const auto left_before_output = std::ranges::find(left_before_result->outputs,
                                                       "build/CMakeFiles/wrapped.dir/left.c.o",
                                                       &liquid::action_output::path);
