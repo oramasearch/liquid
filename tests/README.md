@@ -37,7 +37,10 @@ structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
 file writes, and key diffs.
 
-Repository tests cover persisted operation records and their public newest-first view; private index
+Repository tests cover persisted operation records and their public newest-first view, operation
+undo for writes, imported batches, records, and locks, skipped newer state, two-replica local
+intent, forty-write session reversal, path-filtered session reversal, and historical document
+state; private index
 and cryptography tests stay in their existing targets. They also verify that repository collection
 retains checkpointed content while reclaiming an orphan. The supplied-store case creates two
 repository identifiers on one store, counts one physical frame for their repeated payload, collects

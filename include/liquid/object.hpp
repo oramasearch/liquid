@@ -70,6 +70,22 @@ struct LIQUID_EXPORT conflict {
     std::vector<digest> refs;
 };
 
+struct LIQUID_EXPORT document_nested_pointer {
+    std::string path;
+    repo_ref reference;
+};
+
+struct LIQUID_EXPORT document_state {
+    std::map<std::string, change_id> refs;
+    std::vector<std::string> locks;
+    std::vector<document_nested_pointer> nested;
+};
+
+struct LIQUID_EXPORT document_heads {
+    node_id directory{};
+    std::vector<std::array<std::byte, 32>> values;
+};
+
 struct LIQUID_EXPORT change {
     change_id id;
     std::vector<change_ref> parents;
@@ -82,6 +98,9 @@ struct LIQUID_EXPORT change {
     std::vector<liquid::conflict> conflicts;
     std::optional<digest> symbols;
     std::vector<std::byte> sig;
+    document_state document;
+    std::vector<document_heads> heads;
+    std::uint64_t record_version{1};
 };
 
 } // namespace liquid

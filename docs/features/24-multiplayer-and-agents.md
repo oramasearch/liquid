@@ -151,7 +151,14 @@ liquid has no such gap, because capture is at the **filesystem layer**
 ([22](22-change-capture.md)): a file written by a shell command inside an agent's
 session is a drip exactly like one written through an editor API. An agent's whole
 session is an addressable range; `liquid undo` reverses it atomically, or selectively by
-file or by drip.
+file or by drip. Issue #30 supplies a delegation's session identifier; absent an
+explicit identifier, each open repository handle generates a random 16-byte value.
+
+Collaborative undo follows **local intent**. Each operation records its own before and
+after values, and undo derives the inverse from that record rather than from the
+document's current head. If later local or remote work changed the same value, the
+undo report marks that path skipped. Concurrent work on another path remains
+untouched and converges normally after synchronization.
 
 ### 5. Review before promotion
 
@@ -221,10 +228,6 @@ under whose authority, and can I undo precisely that?" liquid does, because drip
 actors and attestations were already required for other reasons.
 
 ## Open questions
-
-- **Undo semantics in a collaborative context.** Local undo should reverse *the user's
-  own intent*, not the most recent remote operation — treated in the literature as a
-  distinct design problem, not a trivial inverse.
 - **Tombstone growth under machine-rate writers**, now partly quantified. In one
   benchmark, 260,000 operations cost Automerge ~44 MB and 1.8 s versus Yjs ~10 MB and
   1.1 s — because **Automerge deliberately retains richer history**, which is exactly

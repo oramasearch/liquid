@@ -52,9 +52,19 @@ it. Taken directly from Jujutsu, which demonstrated it works.
 ### Every operation is undoable
 
 The datastore's change history records every mutation of the repository, and its
-time travel (`get_at()`) reads any prior state. `liquid undo` reverses any
-operation, including ones Git makes unrecoverable. This removes the
-fear that drives the worst Git workflows.
+time travel reads any prior tree with `at(change_id)` and the recorded refs, locks,
+and nested pointers with `document_at(change_id)`. Historical document reads use the
+full-history archive and never touch the active shallow document.
+
+`liquid undo <op-id>` reverses the selected operation from its recorded before-state,
+even when it is not the newest operation. It applies each inverse only where current
+state still matches that operation's after-state, so newer local or remote work is
+reported as skipped instead of overwritten. The inverse is appended as another
+operation: undo never rewrites history. Every open repository handle also has a
+16-byte session ID, and `undo_session` reverses that session atomically across the
+touched directory documents, optionally restricted by path or drip ID. This removes
+the fear that drives the worst Git workflows without treating concurrent intent as
+disposable.
 
 ### The working copy is a change
 
@@ -76,7 +86,7 @@ aggregation of drips.
 | **Change** | From drips | Yes | Yes |
 
 This is why history is complete rather than curated: nothing is lost between saves,
-`liquid undo` reaches any prior state, and the build invalidates the minimum work per
+operation and session undo can reverse precisely selected intent, and the build invalidates the minimum work per
 drip ([04](04-build-engine.md)) instead of per commit.
 
 Every drip is **signed by the party that made it** under
