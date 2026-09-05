@@ -111,6 +111,19 @@ auto validate(const std::filesystem::path& root,
     co_return opened->statistics();
 }
 
+auto validate_clean(const std::filesystem::path& root, const std::filesystem::path& state)
+    -> liquid::runtime::task<liquid::graph_validation_report> {
+    auto kinds = registry();
+    if (!kinds) {
+        co_return std::unexpected(kinds.error());
+    }
+    auto opened = co_await liquid::graph::open(state, std::move(*kinds), {.working_tree = root});
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    co_return co_await opened->validate({.all = true});
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -142,5 +155,13 @@ int main(int argc, char** argv) {
               << " fingerprint_reads=" << statistics->fingerprint_reads
               << " executions=" << statistics->executions << " hits=" << statistics->hits
               << " elapsed_ms=" << elapsed.count() << '\n';
+    auto clean = liquid::runtime::block_on(validate_clean(root, state));
+    if (!clean) {
+        std::cerr << clean.error().message << '\n';
+        return 1;
+    }
+    std::cout << "graph clean-rebuild validation: targets=" << clean->validated
+              << " divergences=" << clean->divergences << " backlog=" << clean->backlog
+              << " elapsed_ms=" << clean->elapsed.count() << '\n';
     return 0;
 }

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <print>
 #include <string>
 #include <string_view>
@@ -71,6 +72,10 @@ auto spawn_daemon(const std::filesystem::path& checkout) -> liquid::result<void>
     const auto idle_text = std::to_string(environment_unsigned("LIQUID_DAEMON_IDLE_MS", 300000));
     const auto memory_text =
         std::to_string(environment_unsigned("LIQUID_DAEMON_MEMORY", 256ULL * 1024ULL * 1024ULL));
+    const auto validation_rate_text =
+        std::to_string(environment_unsigned("LIQUID_GRAPH_VALIDATION_RATE", 20));
+    const auto validation_interval_text =
+        std::to_string(environment_unsigned("LIQUID_GRAPH_VALIDATION_MS", 1000));
     auto actions = posix_spawn_file_actions_t{};
     auto spawn_error = posix_spawn_file_actions_init(&actions);
     const auto actions_ready = spawn_error == 0;
@@ -87,6 +92,10 @@ auto spawn_daemon(const std::filesystem::path& checkout) -> liquid::result<void>
                                 const_cast<char*>(idle_text.c_str()),
                                 const_cast<char*>("--memory"),
                                 const_cast<char*>(memory_text.c_str()),
+                                const_cast<char*>("--validation-rate"),
+                                const_cast<char*>(validation_rate_text.c_str()),
+                                const_cast<char*>("--validation-ms"),
+                                const_cast<char*>(validation_interval_text.c_str()),
                                 static_cast<char*>(nullptr)};
     auto child = pid_t{};
     if (spawn_error == 0) {
@@ -161,25 +170,36 @@ auto daemon_command(int argc, char** argv) -> int {
     auto checkout = std::filesystem::current_path();
     if (argc >= 1 && std::string_view{argv[0]} == "--serve") {
         if (argc < 2) {
-            return usage("daemon --serve <checkout> [--idle-ms <n>] [--memory <bytes>]");
+            return usage("daemon --serve <checkout> [--idle-ms <n>] [--memory <bytes>] "
+                         "[--validation-rate <n>] [--validation-ms <n>]");
         }
         checkout = argv[1];
         auto options = liquid::daemon_options{};
         for (auto index = 2; index < argc; ++index) {
             const auto argument = std::string_view{argv[index]};
-            if ((argument == "--idle-ms" || argument == "--memory") && index + 1 < argc) {
+            if ((argument == "--idle-ms" || argument == "--memory" ||
+                 argument == "--validation-rate" || argument == "--validation-ms") &&
+                index + 1 < argc) {
                 auto parsed = parse_unsigned(argv[++index], argument);
                 if (!parsed) {
                     return fail(parsed.error());
                 }
                 if (argument == "--idle-ms") {
                     options.idle_timeout = std::chrono::milliseconds{*parsed};
-                } else {
+                } else if (argument == "--memory") {
                     options.graph_memory = *parsed;
+                } else if (argument == "--validation-rate") {
+                    if (*parsed > std::numeric_limits<std::uint32_t>::max()) {
+                        return usage("daemon validation rate is too large");
+                    }
+                    options.graph_validation_rate = static_cast<std::uint32_t>(*parsed);
+                } else {
+                    options.graph_validation_interval = std::chrono::milliseconds{*parsed};
                 }
                 continue;
             }
-            return usage("daemon --serve <checkout> [--idle-ms <n>] [--memory <bytes>]");
+            return usage("daemon --serve <checkout> [--idle-ms <n>] [--memory <bytes>] "
+                         "[--validation-rate <n>] [--validation-ms <n>]");
         }
         auto started = liquid::runtime::block_on(liquid::daemon::start(checkout, options));
         if (!started) {

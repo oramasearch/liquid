@@ -1,8 +1,12 @@
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <print>
+#include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -59,6 +63,15 @@ auto json_string(std::string_view value) -> std::string {
     return output;
 }
 
+auto hex(std::span<const std::byte> value) -> std::string {
+    auto output = std::string{};
+    output.reserve(value.size() * 2);
+    for (const auto byte : value) {
+        output += std::format("{:02x}", std::to_integer<std::uint8_t>(byte));
+    }
+    return output;
+}
+
 auto daemon_targets_json(const std::optional<liquid::daemon_status>& status) -> std::string {
     auto output = std::string{"["};
     if (status) {
@@ -88,6 +101,41 @@ auto daemon_paths_json(const std::optional<liquid::daemon_status>& status) -> st
     }
     output += ']';
     return output;
+}
+
+auto graph_divergence_json(const std::optional<liquid::daemon_status>& status) -> std::string {
+    if (!status || !status->last_graph_divergence) {
+        return "null";
+    }
+    const auto& divergence = *status->last_graph_divergence;
+    auto inputs = std::string{"["};
+    for (std::size_t index = 0; index != divergence.inputs.size(); ++index) {
+        const auto& dependency = divergence.inputs[index];
+        const auto name = std::visit(
+            [](const auto& key) {
+                using key_type = std::decay_t<decltype(key)>;
+                if constexpr (std::is_same_v<key_type, liquid::graph_input_key>) {
+                    return key.name;
+                } else {
+                    return key.kind;
+                }
+            },
+            dependency.key);
+        inputs += std::format("{}{{\"name\":{},\"fingerprint\":{}}}",
+                              index == 0 ? "" : ",",
+                              json_string(name),
+                              json_string(liquid::to_string(dependency.fingerprint)));
+    }
+    inputs += ']';
+    return std::format(
+        "{{\"record\":{},\"query\":{},\"arguments\":{},\"inputs\":{},\"incremental\":{},"
+        "\"clean\":{}}}",
+        json_string(liquid::to_string(divergence.id)),
+        json_string(divergence.query.kind),
+        json_string(hex(divergence.query.arguments)),
+        inputs,
+        json_string(liquid::to_string(divergence.incremental)),
+        json_string(liquid::to_string(divergence.clean)));
 }
 
 auto join(int argc, char** argv) -> std::string {
@@ -196,7 +244,8 @@ auto repo_status(int argc, char** argv) -> int {
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
             "\"daemon\":{{\"available\":{},\"running\":{},"
             "\"pid\":{},\"graph_keys\":{},\"graph_values\":{},\"graph_memory\":{},"
-            "\"graph_ceiling\":{},\"last_drip\":{},\"invalidated_paths\":{},"
+            "\"graph_ceiling\":{},\"graph_validation_backlog\":{},"
+            "\"last_graph_divergence\":{},\"last_drip\":{},\"invalidated_paths\":{},"
             "\"targets\":{}}}}}",
             current->pending_drips,
             current->remote_bytes,
@@ -219,6 +268,8 @@ auto repo_status(int argc, char** argv) -> int {
             daemon_current ? daemon_current->graph_values : 0,
             daemon_current ? daemon_current->graph_memory_bytes : 0,
             daemon_current ? daemon_current->graph_memory_ceiling : 0,
+            daemon_current ? daemon_current->graph_validation_backlog : 0,
+            graph_divergence_json(daemon_current),
             daemon_current && daemon_current->last_drip
                 ? json_string(liquid::to_string(daemon_current->last_drip->value))
                 : "null",
@@ -252,6 +303,25 @@ auto repo_status(int argc, char** argv) -> int {
             std::println("daemon_graph_values={}", daemon_current->graph_values);
             std::println("daemon_graph_memory={}", daemon_current->graph_memory_bytes);
             std::println("daemon_graph_ceiling={}", daemon_current->graph_memory_ceiling);
+            std::println("daemon_graph_validation_backlog={}",
+                         daemon_current->graph_validation_backlog);
+            if (daemon_current->last_graph_divergence) {
+                const auto& divergence = *daemon_current->last_graph_divergence;
+                std::println("daemon_last_graph_divergence={} query={} arguments={} incremental={} "
+                             "clean={}",
+                             liquid::to_string(divergence.id),
+                             divergence.query.kind,
+                             hex(divergence.query.arguments),
+                             liquid::to_string(divergence.incremental),
+                             liquid::to_string(divergence.clean));
+                for (const auto& input : divergence.inputs) {
+                    if (const auto* key = std::get_if<liquid::graph_input_key>(&input.key)) {
+                        std::println("daemon_last_graph_divergence_input={} fingerprint={}",
+                                     key->name,
+                                     liquid::to_string(input.fingerprint));
+                    }
+                }
+            }
             std::println("daemon_last_drip={}",
                          daemon_current->last_drip
                              ? liquid::to_string(daemon_current->last_drip->value)

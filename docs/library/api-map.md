@@ -57,7 +57,7 @@ owning issue in `error::context`.
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
-| `liquid/graph.hpp` | #20, #21 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, and the #23 comparison hook |
+| `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/frontend_abi.h` | #65 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, and `assemble` operations |
 | `liquid/frontend.hpp` | #65 | implemented | checked shared/static frontend loading, language registry, source units, and the unit-keyed query-graph coordinator |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
@@ -68,8 +68,8 @@ owning issue in `error::context`.
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
-| `liquid/daemon.hpp` | #21 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory status, attach, and shutdown |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/daemon.hpp` | #21, #23 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
@@ -163,6 +163,20 @@ struct graph_statistics {
   std::uint64_t invalidation_walks, discarded_computations;
   std::uint64_t keys, resident_values, resident_value_bytes, memory_ceiling;
 };
+struct graph_validation_record {
+  digest id; query_key query; std::vector<recorded_dependency> inputs;
+  digest incremental, clean; bool agreement; std::chrono::sys_seconds at;
+};
+struct graph_validation_options { std::uint32_t rate; bool all; std::uint64_t limit; };
+struct graph_validation_status {
+  std::uint64_t eligible, validated, backlog, records;
+  std::optional<graph_validation_record> last_divergence;
+};
+struct graph_validation_report {
+  std::uint64_t considered, validated, divergences, backlog; std::chrono::milliseconds elapsed;
+  std::vector<graph_validation_record> records;
+  std::optional<graph_validation_record> last_divergence;
+};
 using query_argument_encoder =
   std::function<result<std::vector<std::byte>>(std::span<const std::byte>)>;
 using query_compute =
@@ -192,6 +206,10 @@ class graph {
   result<std::uint64_t> mark_changed(graph_input_key, durability);
   result<std::uint64_t> mark_changed(query_key);
   runtime::task<std::optional<recorded_query>> recorded(query_key);
+  runtime::task<graph_validation_report> validate(graph_validation_options = {});
+  graph_validation_status validation_status() const;
+  runtime::task<std::vector<graph_validation_record>> validation_records();
+  runtime::task<void> inject_stale_value_for_testing(query_key, std::vector<std::byte>);
   runtime::task<void> flush();
   graph_statistics statistics() const;
 };
@@ -216,10 +234,14 @@ its completed value to force recomputation. `set_input` and `clear_input` manage
 environment, and toolchain leaves; working-tree leaves otherwise read relative to
 `graph_options::working_tree`. A nonzero `graph_options::memory_ceiling` evicts resident values in
 least-recently-demanded order while retaining keys, fingerprints, dependencies, and stored value
-identifiers. `recorded` loads a completed value and returns the comparison
-surface for #23; a query with no completed value returns an empty optional. `flush` atomically
-republishes the current graph root, and `statistics` returns counters since open plus the current
-resident-value accounting.
+identifiers. `recorded` loads a completed value and returns the clean-comparison surface; a query
+with no completed value returns an empty optional. `validate` samples completed nodes or runs a
+full pass, computes each through a new empty graph, retains its comparison record, and evicts a
+divergent value. `validation_status` is the non-I/O backlog and latest-divergence view;
+`validation_records` returns the durable audit history. The explicitly named test hook corrupts a
+completed value while preserving an otherwise valid graph node. `flush` atomically republishes the
+current graph root, and `statistics` returns counters since open plus the current resident-value
+accounting.
 
 ### `liquid/frontend_abi.h` and `liquid/frontend.hpp`
 
@@ -881,6 +903,11 @@ struct verified_action {
   std::vector<reproducibility_difference> differences;
 };
 struct verify_report { std::uint64_t considered; std::vector<verified_action> actions; };
+struct graph_verify_options {
+  bool all, explain; std::uint32_t rate;
+  std::optional<std::filesystem::path> cache_directory;
+};
+struct graph_verify_report { graph_validation_report graph; verify_report actions; };
 struct replay_options {
   bool record; std::optional<std::filesystem::path> cache_directory;
 };
@@ -899,6 +926,8 @@ runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
 runtime::task<verify_report> verify(repository&, verify_options = {});
 runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
+runtime::task<graph_verify_report> verify_graph(std::filesystem::path,
+                                                graph_verify_options = {});
 runtime::task<replay_report> replay(repository&, digest target, replay_options = {});
 runtime::task<replay_report> replay(std::filesystem::path, digest target, replay_options = {});
 runtime::task<provenance_report> verify_provenance(repository&, result_id);
@@ -943,7 +972,9 @@ only the winner and cancels the other task. The interfaces have no REAPI, gRPC, 
 worker implementation dependency. `verify` re-executes
 selected cache entries with their recorded sandbox definition, compares exit status and output
 digests, and returns the signed attestation digest plus any differences. A divergent index entry is
-permanently excluded from lookup.
+permanently excluded from lookup. `verify_graph` first cleanly recomputes the wrap graph's sampled
+or complete `action_result` nodes, then runs the matching action-verification selection; its two
+reports keep graph and action evidence distinct.
 `replay` uses the same reconstruction, sandbox launch, and comparison for one action or result.
 It returns both exit values and byte-level differences without an attestation by default. Setting
 `replay_options::record` records the ordinary verification attestation and quarantine decision.
@@ -958,7 +989,8 @@ result. See
 current/prior identifiers and a typed cause. It re-evaluates current policy before classifying a
 hit or ordinary miss and uses `cache_miss_reason::policy_refused` for an unsatisfied refuse rule.
 `wrap_report` includes action counts, its per-wrap `cache_report`, typed miss details, the retained
-trace digest, phase totals, achieved parallelism, and the dependency-aware critical path.
+trace digest, phase totals, achieved parallelism, the dependency-aware critical path, graph
+validation backlog, and the last graph divergence.
 `why_report`, trace actions, critical-path actions, and Chrome events carry the stored schedule, so
 diagnostics expose history, size class, byte counts, queue depth, locality, batching, estimates, and
 reason without recalculating the choice. `latest_trace`, `why_slow`, and `chrome_trace` query and
@@ -1056,9 +1088,13 @@ struct daemon_status {
   std::optional<drip_id> last_drip; std::vector<std::string> invalidated_paths;
   std::vector<daemon_target_status> targets; capture_status capture;
   std::uint64_t graph_keys, graph_values, graph_memory_bytes, graph_memory_ceiling;
+  std::uint64_t graph_validation_backlog;
+  std::optional<graph_validation_record> last_graph_divergence;
 };
 struct daemon_options {
   std::chrono::milliseconds idle_timeout; std::uint64_t graph_memory;
+  std::uint32_t graph_validation_rate; std::chrono::milliseconds graph_validation_interval;
+  query_registry graph_queries;
   capture_options capture; std::vector<std::shared_ptr<daemon_target>> targets;
 };
 class daemon {
@@ -1079,8 +1115,10 @@ class daemon {
 The opaque handle is either the host returned by `start` or a local client returned by `attach`.
 All waiting operations are Capy tasks. A host owns capture, persists the graph on idle or explicit
 shutdown, and processes targets in vector order. Cursor publication follows successful target
-delivery. `daemon_status` contains capture telemetry, the last invalidated paths, every target's
-cursor distance and error, plus graph key, resident-value, byte-use, and ceiling counts. The local
+delivery. During otherwise idle slices, the host validates one pending graph target through the
+supplied query registry. `daemon_status` contains capture telemetry, the last invalidated paths,
+every target's cursor distance and error, graph key, resident-value, byte-use, and ceiling counts,
+plus validation backlog and the most recent divergence. The local
 wire payload is canonical CBOR in the sync protocol's five-byte frame. Windows entry points return
 `errc::unsupported` while Corosio lacks named-pipe transport.
 

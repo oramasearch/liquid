@@ -261,6 +261,12 @@ auto wrap(int argc, char** argv) -> int {
                  result->cache.disk.bytes_transferred,
                  result->cache.disk.bytes_avoided,
                  result->cache.bytes_rebuilt);
+    std::println(
+        "graph_validation_backlog={} last_graph_divergence={} last_graph_query={}",
+        result->graph_validation_backlog,
+        result->last_graph_divergence ? liquid::to_string(result->last_graph_divergence->id)
+                                      : "none",
+        result->last_graph_divergence ? result->last_graph_divergence->query.kind : "none");
     if (result->cache.remote.available) {
         std::println("remote_hits={} remote_misses={} remote_bytes_transferred={} "
                      "remote_bytes_avoided={}",
