@@ -64,7 +64,7 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed working/ref search; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -73,7 +73,7 @@ owning issue in `error::context`.
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
-| `liquid/sync.hpp` | #160, #165, Phase 6 | implemented | signed metadata items and reports, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/sync.hpp` | #160, #165, #177, Phase 6 | implemented | signed metadata items and reports, change-graph-derived ref authorization, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
 
@@ -439,7 +439,11 @@ enum class sync_item_kind : std::uint8_t { drip = 1, change = 2, directory = 3, 
 struct sync_item;       // signed actor/body, repository and directory IDs, root marker, ref value
 struct sync_export { journal_cursor cursor; std::size_t count; bool done; std::vector<digest> objects; };
 struct sync_report { journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received; };
-using sync_authorizer = std::function<runtime::task<void>(const sync_item&)>;
+struct sync_ref_update {
+  std::string name; std::optional<change_id> old_head; change_id new_head; bool fast_forward;
+};
+using sync_authorizer = std::function<runtime::task<void>(
+    const sync_item&, std::span<const sync_ref_update>)>;
 struct sync_server_options { sync_authorizer authorize; std::size_t batch_items{256}; };
 class sync_server {
  public:
@@ -466,8 +470,10 @@ class sync_endpoint final : public remote_blob_source {
 ```
 
 `sync_server` verifies that an explicitly supplied store belongs to the repository. Its optional
-authorization task runs for change items before an atomic metadata import; transport adapters call
-the byte-span handlers and do not include private codec headers.
+authorization task runs in metadata-frame order for changes and refs before an atomic import.
+Change calls carry the ref updates that newly reach them; ref calls carry the server-known old
+head, proposed new head, and a fast-forward value computed from the change graph. Transport
+adapters call the byte-span handlers and do not include private codec headers.
 `repository::export_drips(cursor, span)` emits bounded pages of journal records, signed changes,
 upstream directory sync messages, refs, and referenced object roots. `import_drips(span)` verifies
 and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
@@ -589,6 +595,8 @@ struct result_filter { std::optional<result_id> id; std::optional<digest> action
 struct repository_attestation { digest id; attestation value; };
 struct attestation_filter { std::optional<digest> id, subject; std::optional<std::string> profile, issuer;
                             record_page_options page; };
+struct search_options { std::optional<std::string> ref; std::uint64_t limit{20}; };
+struct search_hit { std::string path; digest blob; std::string snippet; double score; };
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
@@ -597,6 +605,7 @@ class repository {
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
   runtime::task<std::vector<std::byte>> read_decrypted(std::string path);  // explicit leaf/file decryption
+  runtime::task<std::vector<search_hit>> search(std::string query, search_options = {});
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
   runtime::task<void> redact(std::string path, std::optional<change_id> = {});
   runtime::task<void> redact(std::string path, std::vector<std::byte> replacement,
@@ -665,6 +674,13 @@ struct write_options { std::uint32_t mode{0100644}; };
 encrypted_regex }`. The first repository-relative glob match selects leaf or file mode. Leaf mode
 is implemented for JSON and `.env`; [leaf-encryption.md](leaf-encryption.md) defines its envelope,
 normalization, enforcement, and JSON Pointer key paths.
+
+`search_options` selects the working tree by default or a named ref and limits results to 20 by
+default. Plain queries use BM25F, quoted queries use exact positional trigrams, and
+slash-delimited queries use regex with a safe literal prefilter when the pattern has no operators.
+`search_hit` carries the
+repository-relative path, content digest, one-line snippet, and score. Publication and the private
+index format are documented in [search.md](search.md).
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
@@ -1108,13 +1124,15 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 frontend-query state), `src/crdt/` (checked automerge-cpp
 access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
 `src/sync/` (canonical metadata and pack wire codecs plus the Corosio/Boost.HTTP client),
-`src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/vfs/` (Cloud
+`src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/search/`
+(manifest, segments, BM25F term records, and positional trigrams), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
 
 ## ABI policy
 
-- **Boost.Capy is a public dependency** (`Boost::capy` linked `PUBLIC`); Corosio and the
+- **Boost.Capy is a public dependency** (`Boost::capy` linked `PUBLIC`); Corosio,
+  `oramasearch/oramacore-cpp` at `9b74ce177f47d63024532ae6000c2cd62c73e0cd`, and the
   `oramasearch/http` client module at `af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4` are private.
   Consumers get Capy transitively and may await liquid tasks from their own Capy coroutines.
 - **Static by default.** One binary to ship; liquify and lake link `liquid::liquid` as a pinned

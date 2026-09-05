@@ -67,11 +67,10 @@ The C++23 (→ C++26) port of OramaCore's engine, structured as a library
 of real queries. Other index types — prefix/FST, geo, filters, vector — follow the
 same pattern.
 
-**Current status: a scaffold.** The BM25F **scoring core** is implemented and unit
-tested (`idf` / `pseudo_tf` / `score`). Tokenization, posting lists, the two-index
-pattern and async search land per the milestone order in its port notes. liquid's
-search feature must be sequenced around that, and the repository is private, so
-availability is a dependency to manage rather than assume.
+**Current status:** the BM25F scoring core, tokenizer, and in-memory postings are implemented and
+tested upstream. Liquid #22 pins that revision and persists its own content-addressed term records,
+using the upstream tokenizer and scorer without exposing upstream types. Coroutine-shaped
+repository search is implemented at liquid's boundary; the oramacore repository remains private.
 
 **What it covers, and the gap it does not.** BM25F is *ranked full-text over
 tokens*. That is the right engine for prose, documentation, and the Drive-style

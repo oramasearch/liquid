@@ -83,7 +83,7 @@ is wrong.
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
 | [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |
-| [12](12-search.md) | Search | Full-text and code search over the working tree, history, and published artifacts. |
+| [12](12-search.md) | Search | Local BM25F and positional-trigram search over the working tree and named refs is implemented; published-artifact search follows the format registry. |
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
 | [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |
 | [15](15-consumer-sync-and-web.md) | Consumer sync and web | The Dropbox/Drive-style interface for non-developers, local and web. |

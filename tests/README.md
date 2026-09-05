@@ -44,9 +44,11 @@ actors and multi-round sync.
 The Unix integration case in `test_sync.cpp` exchanges two disk repositories through the public
 server behind a small socket transport dispatched on the shared runtime, measures missing-object
 bytes across repeated pushes, pulls into an empty repository, and rejects both a corrupted TAAP
-signature and an authorization callback without changing state. Its CLI case starts the real
-`serve sync` process and invokes the real push and pull commands. The private wire codec stays in
-libliquid. Header compilation keeps the public sync API covered on every platform.
+signature and authorization callbacks for changes or refs without changing state. It checks
+change-to-ref context and derives false fast-forward state for divergent history. Its CLI case
+starts the real `serve sync --allow-ref main` process, accepts `main`, rejects a disallowed ref,
+and invokes the real push and pull commands. The private wire codec stays in libliquid. Header
+compilation keeps the public sync API covered on every platform.
 
 Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,

@@ -32,6 +32,7 @@
 #include "encoding/cbor.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
+#include "search/index.hpp"
 
 namespace liquid {
 namespace {
@@ -759,7 +760,7 @@ runtime::task<daemon> daemon::start(std::filesystem::path checkout, daemon_optio
         auto targets = std::vector<std::shared_ptr<daemon_target>>{};
         targets.push_back(std::make_shared<graph_target>(state->query_graph));
         if (state->options.targets.empty()) {
-            targets.push_back(std::make_shared<no_op_target>("search"));
+            targets.push_back(search_detail::make_daemon_target(state->checkout));
             targets.push_back(std::make_shared<no_op_target>("collaborators"));
             targets.push_back(std::make_shared<no_op_target>("lake"));
         } else {

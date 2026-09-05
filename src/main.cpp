@@ -56,6 +56,7 @@ auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
+auto search(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -84,6 +85,11 @@ constexpr auto commands = std::to_array<command>({
      "start or stop the checkout daemon",
      "available on macOS and Linux",
      liquid_cli::daemon_command},
+    {"search",
+     "search <query> [--ref <name>] [--limit <count>]",
+     "search paths and contents",
+     "available",
+     liquid_cli::search},
     {"log", "log [--json]", "show change history", "available", liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
@@ -98,7 +104,7 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::sync_pull},
     {"serve",
-     "serve sync <path> [--listen <address>] [--port <port>]",
+     "serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...",
      "serve a repository over the sync protocol",
      "available",
      liquid_cli::serve},

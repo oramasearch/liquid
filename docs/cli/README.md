@@ -23,12 +23,13 @@ that the table and `liquid --help` name the same commands.
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
+| `search` | `search <query> [--ref <name>] [--limit <count>]` | Search paths and contents. | available |
 | `log` | `log [--json]` | Show change history. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
-| `serve` | `serve sync <path> [--listen <address>] [--port <port>]` | Serve one repository over the sync protocol. | available |
+| `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
 | `anchor` | `anchor <path>:<line>@<change> --to <change>` | Map a text position between changes. | available |
@@ -83,8 +84,11 @@ The path follows a `node_id` rename; insertions and removals above shift the lin
 sets `approximate`; and a removed line or file sets `deleted`.
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
-listener. It has no built-in authentication policy, so the default is appropriate for local use;
-network services embed the public server with their own authorization callback.
+listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
+pattern; `*` matches any sequence and `?` one character. Supplying the flag rejects the complete
+push when any ref is outside all allowed patterns. Without it there is no built-in authentication
+policy, so the default is appropriate for local use; network services embed the public server with
+their own authorization callback.
 `version --json` is also available for scripts. Text output is line-oriented and stable. A library
 error always has this shape and exits with status 1:
 
@@ -99,6 +103,12 @@ a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <del
 <destination>` checks the source, patch blob, and reconstructed target before writing. `delta fetch
 <target> <source> <destination>` uses a matching local signed catalog record and the store's
 registered remote blobs when necessary, then reports `method=delta` or `method=chunks`.
+
+`search` uses BM25F ranking over path and content fields. A query wrapped in double quotes selects
+exact substring matching through the positional trigram index; a query wrapped in slashes selects
+regular-expression matching with a trigram literal prefilter. `--ref` accepts a repository ref name
+or change digest, and `--limit` accepts 1 through 1,000. Each result line contains score, path, and
+snippet separated by tabs.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
 number of uncached feature probes observed, plus the outer action's status. `--explain`
@@ -219,6 +229,8 @@ liquid init .
 liquid status --json
 liquid daemon
 liquid daemon --shutdown
+liquid search 'query graph'
+liquid search '"exact substring"' --ref main --limit 50
 liquid log --json
 liquid cut "import existing files"
 liquid refs --json

@@ -52,6 +52,10 @@ scheduler backend, TLS trust and client-key paths, request headers, deadline, ba
 read-only-by-default publication. The public
 accessor lets later wrap runs reuse the configuration without exposing document internals.
 
+The private search adapter exposes only the repository checkout's `.liquid/index/` path to the
+search implementation. Public queries remain on `repository::search`; no index representation or
+oramacore type crosses the public boundary.
+
 Remote file entries use the same working tree and canonical blob reference as local files.
 `store_remote_blob` registers metadata without reading content, `write_remote` records the entry,
 and repository status recursively sums chunk bytes that are not yet local.

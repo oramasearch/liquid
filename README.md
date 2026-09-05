@@ -21,7 +21,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error, digest, identity
 > document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
-> BLAKE3 identifiers. The public waiting operations are lazy
+> BLAKE3 identifiers. Repository-local BM25F, substring, and regex search over the working tree or
+> named refs is implemented with atomic per-drip publication. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
@@ -29,8 +30,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > caller-owned store with repository-scoped checkpoints, journals, and retention leases. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
-> push and pull, signed metadata exchange, missing-object negotiation, the public sync server, and
-> the HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
+> push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
+> change and graph-derived reference authorization, and the HTTP/1.1 client and `serve sync`
+> adapter are implemented. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
@@ -138,6 +140,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > returns a documented unsupported result until Corosio provides named-pipe transport. The daemon
 > uses issue #20's public graph interface for persistence, invalidation, and resident-value bounds.
 
+> **Phase 4 local search is implemented.** `liquid search` and `repository::search` query a
+> content-addressed oramacore BM25F and positional-trigram index under `.liquid/index/`. The daemon
+> publishes changed paths and tombstones after each drip with a durable independent cursor; an
+> atomic manifest replacement makes the whole change visible at once. Identical blobs are indexed
+> once even when several paths refer to them. Named refs use snapshot-specific index slots.
+
 ## Where this sits
 
 liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module of
@@ -179,6 +187,7 @@ and Zetta's.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented daemon lifecycle, cursor fan-out, endpoint, status, and graph value eviction.
+- [`docs/library/search.md`](docs/library/search.md) — the local BM25F and positional-trigram index, atomic publication, daemon updates, public API, CLI, and measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.
 - [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.

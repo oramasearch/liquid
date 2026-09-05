@@ -327,6 +327,18 @@ set_target_properties(automerge-cpp PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   EXCLUDE_FROM_ALL ON)
 
+# oramacore-cpp supplies the private BM25F engine. Keep its own test tree out of
+# liquid's build and fold its static target into shared libliquid with hidden symbols.
+block()
+  set(BUILD_TESTING OFF)
+  add_subdirectory(modules/oramacore-cpp EXCLUDE_FROM_ALL)
+endblock()
+set_target_properties(oramacore-cpp PROPERTIES
+  CXX_VISIBILITY_PRESET hidden
+  VISIBILITY_INLINES_HIDDEN ON
+  POSITION_INDEPENDENT_CODE ON
+  EXCLUDE_FROM_ALL ON)
+
 add_library(liquid_metadata_objects OBJECT
   src/crdt/document.cpp
   src/crdt/journal.cpp
@@ -404,6 +416,8 @@ add_library(libliquid
   src/runtime/runtime.cpp
   src/sandbox/environment.cpp
   src/scan/detectors.cpp
+  src/search/index.cpp
+  src/search/repository.cpp
   src/store.cpp
   src/store/chunker.cpp
   src/store/collector.cpp
@@ -466,7 +480,8 @@ endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio Boost::corosio_openssl Boost::http libzstd_static ZLIB::ZLIB
-          ${CMAKE_DL_LIBS} $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
+          ${CMAKE_DL_LIBS} $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>
+          $<BUILD_INTERFACE:orama::oramacore-cpp>)
 if(LIQUID_FUSE_TARGET)
   target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
   target_link_libraries(libliquid PRIVATE ${LIQUID_FUSE_TARGET})
@@ -515,6 +530,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
+    src/cli/search.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp

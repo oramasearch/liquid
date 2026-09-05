@@ -415,7 +415,15 @@ TEST(Sync, ServerAuthorizesEveryChangeBeforeRejectingTheBatch) {
     ASSERT_TRUE(liquid::runtime::block_on(source->cut("second")));
 
     auto calls = std::size_t{};
-    auto authorize = [&calls](const liquid::sync_item&) -> liquid::runtime::task<void> {
+    auto authorize =
+        [&calls](const liquid::sync_item& item,
+                 std::span<const liquid::sync_ref_update> updates) -> liquid::runtime::task<void> {
+        EXPECT_EQ(item.kind, liquid::sync_item_kind::change);
+        if (updates.size() != 1) {
+            co_return std::unexpected(liquid::error{
+                liquid::errc::internal, "change reference context is missing", "test"});
+        }
+        EXPECT_EQ(updates.front().name, "main");
         ++calls;
         if (calls == 2) {
             co_return std::unexpected(liquid::error{
@@ -437,6 +445,120 @@ TEST(Sync, ServerAuthorizesEveryChangeBeforeRejectingTheBatch) {
     auto head = liquid::runtime::block_on(destination->head());
     EXPECT_FALSE(head);
     EXPECT_EQ(head.error().code, liquid::errc::not_found);
+}
+
+TEST(Sync, RefusalOfReferenceUpdateRejectsTheBatch) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(destination);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    auto source_head = liquid::runtime::block_on(source->cut("first"));
+    ASSERT_TRUE(source_head);
+
+    auto change_calls = std::size_t{};
+    auto reference_calls = std::size_t{};
+    auto authorize =
+        [&](const liquid::sync_item& item,
+            std::span<const liquid::sync_ref_update> updates) -> liquid::runtime::task<void> {
+        if (item.kind == liquid::sync_item_kind::change) {
+            ++change_calls;
+            if (updates.size() != 1) {
+                co_return std::unexpected(liquid::error{
+                    liquid::errc::internal, "change reference context is missing", "test"});
+            }
+            EXPECT_EQ(updates.front().name, "main");
+            co_return liquid::result<void>{};
+        }
+        EXPECT_EQ(item.kind, liquid::sync_item_kind::reference);
+        if (updates.size() != 1) {
+            co_return std::unexpected(liquid::error{
+                liquid::errc::internal, "reference update context is missing", "test"});
+        }
+        ++reference_calls;
+        EXPECT_EQ(updates.front().name, "main");
+        EXPECT_FALSE(updates.front().old_head);
+        EXPECT_EQ(liquid::to_string(updates.front().new_head.value),
+                  liquid::to_string(source_head->value));
+        EXPECT_TRUE(updates.front().fast_forward);
+        co_return std::unexpected(liquid::error{
+            liquid::errc::unauthorized, "reference is not authorized", "test policy"});
+    };
+    auto server =
+        liquid::sync_server{*destination, liquid::sync_server_options{.authorize = authorize}};
+    sync_http_server http{server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+    ASSERT_FALSE(pushed);
+    EXPECT_EQ(pushed.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(change_calls, 1U);
+    EXPECT_EQ(reference_calls, 1U);
+    auto root = liquid::runtime::block_on(destination->root());
+    ASSERT_TRUE(root);
+    EXPECT_TRUE(root->entries.empty());
+    auto destination_head = liquid::runtime::block_on(destination->head());
+    EXPECT_FALSE(destination_head);
+    EXPECT_EQ(destination_head.error().code, liquid::errc::not_found);
+}
+
+TEST(Sync, DivergentReferenceUpdateIsNotFastForward) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(destination);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("base.txt", bytes("base"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("base")));
+    {
+        auto server = liquid::sync_server{*destination};
+        sync_http_server http{server};
+        auto endpoint = liquid::sync_endpoint{http.url()};
+        ASSERT_TRUE(liquid::runtime::block_on(endpoint.push(*source)));
+    }
+
+    ASSERT_TRUE(liquid::runtime::block_on(destination->write("server.txt", bytes("server"))));
+    auto old_head = liquid::runtime::block_on(destination->cut("server"));
+    ASSERT_TRUE(old_head);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("client.txt", bytes("client"))));
+    auto new_head = liquid::runtime::block_on(source->cut("client"));
+    ASSERT_TRUE(new_head);
+
+    auto observed = std::optional<liquid::sync_ref_update>{};
+    auto authorize =
+        [&observed](
+            const liquid::sync_item& item,
+            std::span<const liquid::sync_ref_update> updates) -> liquid::runtime::task<void> {
+        if (item.kind != liquid::sync_item_kind::reference) {
+            co_return liquid::result<void>{};
+        }
+        if (updates.size() != 1) {
+            co_return std::unexpected(liquid::error{
+                liquid::errc::internal, "reference update context is missing", "test"});
+        }
+        observed = updates.front();
+        co_return std::unexpected(liquid::error{
+            liquid::errc::unauthorized, "reference is not authorized", "test policy"});
+    };
+    auto server =
+        liquid::sync_server{*destination, liquid::sync_server_options{.authorize = authorize}};
+    sync_http_server http{server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+    ASSERT_FALSE(pushed);
+    ASSERT_TRUE(observed);
+    ASSERT_TRUE(observed->old_head);
+    EXPECT_EQ(observed->name, "main");
+    EXPECT_EQ(liquid::to_string(observed->old_head->value), liquid::to_string(old_head->value));
+    EXPECT_EQ(liquid::to_string(observed->new_head.value), liquid::to_string(new_head->value));
+    EXPECT_FALSE(observed->fast_forward);
+    auto unchanged_head = liquid::runtime::block_on(destination->head());
+    ASSERT_TRUE(unchanged_head);
+    EXPECT_EQ(liquid::to_string(unchanged_head->value), liquid::to_string(old_head->value));
 }
 
 TEST(Sync, bad_signature_rejects_the_complete_batch) {
@@ -507,10 +629,25 @@ auto available_port() -> std::uint16_t {
 
 class cli_server_process {
 public:
-    cli_server_process(const std::filesystem::path& repository, std::uint16_t port) {
+    cli_server_process(const std::filesystem::path& repository,
+                       std::uint16_t port,
+                       std::optional<std::string> allowed_ref = std::nullopt) {
         const auto port_text = std::to_string(port);
         child_ = ::fork();
         if (child_ == 0) {
+            if (allowed_ref) {
+                ::execl(LIQUID_CLI,
+                        LIQUID_CLI,
+                        "serve",
+                        "sync",
+                        repository.c_str(),
+                        "--port",
+                        port_text.c_str(),
+                        "--allow-ref",
+                        allowed_ref->c_str(),
+                        static_cast<char*>(nullptr));
+                std::_Exit(127);
+            }
             ::execl(LIQUID_CLI,
                     LIQUID_CLI,
                     "serve",
@@ -583,7 +720,7 @@ TEST(Sync, cli_push_and_pull_round_trip) {
     *server_repository = liquid::repository{};
     const auto port = available_port();
     ASSERT_NE(port, 0);
-    auto server = cli_server_process{server_path.path(), port};
+    auto server = cli_server_process{server_path.path(), port, "main"};
     ASSERT_TRUE(server.ready(port));
     const auto url = "http://127.0.0.1:" + std::to_string(port);
     const auto executable = shell_quote(LIQUID_CLI);
@@ -592,6 +729,13 @@ TEST(Sync, cli_push_and_pull_round_trip) {
     const auto pull =
         "cd " + shell_quote(destination_path.path()) + " && " + executable + " pull '" + url + "'";
     ASSERT_EQ(std::system(push.c_str()), 0);
+    auto reopened_source = liquid::runtime::block_on(liquid::repository::open(source_path.path()));
+    ASSERT_TRUE(reopened_source);
+    auto source_head = liquid::runtime::block_on(reopened_source->head());
+    ASSERT_TRUE(source_head);
+    ASSERT_TRUE(liquid::runtime::block_on(reopened_source->set_ref("blocked", *source_head)));
+    *reopened_source = liquid::repository{};
+    EXPECT_NE(std::system(push.c_str()), 0);
     ASSERT_EQ(std::system(pull.c_str()), 0);
     auto opened = liquid::runtime::block_on(liquid::repository::open(destination_path.path()));
     ASSERT_TRUE(opened);

@@ -35,10 +35,15 @@ directly.
 `delta.cpp` implements create, digest-checked apply, and fetch through the public delta API. A
 fetch can hydrate a patch or target registered with the store's configured remote sources.
 
+`search.cpp` starts or attaches to the checkout daemon, parses optional ref and result-limit
+selectors, calls `repository::search`, and prints the public ranked hit records. It does not read
+the index files directly.
+
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` to the endpoint and prints stable metadata, object, byte, and cursor counts.
 `serve.cpp` implements `serve sync` with the public `sync_server` and the vendored
-`oramasearch/http` router. Request handlers await library tasks on the listener executor and never
+`oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
+authorization callback. Request handlers await library tasks on the listener executor and never
 include the private protocol codec.
 
 The public command table, replay output contract, and user-facing examples live in

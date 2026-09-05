@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -62,7 +63,15 @@ struct LIQUID_EXPORT sync_endpoint_options {
     std::size_t batch_items{256};
 };
 
-using sync_authorizer = std::function<runtime::task<void>(const sync_item&)>;
+struct LIQUID_EXPORT sync_ref_update {
+    std::string name;
+    std::optional<change_id> old_head;
+    change_id new_head;
+    bool fast_forward{};
+};
+
+using sync_authorizer = std::function<runtime::task<void>(
+    const sync_item&, std::span<const sync_ref_update> reference_updates)>;
 
 struct LIQUID_EXPORT sync_server_options {
     sync_authorizer authorize;

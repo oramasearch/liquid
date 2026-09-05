@@ -29,6 +29,7 @@
 #include "repository/store_access.hpp"
 #include "repository/sync_access.hpp"
 #include "repository/testing.hpp"
+#include "search/repository_access.hpp"
 #include "store/leases.hpp"
 #include "store/pack.hpp"
 #include "vfs/repository_access.hpp"
@@ -4594,6 +4595,14 @@ auto repository_detail::testing::verify_history(repository& value) -> result<std
 
 auto repository_detail::sync_access::objects(repository& source) -> store& {
     return source.impl_->objects;
+}
+
+auto repository_detail::search_access::index_path(repository& source)
+    -> result<std::filesystem::path> {
+    if (!source.impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return source.impl_->root_path / ".liquid" / "index";
 }
 
 void repository_detail::testing::reset_directory_loads(repository& value) {
