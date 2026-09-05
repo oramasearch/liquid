@@ -99,12 +99,14 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
+  target_sources(liquid-tests PRIVATE build/test_frontend.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
     LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
     LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
-    LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
+    LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
+    LIQUID_NM="${CMAKE_NM}")
   target_link_libraries(liquid-tests PRIVATE liquid-frontend-clang-static)
 endif()
 if(UNIX)
@@ -207,7 +209,11 @@ add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
 if(LIQUID_BUILD_FRONTENDS)
-  add_executable(liquid-frontend-measure EXCLUDE_FROM_ALL frontend_measure.cpp)
+  add_executable(liquid-frontend-measure frontend_measure.cpp)
+  target_sources(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp)
+  if(NOT UNIX)
+    set_target_properties(liquid-frontend-measure PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  endif()
   target_link_libraries(liquid-frontend-measure PRIVATE liquid::liquid)
   target_include_directories(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_compile_definitions(liquid-frontend-measure PRIVATE
@@ -215,6 +221,12 @@ if(LIQUID_BUILD_FRONTENDS)
     LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
     LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>")
   add_dependencies(liquid-frontend-measure liquid-frontend-clang)
+  if(UNIX)
+    add_test(NAME frontend-one-function-measure
+      COMMAND liquid-frontend-measure
+        ${PROJECT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/frontend-measure-state)
+  endif()
 endif()
 
 add_executable(liquid-store-large-tests test_store_large.cpp)

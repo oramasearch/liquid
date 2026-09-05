@@ -14,6 +14,14 @@ restart case kills `graph_crash_fixture.cpp` during an active demand, reopens th
 root, counts one input fingerprint read and no query executions, and checks the public recorded
 query hook.
 
+`test_frontend.cpp` loads the Clang frontend dynamically, registers its descriptor statically,
+checks that its shared object exports only the ABI v1 entry point, and asks the tree-sitter fallback
+for a C definition. Its copied CMake fixture compiles two definition objects with the configured
+compiler. A one-body edit executes one action and assembly, while a changed quoted header executes
+both recorded readers and assembly. `frontend-one-function-measure` is a registered macOS/Linux
+CTest that performs the same count assertion against `src/store/faults.cpp` and prints its elapsed
+milliseconds.
+
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
 executor uses #17's shared on-disk remote source to reconstruct the source and toolchain in a new

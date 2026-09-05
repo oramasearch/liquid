@@ -92,19 +92,21 @@ current action-query keys in unit order.
 
 ## Measurement
 
-`liquid-frontend-measure` uses liquid's own `src/store/faults.cpp`, which has two definitions. It
-performs an in-memory edit inside `visit_fault`, executes the emitted Clang action, and reassembles
-the translation-unit object. On an Apple M3 Max macOS host on 2026-09-04:
+The registered `frontend-one-function-measure` CTest runs `liquid-frontend-measure` against liquid's
+own `src/store/faults.cpp`, which has two definitions. It performs an in-memory edit inside
+`visit_fault`, executes the emitted Clang action, reassembles the translation-unit object, asserts
+one action and one assembly, and records the elapsed milliseconds. On an Apple M3 Max macOS host on
+2026-09-04:
 
 ```text
 frontend one-function edit: file=src/store/faults.cpp units=2 actions_run=1 assemblies_run=1 elapsed_ms=496
 ```
 
-Run the measurement from a configured static build with:
+Run the measurement test from a configured static build with:
 
 ```sh
-cmake --build build --target liquid-frontend-measure
-build/tests/liquid-frontend-measure . build/frontend-measure-state
+cmake --build build
+ctest --test-dir build -R frontend-one-function-measure --output-on-failure
 ```
 
 The wall value includes module discovery, one real compiler process, relocatable-object assembly,
@@ -116,7 +118,9 @@ The portable frontend tests prove language registration, static registration, tr
 ranges, canonical action generation, per-definition fingerprints, progress/error ownership, and
 the CMake fixture's body/header invalidation behavior. `public-frontend-c-header` compiles the ABI as
 C. The Clang module test loads `$<TARGET_FILE:liquid-frontend-clang>`, which proves the module is a
-separate shared object rather than code folded into libliquid.
+separate shared object rather than code folded into libliquid; macOS and Linux also inspect its
+defined external symbols and require the ABI v1 entry point to be the only export. The own-tree
+measurement is part of the default macOS/Linux CTest suite.
 
 Run the repository's static, shared, and Linux-container proofs from [`../build/ci.md`](../build/ci.md).
 
