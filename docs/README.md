@@ -17,6 +17,7 @@ notes so that each claim has a clear role.
 | [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, cursor fan-out, graph value eviction, per-definition frontend granularity, and local search index; also designs symbols, the planner, and liquify on the graph. |
 | [`library/frontends.md`](library/frontends.md) | The versioned frontend C ABI, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
 | [`library/search.md`](library/search.md) | Issue #22's content-addressed BM25F and positional-trigram index, atomic segment publication, daemon updates, public API, CLI, and measurements. |
+| [`library/symbols.md`](library/symbols.md) | Content-addressed per-translation-unit symbol records, query behavior, fallback labelling, public repository access, and CLI use. |
 | [`library/reapi-codec.md`](library/reapi-codec.md) | Dependency-free protobuf wire encoding, the REAPI v2.3 structs, native record conversion, hash selection, and pinned reference fixtures. |
 | [`library/reapi.md`](library/reapi.md) | REAPI client and server RPCs, the remote cache tier, configuration and CLI, public API map, and NativeLink, BuildBarn, and Bazel proof. |
 | [`library/provenance.md`](library/provenance.md) | Automatic result provenance: canonical TAAP storage, the exact SLSA v1 mapping, verification, and in-toto/DSSE export. |

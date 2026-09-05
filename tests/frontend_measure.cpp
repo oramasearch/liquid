@@ -166,6 +166,27 @@ int main(int argc, char** argv) {
         std::cerr << build_context.error().message << '\n';
         return 1;
     }
+    const auto symbols_started = std::chrono::steady_clock::now();
+    auto symbols_value = module->symbols("c++", bytes(source), *build_context);
+    const auto symbols_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - symbols_started);
+    if (!symbols_value) {
+        std::cerr << symbols_value.error().message << ": " << symbols_value.error().context << '\n';
+        return 1;
+    }
+    const auto subject = liquid::hash(liquid::algorithm::blake3, bytes(source));
+    if (!subject) {
+        std::cerr << subject.error().message << ": " << subject.error().context << '\n';
+        return 1;
+    }
+    auto symbols = liquid::decode_frontend_symbols(*subject, *symbols_value);
+    if (!symbols) {
+        std::cerr << symbols.error().message << ": " << symbols.error().context << '\n';
+        return 1;
+    }
+    std::cout << "symbol extraction: file=src/store/faults.cpp units=1 occurrences="
+              << symbols->occurrences.size() << " elapsed_ms=" << symbols_elapsed.count()
+              << " per_unit_ms=" << symbols_elapsed.count() << '\n';
     auto first = liquid::runtime::block_on(graph->build({
         .language = "c++",
         .source_path = "faults.cpp",

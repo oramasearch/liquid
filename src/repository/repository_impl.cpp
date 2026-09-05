@@ -3507,6 +3507,54 @@ runtime::task<digest> repository::store_attestation(attestation value) {
                                                                   std::move(*encoded));
 }
 
+runtime::task<digest> repository::store_symbols(symbol_record value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto encoded = encode_symbols(value);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    const auto subject = to_string(value.subject);
+    auto stored =
+        co_await repository_detail::store_access::put_plain(impl_->objects, std::move(*encoded));
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    auto text = to_string(*stored);
+    impl_->current.metadata.insert_or_assign(
+        "symbols/" + subject,
+        std::vector<std::byte>{reinterpret_cast<const std::byte*>(text.data()),
+                               reinterpret_cast<const std::byte*>(text.data() + text.size())});
+    auto saved = co_await impl_->checkpoint();
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    co_return *stored;
+}
+
+runtime::task<symbol_record> repository::symbols(digest id) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto found = impl_->current.metadata.find("symbols/" + to_string(id));
+    if (found == impl_->current.metadata.end()) {
+        co_return std::unexpected(
+            failure(errc::not_found, "symbols are not recorded", to_string(id)));
+    }
+    const auto text =
+        std::string_view{reinterpret_cast<const char*>(found->second.data()), found->second.size()};
+    auto record = parse_digest(text);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    auto encoded = co_await impl_->objects.get(*record);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return decode_symbols(*encoded);
+}
+
 runtime::task<void> repository::set_policy(policy_config policy) {
     if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));

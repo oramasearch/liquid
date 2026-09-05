@@ -63,12 +63,13 @@ repair. `liquid-graph-measure` reports cold-start and full clean-rebuild validat
 repository's regular files. Daemon coverage injects a stale cached query and observes its idle
 validation backlog and divergence status.
 Frontend tests load the Clang implementation as a separate shared object, register the same ABI
-statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
-to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
-body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
-before assembly. The registered `frontend-one-function-measure` CTest performs the same
-one-definition edit against liquid's own tree with the configured compiler, asserts the action and
-assembly counts, and prints the elapsed milliseconds.
+ statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
+ to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
+ body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
+ before assembly. The registered `frontend-one-function-measure` CTest performs the same
+ one-definition edit against liquid's own tree with the configured compiler, asserts the action and
+ assembly counts, and prints the elapsed milliseconds. `liquid-frontend-measure` additionally
+ reports compiler-AST symbol extraction against liquid's own tree with the configured compiler.
 Portable provenance cases prove the SLSA field mapping, exact manifest dependencies, tamper
 rejection, and the DSSE/in-toto projection's canonical attestation digest round-trip. The real
 cache-hit case also proves that the existing provenance attestation is reused without re-signing.
@@ -104,3 +105,6 @@ nlohmann/json before liquid, then builds and runs an executable linked to `liqui
 `consumer-project-build` configures and builds it as one CTest step with the parent build's compiler
 and static/shared setting. `cli-identity-codec` creates and rotates an identity through the CLI,
 then decodes, re-encodes, and verifies the stored canonical-CBOR files through public libliquid API.
+
+Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
+repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.

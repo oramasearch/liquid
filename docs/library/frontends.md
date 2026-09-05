@@ -9,8 +9,8 @@ does not invalidate its neighbours.
 **Status.** The ABI, loader, registry, graph coordinator, bundled tree-sitter fallback, and bundled
 Clang C++ module are implemented. The CMake fixture compiles two definition objects with the
 configured Clang, changes one body, executes one new action, and assembles the translation unit
-again. Its header change executes both actions because both units read that header. Symbol records
-remain liquid #66.
+again. Its header change executes both actions because both units read that header. Liquid #66 adds
+the `symbols` ABI operation and graph query; its record is documented in [`symbols.md`](symbols.md).
 
 ## ABI v1
 
@@ -24,6 +24,7 @@ module name and one or more language names, then supplies these operations:
 | `units` | language, source blob, context | array of unit maps |
 | `compile_unit` | one unit map, context | executable frontend-action map |
 | `assemble` | array of unit fingerprints and output byte strings, context | translation-unit output map |
+| `symbols` | language, source blob, context | per-translation-unit symbol output map |
 
 Every operation receives progress and cancellation callbacks. Return values use caller-independent
 owned bytes with an explicit release callback. ABI status values distinguish invalid input,
@@ -49,8 +50,9 @@ the BLAKE3 unit fingerprint from `kind`, `name`, and `source`, excluding the abs
 earlier in the file can therefore move an unchanged function without changing its identity.
 
 `frontend_module` exposes the checked C++ wrapper. `frontend_registry` owns modules and resolves a
-language registration. `frontend_graph` owns the two registered query kinds, accepts a caller's
-action executor, and returns each unit action/output plus the assembled translation-unit value.
+language registration. `frontend_graph` owns the registered action, assembly, and `symbols` query
+kinds, accepts a caller's action executor, and returns each unit action/output, symbol sidecar,
+and assembled translation-unit value.
 The executor remains injected because the daemon and `build::execute` own scheduling, sandboxing,
 toolchain materialisation, and cache policy.
 
@@ -75,6 +77,10 @@ includes. Unit actions produce ordinary object bytes. On macOS and Linux, `assem
 same toolchain compiler with `-r` and returns canonical CBOR containing the relocatable object. The
 Windows module returns a portable ordered unit-output value; per-definition Clang object assembly
 there remains outside the supported target set.
+
+For `symbols`, the Clang module invokes that configured compiler with `-ast-dump=json`, retaining
+definitions and resolved declaration references from the compiler AST. The tree-sitter module
+emits syntax-only occurrences when no compiler frontend is available.
 
 ## Graph behavior
 

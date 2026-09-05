@@ -11,6 +11,7 @@
 namespace liquid_cli {
 
 auto set_executable(std::filesystem::path path) -> void;
+auto frontend_module_path(bool compiler) -> std::filesystem::path;
 
 auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
@@ -57,6 +58,7 @@ auto daemon_command(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
+auto symbols(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -212,6 +214,11 @@ constexpr auto commands = std::to_array<command>({
      "print a derived or explicitly inferred SBOM",
      "available",
      liquid_cli::sbom},
+    {"symbols",
+     "symbols <path>",
+     "show compiler or syntactic symbols for a source path",
+     "available",
+     liquid_cli::symbols},
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "

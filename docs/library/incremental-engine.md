@@ -14,9 +14,9 @@
 validation in #23, per-definition frontend granularity in #65, and local search index in #22 are
 implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
-bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
-atomic per-drip search publication.
-Symbols and the planner remain with their listed issues.
+ bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
+ atomic per-drip search publication.
+ Symbol records are implemented by #66. The planner remains with its listed issue.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -205,13 +205,24 @@ definitions that recorded it.
 
 Compiler-derived symbols are a byproduct of building: the frontend module emits a SCIP-equivalent
 symbol record per translation unit as an action output, content-addressed like everything else,
-with tree-sitter's syntactic symbols as the fallback. The local search index (#22) uses
-oramacore-cpp BM25F and lake's positional-trigram format, runs in the daemon, updates per drip from
-the fan-out, and indexes each blob once. Immutable segments and an atomically replaced manifest
-make every change visible as a unit. The implementation, layout, and query interface are in
-[`search.md`](search.md). The **planner** (#67) chooses per query among BM25F, the trigram index and a brute-force
+ with tree-sitter's syntactic symbols as the fallback. The local search index (#22) uses
+ oramacore-cpp BM25F and lake's positional-trigram format, runs in the daemon, updates per drip from
+ the fan-out, and indexes each blob once. Immutable segments and an atomically replaced manifest
+ make every change visible as a unit. The implementation, layout, and query interface are in
+ [`search.md`](search.md). The `symbols` query returns the canonical record for its source blob;
+ [`symbols.md`](symbols.md) fixes its public shape. The **planner** (#67) chooses per query among
+ BM25F, the trigram index and a brute-force
 scan over blobs by cost (index availability, term selectivity, corpus size), and explains its
 choice the way `liquid why` explains a cache miss.
+
+**Measurement.** On the Apple M3 Max macOS host on 2026-09-04, the Clang frontend extracted 38
+occurrences from liquid's `src/store/faults.cpp` in one translation unit:
+
+```text
+symbol extraction: file=src/store/faults.cpp units=1 occurrences=38 elapsed_ms=7263 per_unit_ms=7263
+```
+
+This is an uncached local compiler-AST measurement, including compiler process startup and parsing.
 
 ## liquify on the graph
 

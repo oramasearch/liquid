@@ -109,6 +109,98 @@ auto position_value(const source_point& value) -> cbor_value {
     };
 }
 
+auto language_name(syntax_language language) -> std::string_view {
+    return language == syntax_language::c ? "c" : "c++";
+}
+
+auto identifier_range(TSNode node, std::span<const std::uint8_t> source) -> source_point {
+    return point(ts_node_end_byte(node), ts_node_end_point(node));
+}
+
+void append_symbol(TSNode node,
+                   std::string_view kind,
+                   std::string_view role,
+                   std::string_view container,
+                   syntax_language language,
+                   std::span<const std::uint8_t> source,
+                   std::vector<syntax_symbol>& output) {
+    const auto text = node_text(node, source);
+    if (text.empty()) {
+        return;
+    }
+    auto symbol = std::string{language_name(language)} + ":";
+    if (role == "definition" && !container.empty()) {
+        symbol += std::string{container} + "::";
+    }
+    symbol += std::string{text};
+    output.push_back(syntax_symbol{symbol,
+                                   std::string{text},
+                                   std::string{kind},
+                                   std::string{role},
+                                   point(ts_node_start_byte(node), ts_node_start_point(node)),
+                                   identifier_range(node, source),
+                                   std::string{container}});
+}
+
+void visit_symbols(TSNode node,
+                   syntax_language language,
+                   std::span<const std::uint8_t> source,
+                   std::string_view container,
+                   std::vector<syntax_symbol>& output) {
+    const auto type = std::string_view{ts_node_type(node)};
+    if (type == "function_definition") {
+        auto name = ts_node_child_by_field_name(node, "declarator", std::strlen("declarator"));
+        name = name_node(name);
+        if (!ts_node_is_null(name)) {
+            append_symbol(name, "function", "definition", container, language, source, output);
+            auto nested = std::string{container};
+            if (!nested.empty()) {
+                nested += "::";
+            }
+            nested += std::string{node_text(name, source)};
+            const auto count = ts_node_named_child_count(node);
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const auto child = ts_node_named_child(node, index);
+                if (ts_node_start_byte(child) == ts_node_start_byte(name) &&
+                    ts_node_end_byte(child) == ts_node_end_byte(name)) {
+                    continue;
+                }
+                visit_symbols(child, language, source, nested, output);
+            }
+            return;
+        }
+    }
+    if (type == "class_specifier" || type == "struct_specifier" || type == "enum_specifier" ||
+        type == "union_specifier") {
+        auto name = ts_node_child_by_field_name(node, "name", std::strlen("name"));
+        if (!ts_node_is_null(name)) {
+            append_symbol(name, "type", "definition", container, language, source, output);
+            auto nested = std::string{container};
+            if (!nested.empty()) {
+                nested += "::";
+            }
+            nested += std::string{node_text(name, source)};
+            const auto count = ts_node_named_child_count(node);
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const auto child = ts_node_named_child(node, index);
+                if (ts_node_start_byte(child) != ts_node_start_byte(name) ||
+                    ts_node_end_byte(child) != ts_node_end_byte(name)) {
+                    visit_symbols(child, language, source, nested, output);
+                }
+            }
+            return;
+        }
+    }
+    if (type == "identifier" || type == "field_identifier" || type == "type_identifier") {
+        append_symbol(node, "unknown", "reference", container, language, source, output);
+        return;
+    }
+    const auto count = ts_node_named_child_count(node);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        visit_symbols(ts_node_named_child(node, index), language, source, container, output);
+    }
+}
+
 } // namespace
 
 auto parse_units(syntax_language language, std::span<const std::uint8_t> source)
@@ -152,6 +244,58 @@ auto encode_units(const std::vector<syntax_unit>& units) -> std::vector<std::uin
         });
     }
     return cbor_encode(cbor_value{std::move(values)});
+}
+
+auto parse_symbols(syntax_language language, std::span<const std::uint8_t> source)
+    -> std::vector<syntax_symbol> {
+    auto* parser = ts_parser_new();
+    if (!parser) {
+        return {};
+    }
+    const auto* grammar = language == syntax_language::c ? tree_sitter_c() : tree_sitter_cpp();
+    if (!ts_parser_set_language(parser, grammar)) {
+        ts_parser_delete(parser);
+        return {};
+    }
+    auto* tree = ts_parser_parse_string(parser,
+                                        nullptr,
+                                        reinterpret_cast<const char*>(source.data()),
+                                        static_cast<std::uint32_t>(source.size()));
+    auto output = std::vector<syntax_symbol>{};
+    if (tree) {
+        visit_symbols(ts_tree_root_node(tree), language, source, {}, output);
+        ts_tree_delete(tree);
+    }
+    ts_parser_delete(parser);
+    std::ranges::sort(output, {}, [](const auto& value) { return value.start.byte; });
+    return output;
+}
+
+auto encode_symbols(syntax_language language,
+                    std::string_view origin,
+                    const std::vector<syntax_symbol>& symbols) -> std::vector<std::uint8_t> {
+    auto values = cbor_value::array{};
+    values.reserve(symbols.size());
+    for (const auto& symbol : symbols) {
+        auto fields = cbor_value::map{
+            {"symbol", symbol.symbol},
+            {"name", symbol.name},
+            {"kind", symbol.kind},
+            {"role", symbol.role},
+            {"range",
+             cbor_value::map{{"start", position_value(symbol.start)},
+                             {"end", position_value(symbol.end)}}},
+        };
+        if (!symbol.container.empty()) {
+            fields.emplace_back("container", symbol.container);
+        }
+        values.emplace_back(std::move(fields));
+    }
+    return cbor_encode(
+        cbor_value{cbor_value::map{{"v", std::uint64_t{1}},
+                                   {"language", std::string{language_name(language)}},
+                                   {"origin", std::string{origin}},
+                                   {"occurrences", std::move(values)}}});
 }
 
 } // namespace liquid_frontend

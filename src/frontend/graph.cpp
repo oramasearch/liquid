@@ -15,6 +15,7 @@ namespace cbor = encoding::cbor;
 
 constexpr auto action_query_kind = std::string_view{"frontend.action.v1"};
 constexpr auto assembly_query_kind = std::string_view{"frontend.assembly.v1"};
+constexpr auto symbols_query_kind = std::string_view{"symbols"};
 
 auto frontend_error(errc code, std::string message, std::string context) -> error {
     return error{code, std::move(message), std::move(context)};
@@ -124,6 +125,15 @@ auto action_arguments(std::span<const std::byte> action) -> result<std::vector<s
     }));
 }
 
+auto symbols_arguments(const frontend_build_request& request, std::span<const std::byte> context)
+    -> result<std::vector<std::byte>> {
+    return cbor::encode(map({
+        {"language", request.language},
+        {"source", cbor::value::bytes{request.source.begin(), request.source.end()}},
+        {"context", cbor::value::bytes{context.begin(), context.end()}},
+    }));
+}
+
 struct query_state {
     std::shared_ptr<frontend_module> module;
     frontend_action_executor execute;
@@ -222,6 +232,46 @@ auto execute_assembly_query(std::shared_ptr<query_state> state,
     co_return std::move(**assembled);
 }
 
+auto execute_symbols_query(std::shared_ptr<query_state> state,
+                           query_context&,
+                           std::vector<std::byte> arguments)
+    -> runtime::task<std::vector<std::byte>> {
+    auto decoded = canonical(arguments, "symbols query");
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    const auto* language_value = find(*decoded, "language");
+    const auto* source_value = find(*decoded, "source");
+    const auto* context_value = find(*decoded, "context");
+    const auto* language =
+        language_value ? std::get_if<std::string>(&language_value->data) : nullptr;
+    const auto* source =
+        source_value ? std::get_if<cbor::value::bytes>(&source_value->data) : nullptr;
+    const auto* context =
+        context_value ? std::get_if<cbor::value::bytes>(&context_value->data) : nullptr;
+    if (!language || !source || !context) {
+        co_return std::unexpected(
+            frontend_error(errc::corrupt, "symbols query is invalid", "symbols"));
+    }
+    auto output = state->module->symbols(*language, *source, *context);
+    if (!output) {
+        co_return std::unexpected(output.error());
+    }
+    auto subject = hash(algorithm::blake3, *source);
+    if (!subject) {
+        co_return std::unexpected(subject.error());
+    }
+    auto symbols = decode_frontend_symbols(*subject, *output);
+    if (!symbols) {
+        co_return std::unexpected(symbols.error());
+    }
+    auto encoded = encode_symbols(*symbols);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return std::move(*encoded);
+}
+
 } // namespace
 
 struct frontend_graph::impl {
@@ -264,6 +314,14 @@ runtime::task<frontend_graph> frontend_graph::open(std::filesystem::path state_d
     if (!assembly_added) {
         co_return std::unexpected(assembly_added.error());
     }
+    auto symbols_added =
+        registry.add({.name = std::string{symbols_query_kind},
+                      .compute = [state](query_context& context, std::vector<std::byte> arguments) {
+                          return execute_symbols_query(state, context, std::move(arguments));
+                      }});
+    if (!symbols_added) {
+        co_return std::unexpected(symbols_added.error());
+    }
     auto opened = co_await graph::open(
         std::move(state_directory), std::move(registry), {.working_tree = std::move(working_tree)});
     if (!opened) {
@@ -289,6 +347,20 @@ runtime::task<frontend_build_report> frontend_graph::build(frontend_build_reques
         co_return std::unexpected(units.error());
     }
     auto report = frontend_build_report{};
+    auto symbol_arguments = symbols_arguments(request, *context);
+    if (!symbol_arguments) {
+        co_return std::unexpected(symbol_arguments.error());
+    }
+    auto symbol_value = co_await impl_->subject.demand(
+        query_key{std::string{symbols_query_kind}, std::move(*symbol_arguments)});
+    if (!symbol_value) {
+        co_return std::unexpected(symbol_value.error());
+    }
+    auto symbols = decode_symbols(symbol_value->bytes);
+    if (!symbols) {
+        co_return std::unexpected(symbols.error());
+    }
+    report.symbols = std::move(*symbols);
     auto assembly_actions = cbor::value::array{};
     const auto actions_before = impl_->state->actions.load();
     const auto assemblies_before = impl_->state->assemblies.load();
