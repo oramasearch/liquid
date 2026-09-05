@@ -27,7 +27,7 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
-| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, operation, or timestamp history and verify timestamp evidence. | available |
+| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |

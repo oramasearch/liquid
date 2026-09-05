@@ -102,7 +102,7 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::search},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps",
-     "show or verify change, operation, or timestamp history",
+     "show or verify change, signed drip, or timestamp history",
      "available",
      liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
