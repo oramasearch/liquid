@@ -73,13 +73,13 @@ struct observation_log {
     struct process_observations {
         std::map<std::string, digest> inputs;
         std::set<std::string> writes;
-        std::optional<std::string> changed_input;
+        std::set<std::string> changed_inputs;
         std::optional<std::string> denied_write;
     };
 
     std::map<std::int64_t, process_observations> processes;
     std::map<std::string, digest> inputs;
-    std::optional<std::string> changed_input;
+    std::set<std::string> changed_inputs;
 
     void record(vfs_detail::observed_request request) {
         auto lock = std::scoped_lock{mutex};
@@ -97,20 +97,19 @@ struct observation_log {
             request.denied || request.path.empty() || !request.content) {
             return;
         }
-        record_input(process.inputs, process.changed_input, request.path, *request.content);
-        record_input(inputs, changed_input, std::move(request.path), std::move(*request.content));
+        record_input(process.inputs, process.changed_inputs, request.path, *request.content);
+        record_input(inputs, changed_inputs, std::move(request.path), std::move(*request.content));
     }
 
 private:
     static void record_input(std::map<std::string, digest>& entries,
-                             std::optional<std::string>& changed,
+                             std::set<std::string>& changed,
                              std::string path,
                              digest content) {
         const auto found = entries.find(path);
         if (found != entries.end() &&
             (found->second.alg != content.alg || found->second.bytes != content.bytes)) {
-            changed = std::move(path);
-            return;
+            changed.insert(path);
         }
         entries.insert_or_assign(std::move(path), std::move(content));
     }
@@ -192,6 +191,11 @@ runtime::task<action_result> load_result(repository& source, digest id);
 auto wrap_error(errc code, std::string message, const std::filesystem::path& context = {})
     -> error {
     return {code, std::move(message), context.string()};
+}
+
+auto stage_error(std::string_view stage, error value) -> error {
+    value.message = std::string{stage} + ": " + value.message;
+    return value;
 }
 
 auto same_digest(const digest& left, const digest& right) -> bool {
@@ -778,12 +782,17 @@ runtime::task<void> copy_outputs(repository& source,
         if (!entry) {
             if (entry.error().code == errc::not_found)
                 continue;
-            co_return std::unexpected(entry.error());
+            co_return std::unexpected(wrap_error(entry.error().code, entry.error().message, path));
+        }
+        if (entry->kind != node_kind::blob) {
+            continue;
         }
         auto target = root / path;
         auto copied = co_await stream_blob_to_file(source, entry->object, target, entry->mode);
-        if (!copied)
-            co_return std::unexpected(copied.error());
+        if (!copied) {
+            co_return std::unexpected(
+                wrap_error(copied.error().code, copied.error().message, path));
+        }
     }
     co_return liquid::result<void>{};
 }
@@ -965,16 +974,17 @@ auto manifest_for(const observation_log& observed,
     auto lock = std::scoped_lock{observed.mutex};
     const auto found = observed.processes.find(pid);
     const auto* process = pid >= 0 && found != observed.processes.end() ? &found->second : nullptr;
-    if ((process && process->changed_input) || (!process && observed.changed_input)) {
+    if (pid >= 0 && !process) {
+        return std::vector<observed_input>{};
+    }
+    const auto& changed = pid >= 0 ? process->changed_inputs : observed.changed_inputs;
+    const auto changed_path = std::ranges::find_if(
+        changed, [&](const std::string& path) { return !written.contains(path); });
+    if (changed_path != changed.end()) {
         return std::unexpected(
-            wrap_error(errc::internal,
-                       "wrapped input changed while it was read",
-                       process ? *process->changed_input : *observed.changed_input));
+            wrap_error(errc::internal, "wrapped input changed while it was read", *changed_path));
     }
     auto output = std::vector<observed_input>{};
-    if (pid >= 0 && !process) {
-        return output;
-    }
     const auto& entries = pid >= 0 ? process->inputs : observed.inputs;
     for (const auto& [path, content] : entries) {
         if (written.contains(path)) {
@@ -1250,16 +1260,28 @@ runtime::task<digest> store_sandbox(repository& source) {
 
 runtime::task<action_result> load_result(repository& source, digest id) {
     auto bytes = co_await repository_detail::build_access::get(source, id);
-    if (!bytes)
+    if (!bytes) {
         co_return std::unexpected(bytes.error());
-    co_return objects::decode_result(*bytes);
+    }
+    auto value = objects::decode_result(*bytes);
+    if (!value) {
+        co_return std::unexpected(
+            wrap_error(value.error().code, value.error().message, "wrap result " + to_string(id)));
+    }
+    co_return *value;
 }
 
 runtime::task<objects::action_record> load_action(repository& source, digest id) {
     auto bytes = co_await repository_detail::build_access::get(source, id);
-    if (!bytes)
+    if (!bytes) {
         co_return std::unexpected(bytes.error());
-    co_return objects::decode_action(*bytes);
+    }
+    auto value = objects::decode_action(*bytes);
+    if (!value) {
+        co_return std::unexpected(
+            wrap_error(value.error().code, value.error().message, "wrap action " + to_string(id)));
+    }
+    co_return *value;
 }
 
 auto remove_run(const std::filesystem::path& path) -> liquid::result<void> {
@@ -1933,13 +1955,13 @@ runtime::task<void> publish_observed_run(repository& source,
     auto cut = co_await source.cut("wrap output snapshot");
     if (!cut) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(cut.error());
+        co_return std::unexpected(stage_error("recording wrap output snapshot", cut.error()));
     }
     auto log = co_await source.log();
     if (!log || log->empty()) {
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(log ? wrap_error(errc::internal, "wrap output is missing")
-                                      : log.error());
+                                      : stage_error("reading wrap output snapshot", log.error()));
     }
     const auto replay_tree = log->front().root;
     const auto previous_actions = state.actions;
@@ -1953,7 +1975,7 @@ runtime::task<void> publish_observed_run(repository& source,
         auto stored = co_await store_toolchain(source, state.tools);
         if (!stored) {
             static_cast<void>(remove_run(run.directory));
-            co_return std::unexpected(stored.error());
+            co_return std::unexpected(stage_error("storing wrap toolchain", stored.error()));
         }
         toolchain = *stored;
         auto pinned = write_toolchain(toolchain_path, *stored);
@@ -1969,7 +1991,7 @@ runtime::task<void> publish_observed_run(repository& source,
     auto empty_blob = co_await repository_detail::build_access::put_file(source, empty);
     if (!empty_blob) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(empty_blob.error());
+        co_return std::unexpected(stage_error("storing wrap empty output", empty_blob.error()));
     }
     const auto writes = writes_by_process(*run.observations);
     const auto driver_pid = run.processes.front().pid;
@@ -1980,7 +2002,7 @@ runtime::task<void> publish_observed_run(repository& source,
         auto program = co_await probe_program_text(source, *run.observations, process.pid);
         if (!program) {
             static_cast<void>(remove_run(run.directory));
-            co_return std::unexpected(program.error());
+            co_return std::unexpected(stage_error("reading configure probe", program.error()));
         }
         const auto is_probe = build_detail::probe_process(process.command, process.cwd) &&
                               shareable_probe_program(*program);
@@ -2049,7 +2071,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                                  options.cache);
         if (!published) {
             static_cast<void>(remove_run(run.directory));
-            co_return std::unexpected(published.error());
+            co_return std::unexpected(stage_error("publishing wrapped action", published.error()));
         }
         if (is_probe && !fact_answers_used) {
             auto answer = fact_answer{.exit = 0, .result = published->result};
@@ -2106,12 +2128,12 @@ runtime::task<void> publish_observed_run(repository& source,
                                                options.cache);
     if (!outer_saved) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(outer_saved.error());
+        co_return std::unexpected(stage_error("publishing outer wrap action", outer_saved.error()));
     }
     auto outer_value = co_await load_result(source, outer_saved->result);
     if (!outer_value) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(outer_value.error());
+        co_return std::unexpected(stage_error("loading outer wrap result", outer_value.error()));
     }
     if (backend && backend->config().publish) {
         auto outer_action = co_await load_action(source, outer_value->action);
@@ -2129,7 +2151,7 @@ runtime::task<void> publish_observed_run(repository& source,
     auto outer_bytes = co_await build_detail::output_bytes(source, *outer_value);
     if (!outer_bytes) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(outer_bytes.error());
+        co_return std::unexpected(stage_error("counting outer wrap outputs", outer_bytes.error()));
     }
     report.cache.bytes_rebuilt += *outer_bytes;
     if (report.trace_actions.empty()) {
@@ -2173,12 +2195,12 @@ runtime::task<void> publish_observed_run(repository& source,
     auto copied = co_await copy_outputs(source, working_tree, state.outputs);
     if (!copied) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(copied.error());
+        co_return std::unexpected(stage_error("restoring wrap outputs", copied.error()));
     }
     auto saved = write_state(state_path, state);
     auto removed = remove_run(run.directory);
     if (!saved)
-        co_return std::unexpected(saved.error());
+        co_return std::unexpected(stage_error("saving wrap state", saved.error()));
     if (!removed)
         co_return std::unexpected(removed.error());
     auto outer_recorded =
@@ -2590,19 +2612,21 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    !fact_variables.empty(),
                                                    outer_miss_recorded,
                                                    report);
-    if (!published)
-        co_return std::unexpected(published.error());
+    if (!published) {
+        co_return std::unexpected(stage_error("publishing observed wrap run", published.error()));
+    }
     auto primed = co_await prime_wrap_actions(*queries, query_state, *state, *sandbox);
     if (!primed) {
-        co_return std::unexpected(primed.error());
+        co_return std::unexpected(stage_error("priming wrap action cache", primed.error()));
     }
     auto recorded = build_detail::record_configuration_facts(working_tree, *facts_key, facts);
-    if (!recorded)
-        co_return std::unexpected(recorded.error());
+    if (!recorded) {
+        co_return std::unexpected(stage_error("recording configuration facts", recorded.error()));
+    }
     auto completed =
         co_await complete_report(*cache_directory, *source, cache, wrap_started, report);
     if (!completed) {
-        co_return std::unexpected(completed.error());
+        co_return std::unexpected(stage_error("recording wrap report", completed.error()));
     }
     if (options.verify) {
         build_detail::schedule_verification(std::move(*source));
