@@ -18,9 +18,13 @@ add_executable(liquid-tests
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/conversion.cpp
+  ${PROJECT_SOURCE_DIR}/src/workers/protocol.cpp
+  ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
+  ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
@@ -298,7 +302,8 @@ add_executable(liquid-header-tests
   headers/store.cpp
   headers/sync.cpp
   headers/version.cpp
-  headers/vfs.cpp)
+  headers/vfs.cpp
+  headers/workers.cpp)
 target_link_libraries(liquid-header-tests PRIVATE liquid::liquid)
 add_test(NAME public-headers-isolated COMMAND liquid-header-tests)
 

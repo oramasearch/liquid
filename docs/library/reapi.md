@@ -60,8 +60,9 @@ liquid serve reapi --listen 127.0.0.1:50051 --instance builds
 Capabilities, CAS `FindMissingBlobs`, batch reads and updates, `GetTree`, ByteStream reads,
 client-streaming and resumable writes, and ActionCache reads and updates. CAS objects use standard
 SHA-256 digest and size validation. ActionCache records live beside the repository store under
-`.liquid-store/reapi-action-cache`. The server intentionally does not offer Execution; liquid's
-worker and scheduler are tracked separately.
+`.liquid-store/reapi-action-cache`. The cache-only server intentionally does not offer Execution;
+`liquid scheduler` reuses it with Execution and Operations enabled, as documented in
+[`workers.md`](workers.md).
 
 The server accepts HTTP/2 prior-knowledge h2c. Its initial SETTINGS frame precedes its acknowledgement
 of the client preface, which is required by strict stock clients. TLS termination is expected in
@@ -75,6 +76,7 @@ front of this server command.
 |---|---|---|
 | `endpoint` | `host:port`, `http://host:port`, or `https://host:port` | required |
 | `instance_name` | REAPI instance prefix | empty |
+| `backend` | stock `reapi` or `liquid_scheduler` execution path | `reapi` |
 | `tls.enabled`, `tls.verify_peer` | TLS and certificate verification | false, true |
 | `tls.certificate_authority` | optional PEM trust file | system trust |
 | `tls.client_certificate`, `tls.client_key` | optional mTLS PEM files | none |
@@ -88,6 +90,8 @@ front of this server command.
 `--remote-client-cert`, `--remote-client-key`, `--remote-deadline-ms`, and
 `--remote-publish`. Supplying the flags when a wrap repository is created persists the
 configuration; later runs reuse it. CLI flags on a later run take precedence.
+`wrap --scheduler <endpoint>` selects and persists the liquid scheduler backend while retaining
+the same TLS, header, deadline, instance, and CAS settings.
 
 ## Public API map
 
@@ -95,6 +99,7 @@ configuration; later runs reuse it. CLI flags on a later run take precedence.
 |---|---|
 | `liquid/remote.hpp` | `remote_config`, TLS configuration, `remote_blob`, the transport-neutral source and executor contracts, and the move-only `remote` REAPI handle. |
 | `liquid/reapi.hpp` | `reapi_serve_options` and `serve_reapi`. |
+| `liquid/workers.hpp` | scheduler and worker options plus their coroutine-native long-running entry points. |
 | `liquid/repository.hpp` | `repository_options::remote` and `repository::remote_configuration`. |
 | `liquid/build.hpp` | `wrap_options::remote`, per-tier `cache_report`, and the existing remote execution entry points. |
 

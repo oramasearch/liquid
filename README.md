@@ -89,7 +89,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > REAPI v2.3 messages, and native tree/action/result conversions are implemented. The Corosio
 > REAPI client provides CAS, ByteStream, ActionCache, and Execution RPCs; `wrap` and `build --profile`
 > use its validated remote cache tier, and `liquid serve reapi` exposes liquid's CAS and ActionCache.
-> Production workers and measured transfer timing remain Phase 3 work.
+> Liquid's action-digest scheduler and TAAP-signed worker fleet are implemented, including one
+> bounded requeue after worker loss, size-class placement from #18's recorded decision, REAPI
+> Execution and ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces.
+> Measured transfer timing remains Phase 3 work.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -176,7 +179,8 @@ and Zetta's.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented daemon lifecycle, cursor fan-out, endpoint, status, and graph value eviction.
-- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
+- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
+- [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.
 - [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.
 - [`docs/library/reapi.md`](docs/library/reapi.md) — the REAPI client, remote cache tier, CAS/ActionCache server, configuration, CLI, API map, and peer proof.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.

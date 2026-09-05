@@ -10,7 +10,8 @@
 > transport-neutral remote interfaces. The protobuf messages and native record mapping are
 > implemented in [`reapi-codec.md`](reapi-codec.md). Issue #16 connects them to the HTTP/2 client,
 > remote cache tier, and liquid CAS/ActionCache server as documented in [`reapi.md`](reapi.md).
-> Production workers remain separate work.
+> Issue #63 adds liquid's action-digest scheduler, signed worker fleet, bounded requeue, and
+> deployable server surfaces, documented in [`workers.md`](workers.md).
 
 Phase 2 built the local action path: records for actions and results
 ([`build-engine.md`](build-engine.md)), observation by the mount, the signed disk cache, `liquid
@@ -112,8 +113,8 @@ objects are written. The test executor uses a second liquid store as the remote 
 the source and toolchain into a new directory for every execution, and invokes the tool from that
 reconstructed toolchain. No worker image supplies the compiler or test tool. A remote result's
 output, stdout, and stderr blob graphs are read back through `read_range` before the signed result
-is published locally. Issues #16 and #63 implement network and production-worker versions of these
-interfaces without changing the scheduler.
+is published locally. Issues #16 and #63 implement the network and worker versions of these
+interfaces without changing the cost model.
 
 ### Cost model
 
@@ -217,12 +218,22 @@ later.
 
 ## liquid's own scheduler and workers (#63)
 
-Compatibility first; ownership second, because REAPI cannot express observed dependencies, finer
-granularity or liquid's attestations. The worker is the Phase 2 executor plus a client of the
-scheduler; the scheduler is a queue keyed by action digest with idempotent requeue (a worker
-killed mid-action is requeued once and the output is identical, because the action is
-deterministic by construction). The CAS is the liquid store on the worker nodes, co-located, and
-results are signed by the worker's TAAP identity. Deployment is the operator's (Phase 6).
+**Implemented.** Compatibility remains first: the scheduler offers REAPI Execution and Operations
+beside the #16 CAS and ActionCache. A liquid client additionally submits #18's exact scheduling
+record, so the queue places by recorded size class and the accepted signed result preserves the
+decision for `why`.
+
+The queue is keyed by action digest. Duplicate submissions join its existing operation. Workers
+poll with their platform, size class, and TAAP identity, keep leases alive with heartbeats, fetch
+missing native input and toolchain records into a co-located liquid store, and run the Phase 2
+executor. A dead worker's action returns to the queue once; a second worker loss fails it. Tokens
+reject late completion, and accepted results retain the worker's TAAP signature, provenance,
+SBOMs, stdout, stderr, and outputs.
+
+`liquid scheduler`, `liquid worker`, the `remote_config::backend` selector, component images, and
+health, readiness, metrics, REST, OpenAPI, and MCP discovery endpoints are implemented. Phase 6
+owns operator reconciliation and rollout. The complete protocol and deployment contract are in
+[`workers.md`](workers.md).
 
 ## Delta encoding for delivery (#64)
 

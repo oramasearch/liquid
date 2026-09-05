@@ -54,6 +54,8 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto scheduler(int argc, char** argv) -> int;
+auto worker(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -205,15 +207,16 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::sbom},
     {"wrap",
-     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>] [remote options] "
+     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
+     "[remote options] "
      "[--no-cache] [--no-verify] [--explain] <command> "
      "[args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build --profile [--remote <endpoint>] [remote options] <command> [args...] | build trace "
-     "[--chrome]",
+     "build --profile [--remote <endpoint>|--scheduler <endpoint>] [remote options] <command> "
+     "[args...] | build trace [--chrome]",
      "profile a build or export its trace",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::build},
@@ -242,6 +245,16 @@ constexpr auto commands = std::to_array<command>({
      "serve the repository CAS and action cache over REAPI",
      "available",
      liquid_cli::serve},
+    {"scheduler",
+     "scheduler --listen <address> [options]",
+     "run the remote-execution scheduler and CAS",
+     "available",
+     liquid_cli::scheduler},
+    {"worker",
+     "worker --scheduler <address> [options]",
+     "run a remote-execution worker",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::worker},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},
