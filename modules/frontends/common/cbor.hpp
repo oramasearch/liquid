@@ -16,10 +16,11 @@ struct cbor_value {
     using bytes = std::vector<std::uint8_t>;
     using array = std::vector<cbor_value>;
     using map = std::vector<std::pair<std::string, cbor_value>>;
-    using storage = std::variant<std::uint64_t, bytes, std::string, array, map>;
+    using storage = std::variant<bool, std::uint64_t, bytes, std::string, array, map>;
 
     storage data;
 
+    cbor_value(bool value) : data(value) {}
     cbor_value(std::uint64_t value) : data(value) {}
     cbor_value(bytes value) : data(std::move(value)) {}
     cbor_value(std::string value) : data(std::move(value)) {}

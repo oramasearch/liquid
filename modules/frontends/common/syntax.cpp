@@ -113,6 +113,30 @@ auto language_name(syntax_language language) -> std::string_view {
     return language == syntax_language::c ? "c" : "c++";
 }
 
+auto syntax_node_value(TSNode node, const char* field) -> cbor_value {
+    auto children = cbor_value::array{};
+    const auto count = ts_node_child_count(node);
+    children.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        children.push_back(syntax_node_value(ts_node_child(node, index),
+                                             ts_node_field_name_for_child(node, index)));
+    }
+    auto fields = cbor_value::map{
+        {"kind", std::string{ts_node_type(node)}},
+        {"named", ts_node_is_named(node)},
+        {"range",
+         cbor_value::map{
+             {"start", position_value(point(ts_node_start_byte(node), ts_node_start_point(node)))},
+             {"end", position_value(point(ts_node_end_byte(node), ts_node_end_point(node)))},
+         }},
+        {"children", std::move(children)},
+    };
+    if (field) {
+        fields.emplace_back("field", std::string{field});
+    }
+    return cbor_value{std::move(fields)};
+}
+
 auto identifier_range(TSNode node, std::span<const std::uint8_t> source) -> source_point {
     return point(ts_node_end_byte(node), ts_node_end_point(node));
 }
@@ -296,6 +320,35 @@ auto encode_symbols(syntax_language language,
                                    {"language", std::string{language_name(language)}},
                                    {"origin", std::string{origin}},
                                    {"occurrences", std::move(values)}}});
+}
+
+auto encode_syntax_tree(syntax_language language, std::span<const std::uint8_t> source)
+    -> std::vector<std::uint8_t> {
+    auto* parser = ts_parser_new();
+    if (!parser) {
+        return {};
+    }
+    const auto* grammar = language == syntax_language::c ? tree_sitter_c() : tree_sitter_cpp();
+    if (!ts_parser_set_language(parser, grammar)) {
+        ts_parser_delete(parser);
+        return {};
+    }
+    auto* tree = ts_parser_parse_string(parser,
+                                        nullptr,
+                                        reinterpret_cast<const char*>(source.data()),
+                                        static_cast<std::uint32_t>(source.size()));
+    if (!tree) {
+        ts_parser_delete(parser);
+        return {};
+    }
+    auto output = cbor_encode(cbor_value{cbor_value::map{
+        {"v", std::uint64_t{1}},
+        {"language", std::string{language_name(language)}},
+        {"root", syntax_node_value(ts_tree_root_node(tree), nullptr)},
+    }});
+    ts_tree_delete(tree);
+    ts_parser_delete(parser);
+    return output;
 }
 
 } // namespace liquid_frontend

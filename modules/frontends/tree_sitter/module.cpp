@@ -92,6 +92,39 @@ auto symbols(void*,
         liquid_frontend::encode_symbols(syntax, "syntactic", found), output);
 }
 
+auto syntax(void*,
+            const char* language,
+            liquid_frontend_bytes_v1 blob,
+            liquid_frontend_bytes_v1,
+            const liquid_frontend_callbacks_v1* callbacks,
+            liquid_frontend_owned_bytes_v1* output,
+            liquid_frontend_error_v1* error) -> int {
+    if (!language || !output || (!blob.data && blob.size != 0)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT, "invalid syntax request");
+    }
+    auto syntax_language = liquid_frontend::syntax_language::c;
+    const auto name = std::string_view{language};
+    if (name == "c++" || name == "cpp") {
+        syntax_language = liquid_frontend::syntax_language::cpp;
+    } else if (name != "c") {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_UNSUPPORTED, "language is not supported");
+    }
+    if (liquid_frontend::cancelled(callbacks)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_CANCELLED, "syntax discovery was cancelled");
+    }
+    liquid_frontend::progress(callbacks, "syntax", 0, 1);
+    auto encoded = liquid_frontend::encode_syntax_tree(syntax_language, {blob.data, blob.size});
+    if (encoded.empty()) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INTERNAL, "tree-sitter could not parse syntax");
+    }
+    liquid_frontend::progress(callbacks, "syntax", 1, 1);
+    return liquid_frontend::return_bytes(std::move(encoded), output);
+}
+
 constexpr const char* c_extensions[] = {".c", ".h"};
 constexpr const char* cpp_extensions[] = {".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx"};
 constexpr liquid_frontend_language_v1 languages[] = {
@@ -112,6 +145,7 @@ const liquid_frontend_module_v1 module = {
     symbols,
     nullptr,
     nullptr,
+    syntax,
 };
 
 } // namespace

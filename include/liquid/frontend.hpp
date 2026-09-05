@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/error.hpp"
@@ -58,6 +59,37 @@ struct LIQUID_EXPORT frontend_unit {
     digest fingerprint;
     std::vector<std::byte> canonical_value;
 };
+
+struct LIQUID_EXPORT syntax_node {
+    std::string kind;
+    bool named{};
+    std::optional<std::string> field;
+    frontend_source_range range;
+    std::vector<syntax_node> children;
+
+    syntax_node() = default;
+    syntax_node(const syntax_node& other);
+    syntax_node(syntax_node&& other) noexcept;
+    auto operator=(const syntax_node& other) -> syntax_node&;
+    auto operator=(syntax_node&& other) noexcept -> syntax_node&;
+
+    [[nodiscard]] auto node_at(std::uint64_t byte) const -> const syntax_node*;
+    [[nodiscard]] auto enclosing(std::string_view node_kind) const -> const syntax_node*;
+
+private:
+    syntax_node* parent_{};
+
+    void relink(syntax_node* parent = nullptr);
+    friend auto decode_syntax_tree(std::span<const std::byte> value) -> result<struct syntax_tree>;
+};
+
+struct LIQUID_EXPORT syntax_tree {
+    std::string language;
+    syntax_node root;
+};
+
+[[nodiscard]] LIQUID_EXPORT auto decode_syntax_tree(std::span<const std::byte> value)
+    -> result<syntax_tree>;
 
 struct LIQUID_EXPORT frontend_callbacks {
     std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
@@ -139,6 +171,10 @@ public:
                                            std::span<const std::byte> action_output,
                                            frontend_callbacks callbacks = {}) const
         -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto syntax(std::string_view language,
+                              std::span<const std::byte> blob,
+                              std::span<const std::byte> context_cbor = {},
+                              frontend_callbacks callbacks = {}) const -> result<syntax_tree>;
 
 private:
     struct impl;

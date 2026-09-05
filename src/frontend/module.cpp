@@ -252,8 +252,9 @@ auto frontend_module::operator=(frontend_module&&) noexcept -> frontend_module& 
 
 auto frontend_module::linked(const liquid_frontend_module_v1* descriptor)
     -> result<frontend_module> {
+    constexpr auto required_size = offsetof(liquid_frontend_module_v1, syntax);
     if (!descriptor || descriptor->abi_version != LIQUID_FRONTEND_ABI_VERSION ||
-        descriptor->struct_size < sizeof(liquid_frontend_module_v1) || !descriptor->name ||
+        descriptor->struct_size < required_size || !descriptor->name ||
         descriptor->language_count == 0 || !descriptor->languages || !descriptor->units ||
         !descriptor->compile_unit || !descriptor->assemble || !descriptor->symbols) {
         return std::unexpected(frontend_error(
@@ -268,6 +269,47 @@ auto frontend_module::linked(const liquid_frontend_module_v1* descriptor)
     auto implementation = std::make_unique<impl>();
     implementation->descriptor = descriptor;
     return frontend_module{std::move(implementation)};
+}
+
+auto frontend_module::syntax(std::string_view language,
+                             std::span<const std::byte> blob,
+                             std::span<const std::byte> context_cbor,
+                             frontend_callbacks callbacks) const -> result<syntax_tree> {
+    constexpr auto syntax_size =
+        offsetof(liquid_frontend_module_v1, syntax) + sizeof(liquid_frontend_module_v1::syntax);
+    if (!impl_ || !supports(language) || impl_->descriptor->struct_size < syntax_size ||
+        !impl_->descriptor->syntax) {
+        return std::unexpected(frontend_error(
+            errc::unsupported, "frontend does not expose concrete syntax", std::string{language}));
+    }
+    auto valid_context = validate_input(context_cbor, "frontend syntax context");
+    if (!valid_context) {
+        return std::unexpected(valid_context.error());
+    }
+    auto bridge = callback_bridge{};
+    auto abi = abi_callbacks(callbacks, bridge);
+    auto output = liquid_frontend_owned_bytes_v1{};
+    auto abi_error = liquid_frontend_error_v1{};
+    const auto language_text = std::string{language};
+    const auto status = impl_->descriptor->syntax(
+        impl_->descriptor->module_context,
+        language_text.c_str(),
+        {reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size()},
+        {reinterpret_cast<const std::uint8_t*>(context_cbor.data()), context_cbor.size()},
+        &abi,
+        &output,
+        &abi_error);
+    if (status != LIQUID_FRONTEND_STATUS_OK) {
+        return std::unexpected(
+            frontend_error(status_code(status),
+                           abi_error.message ? abi_error.message : "frontend syntax failed",
+                           std::string{name()}));
+    }
+    auto copied = copy_output(output, name());
+    if (!copied) {
+        return std::unexpected(copied.error());
+    }
+    return decode_syntax_tree(*copied);
 }
 
 auto frontend_module::load(std::filesystem::path shared_object) -> result<frontend_module> {

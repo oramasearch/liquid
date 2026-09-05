@@ -45,5 +45,7 @@ auto parse_symbols(syntax_language language, std::span<const std::uint8_t> sourc
 auto encode_symbols(syntax_language language,
                     std::string_view origin,
                     const std::vector<syntax_symbol>& symbols) -> std::vector<std::uint8_t>;
+auto encode_syntax_tree(syntax_language language, std::span<const std::uint8_t> source)
+    -> std::vector<std::uint8_t>;
 
 } // namespace liquid_frontend
