@@ -35,8 +35,9 @@ and `sbom/1` attestations derived from its action and manifest. Before execution
 can require verified registered-profile attestations for source and toolchain blobs. Issue #18 adds
 a remote executor alongside #17's remote blob interface, input and toolchain transfer, cost-based
 local/remote/race selection, remote batching, and loser cancellation. Issue #16 supplies the REAPI
-network transport and validated remote cache tier. Production workers remain separate. Configure checks additionally populate a
-shared content-addressed fact base and can be answered across projects without starting the probe.
+network transport and validated remote cache tier. Issue #63 supplies liquid's scheduler and
+TAAP-signed worker fleet. Configure checks additionally populate a shared content-addressed fact
+base and can be answered across projects without starting the probe.
 
 ## Records in the store
 
@@ -104,6 +105,8 @@ and `TMPDIR` to sandbox-private directories, `LANG=C.UTF-8`, `TZ=UTC`, `SOURCE_D
 from the change's time, nothing inherited). The sandbox definition (the mount layout, the
 environment, the enforcement profile) is itself a record and its digest is in the action, so
 two machines with different sandbox definitions never share a cache entry by accident.
+On Linux, optional `lib` and `lib64` directories from that same toolchain are mounted at their
+conventional absolute paths for dynamic executables; no worker-image runtime file is exposed.
 
 `action_input::remote_eligible` defaults off. When enabled on Linux, the read guard observes open
 system calls across the action's process tree and reports the first path outside the input and
@@ -341,9 +344,10 @@ marks every index row for that result permanently divergent, and appends a criti
 and outputs and exits non-zero; `--explain` reports the first differing byte because Phase 2 has no
 structured output codecs.
 
-Local replay is the Phase 2 trust check. Verification through a networked production worker remains
-Phase 3 work; it uses the same comparison and attestation records. Issue #18's local second-store
-worker proves the executor and toolchain-transfer boundary without adding a transport.
+Local replay is the Phase 2 trust check. Issue #63 runs the same executor through liquid's
+networked scheduler and worker fleet while preserving signed result, provenance, SBOM, and
+scheduling records. Issue #18's local second-store worker proves the executor and
+toolchain-transfer boundary without adding a transport.
 
 Issue #19 exposes that re-execution path as `liquid replay <action|result>`. Verification and replay
 share action reconstruction, sandbox selection, execution, and comparison. Verification always

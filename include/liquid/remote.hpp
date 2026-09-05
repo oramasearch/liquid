@@ -19,7 +19,10 @@ namespace liquid {
 
 struct action_input;
 struct action_result;
+struct execution_schedule;
 class repository;
+
+enum class remote_backend : std::uint8_t { reapi, liquid_scheduler };
 
 struct LIQUID_EXPORT remote_tls_config {
     bool enabled{};
@@ -39,6 +42,7 @@ struct LIQUID_EXPORT remote_config {
     std::chrono::milliseconds deadline{std::chrono::seconds{60}};
     std::uint64_t batch_blob_limit{4U * 1024U * 1024U};
     bool publish{};
+    remote_backend backend{remote_backend::reapi};
 
     auto operator==(const remote_config&) const -> bool = default;
 };
@@ -82,6 +86,8 @@ public:
     [[nodiscard]] virtual runtime::task<action_result> execute(action_input input) = 0;
     [[nodiscard]] virtual runtime::task<std::vector<action_result>>
     execute_batch(std::vector<action_input> inputs) = 0;
+    [[nodiscard]] virtual runtime::task<action_result> execute_prepared(
+        action_input input, digest action, digest sandbox, execution_schedule schedule);
 };
 
 class LIQUID_EXPORT remote {

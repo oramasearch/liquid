@@ -9,6 +9,7 @@ splitting a Markdown row as a CMake list. `public-includes.cmake` rejects a CLI 
 includes anything outside the public `liquid/` header tree. The `cli-why-json` and
 `cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
 cache.
+The help/documentation comparison also pins the `scheduler` and `worker` command names.
 The scenario also pins `remote_bytes` in the status JSON contract.
 It maps an anchor from the imported change through a later rename and checks the returned path and
 flags.

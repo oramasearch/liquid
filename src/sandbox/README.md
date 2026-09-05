@@ -16,6 +16,11 @@ Local action launch also carries the coroutine stop token. A cancelled local/rem
 Linux sandbox process group, waits for it, unmounts its input view, and removes the run directory;
 only the scheduler's winner can reach result publication.
 
+Linux exposes `lib` and `lib64` aliases only when those directories exist in the declared
+toolchain. The dynamic loader and libraries remain content-addressed toolchain inputs; the read
+guard permits those aliases and the optional loader-cache lookup inside the otherwise isolated
+sandbox root.
+
 Windows deliberately returns `errc::unsupported` until its Phase 6 launcher exists.
 
 On Linux, a remote-eligible action is prefixed with the static `read_guard.c` tracer inside the

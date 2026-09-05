@@ -1159,7 +1159,8 @@ TEST(Repository, RemoteConfigurationPersistsAcrossOpen) {
                                            .headers = {{"authorization", "Bearer test-token"}},
                                            .deadline = std::chrono::milliseconds{2500},
                                            .batch_blob_limit = 1024,
-                                           .publish = true};
+                                           .publish = true,
+                                           .backend = liquid::remote_backend::liquid_scheduler};
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
     ASSERT_TRUE(created) << created.error().message;
     ASSERT_TRUE(created->remote_configuration());

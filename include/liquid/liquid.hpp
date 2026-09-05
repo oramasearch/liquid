@@ -21,3 +21,4 @@
 #include "liquid/sync.hpp"
 #include "liquid/version.hpp"
 #include "liquid/vfs.hpp"
+#include "liquid/workers.hpp"
