@@ -46,7 +46,10 @@ one repository without losing the other, and reopens by identifier. Tree-diff ca
 additions, removals, content and mode changes, `node_id` moves, opt-in text hunks, and stored
 conflict values. Text-anchor cases map unchanged and shifted lines, approximate replacements,
 deleted regions and files, and a renamed node in one unsorted batch. CLI scenario and
-command-documentation tests live in `cli/`. `test_runtime.cpp`
+command-documentation tests live in `cli/`. Flow-control cases pin the eleventh-write refusal and
+operation count, update-size rejection, cross-actor directory isolation, persisted configuration,
+daemon pause/resume and bucket status, peer HTTP 429 retry projection, and the status JSON fixture.
+`test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
@@ -68,7 +71,8 @@ bytes across repeated pushes, pulls into an empty repository, and rejects a corr
 signature without changing state. It checks change-to-ref context, derives false fast-forward
 state for divergent history, applies mixed per-ref outcomes, preserves exact reasons, keeps
 all-refused and atomic pushes unchanged, retains uploaded objects, converts callback exceptions to
-refusals, and reads a legacy reply. Its CLI case starts the real `serve sync --allow-ref main`
+refusals, reads a legacy reply, and proves a flow-refused push leaves repository metadata
+unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.

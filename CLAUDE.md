@@ -24,6 +24,8 @@ deterministic crash simulator, liquid #116's bounded-memory file and repository 
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
 verified redaction, liquid #52's JSON/`.env` leaf encryption with structural key diff, and liquid
 #43's local Git import/export with identity mapping are implemented;
+liquid #85 adds persisted actor, directory-document, and repository write buckets, explicit
+pre-transaction rejection, peer 429 retry signals, daemon watermarks, and consumer-lag status;
 liquid #10 provides local sandboxed action execution through `liquid::build` on Linux. Liquid #11
 provides its signed, manifest-validated persistent disk cache with read-only publication by default.
 Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and

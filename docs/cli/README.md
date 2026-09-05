@@ -89,7 +89,9 @@ Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
 adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
-successful delivery count.
+successful delivery count. The top-level JSON `flow` object pins paused state, reason, persistence
+lag, consumer lag, and bucket rows. Text output presents the same high-level values on one `flow`
+line; each bucket row in JSON includes scope, key, current tokens, rate, burst, and rejected count.
 `push` and `pull` print metadata item, object, byte, and cursor counts. `push` then prints exactly
 one line per requested ref:
 
@@ -102,6 +104,9 @@ Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refu
 completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
 use `LIQUID_TOKEN` as an optional bearer credential and never print it. A URL must use HTTP or HTTPS
 and identify one lake repository.
+An HTTP 429 flow refusal prints
+`flow_rejected scope=<actor|document|repository> retry_after_ms=<count>` and exits with status 1;
+the cursor does not advance.
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line

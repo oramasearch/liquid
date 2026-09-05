@@ -187,6 +187,23 @@ journal cursor only after successful delivery. Replayed or duplicate cursor valu
 a failed target keeps its old cursor and error, so restart retries it. `liquid status` reports the
 last drip, changed paths, delivery count, cursor, error, and cursor distance for each target.
 
+### Flow watermarks
+
+The daemon reports two independent lag measures. Persistence lag is
+`capture_status::pending_drips`; consumer lag is the largest `behind` value across delivery targets
+and registered in-process consumers. `flow_config::pause_above` and `resume_below` form a
+hysteresis band. Above the high mark, writes return `errc::busy` with `paused_for=persistence` or
+`paused_for=consumers`; the pause remains until that measure reaches the low mark. The configured
+`max_unacknowledged` is also an upper bound for consumer lag.
+
+`daemon::report_consumer_lag(name, behind)` is a task-returning hook for an in-process client that
+is not a delivery target. liquify reports its render backlog through this hook. Reporting a lower
+value updates the existing named consumer, so it participates in the same resume decision without
+gaining a delivery cursor.
+
+`daemon_status::flow` contains `paused`, `reason`, `persistence_lag`, `consumer_lag`, and live
+bucket rows with scope, key, tokens, rate, burst, and rejection count since daemon start.
+
 ## Continuous clean-rebuild validation (#23)
 
 Phase 2's sampled re-execution verifies actions; Phase 4 verifies the graph: on idle capacity the

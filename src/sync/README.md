@@ -13,10 +13,11 @@ continues through its references while preserving each transmitted digest algori
 checks repository/store pairing, derives old/new ref updates and fast-forward state from the change
 graph, associates new reachability with change callbacks, accumulates named verdicts, imports the
 accepted ref set, applies the optional atomic rule, exports pull pages, answers missing-object
-queries and logical range reads, verifies pack uploads, and encodes canonical error bodies.
+queries and logical range reads, verifies pack uploads, applies per-author flow limits before
+metadata import, and encodes canonical error bodies including retry scope and delay.
 
 `endpoint.cpp` is the private Corosio and `oramasearch/http` adapter. It parses HTTP/HTTPS repository
 URLs, resolves and connects on the caller's Capy executor, supports content-length and chunked
 responses, supplies bearer authentication, validates or synthesizes legacy push outcomes, and
-composes metadata with the object session for push and pull. The public types contain no transport
-implementation types.
+composes metadata with the object session for push and pull. HTTP 429 responses become explicit
+retry fields in the public sync report. The public types contain no transport implementation types.
