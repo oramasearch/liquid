@@ -100,6 +100,11 @@ Ignored generated entries are retained from the prior paged tree, so synchronisi
 subsequent wrapped build cannot remove the configured CMake cache from the observed filesystem.
 The following change cut retains that deferred root page instead of rebuilding it from an unloaded
 entry map, preserving those configured inputs through the wrapper's snapshot record.
+For a `cmake --build` invocation, paths below its configured build directory are inputs even when a
+previous wrapper action listed them as outputs; source synchronisation imports them rather than
+letting the prior-output exclusion hide the CMake cache.
+The wrapper obtains that directory from the current `--build` argument and from the preceding
+CMake configure action's `-B` argument, so a configured tree remains available to its next build.
 The Linux self-host container has an 8 GiB memory limit; that bound applies to source import as
 well as result restoration and repository checkpoints.
 

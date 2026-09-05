@@ -205,6 +205,12 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
         run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, false, 3);
     ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
     ASSERT_EQ(first->exit, 0);
+    auto cached_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(cached_repository) << cached_repository.error().message;
+    const auto imported_cache =
+        liquid::runtime::block_on(cached_repository->read("build/CMakeCache.txt"));
+    EXPECT_TRUE(imported_cache) << imported_cache.error().message;
     EXPECT_GE(first->processes_started, 3U);
     EXPECT_TRUE(std::filesystem::is_regular_file(fixture.project() / "build/wrapped"));
 

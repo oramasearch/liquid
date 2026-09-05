@@ -309,7 +309,7 @@ TEST(Repository, import_tree_preserves_ignored_entries_in_a_paged_tree) {
 
     write_file(source / "build" / "CMakeCache.txt", content("configured"));
     auto options = liquid::import_options{};
-    options.ignore_patterns = {"build/**", "!build", "!build/**"};
+    options.ignore_patterns = {"build", "build/**", "!build", "!build/**"};
     const auto included = liquid::runtime::block_on(repository.import_tree(source, options));
     ASSERT_TRUE(included) << included.error().message << ": " << included.error().context;
     ASSERT_TRUE(included->drip.has_value());

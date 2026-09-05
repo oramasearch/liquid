@@ -558,7 +558,50 @@ runtime::task<void> sync_sources(repository& source,
     options.message = "synchronise wrap sources";
     options.ignore_patterns = {
         ".git/**", ".liquid-store/**", "LIQUID_REPO", "LIQUID_JOURNAL", ".liquid-build/**"};
+    auto configured_inputs = std::vector<std::string>{};
+    const auto add_configured_input = [&](std::string_view directory) {
+        if (directory.empty()) {
+            return;
+        }
+        const auto relative = std::filesystem::path{directory}.lexically_normal().generic_string();
+        if (relative.empty() || relative.starts_with("../") || relative.starts_with('/')) {
+            return;
+        }
+        if (std::ranges::find(configured_inputs, relative) != configured_inputs.end()) {
+            return;
+        }
+        configured_inputs.push_back(relative);
+        options.ignore_patterns.push_back("!" + relative);
+        options.ignore_patterns.push_back("!" + relative + "/**");
+    };
+    const auto add_current_build_directory = [&](const std::vector<std::string>& arguments) {
+        for (auto index = std::size_t{}; index != arguments.size(); ++index) {
+            if (arguments[index] == "--build" && index + 1 != arguments.size()) {
+                add_configured_input(arguments[index + 1]);
+            } else if (arguments[index].starts_with("--build=")) {
+                add_configured_input(std::string_view{arguments[index]}.substr(8));
+            }
+        }
+    };
+    const auto add_configured_build_directory = [&](const std::vector<std::string>& arguments) {
+        for (auto index = std::size_t{}; index != arguments.size(); ++index) {
+            if (arguments[index] == "-B" && index + 1 != arguments.size()) {
+                add_configured_input(arguments[index + 1]);
+            } else if (arguments[index].starts_with("-B") && arguments[index].size() > 2) {
+                add_configured_input(std::string_view{arguments[index]}.substr(2));
+            }
+        }
+    };
+    add_current_build_directory(command);
+    add_configured_build_directory(state.action_command);
     for (const auto& output : state.outputs) {
+        const auto is_configured_input =
+            std::ranges::any_of(configured_inputs, [&output](const std::string& configured) {
+                return output == configured || output.starts_with(configured + "/");
+            });
+        if (is_configured_input) {
+            continue;
+        }
         options.ignore_patterns.push_back(output);
         options.ignore_patterns.push_back(output + "/**");
     }
@@ -566,24 +609,6 @@ runtime::task<void> sync_sources(repository& source,
     if (!relative_cache.empty() && !relative_cache.starts_with("../")) {
         options.ignore_patterns.push_back(relative_cache);
         options.ignore_patterns.push_back(relative_cache + "/**");
-    }
-    for (auto index = std::size_t{}; index != command.size(); ++index) {
-        auto build_directory = std::string_view{};
-        if (command[index] == "--build" && index + 1 != command.size()) {
-            build_directory = command[index + 1];
-        } else if (command[index].starts_with("--build=")) {
-            build_directory = std::string_view{command[index]}.substr(8);
-        }
-        if (build_directory.empty()) {
-            continue;
-        }
-        const auto relative =
-            std::filesystem::path{build_directory}.lexically_normal().generic_string();
-        if (relative.empty() || relative.starts_with("../") || relative.starts_with('/')) {
-            continue;
-        }
-        options.ignore_patterns.push_back("!" + relative);
-        options.ignore_patterns.push_back("!" + relative + "/**");
     }
     auto imported = co_await source.import_tree(root, std::move(options));
     if (!imported) {
