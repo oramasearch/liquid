@@ -234,6 +234,9 @@ path again, including the directory selected by an earlier `/**` rule. `wrap` us
 to the wrapped CMake build even when the repository ignores build directories. By default symbolic
 links are skipped.
 
+The paged walker represents a new directory with no prior page rather than a synthetic digest, so
+adding a configured build directory does not attempt to load a nonexistent tree object.
+
 Rules from the imported root are evaluated first and caller-supplied rules last, allowing a caller to
 include one configured directory without weakening the root's other exclusions.
 `follow_symlinks` follows them, and `message` is retained with the recorded operation. `liquid

@@ -2503,7 +2503,7 @@ struct repository::impl {
         bool changed{};
     };
     runtime::task<paged_import_result>
-    import_paged_directory(const digest& previous,
+    import_paged_directory(const std::optional<digest>& previous,
                            const node_id& node,
                            std::uint32_t mode,
                            const std::filesystem::path& directory,
@@ -2512,8 +2512,8 @@ struct repository::impl {
                            tree_import_report& report,
                            std::vector<std::string>& changed_paths) {
         auto prior = ::liquid::tree{};
-        if (!previous.bytes.empty()) {
-            auto bytes = co_await objects.get(previous);
+        if (previous) {
+            auto bytes = co_await objects.get(*previous);
             if (!bytes) {
                 co_return std::unexpected(bytes.error());
             }
@@ -2561,8 +2561,8 @@ struct repository::impl {
             seen.insert(name);
             if (std::filesystem::is_directory(status)) {
                 const auto old_root = old != prior.entries.end() && old->kind == node_kind::tree
-                                          ? old->id
-                                          : digest{hash_algorithm, {}};
+                                          ? std::optional<digest>{old->id}
+                                          : std::optional<digest>{};
                 const auto old_node = old != prior.entries.end() && old->kind == node_kind::tree
                                           ? old->node
                                           : random_id();
@@ -2652,7 +2652,7 @@ struct repository::impl {
             changed_paths.push_back(path);
         }
         if (!changed) {
-            co_return paged_import_result{previous, false};
+            co_return paged_import_result{*previous, false};
         }
         auto encoded = objects::encode(output);
         if (!encoded) {

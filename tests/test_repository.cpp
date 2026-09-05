@@ -304,11 +304,14 @@ TEST(Repository, import_tree_preserves_ignored_entries_in_a_paged_tree) {
     ASSERT_TRUE(reopened) << reopened.error().message;
     repository = std::move(*reopened);
 
+    const auto retained = liquid::runtime::block_on(repository.read("sources/0"));
+    ASSERT_TRUE(retained) << retained.error().message << ": " << retained.error().context;
+
     write_file(source / "build" / "CMakeCache.txt", content("configured"));
     auto options = liquid::import_options{};
     options.ignore_patterns = {"build/**", "!build", "!build/**"};
     const auto included = liquid::runtime::block_on(repository.import_tree(source, options));
-    ASSERT_TRUE(included) << included.error().message;
+    ASSERT_TRUE(included) << included.error().message << ": " << included.error().context;
     ASSERT_TRUE(included->drip.has_value());
     EXPECT_EQ(included->changed, 1U);
     const auto cache = liquid::runtime::block_on(repository.read("build/CMakeCache.txt"));
