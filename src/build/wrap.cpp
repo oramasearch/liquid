@@ -70,7 +70,50 @@ auto peak_rss_bytes() -> std::uint64_t {
 
 struct observation_log {
     mutable std::mutex mutex;
-    std::vector<vfs_detail::observed_request> requests;
+    struct process_observations {
+        std::map<std::string, digest> inputs;
+        std::set<std::string> writes;
+        std::optional<std::string> changed_input;
+        std::optional<std::string> denied_write;
+    };
+
+    std::map<std::int64_t, process_observations> processes;
+    std::map<std::string, digest> inputs;
+    std::optional<std::string> changed_input;
+
+    void record(vfs_detail::observed_request request) {
+        auto lock = std::scoped_lock{mutex};
+        auto& process = processes[request.pid];
+        if (request.operation == vfs_detail::observed_operation::write) {
+            if (request.denied) {
+                process.denied_write = std::move(request.path);
+            } else if (!request.path.empty()) {
+                process.writes.insert(std::move(request.path));
+            }
+            return;
+        }
+        if ((request.operation != vfs_detail::observed_operation::open &&
+             request.operation != vfs_detail::observed_operation::read) ||
+            request.denied || request.path.empty() || !request.content) {
+            return;
+        }
+        record_input(process.inputs, process.changed_input, request.path, *request.content);
+        record_input(inputs, changed_input, std::move(request.path), std::move(*request.content));
+    }
+
+private:
+    static void record_input(std::map<std::string, digest>& entries,
+                             std::optional<std::string>& changed,
+                             std::string path,
+                             digest content) {
+        const auto found = entries.find(path);
+        if (found != entries.end() &&
+            (found->second.alg != content.alg || found->second.bytes != content.bytes)) {
+            changed = std::move(path);
+            return;
+        }
+        entries.insert_or_assign(std::move(path), std::move(content));
+    }
 };
 
 struct traced_process {
@@ -919,24 +962,26 @@ auto manifest_for(const observation_log& observed,
                   std::int64_t pid,
                   const std::set<std::string>& written)
     -> liquid::result<std::vector<observed_input>> {
-    auto entries = std::map<std::string, digest>{};
     auto lock = std::scoped_lock{observed.mutex};
-    for (const auto& request : observed.requests) {
-        if ((pid >= 0 && request.pid != pid) || request.denied || !request.content ||
-            request.path.empty() || written.contains(request.path) ||
-            (request.operation != vfs_detail::observed_operation::open &&
-             request.operation != vfs_detail::observed_operation::read)) {
-            continue;
-        }
-        const auto found = entries.find(request.path);
-        if (found != entries.end() && !same_digest(found->second, *request.content))
-            return std::unexpected(wrap_error(
-                errc::internal, "wrapped input changed while it was read", request.path));
-        entries.insert_or_assign(request.path, *request.content);
+    const auto found = observed.processes.find(pid);
+    const auto* process = pid >= 0 && found != observed.processes.end() ? &found->second : nullptr;
+    if ((process && process->changed_input) || (!process && observed.changed_input)) {
+        return std::unexpected(
+            wrap_error(errc::internal,
+                       "wrapped input changed while it was read",
+                       process ? *process->changed_input : *observed.changed_input));
     }
     auto output = std::vector<observed_input>{};
-    for (const auto& [path, content] : entries)
+    if (pid >= 0 && !process) {
+        return output;
+    }
+    const auto& entries = pid >= 0 ? process->inputs : observed.inputs;
+    for (const auto& [path, content] : entries) {
+        if (written.contains(path)) {
+            continue;
+        }
         output.push_back({path, content});
+    }
     return output;
 }
 
@@ -944,10 +989,9 @@ auto writes_by_process(const observation_log& observed)
     -> std::map<std::int64_t, std::set<std::string>> {
     auto output = std::map<std::int64_t, std::set<std::string>>{};
     auto lock = std::scoped_lock{observed.mutex};
-    for (const auto& request : observed.requests) {
-        if (request.operation == vfs_detail::observed_operation::write && !request.denied &&
-            !request.path.empty()) {
-            output[request.pid].insert(request.path);
+    for (const auto& [pid, process] : observed.processes) {
+        if (!process.writes.empty()) {
+            output.insert_or_assign(pid, process.writes);
         }
     }
     return output;
@@ -1114,17 +1158,18 @@ auto apply_cached_variables(std::vector<std::string>& command,
 auto probe_program_digest(const observation_log& observed, std::int64_t pid)
     -> std::optional<digest> {
     auto lock = std::scoped_lock{observed.mutex};
-    for (const auto& request : observed.requests) {
-        if (request.pid != pid || !request.content) {
-            continue;
-        }
-        const auto path = std::filesystem::path{request.path};
+    const auto found = observed.processes.find(pid);
+    if (found == observed.processes.end()) {
+        return std::nullopt;
+    }
+    for (const auto& [name, content] : found->second.inputs) {
+        const auto path = std::filesystem::path{name};
         const auto extension = path.extension().string();
         if (path.filename().string().starts_with("conftest.") ||
-            (request.path.contains("CMakeScratch/TryCompile-") &&
+            (name.contains("CMakeScratch/TryCompile-") &&
              (extension == ".c" || extension == ".cc" || extension == ".cpp" ||
               extension == ".cxx"))) {
-            return request.content;
+            return content;
         }
     }
     return std::nullopt;
@@ -1770,8 +1815,7 @@ execute_observed_run(repository& source,
         mount,
         {known_outputs.begin(), known_outputs.end()},
         [observations](vfs_detail::observed_request request) {
-            auto lock = std::scoped_lock{observations->mutex};
-            observations->requests.push_back(std::move(request));
+            observations->record(std::move(request));
         },
         false);
     if (!mounted) {

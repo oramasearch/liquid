@@ -96,6 +96,28 @@ tree writes no drip. Its retained state is `O(depth + changed entries + 64 KiB j
 The Linux self-host container has an 8 GiB memory limit; that bound applies to source import as
 well as result restoration and repository checkpoints.
 
+The mount callback retains an action's manifest rather than every filesystem callback. While the
+observed build is running, it keeps one `(process, path, content)` entry for each distinct input,
+one global `(path, content)` entry for the outer action, and one write path per process. Repeated
+opens and reads of a header replace the existing identity entry. This keeps the in-memory
+observation proportional to the cacheable manifests, not to the number of FUSE reads.
+
+## v6 memory-limit diagnosis
+
+The bind-mounted v6 Linux run was killed with exit 137 during action 414 of 482. Its cache and
+build directories were host bind mounts; the sampler therefore distinguishes filesystem cache
+pages from process memory. The largest sampled cgroup use was 5,102,751,744 bytes, of which
+4,157,706,240 bytes were anonymous, 727,392,256 bytes file cache, and 208,134,144 bytes kernel
+memory. At that sample, the wrapper was 2,352,103,424 bytes RSS and its children raised the
+process-tree RSS to 5,773,623,296 bytes. The final sampled wrapper high-water mark was
+2,798,409,728 bytes and the process-tree high-water mark was 4,463,710,208 bytes.
+
+The growing wrapper allocation was the raw FUSE observation vector, which retained an entry for
+every repeated `open` and `read` callback until result publication. The observation log now
+deduplicates those callbacks by process, path, and content identity while preserving each
+action's manifest and the outer manifest. The sampler's final records are retained in
+`self-host-v6-first-memory.log` for the killed run.
+
 The self-host proof bind-mounts the checkout, `build-wrapped`, and
 `.liquid-build/self-host-cache` at `/liquid/work`. The explicit cache location matters: without
 `LIQUID_WRAP_CACHE`, the wrapper uses `/root/.cache/liquid/wrap` on Docker's writable layer, whose
