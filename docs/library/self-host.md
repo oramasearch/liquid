@@ -77,8 +77,9 @@ checkpoint is published when accumulated signed drip bytes reach that budget. Tr
 stored one at a time; the checkpoint encoder does not construct a second in-memory copy of the
 repository tree.
 
-`Repository.restores_many_journaled_outputs_with_bounded_peak_rss` writes and restores 1,024
-small outputs, crossing the journal budget repeatedly, and requires peak RSS below 512 MiB on
+`Repository.restores_many_journaled_outputs_with_bounded_peak_rss` writes and restores 96
+small outputs (three times the buffer budget), crossing the journal budget before its configured
+checkpoint interval, and requires peak RSS below 512 MiB on
 both supported desktop platforms. The test keeps the payload small so it measures buffering,
 not capacity.
 

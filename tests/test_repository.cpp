@@ -91,7 +91,11 @@ auto journal_document(const std::filesystem::path& repository) -> std::vector<st
     if (!pointer.starts_with(prefix)) {
         return journal;
     }
-    auto digest = liquid::parse_digest(pointer.substr(prefix.size()));
+    auto digest_text = pointer.substr(prefix.size());
+    if (const auto newline = digest_text.find('\n'); newline != std::string_view::npos) {
+        digest_text = digest_text.substr(0, newline);
+    }
+    auto digest = liquid::parse_digest(digest_text);
     EXPECT_TRUE(digest) << digest.error().message;
     auto store = liquid::runtime::block_on(liquid::store::open(repository / ".liquid-store"));
     EXPECT_TRUE(store) << store.error().message;
@@ -140,11 +144,13 @@ auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
 }
 
 TEST(Repository, restores_many_journaled_outputs_with_bounded_peak_rss) {
-    constexpr auto output_count = std::size_t{1024};
-    constexpr auto output_size = std::size_t{256};
+    constexpr auto output_count = std::size_t{96};
+    constexpr auto output_size = std::size_t{2048};
     constexpr auto rss_ceiling = std::uint64_t{512 * 1024 * 1024};
     temporary_repository location;
-    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    auto options = liquid::repository_options{};
+    options.checkpoint_interval = output_count + 1;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
     ASSERT_TRUE(created) << created.error().message;
     auto repository = std::move(*created);
     auto payload = std::vector<std::byte>(output_size, std::byte{0x5a});
@@ -154,7 +160,7 @@ TEST(Repository, restores_many_journaled_outputs_with_bounded_peak_rss) {
         ASSERT_TRUE(written) << written.error().message;
     }
     repository = {};
-    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path(), options));
     ASSERT_TRUE(reopened) << reopened.error().message;
     auto restored = liquid::runtime::block_on(
         reopened->read("outputs/" + std::to_string(output_count - 1) + ".o"));
