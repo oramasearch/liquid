@@ -54,10 +54,12 @@ Portable query-graph tests cover early cutoff, durability-filtered walks, cooper
 interrupted-process recovery, fingerprint-only restart validation, and recorded input retrieval.
 `liquid-graph-measure` reports cold-start validation over the repository's regular files.
 Frontend tests load the Clang implementation as a separate shared object, register the same ABI
-statically, and use the tree-sitter fallback to discover C definitions. The CMake frontend fixture
-compiles two C++ definition objects, proves a body edit runs one action and one assembly, and proves
-a header edit reruns both recorded readers before assembly. `liquid-frontend-measure` performs the
-same one-definition edit against liquid's own tree with the configured compiler.
+statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
+to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
+body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
+before assembly. The registered `frontend-one-function-measure` CTest performs the same
+one-definition edit against liquid's own tree with the configured compiler, asserts the action and
+assembly counts, and prints the elapsed milliseconds.
 Portable provenance cases prove the SLSA field mapping, exact manifest dependencies, tamper
 rejection, and the DSSE/in-toto projection's canonical attestation digest round-trip. The real
 cache-hit case also proves that the existing provenance attestation is reused without re-signing.
