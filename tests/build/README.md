@@ -8,6 +8,9 @@ and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, s
 SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages over public
 results, attestations, traces, and result-scoped SBOMs.
 
+Filesystem fixtures allocate their named directories beneath the unique process root specified in
+the parent [`README.md`](../README.md).
+
 `test_graph.cpp` covers canonical demand, read-order dependencies, red-green validation, early
 cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Clean
 validation cases cover the default one-in-twenty selection, a zero-divergence full pass, and a

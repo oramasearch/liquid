@@ -34,15 +34,15 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class temporary_directory {
 public:
     temporary_directory()
-        : path_(
-              std::filesystem::temp_directory_path() /
-              ("liquid-sync-test-" + std::to_string(::getpid()) + "-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-sync-test-" + std::to_string(::getpid()) + "-" +
+                                           std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

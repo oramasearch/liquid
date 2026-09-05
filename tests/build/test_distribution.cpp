@@ -16,6 +16,7 @@
 #include <unistd.h>
 #endif
 
+#include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
@@ -110,9 +111,8 @@ TEST(BuildDistribution, unknown_and_unbatched_short_work_stays_local) {
 class temporary_directory {
 public:
     explicit temporary_directory(std::string_view name)
-        : path_(std::filesystem::temp_directory_path() /
-                (std::string{name} + "-" + std::to_string(::getpid()) + "-" +
-                 std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path(std::string{name} + "-" + std::to_string(::getpid()) +
+                                           "-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
         std::filesystem::create_directories(path_, code);
@@ -407,8 +407,8 @@ auto seed_history(distributed_fixture& fixture,
     auto candidate = cache.candidate_key(input, *sandbox_id);
     EXPECT_TRUE(candidate) << candidate.error().message;
     const auto wrong_input = tree_blob(fixture.repository, fixture.root, "other.txt");
-    const auto empty_path = std::filesystem::temp_directory_path() /
-                            ("liquid-distribution-empty-" + std::to_string(::getpid()));
+    const auto empty_path =
+        liquid::test::fixture_path("liquid-distribution-empty-" + std::to_string(::getpid()));
     {
         auto empty = std::ofstream{empty_path, std::ios::trunc};
     }

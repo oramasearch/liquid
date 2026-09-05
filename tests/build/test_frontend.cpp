@@ -20,6 +20,7 @@
 #include <unistd.h>
 #endif
 
+#include "../temporary_directory.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/frontend.hpp"
 
@@ -105,9 +106,8 @@ auto shell_quote(std::string_view value) -> std::string {
 class frontend_directory {
 public:
     frontend_directory()
-        : root_(std::filesystem::temp_directory_path() /
-                ("liquid-frontend-test-" + std::to_string(process_id()) + "-" +
-                 std::to_string(next_.fetch_add(1)))),
+        : root_(liquid::test::fixture_path("liquid-frontend-test-" + std::to_string(process_id()) +
+                                           "-" + std::to_string(next_.fetch_add(1)))),
           project_(root_ / "project") {
         auto code = std::error_code{};
         std::filesystem::remove_all(root_, code);

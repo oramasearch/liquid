@@ -89,6 +89,13 @@ executor. A successful named run reports one passed test and no skipped tests.
 
 `BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
 The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.
+
+Test processes create a random fixture directory beneath the platform temporary root through
+`tests/temporary_directory.hpp`. On Linux this honours `TMPDIR`, which allows container runs to
+place fixture data on an explicit writable mount. Fixed fixture names are permitted only beneath
+the process directory, so full suites from separate worktrees cannot share test stores or working
+directories. The process directory is removed when the test process exits; an unwritable temporary
+root stops the test with a diagnostic naming the root.
 `FrontendModule.*` and `FrontendGraph.*` exercise dynamic loading, the C fallback, real definition
 compiler actions, relocatable-object assembly, and body/header invalidation in the same container.
 

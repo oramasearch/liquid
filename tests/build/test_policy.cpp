@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "identity/taap.hpp"
 #include "liquid/attestation.hpp"
@@ -21,8 +22,8 @@ namespace {
 class temporary_directory {
 public:
     explicit temporary_directory(std::string_view label)
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-policy-test-" + std::string{label} + "-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-policy-test-" + std::string{label} + "-" +
+                                           std::to_string(next_++))) {
         std::error_code code;
         std::filesystem::remove_all(path_, code);
     }

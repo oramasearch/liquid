@@ -5,3 +5,6 @@ the literal line marker. Test names and assertion output never contain matched v
 
 Capture tests also hold a blocked file across a periodic reconciliation, ensuring a delayed watcher
 hint cannot deliver the same safe block twice.
+
+Repository and capture fixtures allocate their named directories beneath the unique process root
+specified in the parent [`README.md`](../README.md).

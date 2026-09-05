@@ -4,6 +4,14 @@ The default suite covers the public library surface and the local store. Focused
 collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
+
+Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
+process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
+Linux, reports a clear error when the temporary root is not writable, and removes the directory at
+process exit. Tests may use fixed names beneath that directory, but must never name a fixed path
+directly beneath the temporary root. `TemporaryDirectory.*` covers root selection, per-process
+stability, unique child creation, cleanup, and the failure diagnostic.
+
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held

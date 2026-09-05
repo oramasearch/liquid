@@ -15,6 +15,7 @@
 #include <unistd.h>
 #endif
 
+#include "../temporary_directory.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/vfs.hpp"
 #include "repository/testing.hpp"
@@ -24,8 +25,7 @@ namespace {
 class mount_tree {
 public:
     mount_tree()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-mount-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-mount-test-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

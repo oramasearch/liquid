@@ -13,14 +13,14 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "store/chunker.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class temporary_store {
 public:
     temporary_store()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-store-test-" + std::to_string(++counter_))) {
+        : path_(liquid::test::fixture_path("liquid-store-test-" + std::to_string(++counter_))) {
         std::filesystem::remove_all(path_);
     }
     ~temporary_store() {

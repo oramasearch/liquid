@@ -12,6 +12,7 @@
 #include <unistd.h>
 #endif
 
+#include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/repository_access.hpp"
 #include "formats/json.hpp"
@@ -25,9 +26,8 @@ namespace {
 class wrap_directory {
 public:
     explicit wrap_directory(std::string_view fixture)
-        : root_(
-              std::filesystem::temp_directory_path() /
-              ("liquid-wrap-test-" + std::to_string(process_id()) + "-" + std::to_string(next_++))),
+        : root_(liquid::test::fixture_path("liquid-wrap-test-" + std::to_string(process_id()) +
+                                           "-" + std::to_string(next_++))),
           project_(root_ / "project"), cache_(root_ / "cache") {
         auto code = std::error_code{};
         std::filesystem::remove_all(root_, code);

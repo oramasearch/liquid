@@ -8,6 +8,7 @@
 #include <unistd.h>
 #endif
 
+#include "../temporary_directory.hpp"
 #include "build/facts.hpp"
 #include "formats/json.hpp"
 #include "liquid/hash.hpp"
@@ -18,9 +19,8 @@ namespace {
 class fact_directory {
 public:
     fact_directory()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-fact-test-" + std::to_string(process_id()) + "-" +
-                 std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-fact-test-" + std::to_string(process_id()) +
+                                           "-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

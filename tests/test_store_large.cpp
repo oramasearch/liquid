@@ -14,14 +14,14 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "repository/testing.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class temporary_tree {
 public:
     temporary_tree()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-store-large-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-store-large-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
         std::filesystem::create_directories(path_, code);
