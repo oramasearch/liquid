@@ -357,8 +357,9 @@ target_link_libraries(app PRIVATE liquid::liquid)
 
 Submodule consumers may define `Boost::capy` and `Boost::corosio` first; liquid reuses those targets
 instead of adding its vendored checkouts again. The exact tested revisions and minimum-pin rule are
-documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite builds a
-separate lake-shaped consumer project with Capy, Corosio, and nlohmann/json already present.
+documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite installs the
+already-built package into a test-local prefix and builds a separate `find_package` consumer without
+rebuilding liquid or its dependencies.
 
 ## Implementation
 

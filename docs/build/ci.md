@@ -17,9 +17,11 @@ on each desktop platform.
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 
-Every static or shared CTest run includes `consumer-project-build`. It configures a separate CMake
-project that defines Capy, Corosio, and nlohmann/json before adding liquid, then builds and runs its
-own `liquid::liquid` client. `cli-identity-codec` also verifies that the public identity codec reads
+Every static or shared CTest run includes `consumer-project-build`. It installs the already-built
+parent artifacts into a test-local prefix, configures a separate CMake project against that package
+with the parent toolchain, then builds and runs its own `liquid::liquid` client. Only the consumer
+source is compiled during the test; liquid and its dependencies are not rebuilt.
+`cli-identity-codec` also verifies that the public identity codec reads
 the initial and rotation documents written by the CLI. The frontend cases compile the standalone C
 ABI header, load the Clang frontend shared object, exercise static registration, and run the C and
 C++ unit tests against the same pinned tree-sitter runtime and grammars on every platform.
@@ -69,6 +71,18 @@ docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-li
            && ctest --test-dir build-linux --output-on-failure --timeout 600 \
                     -LE "large|sim-long|realworld"'
 ```
+
+The included `consumer-project-build` is the installed-package proof; run it alone with:
+
+```sh
+ctest --test-dir build-linux --output-on-failure --timeout 120 \
+  -R '^consumer-project-build$'
+```
+
+The test uses a fresh install prefix and consumer build directory on each run. It copies the
+artifacts already produced by the parent build, configures only the small consumer project, and
+compiles only that project's source. It remains in the ordinary container suite rather than using
+the `large` label.
 
 `-k 0` keeps building past the first failure so one run lists every portability error. Run the
 Linux mount scenario by itself, without allowing a missing FUSE device to hide it, with:
