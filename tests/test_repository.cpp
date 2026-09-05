@@ -197,6 +197,10 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     const auto caller_ignored = liquid::runtime::block_on(repository.read("caller-ignored.txt"));
     EXPECT_FALSE(caller_ignored);
 
+    repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path() / "target"));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    repository = std::move(*reopened);
     const auto before = repository.status();
     ASSERT_TRUE(before) << before.error().message;
     const auto unchanged = liquid::runtime::block_on(repository.import_tree(source, options));

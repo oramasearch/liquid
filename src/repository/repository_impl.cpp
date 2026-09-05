@@ -1583,6 +1583,42 @@ struct repository::impl {
         }
         co_return result<void>{};
     }
+    runtime::task<void> load_paged_root() {
+        if (!current.root_is_paged) {
+            co_return result<void>{};
+        }
+        auto restored = co_await restore_paged_tree(current.root);
+        if (!restored) {
+            co_return std::unexpected(restored.error());
+        }
+        current.root_is_paged = false;
+        co_return result<void>{};
+    }
+    runtime::task<std::optional<tree_entry>> paged_entry_at(const std::vector<std::string>& path) {
+        auto root_id = current.root.object;
+        for (auto index = std::size_t{}; index != path.size(); ++index) {
+            auto bytes = co_await objects.get(root_id);
+            if (!bytes) {
+                co_return std::unexpected(bytes.error());
+            }
+            auto tree = objects::decode_tree(*bytes);
+            if (!tree) {
+                co_return std::unexpected(tree.error());
+            }
+            const auto found = std::ranges::find(tree->entries, path[index], &tree_entry::name);
+            if (found == tree->entries.end()) {
+                co_return std::optional<tree_entry>{};
+            }
+            if (index + 1 == path.size()) {
+                co_return std::optional<tree_entry>{*found};
+            }
+            if (found->kind != node_kind::tree) {
+                co_return std::optional<tree_entry>{};
+            }
+            root_id = found->id;
+        }
+        co_return std::optional<tree_entry>{};
+    }
     runtime::task<void> restore_directory_document(node_id id, crdt::directory_document& document) {
         auto* working_directory = directory_with_node(current.root, id);
         if (!working_directory) {
@@ -1833,11 +1869,15 @@ struct repository::impl {
     runtime::task<void> checkpoint(std::optional<digest> root = {}) {
         auto working_tree = root;
         if (!working_tree) {
-            auto snapshot_id = co_await snapshot(current.root);
-            if (!snapshot_id) {
-                co_return std::unexpected(snapshot_id.error());
+            if (current.root_is_paged && current.root.entries.empty()) {
+                working_tree = current.root.object;
+            } else {
+                auto snapshot_id = co_await snapshot(current.root);
+                if (!snapshot_id) {
+                    co_return std::unexpected(snapshot_id.error());
+                }
+                working_tree = *snapshot_id;
             }
-            working_tree = *snapshot_id;
         }
         current.pending_drips = 0;
         journal_bytes = 0;
@@ -1858,9 +1898,12 @@ struct repository::impl {
             journal_bytes >= build_detail::repository_journal_byte_budget) {
             co_return co_await checkpoint();
         }
-        auto root = co_await snapshot(current.root);
-        if (!root) {
-            co_return std::unexpected(root.error());
+        auto root = result<digest>{current.root.object};
+        if (!current.root_is_paged || !current.root.entries.empty()) {
+            root = co_await snapshot(current.root);
+            if (!root) {
+                co_return std::unexpected(root.error());
+            }
         }
         auto document = co_await persist();
         if (!document) {
@@ -2442,6 +2485,171 @@ struct repository::impl {
         }
         co_return result<void>{};
     }
+    struct paged_import_result {
+        digest root;
+        bool changed{};
+    };
+    runtime::task<paged_import_result>
+    import_paged_directory(const digest& previous,
+                           const node_id& node,
+                           std::uint32_t mode,
+                           const std::filesystem::path& directory,
+                           std::string relative,
+                           const import_options& options,
+                           tree_import_report& report,
+                           std::vector<std::string>& changed_paths) {
+        auto prior = ::liquid::tree{};
+        if (!previous.bytes.empty()) {
+            auto bytes = co_await objects.get(previous);
+            if (!bytes) {
+                co_return std::unexpected(bytes.error());
+            }
+            auto decoded = objects::decode_tree(*bytes);
+            if (!decoded) {
+                co_return std::unexpected(decoded.error());
+            }
+            prior = std::move(*decoded);
+        }
+        auto output = ::liquid::tree{};
+        auto seen = std::set<std::string>{};
+        auto changed = false;
+        auto code = std::error_code{};
+        const auto flags =
+            std::filesystem::directory_options::skip_permission_denied |
+            (options.follow_symlinks ? std::filesystem::directory_options::follow_directory_symlink
+                                     : std::filesystem::directory_options::none);
+        for (std::filesystem::directory_iterator iterator{directory, flags, code};
+             !code && iterator != std::filesystem::directory_iterator{};
+             iterator.increment(code)) {
+            const auto name = iterator->path().filename().generic_string();
+            const auto path = relative.empty() ? name : relative + "/" + name;
+            if (ignored(path, options)) {
+                const auto old = std::ranges::find(prior.entries, name, &tree_entry::name);
+                changed = changed || old != prior.entries.end();
+                continue;
+            }
+            auto status = iterator->symlink_status(code);
+            if (code) {
+                break;
+            }
+            if (std::filesystem::is_symlink(status)) {
+                if (!options.follow_symlinks) {
+                    seen.insert(name);
+                    continue;
+                }
+                status = iterator->status(code);
+                if (code) {
+                    break;
+                }
+            }
+            const auto old = std::ranges::find(prior.entries, name, &tree_entry::name);
+            seen.insert(name);
+            if (std::filesystem::is_directory(status)) {
+                const auto old_root = old != prior.entries.end() && old->kind == node_kind::tree
+                                          ? old->id
+                                          : digest{hash_algorithm, {}};
+                const auto old_node = old != prior.entries.end() && old->kind == node_kind::tree
+                                          ? old->node
+                                          : random_id();
+                const auto directory_mode =
+                    std::uint32_t{0040000} |
+                    (static_cast<std::uint32_t>(status.permissions()) & std::uint32_t{0777});
+                auto imported = co_await import_paged_directory(old_root,
+                                                                old_node,
+                                                                directory_mode,
+                                                                iterator->path(),
+                                                                path,
+                                                                options,
+                                                                report,
+                                                                changed_paths);
+                if (!imported) {
+                    co_return std::unexpected(imported.error());
+                }
+                const auto same = old != prior.entries.end() && old->kind == node_kind::tree &&
+                                  old->mode == directory_mode &&
+                                  same_digest(old->id, imported->root);
+                output.entries.push_back({name,
+                                          directory_mode,
+                                          node_kind::tree,
+                                          imported->root,
+                                          old_node,
+                                          imported->root,
+                                          {}});
+                changed = changed || imported->changed || !same;
+                continue;
+            }
+            if (!std::filesystem::is_regular_file(status)) {
+                continue;
+            }
+            ++report.files_seen;
+            const auto size = std::filesystem::file_size(iterator->path(), code);
+            if (code) {
+                break;
+            }
+            report.bytes_hashed += size;
+            auto content = co_await objects.put_file(iterator->path());
+            if (!content) {
+                co_return std::unexpected(content.error());
+            }
+            auto record = objects.blob_for(*content);
+            if (!record) {
+                co_return std::unexpected(record.error());
+            }
+            record->content = {};
+            auto encoded = objects::encode(*record);
+            if (!encoded) {
+                co_return std::unexpected(encoded.error());
+            }
+            auto reference =
+                co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+            if (!reference) {
+                co_return std::unexpected(reference.error());
+            }
+            const auto file_mode =
+                std::uint32_t{0100000} |
+                (static_cast<std::uint32_t>(status.permissions()) & std::uint32_t{0777});
+            const auto unchanged = old != prior.entries.end() && old->kind == node_kind::blob &&
+                                   old->mode == file_mode && same_digest(old->id, *reference);
+            const auto file_node = unchanged ? old->node : random_id();
+            output.entries.push_back(
+                {name, file_mode, node_kind::blob, *reference, file_node, *reference, {}});
+            if (!unchanged) {
+                changed = true;
+                ++report.changed;
+                report.bytes_written += size;
+                changed_paths.push_back(path);
+            }
+        }
+        if (code) {
+            co_return std::unexpected(failure(errc::io, code.message(), directory.string()));
+        }
+        for (const auto& old : prior.entries) {
+            if (seen.contains(old.name)) {
+                continue;
+            }
+            const auto path = relative.empty() ? old.name : relative + "/" + old.name;
+            if (ignored(path, options)) {
+                changed = true;
+                continue;
+            }
+            changed = true;
+            ++report.changed;
+            changed_paths.push_back(path);
+        }
+        if (!changed) {
+            co_return paged_import_result{previous, false};
+        }
+        auto encoded = objects::encode(output);
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        auto stored =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        co_return paged_import_result{*stored, true};
+    }
 };
 repository::repository() noexcept = default;
 repository::~repository() = default;
@@ -2577,12 +2785,6 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
                                           std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
-    if (output.impl_->current.root_is_paged) {
-        auto restored = co_await output.impl_->restore_paged_tree(output.impl_->current.root);
-        if (!restored) {
-            co_return std::unexpected(restored.error());
-        }
-    }
     auto checkpointed = co_await output.impl_->checkpoint();
     if (!checkpointed)
         co_return std::unexpected(checkpointed.error());
@@ -2608,6 +2810,16 @@ runtime::task<std::vector<std::byte>> repository::read(std::string path) {
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
+    if (impl_->current.root_is_paged) {
+        auto entry = co_await impl_->paged_entry_at(*parts);
+        if (!entry) {
+            co_return std::unexpected(entry.error());
+        }
+        if (!*entry || (*entry)->kind != node_kind::blob) {
+            co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
+        }
+        co_return co_await impl_->blob_contents((*entry)->id, std::move(path));
+    }
     auto* entry = lookup(impl_->current.root, *parts);
     if (!entry || entry->kind != entry_kind::file)
         co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
@@ -2752,12 +2964,38 @@ runtime::task<tree_import_report> repository::import_tree(std::filesystem::path 
     }
     auto report = tree_import_report{};
     auto changed_paths = std::vector<std::string>{};
-    auto imported = co_await impl_->import_directory(
-        impl_->current.root, root, {}, options, report, changed_paths);
-    if (!imported) {
-        co_return std::unexpected(imported.error());
+    auto tree_changed = false;
+    if (impl_->current.root_is_paged) {
+        auto imported = co_await impl_->import_paged_directory(impl_->current.root.object,
+                                                               impl_->current.root.node,
+                                                               impl_->current.root.mode,
+                                                               root,
+                                                               {},
+                                                               options,
+                                                               report,
+                                                               changed_paths);
+        if (!imported) {
+            co_return std::unexpected(imported.error());
+        }
+        impl_->current.root.object = imported->root;
+        impl_->current.root.entries.clear();
+        tree_changed = imported->changed;
+    } else {
+        auto imported = co_await impl_->import_directory(
+            impl_->current.root, root, {}, options, report, changed_paths);
+        if (!imported) {
+            co_return std::unexpected(imported.error());
+        }
+        tree_changed = report.changed != 0;
+    }
+    if (!tree_changed) {
+        co_return report;
     }
     if (report.changed == 0) {
+        auto saved = co_await impl_->checkpoint();
+        if (!saved) {
+            co_return std::unexpected(saved.error());
+        }
         co_return report;
     }
     auto operation = random_operation_id(impl_->hash_algorithm);

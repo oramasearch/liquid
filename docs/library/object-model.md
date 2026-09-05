@@ -238,10 +238,11 @@ entry, a removal, both ignore sources, and a synthetic 1,024-file import under a
 ceiling on macOS and Linux.
 
 The walk retains the directory stack and changed entries, never a collection of all discovered
-paths. The imported drip participates in the 64 KiB repository journal budget documented in
-[`build-engine.md`](build-engine.md); reaching that budget checkpoints the already-paged tree.
-Thus importing is bounded by `O(depth + changed entries + journal budget)`, rather than the size
-of the input tree.
+paths. On a reopened repository it reads and replaces one stored tree page at a time, rather than
+reconstructing the prior tree before comparing it. The imported drip participates in the 64 KiB
+repository journal budget documented in [`build-engine.md`](build-engine.md); reaching that budget
+checkpoints the already-paged tree. Thus importing is bounded by `O(depth + changed entries +
+journal budget)`, rather than the size of either tree.
 
 ## Anchors
 
