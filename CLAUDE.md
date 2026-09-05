@@ -103,6 +103,8 @@ recorded compile actions, graph retrieval,
 repository access, and the `liquid symbols` command.
 Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
 approximate, or deleted positions across changes.
+Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
+line-hunk stale reports, and signed disjoint or forced re-validation records.
 
 ### Vocabulary — use these words exactly
 

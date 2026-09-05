@@ -200,8 +200,12 @@ liquid's defences, in order:
 4. **Advisory locks** for genuinely unmergeable content ([02](02-version-control.md)).
 5. **Guard against stale reasoning.** An agent may reason against an obsolete snapshot
    while human edits arrive. *Deterministic merge cannot repair decisions made from
-   stale semantics* — so an agent's update should carry the version it reasoned from,
-   and be re-validated if the base moved materially.
+   stale semantics* — so an agent's update carries the change and optional journal cursor it
+   reasoned from. Listed agent actors must supply that base. A moved head or cursor is refused by
+   default; the caller may accept a path-disjoint update or force a write only after re-planning.
+   The signed drip records the stated base and the disjoint or forced result, while
+   `explain_stale` returns changed paths and line hunks since the base. Implemented by liquid #86;
+   delegation-derived agent classification remains liquid #30.
 
 ## Presence for non-human actors
 
