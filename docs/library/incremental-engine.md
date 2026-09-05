@@ -10,13 +10,12 @@
 > Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
 > a retained GPU text layer inside Dear ImGui.
 
-**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, continuous clean
-validation in #23, per-definition frontend granularity in #65, and local search index in #22 are
-implemented, including persisted red-green validation,
+**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, and per-definition
+frontend granularity in #65 are implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
- bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
- atomic per-drip search publication.
- Symbol records are implemented by #66. The planner remains with its listed issue.
+bounded resident graph values, module loading, unit-keyed actions, and translation-unit assembly.
+The clean-rebuild scheduler and planner remain with their listed issues. Symbol records are
+implemented by #66.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -72,20 +71,11 @@ checkout, excluding `.git`, `.liquid-build`, and build directories, then reopene
 the graph. On an Apple M3 Max macOS host on 2026-09-04:
 
 ```text
-graph cold-start validation: files=3753 fingerprint_reads=3753 executions=0 hits=3753 elapsed_ms=780
-graph clean-rebuild validation: targets=3753 divergences=0 backlog=0 elapsed_ms=102465
+graph cold-start validation: files=3656 fingerprint_reads=3656 executions=0 hits=3656 elapsed_ms=3038
 ```
 
 Run it with `cmake --build build --target liquid-graph-measure`, followed by
 `build/tests/liquid-graph-measure . <empty-state-directory-outside-checkout>`.
-
-The complete release proof for this implementation reported:
-
-```text
-macOS static: 100% tests passed, 0 tests failed out of 284; Total Test time (real) = 217.15 sec
-macOS shared: 100% tests passed, 0 tests failed out of 284; Total Test time (real) = 208.07 sec
-Linux container: 100% tests passed, 0 tests failed out of 316; Total Test time (real) = 371.39 sec
-```
 
 **Cancellation.** A keystroke cancels in-flight queries that depend on the changed volatile input;
 queries are Capy coroutines, and cancellation is cooperative at every dependency read. Results of
@@ -144,8 +134,8 @@ architecture and is the only way to avoid a serialisation boundary.
 
 The built-in target order is build, search, collaborators, then lake. The build target marks only
 working-tree inputs named by the drip operations changed through #20's public graph. The remaining
-built-ins other than search are idempotent acceptance hooks until their owning work binds an
-implementation. Search publishes changed paths and tombstones into #22's local index.
+built-ins are idempotent acceptance hooks until #22 and the collaborator work bind their
+implementations.
 Callers can instead pass ordered `daemon_target` implementations. Every target persists its own
 journal cursor only after successful delivery. Replayed or duplicate cursor values are ignored;
 a failed target keeps its old cursor and error, so restart retries it. `liquid status` reports the
@@ -153,37 +143,12 @@ last drip, changed paths, delivery count, cursor, error, and cursor distance for
 
 ## Continuous clean-rebuild validation (#23)
 
-Every completed query value is eligible. A node stores the fingerprint most recently validated;
-changing its value clears that marker. `graph::validation_status` reports eligible, validated, and
-backlog counts plus the most recent divergence. Ordinary validation selects the first and every
-twentieth unvalidated node in canonical graph order. `graph_validation_options::rate` changes that
-interval, `limit` bounds one idle slice, and `all` ignores both the sample history and prior
-validation markers for an explicit full pass.
-
-Each validation slice opens one new graph beneath an atomically allocated empty validation
-directory, copies only caller-supplied input overrides, and demands the selected canonical queries
-through the same registry. It therefore reads working-tree, environment, and toolchain inputs again
-and cannot reuse saved values from the incremental graph. Dependencies computed during that clean
-pass may serve later selected targets in the same pass. The directory is removed after comparison.
-The validation instance keeps those new values only in memory and does not publish temporary node
-roots or values. The daemon performs one target per idle slice and exposes the rate and slice interval through
-`daemon_options`; the detached CLI maps `LIQUID_GRAPH_VALIDATION_RATE` and
-`LIQUID_GRAPH_VALIDATION_MS` to those fields.
-
-Each comparison writes a content-addressed `query-validation` record and links its digest from the
-graph root. The record contains the canonical query, its recursively recorded leaf inputs and
-fingerprints, both result fingerprints, agreement, `notice` or `critical` severity, and wall-clock
-second. Records and validation
-markers survive reopen. A disagreement clears the offending node's stored value and root entry,
-so the next demand executes it, while the audit record remains. The report, daemon status, and
-`liquid status` preserve the most recent disagreement; command output labels a newly observed
-disagreement `critical` and names the query and inputs.
-
-Wrapped action queries use the same comparison before Phase 2 re-executes an action verification
-sample in recorded fresh action sandboxes. `liquid verify --graph` runs the default
-sample and `liquid verify --graph --all` runs a complete graph and action pass. The wrap report
-prints graph backlog and the last divergence, and its existing background verification switch now
-schedules graph validation together with action verification. `--no-verify` disables that work.
+Phase 2's sampled re-execution verifies actions; Phase 4 verifies the graph: on idle capacity the
+daemon picks sampled targets, rebuilds them from clean in a fresh sandbox, and compares outputs
+with the incremental result. A divergence is reported with the query that was wrong and its
+recorded inputs, as a critical alert and an audit-able record, and the offending value is
+evicted so the next demand recomputes it. Zero divergences on the reference projects (liquid
+itself from #59, the wrap fixtures) is the acceptance.
 
 ## Granularity: per translation unit, then per definition (#65)
 
@@ -203,26 +168,29 @@ definitions that recorded it.
 
 ## Symbols and the search planner (#66, #67, #22)
 
-Compiler-derived symbols are a byproduct of building: the frontend module emits a SCIP-equivalent
-symbol record per translation unit as an action output, content-addressed like everything else,
- with tree-sitter's syntactic symbols as the fallback. The local search index (#22) uses
- oramacore-cpp BM25F and lake's positional-trigram format, runs in the daemon, updates per drip from
- the fan-out, and indexes each blob once. Immutable segments and an atomically replaced manifest
- make every change visible as a unit. The implementation, layout, and query interface are in
- [`search.md`](search.md). The `symbols` query returns the canonical record for its source blob;
- [`symbols.md`](symbols.md) fixes its public shape. The **planner** (#67) chooses per query among
- BM25F, the trigram index and a brute-force
+Compiler-derived symbols are produced by a query over a recorded compile action: the derived action
+uses the compile's input and toolchain trees and replaces its object-output arguments with AST
+extraction arguments. It emits one SCIP-equivalent, content-addressed symbol record per
+translation unit, with tree-sitter's syntactic symbols as the fallback. The `symbols` query
+returns the canonical record for its source blob; [`symbols.md`](symbols.md) fixes its public
+shape. Compile and relink do not demand the symbols query, so extraction remains off the edit
+path. The local search index (#22) is oramacore-cpp
+BM25F and lake's trigram index run in the daemon, updated per drip from the fan-out, indexed by
+blob once. The **planner** (#67) chooses per query among BM25F, the trigram index and a brute-force
 scan over blobs by cost (index availability, term selectivity, corpus size), and explains its
 choice the way `liquid why` explains a cache miss.
 
-**Measurement.** On the Apple M3 Max macOS host on 2026-09-04, the Clang frontend extracted 38
-occurrences from liquid's `src/store/faults.cpp` in one translation unit:
+**Measurement.** On the Apple M3 Max macOS host on 2026-09-04, at
+`sysctl -n vm.loadavg` = `{ 45.72 79.50 87.97 }`, the Clang frontend extracted 41 occurrences
+from liquid's `src/store/faults.cpp` in one translation unit:
 
 ```text
-symbol extraction: file=src/store/faults.cpp units=1 occurrences=38 elapsed_ms=7263 per_unit_ms=7263
+symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=10535 per_unit_ms=10535
+frontend one-function edit: symbols=disabled elapsed_ms=444 symbols=enabled elapsed_ms=438 delta_ms=-6
 ```
 
-This is an uncached local compiler-AST measurement, including compiler process startup and parsing.
+The edit measurements were taken in the same session; the symbol demand followed the edit. The
+small delta confirms that compile and relink do not demand extraction.
 
 ## liquify on the graph
 
@@ -256,8 +224,7 @@ in-process:
    query interface) and liquify #1's shell work that does not need the graph (the retained text
    layer).
 2. liquid #65 (**implemented:** frontend module boundary and C++ per definition, with C/C++ syntax
-   fallback), #66 (symbols), #22 (local index on drip), #23 (**implemented:** validation on the
-   reference projects);
+   fallback), #66 (symbols), #22 (local index on drip), #23 (validation on the reference projects);
    liquify #5 (interactive analysis)
    and #1 (the editor on the graph).
 3. liquid #67 (the planner); liquify #6 (inline build, test, deploy).
@@ -266,22 +233,14 @@ in-process:
 
 `QueryGraph` tests cover read-order red-green validation, early cutoff, exact volatile
 invalidation walks, cancellation by a second demand, interrupted-process recovery, shallow value
-loading, fingerprint-only restart validation, one-in-twenty clean sampling, full-pass agreement,
-and a deliberately stale value that is named, audited, evicted, recomputed, and recovered after
-reopen. `Daemon` proves the idle worker reports that disagreement over its public status API. The
-mount-backed recursive-Make fixture runs `liquid verify --graph --all` and requires zero graph and
-action divergences. `liquid-graph-measure` runs a full clean pass over liquid's own regular files;
-its recorded result appears above with the graph contract. The mount-backed CMake
+loading, fingerprint-only restart validation, and the #23 retrieval hook. The mount-backed CMake
 fixture proves a comment edit executes one compile process with identical object and link results,
 while a one-line semantic edit executes one compile and the link and changes the link result.
 `FrontendModule` and `FrontendGraph` prove dynamic and static registration, C fallback units, exact
 definition actions, one action plus assembly after a body edit, and every recorded reader plus
 assembly after a header edit. `liquid-frontend-measure` records the own-tree edit result in
-[`frontends.md`](frontends.md).
-Issue #22's measurement over liquid's checkout indexed 3,812 paths and 3,672 unique blobs
-(46,572,788 content bytes) in 22,629 ms. Ten representative queries averaged 488,424 us. The
-reproduction command and query mix are documented in [`search.md`](search.md). Remaining phase exit
-measurements belong to the issues that add editor diagnostics.
+[`frontends.md`](frontends.md). Remaining phase exit measurements belong to the issues that add the
+daemon and editor diagnostics.
 
 ## How to change
 
