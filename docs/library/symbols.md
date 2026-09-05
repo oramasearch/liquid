@@ -27,6 +27,8 @@ options, and the symbol record as its output contract.
 The build-engine adapter executes that description through `liquid::build::execute`. The resulting
 action is sandboxed, input-keyed, cacheable, replayable, and eligible for remote execution under
 the same policy as the compile it mirrors. The frontend never starts a compiler process itself.
+The graph recognizes the action description by its canonical `clang-symbols` kind and decodes the
+resulting compiler stdout into the stored record.
 If there is no matching recorded compile action, the command reports `no recorded compile action
 for <path>; run liquid build first`; it never attempts a fresh compiler invocation.
 

@@ -273,11 +273,7 @@ auto execute_symbols_query(std::shared_ptr<query_state> state,
     if (!kind) {
         co_return std::unexpected(kind.error());
     }
-    if (state->module->name() == "clang-cpp") {
-        if (!*kind || **kind != "clang-symbols") {
-            co_return std::unexpected(frontend_error(
-                errc::corrupt, "clang frontend did not describe a symbol action", "symbols"));
-        }
+    if (*kind && **kind == "clang-symbols") {
         auto arguments = action_arguments(*output);
         if (!arguments) {
             co_return std::unexpected(arguments.error());
