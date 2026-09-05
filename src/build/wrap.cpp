@@ -49,6 +49,8 @@ namespace {
 
 constexpr auto virtual_root = std::string_view{"/liquid/work"};
 
+static_assert(build_detail::restored_output_files_in_flight == 1);
+
 struct observation_log {
     mutable std::mutex mutex;
     std::vector<vfs_detail::observed_request> requests;

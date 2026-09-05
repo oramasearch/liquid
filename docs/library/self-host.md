@@ -70,8 +70,8 @@ shared libliquid normally; a wrapped macOS build requires macFUSE.
 
 ## Bounded restoration
 
-The Linux proof container has an 8 GiB memory limit. Cache restoration keeps one output file in
-flight and reads at most 64 KiB from the content store at a time. Repository recovery uses a
+The Linux proof container has an 8 GiB memory limit. Cache restoration has a serial writer: one
+output file is in flight and it reads at most 64 KiB from the content store at a time. Repository recovery uses a
 64 KiB journal budget: each journal entry is a fixed-size pointer to a paged checkpoint, and a
 checkpoint is published when accumulated signed drip bytes reach that budget. Tree pages are
 stored one at a time; the checkpoint encoder does not construct a second in-memory copy of the
