@@ -5,8 +5,15 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
+
+#include <openssl/core_names.h>
+#include <openssl/ec.h>
+#include <openssl/evp.h>
+#include <openssl/rsa.h>
 
 #include "crypto/signature.hpp"
 #include "liquid/transparency.hpp"
@@ -48,6 +55,119 @@ auto hex(std::span<const std::byte> input) -> std::string {
         output.push_back(alphabet[byte >> 4]);
         output.push_back(alphabet[byte & 0x0f]);
     }
+    return output;
+}
+
+template <class T, auto Free> struct openssl_deleter {
+    auto operator()(T* value) const -> void {
+        Free(value);
+    }
+};
+
+using openssl_key = std::unique_ptr<EVP_PKEY, openssl_deleter<EVP_PKEY, EVP_PKEY_free>>;
+using openssl_key_context =
+    std::unique_ptr<EVP_PKEY_CTX, openssl_deleter<EVP_PKEY_CTX, EVP_PKEY_CTX_free>>;
+using openssl_digest_context =
+    std::unique_ptr<EVP_MD_CTX, openssl_deleter<EVP_MD_CTX, EVP_MD_CTX_free>>;
+using openssl_number = std::unique_ptr<BIGNUM, openssl_deleter<BIGNUM, BN_free>>;
+
+auto generate_key(int identifier, int curve = 0) -> openssl_key {
+    auto context = openssl_key_context{EVP_PKEY_CTX_new_id(identifier, nullptr)};
+    EVP_PKEY* output = nullptr;
+    if (!context || EVP_PKEY_keygen_init(context.get()) != 1) {
+        return {};
+    }
+    if (identifier == EVP_PKEY_RSA && EVP_PKEY_CTX_set_rsa_keygen_bits(context.get(), 2048) != 1) {
+        return {};
+    }
+    if (identifier == EVP_PKEY_EC &&
+        EVP_PKEY_CTX_set_ec_paramgen_curve_nid(context.get(), curve) != 1) {
+        return {};
+    }
+    if (EVP_PKEY_keygen(context.get(), &output) != 1) {
+        return {};
+    }
+    return openssl_key{output};
+}
+
+auto number_bytes(const BIGNUM* value) -> std::vector<std::byte> {
+    std::vector<std::byte> output(static_cast<std::size_t>(BN_num_bytes(value)));
+    BN_bn2bin(value, reinterpret_cast<unsigned char*>(output.data()));
+    return output;
+}
+
+auto rsa_public_key(EVP_PKEY* value) -> std::optional<liquid::crypto::public_key> {
+    BIGNUM* modulus_value = nullptr;
+    BIGNUM* exponent_value = nullptr;
+    if (EVP_PKEY_get_bn_param(value, OSSL_PKEY_PARAM_RSA_N, &modulus_value) != 1 ||
+        EVP_PKEY_get_bn_param(value, OSSL_PKEY_PARAM_RSA_E, &exponent_value) != 1) {
+        BN_free(modulus_value);
+        BN_free(exponent_value);
+        return std::nullopt;
+    }
+    auto modulus = openssl_number{modulus_value};
+    auto exponent = openssl_number{exponent_value};
+    return liquid::crypto::public_key{
+        .kind = liquid::crypto::signature_kind::rsa_pkcs1,
+        .first = number_bytes(modulus.get()),
+        .second = number_bytes(exponent.get()),
+    };
+}
+
+auto ec_public_key(EVP_PKEY* value, liquid::crypto::curve_kind curve, std::size_t coordinate_size)
+    -> std::optional<liquid::crypto::public_key> {
+    std::size_t size = 0;
+    if (EVP_PKEY_get_octet_string_param(value, OSSL_PKEY_PARAM_PUB_KEY, nullptr, 0, &size) != 1) {
+        return std::nullopt;
+    }
+    std::vector<std::byte> encoded(size);
+    if (EVP_PKEY_get_octet_string_param(value,
+                                        OSSL_PKEY_PARAM_PUB_KEY,
+                                        reinterpret_cast<unsigned char*>(encoded.data()),
+                                        encoded.size(),
+                                        &size) != 1 ||
+        size != 1 + coordinate_size * 2 || encoded.front() != std::byte{4}) {
+        return std::nullopt;
+    }
+    return liquid::crypto::public_key{
+        .kind = liquid::crypto::signature_kind::ecdsa,
+        .curve = curve,
+        .first = {encoded.begin() + 1,
+                  encoded.begin() + static_cast<std::ptrdiff_t>(1 + coordinate_size)},
+        .second = {encoded.begin() + static_cast<std::ptrdiff_t>(1 + coordinate_size),
+                   encoded.end()},
+    };
+}
+
+auto sign(EVP_PKEY* key, const EVP_MD* digest, std::span<const std::byte> message, bool pss = false)
+    -> std::vector<std::byte> {
+    auto context = openssl_digest_context{EVP_MD_CTX_new()};
+    EVP_PKEY_CTX* key_context = nullptr;
+    if (!context || EVP_DigestSignInit(context.get(), &key_context, digest, nullptr, key) != 1) {
+        return {};
+    }
+    if (pss && (EVP_PKEY_CTX_set_rsa_padding(key_context, RSA_PKCS1_PSS_PADDING) != 1 ||
+                EVP_PKEY_CTX_set_rsa_mgf1_md(key_context, digest) != 1 ||
+                EVP_PKEY_CTX_set_rsa_pss_saltlen(key_context, EVP_MD_get_size(digest)) != 1)) {
+        return {};
+    }
+    std::size_t size = 0;
+    if (EVP_DigestSign(context.get(),
+                       nullptr,
+                       &size,
+                       reinterpret_cast<const unsigned char*>(message.data()),
+                       message.size()) != 1) {
+        return {};
+    }
+    std::vector<std::byte> output(size);
+    if (EVP_DigestSign(context.get(),
+                       reinterpret_cast<unsigned char*>(output.data()),
+                       &size,
+                       reinterpret_cast<const unsigned char*>(message.data()),
+                       message.size()) != 1) {
+        return {};
+    }
+    output.resize(size);
     return output;
 }
 
@@ -187,4 +307,80 @@ TEST(TransparencySignature, Sha384MatchesStandardVector) {
     EXPECT_EQ(hex(*digest),
               "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed"
               "8086072ba1e7cc2358baeca134c825a7");
+}
+
+TEST(TransparencySignature, VerifiesRsaPkcs1AndPss) {
+    const auto key = generate_key(EVP_PKEY_RSA);
+    ASSERT_TRUE(key);
+    const auto public_key = rsa_public_key(key.get());
+    ASSERT_TRUE(public_key);
+    constexpr std::string_view input = "liquid timestamp signature interoperability";
+    const auto message = std::as_bytes(std::span(input));
+
+    const auto pkcs1_signature = sign(key.get(), EVP_sha256(), message);
+    ASSERT_FALSE(pkcs1_signature.empty());
+    const auto pkcs1 =
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::rsa_pkcs1,
+                                             .digest = liquid::crypto::digest_kind::sha256,
+                                         },
+                                         message,
+                                         pkcs1_signature);
+    EXPECT_TRUE(pkcs1) << pkcs1.error().message;
+
+    const auto pss_signature = sign(key.get(), EVP_sha384(), message, true);
+    ASSERT_FALSE(pss_signature.empty());
+    const auto pss =
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::rsa_pss,
+                                             .digest = liquid::crypto::digest_kind::sha384,
+                                             .pss_salt_length = 48,
+                                         },
+                                         message,
+                                         pss_signature);
+    EXPECT_TRUE(pss) << pss.error().message;
+
+    auto changed = pss_signature;
+    changed.back() ^= std::byte{1};
+    EXPECT_FALSE(
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::rsa_pss,
+                                             .digest = liquid::crypto::digest_kind::sha384,
+                                             .pss_salt_length = 48,
+                                         },
+                                         message,
+                                         changed));
+}
+
+TEST(TransparencySignature, VerifiesP384Sha384) {
+    const auto key = generate_key(EVP_PKEY_EC, NID_secp384r1);
+    ASSERT_TRUE(key);
+    const auto public_key = ec_public_key(key.get(), liquid::crypto::curve_kind::p384, 48);
+    ASSERT_TRUE(public_key);
+    constexpr std::string_view input = "liquid P-384 timestamp signature interoperability";
+    const auto message = std::as_bytes(std::span(input));
+    const auto signature = sign(key.get(), EVP_sha384(), message);
+    ASSERT_FALSE(signature.empty());
+    const auto verified =
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::ecdsa,
+                                             .digest = liquid::crypto::digest_kind::sha384,
+                                         },
+                                         message,
+                                         signature);
+    EXPECT_TRUE(verified) << verified.error().message;
+
+    auto changed = signature;
+    changed.back() ^= std::byte{1};
+    EXPECT_FALSE(liquid::crypto::verify_signature(*public_key,
+                                                  liquid::crypto::signature_parameters{
+                                                      .kind = liquid::crypto::signature_kind::ecdsa,
+                                                      .digest = liquid::crypto::digest_kind::sha384,
+                                                  },
+                                                  message,
+                                                  changed));
 }

@@ -9,6 +9,9 @@ Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, i
 identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
 `transparency/` records how the initial and renewed RFC 4998 fixtures were generated through lake's
 production timestamp service and contains the timestamp, trust, tampering, and renewal cases.
+OpenSSL generates ephemeral RSA and P-384 signatures only in the test process so the private
+verification engine is checked against an independent implementation for PKCS#1 v1.5, RSA-PSS,
+ECDSA, SHA-256, and SHA-384; no OpenSSL call enters the verification path.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
 
