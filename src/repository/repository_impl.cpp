@@ -2734,16 +2734,21 @@ runtime::task<tree_import_report> repository::import_tree(std::filesystem::path 
                                           code ? code.message() : "import root is not a directory",
                                           root.string()));
     }
-    auto ignore_file = std::ifstream{root / ".liquidignore"};
-    auto pattern = std::string{};
-    while (std::getline(ignore_file, pattern)) {
-        if (pattern.empty() || pattern.starts_with('#')) {
-            continue;
+    for (const auto name : {".gitignore", ".liquidignore"}) {
+        auto ignore_file = std::ifstream{root / name};
+        auto pattern = std::string{};
+        while (std::getline(ignore_file, pattern)) {
+            if (pattern.empty() || pattern.starts_with('#')) {
+                continue;
+            }
+            if (pattern.starts_with('/')) {
+                pattern.erase(0, 1);
+            }
+            if (pattern.ends_with('/')) {
+                pattern += "**";
+            }
+            options.ignore_patterns.push_back(std::move(pattern));
         }
-        if (pattern.ends_with('/')) {
-            pattern += "**";
-        }
-        options.ignore_patterns.push_back(std::move(pattern));
     }
     auto report = tree_import_report{};
     auto changed_paths = std::vector<std::string>{};

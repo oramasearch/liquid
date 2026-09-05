@@ -226,11 +226,12 @@ the changed paths; an unchanged tree returns no drip. `tree_import_report` retur
 drip identifier plus `files_seen`, `changed`,
 `bytes_hashed`, and `bytes_written`.
 
-`import_options::ignore_patterns` supplements `.liquidignore` at the imported root. Patterns use
-the repository glob rules; a trailing slash selects the directory and its descendants. By default
-symbolic links are skipped. `follow_symlinks` follows them, and `message` is retained with the
-recorded operation. `liquid init`, local `liquid import <path>`, and `liquid wrap` use this one
-primitive; Git history import remains its separate historical-object path.
+`import_options::ignore_patterns` supplements `.gitignore` and `.liquidignore` at the imported
+root. Patterns use the repository glob rules; a leading slash anchors at that root and a trailing
+slash selects the directory and its descendants. By default symbolic links are skipped.
+`follow_symlinks` follows them, and `message` is retained with the recorded operation. `liquid
+init`, local `liquid import <path>`, and `liquid wrap` use this one primitive; Git history import
+remains its separate historical-object path.
 
 The repository regression covers an unchanged import, a one-file change with one changed tree
 entry, a removal, both ignore sources, and a synthetic 1,024-file import under a 512 MiB RSS

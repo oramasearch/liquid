@@ -177,7 +177,7 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     write_file(source / "kept.txt", content("first"));
     write_file(source / "ignored.txt", content("ignored"));
     write_file(source / "caller-ignored.txt", content("ignored"));
-    write_file(source / ".liquidignore", content("ignored.txt\n"));
+    write_file(source / ".gitignore", content("ignored.txt\n"));
     auto created =
         liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
     ASSERT_TRUE(created) << created.error().message;
