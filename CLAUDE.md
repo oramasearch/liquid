@@ -39,7 +39,9 @@ registered-profile attestations, approved-builder identity quorums, policy-bound
 and policy check/explain commands. Liquid #56 adds content-keyed Autotools and CMake configure
 facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
-and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
+and retention explanations. Liquid #207 adds signed Lake transparency checkpoint, witness quorum,
+tile, inclusion, consistency, and identity-scan verification with repository-backed trusted
+checkpoint state. Liquid #61 adds signed `sbom/1` attestations with graph-derived
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
 remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
 materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read

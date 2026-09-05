@@ -19,6 +19,7 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
+#include "liquid/transparency.hpp"
 #include "liquid/version.hpp"
 #include "liquid/vfs.hpp"
 #include "liquid/workers.hpp"

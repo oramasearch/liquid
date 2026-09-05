@@ -29,6 +29,7 @@ add_executable(liquid-tests
   test_stale_reasoning.cpp
   test_runtime.cpp
   test_store.cpp
+  test_transparency.cpp
   test_temporary_directory.cpp
   attestation/test_registry.cpp
   scan/test_capture.cpp
@@ -76,6 +77,8 @@ target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
+target_include_directories(liquid-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
 
@@ -104,6 +107,8 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TRANSPARENCY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/transparency/fixture.json")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
@@ -339,6 +344,7 @@ add_executable(liquid-header-tests
   headers/repository.cpp
   headers/runtime.cpp
   headers/store.cpp
+  headers/transparency.cpp
   headers/sync.cpp
   headers/version.cpp
   headers/vfs.cpp

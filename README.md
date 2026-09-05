@@ -33,6 +33,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > caller-owned store with repository-scoped checkpoints, journals, and retention leases. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
+> metadata also retains verified Lake transparency checkpoints: the public client verifies signed
+> witness-quorum checkpoints, all entry and parent hash tiles, exact TAAP inclusion, consistency,
+> and identity scans before callers trust a log response.
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
 > HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
@@ -192,6 +195,7 @@ and Zetta's.
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
+- [`docs/library/transparency.md`](docs/library/transparency.md) — Lake transparency-log verification, checkpoint bootstrap, proofs, scans, and failure behavior.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.

@@ -441,6 +441,7 @@ add_library(libliquid
   src/sync/endpoint.cpp
   src/sync/server.cpp
   src/sync/session.cpp
+  src/transparency.cpp
   src/version.cpp
   src/vfs.cpp
   src/vfs/fuse_fs.cpp
@@ -472,7 +473,8 @@ target_include_directories(libliquid PUBLIC
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${blake3_source_SOURCE_DIR}/c
           ${monocypher_source_SOURCE_DIR}/src
-          ${monocypher_source_SOURCE_DIR}/src/optional)
+          ${monocypher_source_SOURCE_DIR}/src/optional
+          ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_compile_definitions(libliquid PRIVATE
   LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
@@ -536,6 +538,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/sync.cpp
     src/cli/test.cpp
     src/cli/repo.cpp
+    src/cli/log.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
     src/cli/search.cpp

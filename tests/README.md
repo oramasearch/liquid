@@ -27,6 +27,8 @@ portable suite.
 
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
+`test_transparency.cpp` consumes Lake's deterministic fixture and checks checkpoint signatures,
+witness quorum, every tile level, inclusion and consistency proofs, and altered or missing input.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
