@@ -38,7 +38,8 @@ fetch can hydrate a patch or target registered with the store's configured remot
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` to the endpoint and prints stable metadata, object, byte, and cursor counts.
 `serve.cpp` implements `serve sync` with the public `sync_server` and the vendored
-`oramasearch/http` router. Request handlers await library tasks on the listener executor and never
+`oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
+authorization callback. Request handlers await library tasks on the listener executor and never
 include the private protocol codec.
 
 The public command table, replay output contract, and user-facing examples live in

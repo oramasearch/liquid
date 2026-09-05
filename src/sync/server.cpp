@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <charconv>
+#include <deque>
+#include <map>
 #include <optional>
+#include <set>
 #include <utility>
 
 #include "encoding/cbor.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
+#include "objects/records.hpp"
 #include "repository/store_access.hpp"
 #include "repository/sync_access.hpp"
 #include "sync/codec.hpp"
@@ -21,6 +25,150 @@ auto server_error(errc code, std::string message, std::string context = {}) -> e
 
 auto same_digest(const digest& left, const digest& right) -> bool {
     return left.alg == right.alg && left.bytes == right.bytes;
+}
+
+class change_graph {
+public:
+    explicit change_graph(store& objects) : objects_(&objects) {}
+
+    auto reachable(change_id head) -> runtime::task<std::set<std::string>> {
+        auto output = std::set<std::string>{};
+        auto pending = std::deque<change_id>{head};
+        while (!pending.empty()) {
+            const auto current = pending.front();
+            pending.pop_front();
+            const auto key = to_string(current.value);
+            if (!output.insert(key).second) {
+                continue;
+            }
+            auto parents = co_await load_parents(current);
+            if (!parents) {
+                co_return std::unexpected(parents.error());
+            }
+            pending.insert(pending.end(), parents->begin(), parents->end());
+        }
+        co_return output;
+    }
+
+private:
+    auto load_parents(change_id id) -> runtime::task<std::vector<change_id>> {
+        const auto key = to_string(id.value);
+        if (const auto found = parents_.find(key); found != parents_.end()) {
+            co_return found->second;
+        }
+        auto bytes = co_await objects_->get(id.value);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto value = objects::decode_change(*bytes, id.value.alg);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        auto parents = std::vector<change_id>{};
+        parents.reserve(value->parents.size());
+        for (const auto& parent : value->parents) {
+            parents.push_back(parent.id);
+        }
+        parents_.emplace(key, parents);
+        co_return parents;
+    }
+
+    store* objects_{};
+    std::map<std::string, std::vector<change_id>> parents_;
+};
+
+struct reference_authorization {
+    std::size_t item_index{};
+    sync_ref_update update;
+    std::set<std::string> introduced_changes;
+};
+
+auto reference_authorizations(repository& subject, store& objects, std::span<const sync_item> items)
+    -> runtime::task<std::vector<reference_authorization>> {
+    auto current_refs = co_await subject.refs();
+    if (!current_refs) {
+        co_return std::unexpected(current_refs.error());
+    }
+    auto current_heads = std::map<std::string, change_id>{};
+    for (const auto& current : *current_refs) {
+        current_heads.emplace(current.name, current.id);
+    }
+
+    auto graph = change_graph{objects};
+    auto output = std::vector<reference_authorization>{};
+    for (auto index = std::size_t{}; index < items.size(); ++index) {
+        const auto& item = items[index];
+        if (item.kind != sync_item_kind::reference) {
+            continue;
+        }
+        auto old_head = std::optional<change_id>{};
+        if (const auto found = current_heads.find(item.name); found != current_heads.end()) {
+            old_head = found->second;
+        }
+        auto new_reachable = co_await graph.reachable(item.reference);
+        if (!new_reachable) {
+            co_return std::unexpected(new_reachable.error());
+        }
+        auto old_reachable = std::set<std::string>{};
+        if (old_head) {
+            auto reachable = co_await graph.reachable(*old_head);
+            if (!reachable) {
+                co_return std::unexpected(reachable.error());
+            }
+            old_reachable = std::move(*reachable);
+        }
+        const auto fast_forward = !old_head || new_reachable->contains(to_string(old_head->value));
+        for (const auto& old_change : old_reachable) {
+            new_reachable->erase(old_change);
+        }
+        output.push_back(reference_authorization{
+            .item_index = index,
+            .update = sync_ref_update{item.name, old_head, item.reference, fast_forward},
+            .introduced_changes = std::move(*new_reachable),
+        });
+    }
+    co_return output;
+}
+
+auto authorize_push(sync_authorizer& authorize,
+                    repository& subject,
+                    store& objects,
+                    std::span<const sync_item> items) -> runtime::task<void> {
+    auto references = co_await reference_authorizations(subject, objects, items);
+    if (!references) {
+        co_return std::unexpected(references.error());
+    }
+    for (auto index = std::size_t{}; index < items.size(); ++index) {
+        const auto& item = items[index];
+        if (item.kind == sync_item_kind::change) {
+            auto updates = std::vector<sync_ref_update>{};
+            const auto id = to_string(item.reference.value);
+            for (const auto& reference : *references) {
+                if (reference.introduced_changes.contains(id)) {
+                    updates.push_back(reference.update);
+                }
+            }
+            auto authorized = co_await authorize(item, updates);
+            if (!authorized) {
+                co_return std::unexpected(authorized.error());
+            }
+            continue;
+        }
+        if (item.kind != sync_item_kind::reference) {
+            continue;
+        }
+        const auto found =
+            std::ranges::find(*references, index, &reference_authorization::item_index);
+        if (found == references->end()) {
+            co_return std::unexpected(
+                server_error(errc::internal, "reference authorization context is missing"));
+        }
+        auto authorized = co_await authorize(item, std::span{&found->update, std::size_t{1}});
+        if (!authorized) {
+            co_return std::unexpected(authorized.error());
+        }
+    }
+    co_return result<void>{};
 }
 
 } // namespace
@@ -56,14 +204,10 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
         co_return std::unexpected(incoming.error());
     }
     if (impl_->options.authorize) {
-        for (const auto& item : incoming->items) {
-            if (item.kind != sync_item_kind::change) {
-                continue;
-            }
-            auto authorized = co_await impl_->options.authorize(item);
-            if (!authorized) {
-                co_return std::unexpected(authorized.error());
-            }
+        auto authorized = co_await authorize_push(
+            impl_->options.authorize, *impl_->subject, *impl_->objects, incoming->items);
+        if (!authorized) {
+            co_return std::unexpected(authorized.error());
         }
     }
     auto imported = co_await impl_->subject->import_drips(incoming->items);

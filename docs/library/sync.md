@@ -3,7 +3,7 @@
 **What.** The HTTP/1.1 protocol used by libliquid clients and lake to exchange repository
 metadata and content. lake's `docs/api/sync.md` mirrors this page.
 
-**Status: implemented by liquid #160 and #165.** Metadata export and import are bounded by
+**Status: implemented by liquid #160, #165, and #177.** Metadata export and import are bounded by
 caller-provided spans. Imports verify the complete batch before changing repository state. Content
 negotiation and transfer reuse `remote_blob_source` and the store's pack-entry framing. The public
 `sync_server` owns protocol decoding and repository dispatch; `liquid serve sync` is its local
@@ -114,11 +114,35 @@ queries, pack-frame uploads, and logical range reads; the canonical codecs remai
 `sync_server::encode_error` produces the error body described above so an adapter need only choose
 the transport status.
 
-`sync_server_options::authorize` is an optional asynchronous per-change callback. Push invokes it
-in frame order before calling repository import. A callback failure returns that error and leaves
-repository metadata unchanged; object uploads that arrived earlier remain unreferenced
-content-addressed data eligible for collection. Embedders can perform authorization and audit work
-in this callback without reimplementing the wire format.
+`sync_server_options::authorize` is an optional asynchronous callback for changes and reference
+updates. Its second argument is a span of `sync_ref_update` values:
+
+```cpp
+struct sync_ref_update {
+    std::string name;
+    std::optional<change_id> old_head;
+    change_id new_head;
+    bool fast_forward;
+};
+```
+
+Before invoking the callback, push reads the server's current refs and walks the stored change
+graph from every proposed head. A new ref is a fast-forward. An update is a fast-forward when its
+old head is reachable from its proposed new head; an unchanged head is therefore also a
+fast-forward. The callback never trusts a client-provided fast-forward claim.
+
+Callbacks preserve metadata-frame order while skipping drips and directory frames. A change
+callback receives the ref updates whose proposed graph newly reaches that change compared with the
+corresponding old graph, in reference-frame order. A change already reachable from a ref's old
+head is not presented under that ref again. A reference callback receives a one-element span with
+its name, the server's pre-batch head when one exists, proposed head, and computed fast-forward
+value. Thus all change decisions precede the exported ref frames that follow them, while each
+decision has the complete ref context.
+
+All graph walks and callbacks finish before repository import starts. A callback failure returns
+that error and leaves the complete metadata batch unapplied; object uploads that arrived earlier
+remain unreferenced content-addressed data eligible for collection. Embedders can perform
+authorization and audit work without reimplementing the wire format.
 
 `repository::export_drips` writes as many `sync_item` values as fit in the supplied span and
 returns the next cursor plus an end flag. `repository::import_drips` accepts a span, verifies it as
@@ -132,15 +156,18 @@ waiting operations are Capy tasks.
 
 `liquid serve sync <path>` opens an existing repository and serves the five routes above with the
 vendored `oramasearch/http` router and serializer. It binds `127.0.0.1:8080` by default;
-`--listen <address>` and `--port <port>` select another listener. The command deliberately supplies
-no authentication policy. Keep the loopback default for local exchange, or embed `sync_server`
-with an authorization callback when exposing a service boundary.
+`--listen <address>` and `--port <port>` select another listener. Repeating `--allow-ref <glob>`
+installs a reference policy that permits only names matching at least one supplied glob; `*`
+matches any sequence and `?` matches one character. Without that flag the command supplies no
+authentication policy. Keep the loopback default for local exchange, or embed `sync_server` with
+an authorization callback when exposing a service boundary.
 
 ## How to verify
 
 The sync tests exchange two on-disk repositories through `sync_server`, prove that a second
 exchange transfers only newly introduced chunks, retry unchanged metadata, and pull into an empty
-repository. They also corrupt a TAAP signature and reject a change through the authorization
-callback without changing repository state. The CLI test spawns `liquid serve sync` and runs the
-real `liquid push` and `liquid pull` commands against it. Static, shared, and Linux-container proofs
-run these tests with the rest of the suite.
+repository. They also corrupt a TAAP signature, reject change and ref updates without changing
+repository state, associate newly reachable changes with their refs, and report false for a
+divergent update's fast-forward field. The CLI test spawns `liquid serve sync --allow-ref main`,
+accepts `main`, rejects another ref, and runs the real `liquid push` and `liquid pull` commands.
+Static, shared, and Linux-container proofs run these tests with the rest of the suite.
