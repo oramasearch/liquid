@@ -87,6 +87,14 @@ allocated loop configuration, and issues one offloaded fresh-path lookup after `
 an explicit unmount. The uncached lookup wakes the blocked libfuse worker without blocking the runtime
 executor. A successful named run reports one passed test and no skipped tests.
 
+For a Linux self-host measurement, bind-mount the checkout at `/liquid/work` and set
+`LIQUID_WRAP_CACHE=/liquid/work/.liquid-build/self-host-cache`; both the wrapped build tree and
+the cache then live on the host bind mount rather than Docker's writable layer. Run
+`bash tools/linux-ci/self-host-memory.sh <log> <wrap command>` inside the container to sample
+the cgroup-v2 `memory.current` and `memory.stat` fields plus `VmRSS`/`VmHWM` for the wrapper and
+its descendants every ten seconds. Keep the log with the self-host result, particularly on a
+memory-limit failure.
+
 `BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
 The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.
 `FrontendModule.*` and `FrontendGraph.*` exercise dynamic loading, the C fallback, real definition

@@ -84,6 +84,14 @@ checkpoint interval, and requires peak RSS below 512 MiB on
 both supported desktop platforms. The test keeps the payload small so it measures buffering,
 not capacity.
 
+The self-host proof bind-mounts the checkout, `build-wrapped`, and
+`.liquid-build/self-host-cache` at `/liquid/work`. The explicit cache location matters: without
+`LIQUID_WRAP_CACHE`, the wrapper uses `/root/.cache/liquid/wrap` on Docker's writable layer, whose
+file-backed pages are charged to the container memory cgroup. The proof samples cgroup-v2
+`memory.current`, `anon`, `file`, `shmem`, and `kernel` fields alongside wrapper-and-child
+`VmRSS`/`VmHWM` every ten seconds with `tools/linux-ci/self-host-memory.sh`; its log is retained
+beside the two-run numbers.
+
 ## Open questions
 
 - Cross-worker cache transport belongs to the remote-cache phase; this issue proves that the local
