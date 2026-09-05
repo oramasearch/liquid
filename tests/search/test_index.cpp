@@ -7,6 +7,7 @@
 #include <ranges>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -22,6 +23,7 @@ namespace {
 
 static_assert(std::is_aggregate_v<liquid::search_options>);
 static_assert(std::is_aggregate_v<liquid::search_hit>);
+static_assert(std::is_aggregate_v<liquid::search_plan>);
 
 class temporary_directory {
 public:
@@ -99,6 +101,11 @@ auto wait_for_search_delivery(liquid::daemon& daemon, std::uint64_t before)
         liquid::errc::unavailable, "search target did not receive drip", "search test"});
 }
 
+auto hit_identity(const liquid::search_hit& hit) {
+    return std::tuple{
+        hit.path, liquid::to_string(hit.blob), hit.line, hit.column, hit.snippet, hit.score};
+}
+
 } // namespace
 
 TEST(SearchIndex, repository_search_indexes_shared_blob_once) {
@@ -159,6 +166,22 @@ TEST(SearchIndex, positional_trigrams_match_only_contiguous_substrings) {
     EXPECT_EQ(hits->front().path, "match.txt");
 }
 
+TEST(SearchIndex, delta_catalogs_a_blob_reintroduced_from_an_inactive_generation) {
+    temporary_directory location;
+    const auto index = location.path() / "index";
+    const auto old = document("old.txt", "reintroduced needle");
+    ASSERT_TRUE(liquid::search_detail::publish_full(index, "working", "one", {old}));
+    ASSERT_TRUE(liquid::search_detail::publish_full(
+        index, "working", "two", {document("current.txt", "current value")}));
+    ASSERT_TRUE(liquid::search_detail::publish_delta(
+        index, "working", "three", {liquid::search_detail::document_update{"restored.txt", old}}));
+
+    auto hits = liquid::search_detail::query(index, "working", "\"needle\"", 20);
+    ASSERT_TRUE(hits) << (hits ? "" : hits.error().message);
+    ASSERT_EQ(hits->size(), 1);
+    EXPECT_EQ(hits->front().path, "restored.txt");
+}
+
 TEST(SearchIndex, regex_alternatives_do_not_use_an_unsafe_literal_prefilter) {
     temporary_directory location;
     const auto index = location.path() / "index";
@@ -169,6 +192,86 @@ TEST(SearchIndex, regex_alternatives_do_not_use_an_unsafe_literal_prefilter) {
     auto hits = liquid::search_detail::query(index, "working", "/foo|bar/", 20);
     ASSERT_TRUE(hits) << (hits ? "" : hits.error().message);
     ASSERT_EQ(hits->size(), 2);
+}
+
+TEST(SearchIndex, scan_and_trigram_results_are_identical) {
+    temporary_directory location;
+    const auto index = location.path() / "index";
+    const auto documents =
+        std::vector{document("one.txt", "first line\nalpha needle omega\nlast line"),
+                    document("two.txt", "alpha other value"),
+                    document("three.txt", "prefix needle suffix")};
+    ASSERT_TRUE(liquid::search_detail::publish_full(index, "working", "one", documents));
+
+    for (const auto& query : {std::string{"\"needle\""},
+                              std::string{"/needle.*omega/"},
+                              std::string{"/\\x6eeedle/"},
+                              std::string{"/needle (omega|suffix)/"}}) {
+        auto indexed = liquid::search_detail::query(
+            index, "working", query, 20, liquid::search_executor::trigram);
+        auto scanned = liquid::search_detail::scan(documents, query, 20);
+        ASSERT_TRUE(indexed) << (indexed ? "" : indexed.error().message);
+        ASSERT_TRUE(scanned) << (scanned ? "" : scanned.error().message);
+        ASSERT_EQ(indexed->size(), scanned->size());
+        for (auto position = std::size_t{}; position != indexed->size(); ++position) {
+            EXPECT_EQ(hit_identity((*indexed)[position]), hit_identity((*scanned)[position]));
+        }
+    }
+    auto core = liquid::search_detail::classify("/needle.*omega/");
+    auto no_core = liquid::search_detail::classify("/(needle|omega)/");
+    auto escaped_core = liquid::search_detail::classify("/\\x6eeedle/");
+    ASSERT_TRUE(core);
+    ASSERT_TRUE(no_core);
+    ASSERT_TRUE(escaped_core);
+    EXPECT_EQ(*core, liquid::search_query_kind::regex_with_literal_core);
+    EXPECT_EQ(*no_core, liquid::search_query_kind::regex_without_literal_core);
+    EXPECT_EQ(*escaped_core, liquid::search_query_kind::regex_without_literal_core);
+}
+
+TEST(SearchPlanner, chooses_scan_and_index_on_opposite_sides_of_crossover) {
+    auto small = liquid::search_detail::planner_inputs{
+        .working_set = {.paths = 10, .unique_blobs = 10, .bytes = 120000},
+        .scan_nanoseconds_per_blob = 20000,
+        .scan_parallelism = 16,
+        .trigram_selectivity = 0.001,
+        .index_available = true};
+    auto large = small;
+    large.working_set = {.paths = 4000, .unique_blobs = 4000, .bytes = 48000000};
+
+    for (const auto kind :
+         {liquid::search_query_kind::literal, liquid::search_query_kind::regex_with_literal_core}) {
+        const auto small_plan = liquid::search_detail::make_plan(small, kind);
+        const auto large_plan = liquid::search_detail::make_plan(large, kind);
+        EXPECT_EQ(small_plan.executor, liquid::search_executor::scan);
+        EXPECT_EQ(large_plan.executor, liquid::search_executor::trigram);
+    }
+
+    large.drips_since_index_update = 1;
+    const auto stale_plan =
+        liquid::search_detail::make_plan(large, liquid::search_query_kind::literal);
+    EXPECT_EQ(stale_plan.executor, liquid::search_executor::scan);
+    EXPECT_FALSE(stale_plan.alternatives[1].eligible);
+}
+
+TEST(SearchPlanner, counts_capture_drips_after_the_index_cursor) {
+    temporary_directory location;
+    const auto index = location.path() / ".liquid" / "index";
+    const auto capture = location.path() / ".liquid" / "capture";
+    std::filesystem::create_directories(capture);
+    ASSERT_TRUE(liquid::search_detail::publish_full(
+        index, "working", "0:0", {document("one.txt", "fresh before drip")}));
+    {
+        auto journal = std::ofstream{capture / "drips.cbor", std::ios::binary};
+        const auto record = std::array<char, 5>{0, 0, 0, 1, 'x'};
+        journal.write(record.data(), static_cast<std::streamsize>(record.size()));
+    }
+    {
+        auto cursor = std::ofstream{capture / "cursor"};
+        cursor << "5 1\n";
+    }
+    auto stale = liquid::search_detail::freshness(index, "working");
+    ASSERT_TRUE(stale) << (stale ? "" : stale.error().message);
+    EXPECT_EQ(*stale, 1);
 }
 
 TEST(SearchIndex, manifest_replacement_is_atomic_for_concurrent_queries) {

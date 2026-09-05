@@ -13,6 +13,8 @@ The help/documentation comparison also pins the `scheduler` and `worker` command
 The scenario also pins `remote_bytes` in the status JSON contract.
 It maps an anchor from the imported change through a later rename and checks the returned path and
 flags.
+It also parses `search --explain` as JSON and pins the scan choice, literal classification,
+freshness input, and three-alternative shape for the small imported working set.
 
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.
