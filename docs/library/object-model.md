@@ -228,7 +228,8 @@ drip identifier plus `files_seen`, `changed`,
 
 `import_options::ignore_patterns` supplements `.gitignore` and `.liquidignore` at the imported
 root. Patterns use the repository glob rules; a leading slash anchors at that root and a trailing
-slash selects the directory and its descendants. By default symbolic links are skipped.
+slash selects the directory and its descendants. A `/**` rule also excludes that directory itself,
+so the walk never opens its descendants. By default symbolic links are skipped.
 `follow_symlinks` follows them, and `message` is retained with the recorded operation. `liquid
 init`, local `liquid import <path>`, and `liquid wrap` use this one primitive; Git history import
 remains its separate historical-object path.

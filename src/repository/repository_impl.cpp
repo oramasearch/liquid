@@ -2341,9 +2341,15 @@ struct repository::impl {
     }
     auto ignored(std::string_view path, const import_options& options) const -> bool {
         return std::ranges::any_of(options.ignore_patterns, [&](const auto& pattern) {
-            return glob_matches(pattern, path) ||
-                   (pattern.ends_with("/**") &&
-                    same_path_or_descendant(path, pattern.substr(0, pattern.size() - 3)));
+            if (glob_matches(pattern, path)) {
+                return true;
+            }
+            if (!pattern.ends_with("/**")) {
+                return false;
+            }
+            auto root = std::string_view{pattern}.substr(0, pattern.size() - 3);
+            root.remove_suffix(1);
+            return same_path_or_descendant(path, root);
         });
     }
     runtime::task<void> import_directory(working_entry& destination,

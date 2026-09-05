@@ -177,6 +177,7 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     write_file(source / "kept.txt", content("first"));
     write_file(source / "ignored.txt", content("ignored"));
     write_file(source / "caller-ignored.txt", content("ignored"));
+    write_file(source / "caller-ignored-directory" / "nested.txt", content("ignored"));
     write_file(source / ".gitignore", content("ignored.txt\n"));
     auto created =
         liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
@@ -184,7 +185,7 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     auto repository = std::move(*created);
 
     auto options = liquid::import_options{};
-    options.ignore_patterns = {"caller-ignored.txt"};
+    options.ignore_patterns = {"caller-ignored.txt", "caller-ignored-directory/**"};
     const auto first = liquid::runtime::block_on(repository.import_tree(source, options));
     ASSERT_TRUE(first) << first.error().message;
     EXPECT_TRUE(first->drip.has_value());
@@ -196,6 +197,9 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     EXPECT_FALSE(ignored);
     const auto caller_ignored = liquid::runtime::block_on(repository.read("caller-ignored.txt"));
     EXPECT_FALSE(caller_ignored);
+    const auto ignored_directory =
+        liquid::runtime::block_on(repository.read("caller-ignored-directory/nested.txt"));
+    EXPECT_FALSE(ignored_directory);
 
     repository = {};
     auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path() / "target"));
