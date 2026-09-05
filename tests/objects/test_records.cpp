@@ -249,4 +249,19 @@ TEST(Records, legacy_result_reencodes_its_original_signing_body) {
     EXPECT_EQ(*reencoded, *encoded);
 }
 
+TEST(Records, content_addressed_result_round_trips_its_output_tree) {
+    auto value = liquid::action_result{.action = example_digest(0x01),
+                                       .stdout_output = example_digest(0x02),
+                                       .stderr_output = example_digest(0x03),
+                                       .record_version = 4,
+                                       .output_tree = example_digest(0x04)};
+    auto encoded = liquid::objects::encode(value);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_result(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    ASSERT_TRUE(decoded->output_tree);
+    EXPECT_EQ(decoded->record_version, 4U);
+    EXPECT_EQ(liquid::to_string(*decoded->output_tree), liquid::to_string(*value.output_tree));
+}
+
 } // namespace

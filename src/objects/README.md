@@ -18,6 +18,9 @@ dependency edges, phase timing, cache outcomes, schedules, and build wall time. 
 records hold the unsigned base SPDX or CycloneDX document.
 The scheduling-record encoder and decoder are also reused as one length-delimited field in the
 private worker protocol, keeping the signed result and submitted placement decision byte-identical.
+Result record version 4 adds the canonical `output_tree` referenced by the producer signature.
+Sandbox record version 2 adds the ordered output-normaliser rule names, binding normalisation
+behavior into action identity while preserving version-1 encoding for definitions without rules.
 `action-index-root` records persist sorted candidate/result entries, divergence, and the optional
 verification-attestation digest plus ordered trace digests so the disk projection can be rebuilt
 and collection can traverse every published result, attestation, and trace.

@@ -14,6 +14,7 @@
 
 #include "../temporary_directory.hpp"
 #include "build/cache.hpp"
+#include "build/content.hpp"
 #include "build/repository_access.hpp"
 #include "identity/taap.hpp"
 #include "liquid/attestation.hpp"
@@ -570,6 +571,29 @@ TEST(Build, records_an_undeclared_input_read) {
     EXPECT_EQ(result->manifest.front().path, "other.txt");
 }
 
+TEST(Build, direct_action_reads_a_named_upstream_tree) {
+    action_fixture fixture;
+    auto folded = liquid::runtime::block_on(liquid::build_detail::fold_dependency_inputs(
+        fixture.repository,
+        fixture.root,
+        std::vector<liquid::named_input>{{"upstream", fixture.root}}));
+    ASSERT_TRUE(folded) << folded.error().message;
+    auto dependency = liquid::runtime::block_on(liquid::repository_detail::vfs_access::entry(
+        fixture.repository, *folded, "deps/upstream/input.txt"));
+    ASSERT_TRUE(dependency) << dependency.error().message;
+    auto input = fixture.input({"fixture", "copy", "deps/upstream/input.txt", "out/copy.txt"},
+                               {"out/copy.txt"});
+    input.dependency_inputs.push_back({"upstream", fixture.root});
+    auto ran = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
+    ASSERT_TRUE(ran) << ran.error().message << ": " << ran.error().context;
+    auto result = liquid::runtime::block_on(liquid::build::result(fixture.repository, *ran));
+    ASSERT_TRUE(result) << result.error().message;
+    ASSERT_EQ(result->exit, 0);
+    ASSERT_EQ(result->manifest.size(), 1U);
+    EXPECT_EQ(result->manifest.front().path, "deps/upstream/input.txt");
+    ASSERT_TRUE(result->output_tree);
+}
+
 TEST(Build, denies_reads_outside_the_mount) {
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(
@@ -637,6 +661,7 @@ TEST(Build, has_fixed_environment) {
                   {"SOURCE_DATE_EPOCH", std::to_string(source_time->time_since_epoch().count())},
                   {"TMPDIR", "/liquid/tmp/" + liquid::to_string(result->action).substr(7)},
                   {"TZ", "UTC"},
+                  {"ZERO_AR_DATE", "1"},
               }));
 }
 

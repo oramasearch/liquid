@@ -7,6 +7,11 @@ rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA p
 and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
 SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages over public
 results, attestations, traces, and result-scoped SBOMs.
+`test_content.cpp` covers canonical output-tree paths and modes plus read-only named dependency
+folding. `test_normalise.cpp` proves two `ar` headers with different owner, group, mode, and time
+normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root
+binary and text kinds are unchanged, and tree modes preserve only portable executability. The
+provenance tests also enumerate the stored signed input/output claim.
 
 Filesystem fixtures allocate their named directories beneath the unique process root specified in
 the parent [`README.md`](../README.md).
@@ -82,6 +87,9 @@ one compiler while preserving the object and link result, then make a semantic e
 compiler and linker and change the link result.
 The fixture registers a labelled smoke test, and the wrap scenario verifies its public target
 metadata.
+Its cross-project case compiles an upstream object twice across a comment-only source edit, imports
+both signed result claims into a downstream project, and asserts that the identical output tree
+causes zero downstream processes and a named unchanged-input explanation.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.

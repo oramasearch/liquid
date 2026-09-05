@@ -100,6 +100,8 @@ complete graph pass and requires zero query divergences.
 Portable build
 diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
 statistics, recorded scheduling decisions and inputs, and the JSON forms of `why` and `cache stats`.
+They also cover canonical output normalisation, signed input/output claims, named dependency-tree
+folding, and cross-project cascade termination.
 Mount-backed observability coverage constructs a two-action sleeping dependency chain and verifies
 result timing, durable trace edges, critical-path queries, scheduling metadata, and Chrome
 trace-event JSON. Distribution coverage uses a second store to materialise source and toolchain

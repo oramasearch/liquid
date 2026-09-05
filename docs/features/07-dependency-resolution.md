@@ -79,6 +79,13 @@ problem is the direct consequence.
 In liquid, a rebuild producing identical bytes terminates the cascade. A glibc patch
 that changes nothing observable rebuilds nothing downstream.
 
+**Implemented by the build engine (#26).** Every new signed result carries its canonical output
+tree. `wrap_options::inputs`, direct `action_input::dependency_inputs`, and `liquid wrap --input
+<name>=<result-or-tree-digest>` mount those bytes below `deps/<name>/` and fold them into the normal
+input tree. `build::known_outputs` enumerates signature-valid input/output pairs for the resolver;
+the signed result itself remains the claim someone vouches for. Package definitions, solving, and
+projection remain owned by #74, #25, and #28.
+
 This requires reproducibility as a hard, enforced property
 ([10](10-supply-chain.md)) and makes "which bytes should this input produce?" a
 claim someone vouches for — solved by signed attestations and independent rebuild
@@ -94,6 +101,10 @@ Editing one file in a large package recompiles one object
 ([04](04-build-engine.md)), not the package. Nix and Spack cannot do this because a
 derivation is atomic: change one source file in a two-hour build and you pay two
 hours again.
+
+The named dependency tree preserves action granularity. A changed upstream tree invalidates only
+the downstream action manifests that read changed paths. A linker runs only when an input object or
+library byte changes; an unchanged normalised tree stops before any downstream process starts.
 
 ## Sandboxing
 

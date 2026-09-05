@@ -33,6 +33,7 @@ struct sandbox_record {
     std::string temporary_root;
     std::vector<std::string> fixed_environment;
     bool network{};
+    std::vector<std::string> output_normalisers;
 };
 
 struct action_index_entry {

@@ -75,7 +75,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
 > dependency-aware build observability, build-input policy, a cross-project configure fact base,
-> cost-aware retention, and graph-derived SPDX and CycloneDX SBOMs for every output.**
+> cost-aware retention, content-addressed upstream outputs, and graph-derived SPDX and CycloneDX
+> SBOMs for every output.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -87,6 +88,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and every output digest, signs a `reproducibility/1` attestation, and permanently quarantines a
 > divergent result. `wrap` schedules one-in-20 graph and action samples on the shared runtime by
 > default.
+> New signed results carry canonical output-tree digests. `wrap --input <name>=<result|tree>` and
+> direct named inputs mount upstream bytes read-only below `deps/<name>/`; an identical normalised
+> upstream tree stops the downstream cascade. Directory modes, `ar` headers, and Python bytecode
+> are normalised before storage, with the rule set bound into the sandbox digest.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
 > in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result

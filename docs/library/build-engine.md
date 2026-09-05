@@ -16,7 +16,7 @@ The cache key then covers exactly what was read, and a miss can name the input t
 changed.
 
 **Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
-#23, and #193 implement
+#23, #26, and #193 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -141,6 +141,7 @@ result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, 
           stdout: digest, stderr: digest, manifest: [ { path, digest } … ],   # everything the action read, with content hashes
           timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
           started_at: time, finished_at: time, provenance: digest(attestation),
+          output_tree: digest(tree),
           sboms: [ digest(attestation) … ],
           schedule: { decision, history, size_class, input_bytes, remote_state_queried,
                       remote_missing_bytes, remote_queue_depth, remote_cache_locality_permille,
@@ -151,11 +152,15 @@ build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outpu
               cache: { hits, misses, bytes_served, bytes_rebuilt, bytes_avoided } }
 ```
 
-New result records use version 3. Its phase durations are non-overlapping and their sum is the
+New result records use version 4. Version 4 adds `output_tree`, the canonical tree containing all
+result outputs. The signed result is therefore the producer's claim that the action input tree
+produced those content-addressed bytes. `build::known_outputs(repository&)` returns the distinct
+`{input_tree, output_tree}` pairs from signature-valid results without adding another record kind.
+Version 3 added phase durations that are non-overlapping and whose sum is the
 recorded action duration: queue wait, sandbox preparation, tool execution, result analysis and
 hashing, then local-store writes. Version 3 adds the immutable scheduling decision and every cost
 model input; it does not change the five timing phases. The decoder continues to accept versions 1
-and 2 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded into
+through 3 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded into
 local store time; absent bytes and the transfer estimate are explicit schedule fields.
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
@@ -170,6 +175,40 @@ local store time; absent bytes and the transfer estimate are explicit schedule f
   provenance record (#14 wraps it in a `slsa_provenance/1` attestation).
 - `outputs` in the action are the paths the action may write; the result lists what it did
   write. A write outside the declared outputs is a sandbox violation, reported with the path.
+
+### Named upstream outputs
+
+`wrap_options::inputs` and repeatable `liquid wrap --input <name>=<result-or-tree-digest>` add a
+producer's canonical output tree below `deps/<name>/`. The mount exposes the same tree read-only at
+`/liquid/work/<action-id>/deps/<name>/`. A result digest is accepted only when its result signature
+is valid and it carries a version-4 `output_tree`; a tree digest is used directly. Wrapper caches
+share these records through their common cache parent, so the downstream cache imports the signed
+result and its referenced object graph before planning.
+
+Direct execution uses `action_input::dependency_inputs` with the same `named_input` values. Before
+policy and cache lookup, direct and wrapped builds fold the named trees into the ordinary input-tree
+record and clear the request-only list. The action and its manifest therefore use one input tree,
+including observed reads such as `deps/zlib/include/zlib.h`. The candidate key keeps its existing
+shape because it already omits the input tree and validates observed paths against the current
+tree.
+
+### Output normalisation
+
+Collection classifies each output before hashing and storing. CPU-only rewriting runs through
+`runtime::offload`. The versioned rule names are fields of the sandbox-definition record, so
+machines with different implementations have different sandbox digests and cannot share entries.
+
+| Artifact kind | Canonical rule before storage |
+|---|---|
+| Directory tree | Tree records contain no mtimes. File modes become `0644` or `0755` according to whether any execute bit was set; directories are `0755`, and named dependency directories are read-only `0555`. |
+| Unix `ar` archive | GNU deterministic-mode headers: member uid, gid, and mtime are zero; modes become `0644` or `0755`. The fixed environment also sets `ZERO_AR_DATE=1`. |
+| ELF object or executable | No byte rewrite. The fixed virtual root already removes checkout paths, so `-ffile-prefix-map` is unnecessary. Toolchains that embed time must be configured for reproducible output. |
+| Mach-O object or executable | No byte rewrite for the same fixed-root reason. `ZERO_AR_DATE=1` covers archive member dates. |
+| PE/COFF object or executable | No byte rewrite. MSVC-compatible toolchains must use `/Brepro` when they would otherwise emit time-dependent bytes. |
+| Text (`.pc`, CMake configuration, generated header) | No byte rewrite. The deterministic `SOURCE_DATE_EPOCH` fixes generators that honor the reproducible-build convention; wrap uses zero and direct actions use the recorded source epoch. |
+| Python `.pyc` | Convert the 16-byte header to unchecked hash-based form and derive its eight-byte hash from the bytecode payload, eliminating timestamp and source-size identity. |
+| ZIP, JAR, wheel, and other codec archives | Deferred to #29's `canonicalise`; this implementation does not add a second ZIP reader. |
+| Other bytes | Stored unchanged. Reproducibility verification detects any remaining producer variance. |
 
 ## The sandbox: observation by the mount, enforcement by the platform
 
@@ -194,7 +233,7 @@ read, so a large input tree costs nothing to set up (features/06: data movement 
 
 Environment inside the sandbox is fixed and minimal (`PATH` to the toolchain tree, `HOME`
 and `TMPDIR` to sandbox-private directories, `LANG=C.UTF-8`, `TZ=UTC`, `SOURCE_DATE_EPOCH`
-from the change's time, nothing inherited). The sandbox definition (the mount layout, the
+from the recorded source epoch, `ZERO_AR_DATE=1`, nothing inherited). The sandbox definition (the mount layout, the
 environment, the enforcement profile) is itself a record and its digest is in the action, so
 two machines with different sandbox definitions never share a cache entry by accident.
 On Linux, optional `etc`, `lib`, and `lib64` directories from that same toolchain are mounted at

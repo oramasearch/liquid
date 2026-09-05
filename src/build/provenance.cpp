@@ -5,6 +5,7 @@
 #include <format>
 #include <string_view>
 
+#include "build/content.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/sbom.hpp"
@@ -222,6 +223,14 @@ runtime::task<result_id> store_result_with_provenance(repository& source, action
     auto action = objects::decode_action(*action_bytes);
     if (!action) {
         co_return std::unexpected(action.error());
+    }
+    if (!value.output_tree) {
+        auto output_tree = co_await build_detail::store_output_tree(source, value.outputs);
+        if (!output_tree) {
+            co_return std::unexpected(output_tree.error());
+        }
+        value.output_tree = *output_tree;
+        value.record_version = 4;
     }
     auto sboms = co_await build_detail::store_derived_sboms(source, *action, value);
     if (!sboms) {

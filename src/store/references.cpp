@@ -129,6 +129,8 @@ std::vector<digest> extract_result(std::span<const std::byte> bytes) {
         append_once(output, sbom);
     for (const auto& action_output : result->outputs)
         append_once(output, action_output.blob);
+    if (result->output_tree)
+        append_once(output, *result->output_tree);
     return output;
 }
 

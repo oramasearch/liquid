@@ -38,6 +38,9 @@ phase timings, retained build traces, dependency-aware critical paths, Chrome tr
 registered-profile attestations, approved-builder identity quorums, policy-bound cache candidates,
 and policy check/explain commands. Liquid #56 adds content-keyed Autotools and CMake configure
 facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`.
+Liquid #26 adds canonical output-tree claims, named upstream result/tree inputs for direct and
+wrapped builds, per-kind output normalisation, unchanged-upstream explanations, and signed
+input/output claim enumeration.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
 and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral

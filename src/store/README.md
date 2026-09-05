@@ -18,7 +18,7 @@ reachability collection so unrelated repository objects remain available.
 
 Build-cache collection roots are canonical `action-index-root` records plus named result leases
 under the same store. The reference registry traverses root to verification attestations and traces,
-result to action/output/stdout/stderr/provenance/SBOM attestations, each `sbom/1` attestation to its
+result to action/output/output-tree/stdout/stderr/provenance/SBOM attestations, each `sbom/1` attestation to its
 canonical SBOM record, and action to input/toolchain/sandbox. The index root retains verification
 attestations and trace digests but does not pin results, so result expiry and cost-aware eviction can
 release one usable graph without weakening the collector's manifest/index/pack-removal ordering.

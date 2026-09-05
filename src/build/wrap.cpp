@@ -26,9 +26,11 @@
 #endif
 
 #include "build/cache.hpp"
+#include "build/content.hpp"
 #include "build/executor.hpp"
 #include "build/facts.hpp"
 #include "build/materialise.hpp"
+#include "build/normalise.hpp"
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
@@ -237,9 +239,10 @@ runtime::task<build_detail::cache_lookup> demand_wrap_action(graph& queries,
     const auto candidate_text = to_string(*candidate);
     state.requests.insert_or_assign(candidate_text,
                                     wrap_query_request{input, sandbox, previous.manifest});
+    const auto input_fingerprint = to_string(previous.action) + "\n" + to_string(input.inputs);
     auto cache_entry = co_await queries.set_input(
         {graph_input_kind::environment, "action-result/" + candidate_text},
-        graph_bytes(to_string(previous.action)),
+        graph_bytes(input_fingerprint),
         durability::high);
     if (!cache_entry) {
         co_return std::unexpected(cache_entry.error());
@@ -927,7 +930,8 @@ collect_action_outputs(repository& source, const std::set<std::string>& paths) {
             co_return std::unexpected(entry.error());
         }
         if (entry->kind == node_kind::blob)
-            output.push_back({path, entry->mode & 0777U, entry->object});
+            output.push_back(
+                {path, build_detail::normalised_output_mode(entry->mode & 0777U), entry->object});
     }
     co_return output;
 }
@@ -1027,7 +1031,8 @@ auto fixed_environment(const wrap_options& options) -> std::map<std::string, std
                                                           {"TMPDIR", "/tmp"},
                                                           {"LANG", "C.UTF-8"},
                                                           {"TZ", "UTC"},
-                                                          {"SOURCE_DATE_EPOCH", "0"}};
+                                                          {"SOURCE_DATE_EPOCH", "0"},
+                                                          {"ZERO_AR_DATE", "1"}};
     if (const auto* compiler = std::getenv("CC"))
         environment["CC"] = compiler;
     if (const auto* compiler = std::getenv("CXX"))
@@ -2015,6 +2020,7 @@ runtime::task<bool> serve_outer_action(repository& source,
         state.outputs.insert(action_output.path);
     report.exit = value->exit;
     report.outer = cache_status::hit;
+    report.output_tree = value->output_tree;
     report.actions = (state.action_command == command ? state.actions.size() : std::size_t{}) + 1;
     report.hits = report.actions;
     report.cache.bytes_served += lookup.bytes_served;
@@ -2218,6 +2224,17 @@ runtime::task<void> publish_observed_run(repository& source,
                                          bool outer_miss_recorded,
                                          wrap_report& report) {
     report.exit = run.launch.exit;
+    const auto writes = writes_by_process(*run.observations);
+    auto all_writes = std::set<std::string>{};
+    for (const auto& [pid, paths] : writes) {
+        all_writes.insert(paths.begin(), paths.end());
+    }
+    all_writes.insert(state.outputs.begin(), state.outputs.end());
+    auto normalised = co_await build_detail::normalise_repository_outputs(source, all_writes);
+    if (!normalised) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(normalised.error());
+    }
     auto cut = co_await source.cut("wrap output snapshot");
     if (!cut) {
         static_cast<void>(remove_run(run.directory));
@@ -2229,7 +2246,13 @@ runtime::task<void> publish_observed_run(repository& source,
         co_return std::unexpected(log ? wrap_error(errc::internal, "wrap output is missing")
                                       : log.error());
     }
-    const auto replay_tree = log->front().root;
+    auto folded_replay =
+        co_await build_detail::fold_dependency_inputs(source, log->front().root, options.inputs);
+    if (!folded_replay) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(folded_replay.error());
+    }
+    const auto replay_tree = *folded_replay;
     const auto previous_actions = state.actions;
     const auto previous_outer = state.outer_result
                                     ? std::optional<result_id>{result_id{*state.outer_result}}
@@ -2263,11 +2286,7 @@ runtime::task<void> publish_observed_run(repository& source,
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(empty_blob.error());
     }
-    const auto writes = writes_by_process(*run.observations);
     const auto driver_pid = run.processes.front().pid;
-    auto all_writes = std::set<std::string>{};
-    for (const auto& [pid, paths] : writes)
-        all_writes.insert(paths.begin(), paths.end());
     for (const auto& process : run.processes) {
         auto program = co_await probe_program_text(source, *run.observations, process.pid);
         if (!program) {
@@ -2405,6 +2424,7 @@ runtime::task<void> publish_observed_run(repository& source,
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(outer_value.error());
     }
+    report.output_tree = outer_value->output_tree;
     if (backend && backend->config().publish) {
         auto outer_action = co_await load_action(source, outer_value->action);
         if (!outer_action) {
@@ -2494,8 +2514,10 @@ objects::sandbox_record wrap_sandbox_definition() {
             .toolchain_root = "/usr/",
             .home_root = "/tmp/home/",
             .temporary_root = "/tmp/",
-            .fixed_environment = {"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"},
-            .network = false};
+            .fixed_environment =
+                {"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH", "ZERO_AR_DATE"},
+            .network = false,
+            .output_normalisers = build_detail::output_normaliser_rules()};
 }
 
 liquid::result<std::filesystem::path>
@@ -2763,7 +2785,18 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!log || log->empty())
         co_return std::unexpected(log ? wrap_error(errc::internal, "wrap snapshot is missing")
                                       : log.error());
-    const auto input_tree = log->front().root;
+    const auto base_input_tree = log->front().root;
+    auto imported_inputs =
+        co_await build_detail::import_wrap_inputs(*source, *cache_directory, options.inputs);
+    if (!imported_inputs) {
+        co_return std::unexpected(imported_inputs.error());
+    }
+    auto folded_inputs =
+        co_await build_detail::fold_dependency_inputs(*source, base_input_tree, options.inputs);
+    if (!folded_inputs) {
+        co_return std::unexpected(folded_inputs.error());
+    }
+    const auto input_tree = *folded_inputs;
     auto toolchain = read_toolchain(toolchain_path);
     if (!toolchain)
         co_return std::unexpected(toolchain.error());
