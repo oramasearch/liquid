@@ -51,7 +51,7 @@ owning issue in `error::context`.
 | Header | Phase | Status | What it exposes |
 |---|---|---|---|
 | `liquid/liquid.hpp` | now | implemented | umbrella |
-| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
+| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()`, `grammar_digest()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97, #193 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `spawn_serial`, `offload`, `context` |
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
@@ -302,6 +302,11 @@ struct frontend_callbacks {
   std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
   std::function<bool()> cancelled;
 };
+enum class frontend_tier_mechanism : std::uint8_t { frontend = 1, grammar = 2 };
+struct frontend_language {
+  std::string language; std::vector<std::string> extensions;
+  frontend_tier_mechanism tier_mechanism; std::string grammar_digest;
+};
 class frontend_module {
  public:
   frontend_module() noexcept; ~frontend_module();
@@ -310,6 +315,7 @@ class frontend_module {
   static result<frontend_module> load(std::filesystem::path shared_object);
   static result<frontend_module> linked(const liquid_frontend_module_v1* descriptor);
   std::string_view name() const; std::vector<std::string> languages() const;
+  std::vector<frontend_language> language_details() const;
   bool supports(std::string_view language) const;
   result<std::vector<frontend_unit>> units(std::string_view language,
       std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
@@ -332,6 +338,7 @@ class frontend_registry {
   frontend_registry& operator=(frontend_registry&&) noexcept;
   result<void> add(frontend_module); result<void> load(std::filesystem::path shared_object);
   result<const frontend_module*> find(std::string_view language) const;
+  std::vector<frontend_language> languages() const;
 };
 struct frontend_build_request {
   std::string language, source_path, compile_action; std::vector<std::byte> source, context_cbor;
@@ -359,13 +366,17 @@ class frontend_graph {
 ```
 
 `frontend_module` validates the descriptor, ownership contract, and canonical CBOR before values
-cross into C++. `frontend_registry` rejects duplicate language registrations. `frontend_graph`
+cross into C++. Optional ABI-v1 language metadata identifies compiler frontends and grammar-backed
+languages while preserving compatibility with the original descriptor size. `frontend_registry`
+rejects duplicate language registrations and projects names, extensions, mechanism, and grammar
+identity. `frontend_graph`
 registers the action and assembly query kinds, records action read paths through `query_context`,
 and runs the potentially blocking assembly operation through `runtime::offload`. The caller's
 `frontend_action_executor` owns compiler-action scheduling and returns object bytes. All three
 handles are move-only; their public copy operations are deleted.
 
-`symbol_record` is `{ subject, language, origin, occurrences }`; each occurrence carries its stable
+`symbol_record` is `{ subject, language, origin, grammar, occurrences }`; `grammar` is empty for
+compiler records and carries the canonical lock identity for syntactic records. Each occurrence carries its stable
 identifier, display name, kind, definition/reference role, source range, and optional container and
 documentation. `encode_symbols` and `decode_symbols` round-trip the canonical stored record.
 `decode_frontend_symbols(subject, bytes)` binds a frontend operation's per-unit output to its blob
