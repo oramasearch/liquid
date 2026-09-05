@@ -80,6 +80,7 @@ struct repository_document {
     std::optional<remote_config> remote;
     std::uint64_t pending_drips{};
     bool root_is_paged{};
+    std::map<std::string, working_entry> nested_entries;
 };
 
 constexpr auto journal_pointer_prefix = std::string_view{"liquid-journal-v2 "};
@@ -204,6 +205,19 @@ auto encode_repository_document(const repository_document& value)
     auto dirs = cbor::value::array{};
     for (const auto& [node, document] : value.dirs)
         dirs.push_back(map({{"node", bytes(node)}, {"document", digest_value(document)}}));
+    auto nested_entries = cbor::value::array{};
+    const auto collect_nested_entries = [&](const auto& self, const working_entry& entry) -> void {
+        if (entry.kind == entry_kind::nested_repository) {
+            nested_entries.push_back(
+                map({{"object", digest_value(entry.object)}, {"entry", encode_entry(entry)}}));
+            return;
+        }
+        for (const auto& [name, child] : entry.entries) {
+            static_cast<void>(name);
+            self(self, child);
+        }
+    };
+    collect_nested_entries(collect_nested_entries, value.root);
     auto ops = cbor::value::array{};
     for (const auto& operation : value.operations)
         ops.push_back(
@@ -339,6 +353,7 @@ auto encode_repository_document(const repository_document& value)
                              {"refs", cbor::value{std::move(refs)}},
                              {"metadata", cbor::value{std::move(metadata)}},
                              {"dirs", cbor::value{std::move(dirs)}},
+                             {"nested_entries", cbor::value{std::move(nested_entries)}},
                              {"ops", cbor::value{std::move(ops)}},
                              {"head", std::move(head)},
                              {"locks", cbor::value{std::move(locks)}},
@@ -360,6 +375,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* refs = find(*decoded, "refs");
     const auto* metadata = find(*decoded, "metadata");
     const auto* dirs = find(*decoded, "dirs");
+    const auto* nested = find(*decoded, "nested_entries");
     const auto* ops = find(*decoded, "ops");
     const auto* head = find(*decoded, "head");
     const auto* locks = find(*decoded, "locks");
@@ -373,6 +389,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* metadata_values =
         metadata ? std::get_if<cbor::value::map>(&metadata->data) : nullptr;
     const auto* dir_values = dirs ? std::get_if<cbor::value::array>(&dirs->data) : nullptr;
+    const auto* nested_values = nested ? std::get_if<cbor::value::array>(&nested->data) : nullptr;
     const auto* op_values = ops ? std::get_if<cbor::value::array>(&ops->data) : nullptr;
     const auto* lock_values = locks ? std::get_if<cbor::value::array>(&locks->data) : nullptr;
     const auto* saved_drips =
@@ -380,8 +397,8 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* drips = pending ? std::get_if<std::uint64_t>(&pending->data) : nullptr;
     const auto paged_root = !root && root_node && root_mode && root_ref;
     if (!v || *v != 1 || !title || *title != "repository-document" || !id || id->size() != 16 ||
-        (!root && !paged_root) || !ref_values || !dir_values || !op_values || !head ||
-        !lock_values || !saved_drips || !drips)
+        (!root && !paged_root) || !ref_values || !dir_values || (paged_root && !nested_values) ||
+        !op_values || !head || !lock_values || !saved_drips || !drips)
         return std::unexpected(
             failure(errc::corrupt, "invalid repository document", "LIQUID_REPO"));
     repository_document output{};
@@ -443,6 +460,30 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         if (!digest)
             return std::unexpected(digest.error());
         output.dirs.emplace(identity, *digest);
+    }
+    for (const auto& item : nested_values ? *nested_values : cbor::value::array{}) {
+        const auto* object = find(item, "object");
+        const auto* entry = find(item, "entry");
+        if (!object || !entry) {
+            return std::unexpected(
+                failure(errc::corrupt, "invalid nested repository entry", "repository document"));
+        }
+        auto decoded_entry = decode_entry(*entry);
+        if (!decoded_entry || decoded_entry->kind != entry_kind::nested_repository) {
+            return std::unexpected(decoded_entry ? failure(errc::corrupt,
+                                                           "invalid nested repository kind",
+                                                           "repository document")
+                                                 : decoded_entry.error());
+        }
+        auto reference = decode_digest(*object);
+        if (!reference) {
+            return std::unexpected(reference.error());
+        }
+        if (!output.nested_entries.emplace(to_string(*reference), std::move(*decoded_entry))
+                 .second) {
+            return std::unexpected(
+                failure(errc::corrupt, "duplicate nested repository entry", "repository document"));
+        }
     }
     for (const auto& item : *op_values) {
         const auto* operation_id = find(item, "id");
@@ -1525,6 +1566,12 @@ struct repository::impl {
                     failure(errc::corrupt, "invalid repository tree entry", entry.name));
             }
             auto child = working_entry{kind, entry.node, entry.mode, entry.ref, {}, entry.nested};
+            if (kind == entry_kind::nested_repository) {
+                const auto retained = current.nested_entries.find(to_string(child.object));
+                if (retained != current.nested_entries.end()) {
+                    child.entries = retained->second.entries;
+                }
+            }
             if (kind == entry_kind::directory) {
                 auto restored = co_await restore_paged_tree(child);
                 if (!restored) {
