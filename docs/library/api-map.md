@@ -671,7 +671,8 @@ normalization, enforcement, and JSON Pointer key paths.
 
 `search_options` selects the working tree by default or a named ref and limits results to 20 by
 default. Plain queries use BM25F, quoted queries use exact positional trigrams, and
-slash-delimited queries use regex with a trigram literal prefilter. `search_hit` carries the
+slash-delimited queries use regex with a safe literal prefilter when the pattern has no operators.
+`search_hit` carries the
 repository-relative path, content digest, one-line snippet, and score. Publication and the private
 index format are documented in [search.md](search.md).
 

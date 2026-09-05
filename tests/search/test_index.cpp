@@ -158,6 +158,18 @@ TEST(SearchIndex, positional_trigrams_match_only_contiguous_substrings) {
     EXPECT_EQ(hits->front().path, "match.txt");
 }
 
+TEST(SearchIndex, regex_alternatives_do_not_use_an_unsafe_literal_prefilter) {
+    temporary_directory location;
+    const auto index = location.path() / "index";
+    const auto documents = std::vector{document("foo.txt", "only foo appears"),
+                                       document("bar.txt", "only bar appears")};
+    ASSERT_TRUE(liquid::search_detail::publish_full(index, "working", "one", documents));
+
+    auto hits = liquid::search_detail::query(index, "working", "/foo|bar/", 20);
+    ASSERT_TRUE(hits) << (hits ? "" : hits.error().message);
+    ASSERT_EQ(hits->size(), 2);
+}
+
 TEST(SearchIndex, manifest_replacement_is_atomic_for_concurrent_queries) {
     temporary_directory location;
     const auto index = location.path() / "index";

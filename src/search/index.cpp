@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cctype>
 #include <fstream>
 #include <limits>
 #include <map>
@@ -908,20 +907,15 @@ auto catalog_candidates(const std::filesystem::path& directory,
 }
 
 auto regex_literal(const std::string& expression) -> std::string {
-    auto longest = std::string{};
-    auto current = std::string{};
+    constexpr auto metacharacters = std::string_view{"^$|()[]{}*+?.\\"};
+    auto output = std::string{};
     auto escaped = false;
     for (const auto character : expression) {
         if (escaped) {
-            if (character == 's' || character == 'S' || character == 'd' || character == 'D' ||
-                character == 'w' || character == 'W') {
-                if (current.size() > longest.size()) {
-                    longest = current;
-                }
-                current.clear();
-            } else {
-                current.push_back(character);
+            if (!metacharacters.contains(character)) {
+                return {};
             }
+            output.push_back(character);
             escaped = false;
             continue;
         }
@@ -929,20 +923,15 @@ auto regex_literal(const std::string& expression) -> std::string {
             escaped = true;
             continue;
         }
-        if (std::isalnum(static_cast<unsigned char>(character)) != 0 || character == '_' ||
-            character == '-') {
-            current.push_back(character);
-            continue;
+        if (metacharacters.contains(character)) {
+            return {};
         }
-        if (current.size() > longest.size()) {
-            longest = current;
-        }
-        current.clear();
+        output.push_back(character);
     }
-    if (current.size() > longest.size()) {
-        longest = current;
+    if (escaped) {
+        return {};
     }
-    return longest;
+    return output;
 }
 
 auto snippet_for(const std::string& content, const std::string& needle) -> std::string {

@@ -227,7 +227,7 @@ definition actions, one action plus assembly after a body edit, and every record
 assembly after a header edit. `liquid-frontend-measure` records the own-tree edit result in
 [`frontends.md`](frontends.md).
 Issue #22's measurement over liquid's checkout indexed 3,763 paths and 3,623 unique blobs
-(46,266,074 content bytes) in 22,596 ms. Ten representative queries averaged 262,870 us. The
+(46,266,382 content bytes) in 22,214 ms. Ten representative queries averaged 268,239 us. The
 reproduction command and query mix are documented in [`search.md`](search.md). Remaining phase exit
 measurements belong to the issues that add editor diagnostics.
 

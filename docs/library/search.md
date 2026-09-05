@@ -45,9 +45,10 @@ persisted once per blob instead of re-tokenizing the corpus for each process.
 
 Quoted queries use the positional trigram representation ported from lake #6. Each blob file maps
 a trigram to its byte positions. Immutable sharded catalog files prefilter candidate blobs; the
-position lists then prove that all query trigrams occur contiguously. Slash-delimited regex queries
-use their longest literal as the trigram prefilter and verify candidates with the standard regex
-engine. Queries shorter than three bytes fall back to the active blobs.
+position lists then prove that all query trigrams occur contiguously. A slash-delimited regex made
+only of literal characters uses that literal as the trigram prefilter. Regexes containing operators
+scan active blobs before verification with the standard regex engine, avoiding false negatives from
+alternation or optional terms. Queries shorter than three bytes also fall back to the active blobs.
 
 ## Daemon updates
 
@@ -93,8 +94,8 @@ live daemon drip becoming searchable, and one cursor advance after duplicate del
 directories, then ran five representative BM25F, substring, and regex queries twice:
 
 ```text
-search index build: files=3763 unique_blobs=3623 bytes=46266074 elapsed_ms=22596
-search query mean: iterations=10 mean_us=262870
+search index build: files=3763 unique_blobs=3623 bytes=46266382 elapsed_ms=22214
+search query mean: iterations=10 mean_us=268239
 ```
 
 ## Deferred
