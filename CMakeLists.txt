@@ -541,6 +541,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/trace.cpp
     src/cli/retain.cpp
     src/cli/search.cpp
+    src/cli/secret.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp

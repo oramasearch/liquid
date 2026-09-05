@@ -50,6 +50,7 @@ that the table and `liquid --help` name the same commands.
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
@@ -101,6 +102,44 @@ Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refu
 completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
 use `LIQUID_TOKEN` as an optional bearer credential and never print it. A URL must use HTTP or HTTPS
 and identify one lake repository.
+
+## Sealed secrets
+
+`liquid secret public-key --lake <url> [--json]` reads the Lake
+`sealing_public_key` capability. Text output names `kid` and `public_key`; JSON also pins
+`algorithm` to `x25519`. `LIQUID_TOKEN`, when set, is sent as the bearer credential.
+
+Seal a value for an exact deployment scope with either a Lake URL or an already obtained public
+key:
+
+```console
+liquid secret seal --lake https://lake.example \
+  --cluster production --namespace payments --name database \
+  --value-file database-password.txt --out database.secret.cbor
+
+liquid secret seal \
+  --public-key 86517bc0c39fe876b7646cb5e34ee03daf71ccbad67450c16a970ad8cbc03e7e \
+  --kid lake-key-2026-09 --cluster production < database-password.txt
+```
+
+`--value <text>`, `--value-file <path>`, and stdin are mutually exclusive inputs; omitting both
+flags selects stdin. Without `--out`, seal writes one base64 line. With `--out`, it writes raw
+canonical CBOR and writes nothing to stdout.
+
+Break-glass unseal accepts a raw record file, `-` for raw-CBOR or base64 stdin, or an inline base64
+record. The private-key file is exactly 32 raw bytes and must have mode `0600` on POSIX systems:
+
+```console
+liquid secret unseal --private-key-file cluster.key \
+  --cluster production --namespace payments --name database \
+  database.secret.cbor
+```
+
+Plaintext is written verbatim to stdout. Scope matching includes optional-field presence: omitting
+`--namespace` or `--name` does not match a record that contains that field. Values, private-key
+bytes, and bearer credentials are never included in errors. The envelope and fixture are specified
+in [sealed secrets](../library/sealed-secrets.md).
+
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
@@ -360,6 +399,8 @@ through `ops`, undoes a selected session path, verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.
+`cli-secret` round-trips raw CBOR and base64 through the executable and checks that stderr never
+contains the value.
 `tests/test_daemon.cpp` runs start-on-first-status through the built CLI and verifies that a library
 client attaches to the same process.
 The privileged Linux build fixtures also invoke `replay --json` for an indexed action and require

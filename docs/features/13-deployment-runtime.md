@@ -122,6 +122,12 @@ Referenced from the repository, minted at deploy time
 Sealed Secrets, so committing a secret does not require the author to be able to read
 it back.
 
+**Implemented in liquid #204:** liquid's versioned canonical-CBOR envelope uses a fresh X25519
+ephemeral key and XChaCha20-Poly1305 for each value. The authenticated scope binds the target
+cluster and, when supplied, namespace and secret name exactly. The public API and CLI seal to a
+Lake environment's published key; the operator-side unseal and Lake capability remain companion
+work. See [the byte-level format and fixture](../library/sealed-secrets.md).
+
 ## Open questions
 
 - ~~Whether to build a distribution at all.~~ **Resolved:** a private, synced copy of

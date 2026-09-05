@@ -61,6 +61,7 @@ auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
+auto secret(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -231,6 +232,11 @@ constexpr auto commands = std::to_array<command>({
      "show compiler or syntactic symbols for a source path",
      "available",
      liquid_cli::symbols},
+    {"secret",
+     "secret <public-key|seal|unseal> ...",
+     "fetch, seal, or unseal a Lake environment secret",
+     "available",
+     liquid_cli::secret},
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "

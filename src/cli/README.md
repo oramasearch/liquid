@@ -54,6 +54,9 @@ alternative costs plus every planner input. It does not read the index files dir
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`secret.cpp` fetches Lake sealing keys, seals stdin or file values, emits canonical CBOR or base64,
+and performs local break-glass unsealing through the public secret API. Private-key files must be
+32 raw bytes with mode `0600` on POSIX systems; key and value bytes are never written to errors.
 `serve.cpp` implements `serve sync` with the public `sync_server` and the vendored
 `oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
 authorization callback and returns one verdict per update. Request handlers await library tasks on
