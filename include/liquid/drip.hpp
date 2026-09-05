@@ -41,6 +41,20 @@ struct LIQUID_EXPORT scan_block {
     std::uint64_t line{};
 };
 
+struct LIQUID_EXPORT journal_cursor {
+    std::string token;
+};
+
+struct LIQUID_EXPORT write_base {
+    change_id change;
+    std::optional<journal_cursor> cursor;
+};
+
+enum class stale_revalidation : std::uint8_t {
+    disjoint,
+    forced,
+};
+
 struct LIQUID_EXPORT drip {
     drip_id id;
     change_id base;
@@ -48,6 +62,8 @@ struct LIQUID_EXPORT drip {
     actor by;
     std::vector<std::byte> signature;
     std::chrono::sys_seconds at;
+    std::optional<write_base> reasoned_from;
+    std::optional<stale_revalidation> revalidated;
     std::optional<digest> scan_attestation;
     std::optional<scan_block> block;
     bool redacted{};
@@ -70,10 +86,6 @@ struct LIQUID_EXPORT capture_options {
     bool attribution{false};
     bool scan{true};
     scan_configuration scan_config{};
-};
-
-struct LIQUID_EXPORT journal_cursor {
-    std::string token;
 };
 
 struct LIQUID_EXPORT capture_status {

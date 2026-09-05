@@ -24,6 +24,7 @@
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
 #include "objects/records.hpp"
+#include "repository/diff.hpp"
 #include "repository/git_access.hpp"
 #include "repository/merge.hpp"
 #include "repository/store_access.hpp"
@@ -96,6 +97,7 @@ struct repository_document {
     std::vector<encryption_path_rule> encryption_rules;
     bool cache_publish{};
     std::uint32_t verification_rate{20};
+    agents_config agents;
     policy_config policy;
     retention_config retention{};
     std::optional<remote_config> remote;
@@ -402,6 +404,15 @@ auto encode_repository_document(const repository_document& value)
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
              {"verify", map({{"rate", cbor::value{std::uint64_t{value.verification_rate}}}})},
+             {"agents",
+              [&] {
+                  auto actors = cbor::value::array{};
+                  for (const auto& actor : value.agents.actors) {
+                      actors.push_back(cbor::value{actor});
+                  }
+                  return map({{"require_base", cbor::value{value.agents.require_base}},
+                              {"actors", cbor::value{std::move(actors)}}});
+              }()},
              {"policy",
               map({{"approved_builders", cbor::value{std::move(approved_builders)}},
                    {"rules", cbor::value{std::move(policy_rules)}}})},
@@ -748,6 +759,27 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     failure(errc::corrupt, "invalid verification config", "repository document"));
             }
             output.verification_rate = static_cast<std::uint32_t>(*value);
+        }
+        if (const auto* agents = find(*config, "agents")) {
+            const auto* require_base_value = find(*agents, "require_base");
+            const auto* actors_value = find(*agents, "actors");
+            const auto* require_base =
+                require_base_value ? std::get_if<bool>(&require_base_value->data) : nullptr;
+            const auto* actors =
+                actors_value ? std::get_if<cbor::value::array>(&actors_value->data) : nullptr;
+            if (!require_base || !actors) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid agents config", "repository document"));
+            }
+            output.agents.require_base = *require_base;
+            for (const auto& item : *actors) {
+                const auto* actor = std::get_if<std::string>(&item.data);
+                if (!actor || actor->empty()) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid agent actor", "repository document"));
+                }
+                output.agents.actors.push_back(*actor);
+            }
         }
         if (const auto* remote = find(*config, "remote");
             remote && !std::holds_alternative<cbor::null>(remote->data)) {
@@ -1437,6 +1469,109 @@ auto plan_undo(repository_document current,
     return output;
 }
 
+struct decoded_drip_body {
+    std::optional<change_id> base;
+    std::vector<std::string> paths;
+    std::optional<write_base> reasoned_from;
+    std::optional<stale_revalidation> revalidated;
+    std::string operation;
+    std::int64_t at{};
+};
+
+auto decode_repository_drip(std::span<const std::byte> input) -> result<decoded_drip_body> {
+    auto decoded = cbor::decode(input);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto* version_value = find(*decoded, "v");
+    const auto* kind_value = find(*decoded, "kind");
+    const auto* operation_value = find(*decoded, "operation");
+    const auto* at_value = find(*decoded, "at");
+    const auto* version =
+        version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
+    const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
+    const auto* operation =
+        operation_value ? std::get_if<std::string>(&operation_value->data) : nullptr;
+    if (!version || (*version != 1 && *version != 2) || !kind || !at_value) {
+        return std::unexpected(failure(errc::corrupt, "invalid signed drip body"));
+    }
+    auto output = decoded_drip_body{};
+    if (const auto* at = std::get_if<std::int64_t>(&at_value->data)) {
+        output.at = *at;
+    } else if (const auto* at = std::get_if<std::uint64_t>(&at_value->data);
+               at && *at <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        output.at = static_cast<std::int64_t>(*at);
+    } else {
+        return std::unexpected(failure(errc::corrupt, "invalid signed drip timestamp"));
+    }
+    if (*version == 1 && *kind == "redaction") {
+        const auto* path_value = find(*decoded, "path");
+        const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+        if (!path) {
+            return std::unexpected(failure(errc::corrupt, "invalid redaction drip body"));
+        }
+        output.operation = "redaction";
+        output.paths.push_back(*path);
+        return output;
+    }
+    if (*kind != "drip" || !operation) {
+        return std::unexpected(failure(errc::corrupt, "invalid signed drip operation"));
+    }
+    output.operation = *operation;
+    if (*version == 1) {
+        return output;
+    }
+    const auto* base_value = find(*decoded, "base");
+    const auto* paths_value = find(*decoded, "paths");
+    const auto* paths = paths_value ? std::get_if<cbor::value::array>(&paths_value->data) : nullptr;
+    if (!base_value || !paths) {
+        return std::unexpected(failure(errc::corrupt, "invalid version 2 drip body"));
+    }
+    if (!std::holds_alternative<cbor::null>(base_value->data)) {
+        auto base = decode_digest(*base_value);
+        if (!base) {
+            return std::unexpected(base.error());
+        }
+        output.base = change_id{*base};
+    }
+    for (const auto& item : *paths) {
+        const auto* path = std::get_if<std::string>(&item.data);
+        if (!path) {
+            return std::unexpected(failure(errc::corrupt, "invalid drip path"));
+        }
+        output.paths.push_back(*path);
+    }
+    if (const auto* reasoned_value = find(*decoded, "reasoned_from")) {
+        const auto* change_value = find(*reasoned_value, "change");
+        const auto* cursor_value = find(*reasoned_value, "cursor");
+        if (!change_value || !cursor_value) {
+            return std::unexpected(failure(errc::corrupt, "invalid reasoned-from base"));
+        }
+        auto change = decode_digest(*change_value);
+        if (!change) {
+            return std::unexpected(change.error());
+        }
+        auto base = write_base{.change = change_id{*change}};
+        if (!std::holds_alternative<cbor::null>(cursor_value->data)) {
+            const auto* cursor = std::get_if<std::string>(&cursor_value->data);
+            if (!cursor) {
+                return std::unexpected(failure(errc::corrupt, "invalid reasoned-from cursor"));
+            }
+            base.cursor = journal_cursor{*cursor};
+        }
+        output.reasoned_from = std::move(base);
+    }
+    if (const auto* revalidated_value = find(*decoded, "revalidated")) {
+        const auto* revalidated = std::get_if<std::string>(&revalidated_value->data);
+        if (!revalidated || (*revalidated != "disjoint" && *revalidated != "forced")) {
+            return std::unexpected(failure(errc::corrupt, "invalid drip revalidation"));
+        }
+        output.revalidated =
+            *revalidated == "disjoint" ? stale_revalidation::disjoint : stale_revalidation::forced;
+    }
+    return output;
+}
+
 auto entry_parent(const working_entry& root, const std::vector<std::string>& path)
     -> const working_entry* {
     const working_entry* current = &root;
@@ -1574,6 +1709,14 @@ auto merge_operation(const repository_document& before,
         output.head_after = after.head;
     }
     return output;
+}
+
+auto paths_overlap(std::string_view left, std::string_view right) -> bool {
+    const auto descendant = [](std::string_view path, std::string_view root) {
+        return path == root ||
+               (path.size() > root.size() && path.starts_with(root) && path[root.size()] == '/');
+    };
+    return descendant(left, right) || descendant(right, left);
 }
 
 void append_working_roots(const working_entry& entry, std::vector<digest>& output) {
@@ -2029,6 +2172,17 @@ auto validate_retention_rules(const retention_config& config) -> result<void> {
         return std::unexpected(failure(errc::invalid_argument,
                                        "retention accepts at most one result and one size-cap rule",
                                        "config.retention"));
+    }
+    return {};
+}
+
+auto validate_agents_config(const agents_config& config) -> result<void> {
+    auto actors = std::set<std::string>{};
+    for (const auto& actor : config.actors) {
+        if (actor.empty() || !actors.insert(actor).second) {
+            return std::unexpected(
+                failure(errc::invalid_argument, "invalid or duplicate agent actor", actor));
+        }
     }
     return {};
 }
@@ -2511,14 +2665,40 @@ struct repository::impl {
             co_return std::unexpected(encoded.error());
         co_return co_await store_detail::write_file(journal_marker(), std::move(*encoded));
     }
-    runtime::task<void>
-    append_drip(std::string operation, const node_id& node, std::chrono::sys_seconds at) {
-        auto body = cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
-                                      {"kind", "drip"},
-                                      {"author", cbor::value{signing_key.identity().taap_id}},
-                                      {"at", cbor::value{at.time_since_epoch().count()}},
-                                      {"node", bytes(node)},
-                                      {"operation", cbor::value{std::move(operation)}}}));
+    runtime::task<void> append_drip(std::string operation,
+                                    const node_id& node,
+                                    std::chrono::sys_seconds at,
+                                    std::vector<std::string> paths,
+                                    const write_options& options,
+                                    std::optional<stale_revalidation> revalidated) {
+        auto path_values = cbor::value::array{};
+        for (auto& path : paths) {
+            path_values.push_back(cbor::value{std::move(path)});
+        }
+        auto fields = cbor::value::map{
+            {"v", cbor::value{std::uint64_t{2}}},
+            {"kind", "drip"},
+            {"author", cbor::value{signing_key.identity().taap_id}},
+            {"at", cbor::value{at.time_since_epoch().count()}},
+            {"node", bytes(node)},
+            {"operation", cbor::value{std::move(operation)}},
+            {"base", current.head ? digest_value(current.head->value) : cbor::value{cbor::null{}}},
+            {"paths", cbor::value{std::move(path_values)}},
+        };
+        if (options.base) {
+            fields.emplace_back(
+                "reasoned_from",
+                map({{"change", digest_value(options.base->change.value)},
+                     {"cursor",
+                      options.base->cursor ? cbor::value{options.base->cursor->token}
+                                           : cbor::value{cbor::null{}}}}));
+        }
+        if (revalidated) {
+            fields.emplace_back(
+                "revalidated",
+                cbor::value{*revalidated == stale_revalidation::disjoint ? "disjoint" : "forced"});
+        }
+        auto body = cbor::encode(cbor::value{std::move(fields)});
         if (!body) {
             co_return std::unexpected(body.error());
         }
@@ -2655,7 +2835,7 @@ struct repository::impl {
                 return operation_matches(operation.id, applied_id);
             });
             const auto node = source == operations.end() ? node_id{} : source->node;
-            auto drip = co_await append_drip("undo", node, at);
+            auto drip = co_await append_drip("undo", node, at, {}, {}, std::nullopt);
             if (!drip) {
                 rollback();
                 co_return std::unexpected(drip.error());
@@ -2957,8 +3137,40 @@ struct repository::impl {
             return same_path_or_descendant(path, pattern);
         });
     }
-    runtime::task<void>
-    record_blob(std::string path, ::liquid::blob record, std::uint32_t mode = 0100644) {
+    auto base_cursor(const write_base& base) const -> result<std::size_t> {
+        if (base.cursor) {
+            auto parsed = parse_sync_cursor(base.cursor->token);
+            if (!parsed || parsed->drips > current.drips.size()) {
+                return std::unexpected(parsed ? failure(errc::invalid_argument,
+                                                        "write cursor is beyond the journal",
+                                                        base.cursor->token)
+                                              : parsed.error());
+            }
+            return parsed->drips;
+        }
+        for (std::size_t index = 0; index < current.drips.size(); ++index) {
+            auto decoded = decode_repository_drip(current.drips[index].body);
+            if (!decoded) {
+                return std::unexpected(decoded.error());
+            }
+            if (decoded->base && same_digest(decoded->base->value, base.change.value)) {
+                return index;
+            }
+        }
+        if (current.head && same_digest(current.head->value, base.change.value)) {
+            return current.drips.size();
+        }
+        return std::size_t{};
+    }
+    auto base_required_for_writer() const -> bool {
+        const auto identity = signing_key.identity().taap_id;
+        return current.agents.require_base &&
+               std::ranges::find(current.agents.actors, identity) != current.agents.actors.end();
+    }
+    runtime::task<void> record_blob(std::string path,
+                                    ::liquid::blob record,
+                                    write_options options,
+                                    std::optional<stale_revalidation> revalidated) {
         if (locked(path))
             co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
         auto parts = split_path(path);
@@ -2991,21 +3203,21 @@ struct repository::impl {
             std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
         auto recorded = (*directory_document)
                             ->put_entry(parts->back(),
-                                        {"blob", entry_id, mode, to_string(*reference)},
+                                        {"blob", entry_id, options.mode, to_string(*reference)},
                                         crdt::commit_options{.message = "write", .time = time});
         if (!recorded)
             co_return std::unexpected(recorded.error());
         if (found != (*parent)->entries.end()) {
             prior = found->second;
             found->second.object = *reference;
-            found->second.mode = mode;
+            found->second.mode = options.mode;
         } else {
-            found =
-                (*parent)
-                    ->entries
-                    .emplace(parts->back(),
-                             working_entry{entry_kind::file, entry_id, mode, *reference, {}, {}})
-                    .first;
+            found = (*parent)
+                        ->entries
+                        .emplace(parts->back(),
+                                 working_entry{
+                                     entry_kind::file, entry_id, options.mode, *reference, {}, {}})
+                        .first;
         }
         std::erase_if(current.conflict_values,
                       [&](const conflict& value) { return value.path == path; });
@@ -3013,7 +3225,8 @@ struct repository::impl {
         if (!operation)
             co_return std::unexpected(operation.error());
         record_operation(*operation, "write", path, {}, found->second.node, std::move(prior));
-        auto signed_drip = co_await append_drip("write", found->second.node, at);
+        auto signed_drip =
+            co_await append_drip("write", found->second.node, at, {path}, options, revalidated);
         if (!signed_drip)
             co_return std::unexpected(signed_drip.error());
         ++current.pending_drips;
@@ -3045,6 +3258,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_retention) {
         co_return std::unexpected(valid_retention.error());
     }
+    auto valid_agents = validate_agents_config(options.agents);
+    if (!valid_agents) {
+        co_return std::unexpected(valid_agents.error());
+    }
     auto prepared = co_await prepare_repository_store(std::move(path), options);
     if (!prepared) {
         co_return std::unexpected(prepared.error());
@@ -3065,6 +3282,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.encryption_rules = std::move(options.encrypt.paths);
     document.cache_publish = options.cache.publish;
     document.verification_rate = options.verify.rate;
+    document.agents = std::move(options.agents);
     document.policy = std::move(options.policy);
     document.retention = std::move(options.retention);
     document.remote = std::move(options.remote);
@@ -3128,6 +3346,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!valid_retention) {
         co_return std::unexpected(valid_retention.error());
     }
+    auto valid_agents = validate_agents_config(document->agents);
+    if (!valid_agents) {
+        co_return std::unexpected(valid_agents.error());
+    }
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -3165,6 +3387,169 @@ runtime::task<change_id> repository::head() {
     if (!impl_ || !impl_->current.head)
         co_return std::unexpected(failure(errc::not_found, "repository has no change"));
     co_return *impl_->current.head;
+}
+runtime::task<stale_base_report> repository::explain_stale(write_base base,
+                                                           std::vector<std::string> paths) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (!impl_->current.head) {
+        co_return std::unexpected(failure(errc::not_found, "repository has no change"));
+    }
+    const auto cursor = impl_->base_cursor(base);
+    if (!cursor) {
+        co_return std::unexpected(cursor.error());
+    }
+    for (const auto& path : paths) {
+        auto parsed = split_path(path);
+        if (!parsed) {
+            co_return std::unexpected(parsed.error());
+        }
+    }
+    auto old_snapshot = co_await at(base.change);
+    if (!old_snapshot) {
+        co_return std::unexpected(old_snapshot.error());
+    }
+    auto report = stale_base_report{.base = std::move(base),
+                                    .head = *impl_->current.head,
+                                    .since_drips = impl_->current.drips.size() - *cursor};
+    auto changed_paths = std::set<std::string>{};
+    for (auto index = *cursor; index < impl_->current.drips.size(); ++index) {
+        auto decoded = decode_repository_drip(impl_->current.drips[index].body);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        const auto& candidates = decoded->paths.empty() ? paths : decoded->paths;
+        for (const auto& candidate : candidates) {
+            if (paths.empty() || std::ranges::any_of(paths, [&](const auto& path) {
+                    return paths_overlap(path, candidate);
+                })) {
+                changed_paths.insert(candidate);
+            }
+        }
+    }
+    if (changed_paths.empty() && !same_digest(report.base.change.value, report.head.value)) {
+        auto differences = co_await diff(report.base.change, report.head, {.text = true});
+        if (!differences) {
+            co_return std::unexpected(differences.error());
+        }
+        for (const auto& difference : *differences) {
+            if (paths.empty() || std::ranges::any_of(paths, [&](const auto& path) {
+                    return paths_overlap(path, difference.path) ||
+                           (difference.old_path && paths_overlap(path, *difference.old_path));
+                })) {
+                report.changed.push_back(
+                    {difference.path, difference.line_hunks.value_or(std::vector<line_change>{})});
+            }
+        }
+        co_return report;
+    }
+    for (const auto& changed_path : changed_paths) {
+        auto old_bytes = co_await impl_->read_at(changed_path, report.base.change);
+        if (!old_bytes && old_bytes.error().code != errc::not_found) {
+            co_return std::unexpected(old_bytes.error());
+        }
+        auto new_bytes = std::vector<std::byte>{};
+        auto parts = split_path(changed_path);
+        if (!parts) {
+            co_return std::unexpected(parts.error());
+        }
+        const auto* current = lookup(impl_->current.root, *parts);
+        if (current && current->kind == entry_kind::file) {
+            auto loaded = co_await impl_->blob_contents(current->object, changed_path);
+            if (!loaded) {
+                co_return std::unexpected(loaded.error());
+            }
+            new_bytes = std::move(*loaded);
+        }
+        const auto before =
+            old_bytes ? std::span<const std::byte>{*old_bytes} : std::span<const std::byte>{};
+        auto hunks = repository_detail::text_hunks(before, new_bytes);
+        report.changed.push_back({changed_path, hunks.value_or(std::vector<line_change>{})});
+    }
+    co_return report;
+}
+
+runtime::task<std::optional<stale_revalidation>>
+repository::validate_write(write_options options, std::vector<std::string> paths) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (impl_->base_required_for_writer() && !options.base) {
+        co_return std::unexpected(failure(errc::invalid_argument,
+                                          "agent writes must name the version they reasoned from"));
+    }
+    paths.insert(paths.end(), options.depends_on.begin(), options.depends_on.end());
+    for (const auto& path : paths) {
+        auto parsed = split_path(path);
+        if (!parsed) {
+            co_return std::unexpected(parsed.error());
+        }
+    }
+    if (!options.base) {
+        co_return std::optional<stale_revalidation>{};
+    }
+    const auto cursor = impl_->base_cursor(*options.base);
+    if (!cursor) {
+        co_return std::unexpected(cursor.error());
+    }
+    auto base_snapshot = co_await at(options.base->change);
+    if (!base_snapshot) {
+        co_return std::unexpected(base_snapshot.error());
+    }
+    const auto head_moved = !impl_->current.head ||
+                            !same_digest(impl_->current.head->value, options.base->change.value);
+    const auto journal_moved = *cursor != impl_->current.drips.size();
+    if (!head_moved && !journal_moved) {
+        co_return std::optional<stale_revalidation>{};
+    }
+    if (options.on_stale == write_options::stale_action::refuse) {
+        co_return std::unexpected(
+            failure(errc::conflict, "write base has moved", to_string(options.base->change.value)));
+    }
+    auto report = co_await explain_stale(*options.base, std::move(paths));
+    if (!report) {
+        co_return std::unexpected(report.error());
+    }
+    if (options.on_stale == write_options::stale_action::accept_if_disjoint) {
+        if (!report->changed.empty()) {
+            co_return std::unexpected(failure(errc::conflict,
+                                              "write base moved on a required path",
+                                              report->changed.front().path));
+        }
+        co_return std::optional<stale_revalidation>{stale_revalidation::disjoint};
+    }
+    co_return std::optional<stale_revalidation>{stale_revalidation::forced};
+}
+
+runtime::task<std::vector<drip>> repository::drips() {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto output = std::vector<drip>{};
+    output.reserve(impl_->current.drips.size());
+    for (const auto& saved : impl_->current.drips) {
+        auto decoded = decode_repository_drip(saved.body);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        auto id = hash(impl_->hash_algorithm, saved.body);
+        if (!id) {
+            co_return std::unexpected(id.error());
+        }
+        auto value = drip{.id = {*id},
+                          .base = decoded->base.value_or(change_id{{impl_->hash_algorithm, {}}}),
+                          .by = saved.author,
+                          .signature = saved.signature,
+                          .at = std::chrono::sys_seconds{std::chrono::seconds{decoded->at}},
+                          .reasoned_from = decoded->reasoned_from,
+                          .revalidated = decoded->revalidated};
+        for (auto& path : decoded->paths) {
+            value.ops.push_back({std::move(path)});
+        }
+        output.push_back(std::move(value));
+    }
+    co_return output;
 }
 runtime::task<std::vector<std::byte>> repository::read(std::string path) {
     if (!impl_)
@@ -3240,6 +3625,10 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U)
         co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
+    auto revalidated = co_await validate_write(options, {path});
+    if (!revalidated) {
+        co_return std::unexpected(revalidated.error());
+    }
     if (impl_->locked(path))
         co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
     auto parts = split_path(path);
@@ -3267,16 +3656,25 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
     auto record = impl_->objects.blob_for(*content);
     if (!record)
         co_return std::unexpected(record.error());
-    co_return co_await impl_->record_blob(std::move(path), std::move(*record), options.mode);
+    co_return co_await impl_->record_blob(
+        std::move(path), std::move(*record), std::move(options), *revalidated);
 }
-runtime::task<void> repository::write_file(std::string path, std::filesystem::path source) {
+runtime::task<void>
+repository::write_file(std::string path, std::filesystem::path source, write_options options) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U) {
+        co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
+    }
+    auto revalidated = co_await validate_write(options, {path});
+    if (!revalidated) {
+        co_return std::unexpected(revalidated.error());
+    }
     if (encryption_rule_for(impl_->current, path)) {
         auto contents = co_await store_detail::read_file(source);
         if (!contents)
             co_return std::unexpected(contents.error());
-        co_return co_await write(std::move(path), std::move(*contents));
+        co_return co_await write(std::move(path), std::move(*contents), std::move(options));
     }
     auto content = co_await impl_->objects.put_file(std::move(source));
     if (!content)
@@ -3284,7 +3682,8 @@ runtime::task<void> repository::write_file(std::string path, std::filesystem::pa
     auto record = impl_->objects.blob_for(*content);
     if (!record)
         co_return std::unexpected(record.error());
-    co_return co_await impl_->record_blob(std::move(path), std::move(*record));
+    co_return co_await impl_->record_blob(
+        std::move(path), std::move(*record), std::move(options), *revalidated);
 }
 
 runtime::task<digest> repository::store_remote_blob(::liquid::blob value) {
@@ -3312,12 +3711,17 @@ repository::write_remote(std::string path, ::liquid::blob value, write_options o
     if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U) {
         co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
     }
+    auto revalidated = co_await validate_write(options, {path});
+    if (!revalidated) {
+        co_return std::unexpected(revalidated.error());
+    }
     auto registered =
         co_await repository_detail::store_access::register_remote(impl_->objects, value);
     if (!registered) {
         co_return std::unexpected(registered.error());
     }
-    co_return co_await impl_->record_blob(std::move(path), std::move(value), options.mode);
+    co_return co_await impl_->record_blob(
+        std::move(path), std::move(value), std::move(options), *revalidated);
 }
 runtime::task<void> repository::redact(std::string path, std::optional<change_id> change) {
     if (!impl_) {
@@ -3582,9 +3986,13 @@ repository::diff_keys(std::string path, change_id change_a, change_id change_b) 
     co_return std::unexpected(
         failure(errc::unsupported, "leaf encryption supports JSON and .env", path));
 }
-runtime::task<void> repository::move(std::string from, std::string to) {
+runtime::task<void> repository::move(std::string from, std::string to, write_options options) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto revalidated = co_await validate_write(options, {from, to});
+    if (!revalidated) {
+        co_return std::unexpected(revalidated.error());
+    }
     if (impl_->locked(from) || impl_->locked(to))
         co_return std::unexpected(failure(errc::locked, "path is advisory locked", from));
     auto source = split_path(from);
@@ -3612,17 +4020,17 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     const auto time =
         std::chrono::duration_cast<std::chrono::milliseconds>(at.time_since_epoch()).count();
-    auto options = crdt::commit_options{.message = "move", .time = time};
+    auto commit_options = crdt::commit_options{.message = "move", .time = time};
     if ((*source_parent)->node == (*destination_parent)->node) {
         auto recorded =
-            (*source_document)->rename_entry(source->back(), destination->back(), options);
+            (*source_document)->rename_entry(source->back(), destination->back(), commit_options);
         if (!recorded)
             co_return std::unexpected(recorded.error());
     } else {
         auto destination_document = co_await impl_->directory((*destination_parent)->node);
         if (!destination_document)
             co_return std::unexpected(destination_document.error());
-        auto removed = (*source_document)->remove_entry(source->back(), options);
+        auto removed = (*source_document)->remove_entry(source->back(), commit_options);
         if (!removed)
             co_return std::unexpected(removed.error());
         const auto kind = found->second.kind == entry_kind::file        ? "blob"
@@ -3633,7 +4041,7 @@ runtime::task<void> repository::move(std::string from, std::string to) {
                 ->put_entry(
                     destination->back(),
                     {kind, found->second.node, found->second.mode, to_string(found->second.object)},
-                    options);
+                    commit_options);
         if (!inserted)
             co_return std::unexpected(inserted.error());
     }
@@ -3645,7 +4053,8 @@ runtime::task<void> repository::move(std::string from, std::string to) {
     if (!operation)
         co_return std::unexpected(operation.error());
     impl_->record_operation(*operation, "move", from, to, moved_node, std::nullopt);
-    auto signed_drip = co_await impl_->append_drip("move", moved_node, at);
+    auto signed_drip =
+        co_await impl_->append_drip("move", moved_node, at, {from, to}, options, *revalidated);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++impl_->current.pending_drips;
@@ -3654,9 +4063,13 @@ runtime::task<void> repository::move(std::string from, std::string to) {
         co_return std::unexpected(saved.error());
     co_return result<void>{};
 }
-runtime::task<void> repository::remove(std::string path) {
+runtime::task<void> repository::remove(std::string path, write_options options) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto revalidated = co_await validate_write(options, {path});
+    if (!revalidated) {
+        co_return std::unexpected(revalidated.error());
+    }
     if (impl_->locked(path))
         co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
     auto parts = split_path(path);
@@ -3685,7 +4098,8 @@ runtime::task<void> repository::remove(std::string path) {
     if (!operation)
         co_return std::unexpected(operation.error());
     impl_->record_operation(*operation, "remove", path, {}, prior.node, std::move(prior));
-    auto signed_drip = co_await impl_->append_drip("remove", prior.node, at);
+    auto signed_drip =
+        co_await impl_->append_drip("remove", prior.node, at, {path}, options, *revalidated);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++impl_->current.pending_drips;
@@ -3931,6 +4345,7 @@ result<repository_status> repository::status() {
     output.pending_drips = impl_->current.pending_drips;
     output.conflicts = impl_->current.conflict_values;
     output.head = impl_->current.head;
+    output.agents = impl_->current.agents;
     auto visit = [&](auto&& self, const working_entry& entry, std::string path) -> result<void> {
         if (entry.kind == entry_kind::file) {
             auto remote =
@@ -5142,7 +5557,8 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
     if (!operation)
         co_return std::unexpected(operation.error());
     source.impl_->record_operation(*operation, "mkdir", path, {}, identity, std::nullopt);
-    auto signed_drip = co_await source.impl_->append_drip("mkdir", identity, at);
+    auto signed_drip = co_await source.impl_->append_drip(
+        "mkdir", identity, at, {path}, write_options{}, std::nullopt);
     if (!signed_drip)
         co_return std::unexpected(signed_drip.error());
     ++source.impl_->current.pending_drips;

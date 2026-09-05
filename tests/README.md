@@ -49,6 +49,10 @@ deleted regions and files, and a renamed node in one unsorted batch. CLI scenari
 command-documentation tests live in `cli/`. `test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
+`test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
+drip bodies, same-path line-hunk reports, declared read dependencies, disjoint and forced records,
+and a synchronized replica whose signed write arrives before refusal. The CLI scenario
+also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
 exclusion, and parse the CLI explanation contract. The opt-in measurement target records scan and

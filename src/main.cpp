@@ -15,6 +15,7 @@ auto frontend_module_path(bool compiler) -> std::filesystem::path;
 
 auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
+auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
 auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
@@ -83,6 +84,12 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"write",
+     "write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... "
+     "[--on-stale refuse|disjoint|force]",
+     "write a file from a stated base",
+     "available",
+     liquid_cli::repo_write},
     {"daemon",
      "daemon [--shutdown]",
      "start or stop the checkout daemon",
@@ -95,7 +102,7 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::search},
     {"log",
      "log [--ops] [--json]",
-     "show change or operation history",
+     "show change or signed drip history",
      "available",
      liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
