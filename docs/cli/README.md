@@ -25,7 +25,7 @@ that the table and `liquid --help` name the same commands.
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
-| `search` | `search <query> [--ref <name>] [--limit <count>]` | Search paths and contents. | available |
+| `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
 | `log` | `log [--json]` | Show change history. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
@@ -119,10 +119,13 @@ a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <del
 registered remote blobs when necessary, then reports `method=delta` or `method=chunks`.
 
 `search` uses BM25F ranking over path and content fields. A query wrapped in double quotes selects
-exact substring matching through the positional trigram index; a query wrapped in slashes selects
-regular-expression matching with a trigram literal prefilter. `--ref` accepts a repository ref name
-or change digest, and `--limit` accepts 1 through 1,000. Each result line contains score, path, and
-snippet separated by tabs.
+exact literal matching; a query wrapped in slashes selects regex matching. The measured planner
+chooses verified trigrams or a current parallel mapped scan when those executors have identical
+results. `--ref` accepts a repository ref name or change digest, and `--limit` accepts 1 through
+1,000. Each result line contains optional score, path with one-based line and column, and snippet,
+separated by tabs. `--explain` executes the query and instead prints stable JSON with the chosen
+executor, estimates, actual cost, inputs, and all alternatives. Ranked plans state that scan has no
+equivalent result set.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
 number of uncached feature probes observed, plus the outer action's status. `--explain`
@@ -260,6 +263,7 @@ liquid daemon
 liquid daemon --shutdown
 liquid search 'query graph'
 liquid search '"exact substring"' --ref main --limit 50
+liquid search --explain '/query.*graph/'
 liquid log --json
 liquid cut "import existing files"
 liquid refs --json

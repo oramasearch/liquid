@@ -89,7 +89,7 @@ constexpr auto commands = std::to_array<command>({
      "available on macOS and Linux",
      liquid_cli::daemon_command},
     {"search",
-     "search <query> [--ref <name>] [--limit <count>]",
+     "search [--explain] <query> [--ref <name>] [--limit <count>]",
      "search paths and contents",
      "available",
      liquid_cli::search},

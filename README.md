@@ -22,7 +22,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > as a thin client of it; liquify and lake link the same library. The public error, digest, identity
 > document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
 > BLAKE3 identifiers. Repository-local BM25F, substring, and regex search over the working tree or
-> named refs is implemented with atomic per-drip publication. The public waiting operations are lazy
+> named refs is implemented with measured cost planning, current mapped scans, stable explanations,
+> and atomic per-drip publication. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
@@ -152,8 +153,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > It also performs #23 clean validation during idle slices and reports validation backlog and the
 > last divergence.
 
-> **Phase 4 local search is implemented.** `liquid search` and `repository::search` query a
-> content-addressed oramacore BM25F and positional-trigram index under `.liquid/index/`. The daemon
+> **Phase 4 local search and cost planning are implemented.** `liquid search`,
+> `repository::search`, and `repository::plan_search` select BM25F, verified positional trigrams,
+> or a parallel mapped scan. `liquid search --explain` reports measured inputs, estimates, actual
+> cost, and rejected alternatives. The content-addressed index lives under `.liquid/index/`. The daemon
 > publishes changed paths and tombstones after each drip with a durable independent cursor; an
 > atomic manifest replacement makes the whole change visible at once. Identical blobs are indexed
 > once even when several paths refer to them. Named refs use snapshot-specific index slots.
@@ -199,7 +202,7 @@ and Zetta's.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, public build streams and ordering, JSON projection, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
-- [`docs/library/search.md`](docs/library/search.md) — the local BM25F and positional-trigram index, atomic publication, daemon updates, public API, CLI, and measurements.
+- [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.
 - [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.

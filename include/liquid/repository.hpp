@@ -266,11 +266,48 @@ struct LIQUID_EXPORT search_options {
     std::uint64_t limit{20};
 };
 
+enum class search_executor : std::uint8_t {
+    bm25f,
+    trigram,
+    scan,
+};
+
+enum class search_query_kind : std::uint8_t {
+    ranked_text,
+    literal,
+    regex_with_literal_core,
+    regex_without_literal_core,
+};
+
 struct LIQUID_EXPORT search_hit {
     std::string path;
     digest blob{};
+    std::uint64_t line{};
+    std::uint64_t column{};
     std::string snippet;
-    double score{};
+    std::optional<double> score;
+};
+
+struct LIQUID_EXPORT search_alternative {
+    search_executor executor{search_executor::scan};
+    std::uint64_t estimated_cost_us{};
+    std::optional<std::uint64_t> actual_cost_us;
+    bool eligible{};
+    std::string reason;
+};
+
+struct LIQUID_EXPORT search_plan {
+    search_executor executor{search_executor::scan};
+    search_query_kind query_kind{search_query_kind::literal};
+    std::uint64_t estimated_cost_us{};
+    std::uint64_t actual_cost_us{};
+    std::uint64_t working_set_blobs{};
+    std::uint64_t working_set_bytes{};
+    std::uint64_t drips_since_index_update{};
+    double trigram_selectivity{};
+    std::uint64_t scan_nanoseconds_per_blob{};
+    std::uint64_t scan_parallelism{1};
+    std::vector<search_alternative> alternatives;
 };
 
 class LIQUID_EXPORT repository {
@@ -323,6 +360,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>> blob(digest id);
     [[nodiscard]] runtime::task<std::vector<search_hit>> search(std::string query,
                                                                 search_options options = {});
+    [[nodiscard]] runtime::task<liquid::search_plan> plan_search(std::string query,
+                                                                 search_options options = {});
     [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>
     diff(change_id old_change, change_id new_change, tree_diff_options options = {});
     [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>

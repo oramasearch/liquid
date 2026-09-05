@@ -38,6 +38,18 @@ set(split "${LIQUID_CLI_ROOT}/split")
 run_liquid(init_output init_error init_result "${workspace}" init .)
 require_success(init_result init_output init_error)
 
+run_liquid(search_plan_output search_plan_error search_plan_result "${workspace}"
+  search --explain "\"first\"")
+require_success(search_plan_result search_plan_output search_plan_error)
+string(JSON search_executor GET "${search_plan_output}" executor)
+string(JSON search_kind GET "${search_plan_output}" query_kind)
+string(JSON search_alternatives LENGTH "${search_plan_output}" alternatives)
+string(JSON search_drips GET "${search_plan_output}" inputs drips_since_index_update)
+if(NOT search_executor STREQUAL "scan" OR NOT search_kind STREQUAL "literal" OR
+   NOT search_alternatives EQUAL 3 OR NOT search_drips EQUAL 0)
+  message(FATAL_ERROR "search explain JSON changed: ${search_plan_output}")
+endif()
+
 run_liquid(status_output status_error status_result "${workspace}" status --json)
 require_success(status_result status_output status_error)
 string(REGEX MATCH "\"pending_drips\":0" imported_files "${status_output}")

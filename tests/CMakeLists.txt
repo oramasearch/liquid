@@ -35,6 +35,7 @@ add_executable(liquid-tests
   scan/test_redaction.cpp
   search/test_index.cpp
   ${PROJECT_SOURCE_DIR}/src/search/index.cpp
+  ${PROJECT_SOURCE_DIR}/src/store/mapped_file.cpp
   ${PROJECT_SOURCE_DIR}/src/scan/detectors.cpp
   store/test_gc.cpp
   ${PROJECT_SOURCE_DIR}/src/store/chunker.cpp
@@ -400,7 +401,8 @@ target_link_libraries(liquid-repository-open-measure PRIVATE liquid::liquid)
 add_executable(
   liquid-search-measure EXCLUDE_FROM_ALL search/measure_index.cpp
                                          ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
-                                         ${PROJECT_SOURCE_DIR}/src/search/index.cpp)
+                                         ${PROJECT_SOURCE_DIR}/src/search/index.cpp
+                                         ${PROJECT_SOURCE_DIR}/src/store/mapped_file.cpp)
 target_include_directories(liquid-search-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-search-measure PRIVATE liquid::liquid orama::oramacore-cpp)
 

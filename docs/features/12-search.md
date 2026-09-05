@@ -4,16 +4,18 @@
 >
 > **Requirement:** full-text search built in, and the ability to serve search.
 
-**Implementation status:** liquid #22 implements repository-local working-tree and named-reference
-search with content-addressed BM25F and positional trigrams, atomic publication, daemon drip
-updates, a public repository API, and `liquid search`. See
+**Implementation status:** liquid #22 and #67 implement repository-local working-tree and
+named-reference search with content-addressed BM25F, verified positional trigrams, a parallel
+current-blob scan, measured cost planning, atomic publication, daemon drip updates, public result
+and plan APIs, and `liquid search --explain`. See
 [`docs/library/search.md`](../library/search.md). Packaged-artifact search waits for the Phase 5
-format registry; symbols and cost-based planning remain #66 and #67.
+format registry; symbols remain #66.
 
-## Two engines, one query planner
+## Three executors, one query planner
 
-No single index is right for both prose and code. liquid runs two, plus a scan
-fallback, and chooses between them by cost.
+No single index is right for both prose and code. liquid runs two, plus a scan executor, and chooses
+the cheapest executor with an identical result set from measured size, freshness, selectivity, and
+machine calibration inputs.
 
 | Engine | Handles | Why |
 |---|---|---|
