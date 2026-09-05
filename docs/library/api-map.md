@@ -667,7 +667,9 @@ normalization, enforcement, and JSON Pointer key paths.
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
 `conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
 `repository_options` is a plain record with `checkpoint_interval`, caller-owned `store`, local
-`storage`, `encrypt`, `cache`, `verify`, `policy`, and `retention`. `storage` selects the
+`storage`, `encrypt`, `cache`, `verify`, `policy`, `retention`, and `defer_tree_load`.
+`defer_tree_load` is for streaming tree import: it leaves the root paged until the caller imports
+or reads it. `storage` selects the
 object-store hash algorithm and key custody when `store` is null. When `store` points to an open
 caller-owned store, that store's configuration is authoritative and the caller keeps it alive for
 the repository's lifetime. Pass the same placement to `create` and `open` so later writes and reads

@@ -102,6 +102,7 @@ struct LIQUID_EXPORT repository_options {
     policy_config policy{};
     retention_config retention{};
     std::optional<remote_config> remote;
+    bool defer_tree_load{};
 };
 
 struct LIQUID_EXPORT log_options {

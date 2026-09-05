@@ -207,7 +207,8 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     ASSERT_TRUE(included_build) << included_build.error().message;
 
     repository = {};
-    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path() / "target"));
+    auto reopened = liquid::runtime::block_on(
+        liquid::repository::open(location.path() / "target", {.defer_tree_load = true}));
     ASSERT_TRUE(reopened) << reopened.error().message;
     repository = std::move(*reopened);
     const auto before = repository.status();

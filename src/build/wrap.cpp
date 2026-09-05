@@ -2367,7 +2367,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     const auto repository_path = *cache_directory / "repository";
     auto source =
         std::filesystem::exists(repository_path / "LIQUID_REPO")
-            ? co_await repository::open(repository_path)
+            ? co_await repository::open(repository_path, {.defer_tree_load = true})
             : co_await repository::create(repository_path,
                                           repository_options{.cache = cache_config{.publish = true},
                                                              .remote = options.remote});

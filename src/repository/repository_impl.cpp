@@ -2799,6 +2799,12 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
                                           std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
+    if (output.impl_->current.root_is_paged && !options.defer_tree_load) {
+        auto restored = co_await output.impl_->load_paged_root();
+        if (!restored) {
+            co_return std::unexpected(restored.error());
+        }
+    }
     auto checkpointed = co_await output.impl_->checkpoint();
     if (!checkpointed)
         co_return std::unexpected(checkpointed.error());
