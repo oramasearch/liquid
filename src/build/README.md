@@ -11,9 +11,12 @@ root. It also computes the median execution cost, synchronizes cost-weighted res
 ranks size-cap eviction by execution cost per result-graph byte. Divergence and the signed
 verification reference are durable index fields, and lookup never serves a divergent row.
 `materialise.cpp` reconstructs toolchain and replay trees from store
-records. `verify.cpp` owns sampling, fresh-sandbox replay, digest comparison, attestations, alerts,
-background scheduling, and the explicit replay API. Verification and replay share reconstruction,
-sandbox execution, and byte comparison. Explicit replay uses the repository's registered
+records. `verify.cpp` owns action sampling, fresh-sandbox replay, graph clean validation, digest
+comparison, attestations, alerts, background scheduling, and the explicit replay API. Graph
+verification reconstructs the `action_result` query registry from current nondivergent index rows,
+opens the persisted wrap graph, and pairs its sampled or complete pass with action verification.
+Verification and replay share reconstruction, sandbox execution, and byte comparison. Explicit
+replay uses the repository's registered
 `remote_blob_source` to hydrate recorded remote inputs and expected outputs; it records
 attestations, alerts, and quarantine only when requested.
 `provenance.cpp` derives the SLSA predicate from each action/result pair,
@@ -45,6 +48,8 @@ checks a condition over the producer's output bytes before accepting a downstrea
 unchanged objects early cutoff without hiding a changed object from the linker.
 Refreshed saved actions retain their prior dependency order so invalidated producer outputs are
 known before any dependent plan is accepted.
+Completed wrap reports include validation backlog and the most recent graph divergence. Unless
+verification is disabled, wrap schedules the combined graph and action sample after publication.
 `trace.cpp` derives dependency edges when a result manifest reads another action's output, stores a
 `build_trace` record for every wrap, computes longest paths, loads the latest retained trace, and
 exports Chrome trace-event JSON including each recorded execution decision and model input. The

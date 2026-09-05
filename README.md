@@ -49,10 +49,13 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > history and its identity mapping; `liquid export git` writes a standalone Git repository and reports
 > compatibility losses.
 
-> **Phase 4 now includes the persisted demand-driven query graph and per-definition C++ builds.** Registered coroutine query
+> **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
 > validate red-green on demand, cut off unchanged fingerprints, propagate durability, cancel
-> cooperatively, and expose recorded inputs and values for clean comparison. Direct build execution
+> cooperatively, and expose recorded inputs and values for clean comparison. Idle one-in-twenty
+> validation uses a new graph instance, persists audit records, reports the query and inputs on
+> divergence, and evicts the offending value. `liquid verify --graph --all` performs a full pass.
+> Direct build execution
 > and every wrapped tool action are `action_result` graph nodes. A versioned C frontend ABI loads
 > replaceable shared or static language modules outside libliquid. The bundled tree-sitter fallback
 > discovers C and C++ units, while the Clang C++ module emits definition actions and assembles their
@@ -72,7 +75,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > reports the first differing input on a miss. The on-disk action index rebuilds from its leased
 > store root. `liquid verify` re-executes cached actions in fresh sandboxes, compares exit status
 > and every output digest, signs a `reproducibility/1` attestation, and permanently quarantines a
-> divergent result. `wrap` schedules a one-in-20 local sample on the shared runtime by default.
+> divergent result. `wrap` schedules one-in-20 graph and action samples on the shared runtime by
+> default.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
 > in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
@@ -139,6 +143,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > byte ceiling and least-recently-demanded eviction while keys and fingerprints remain. Windows
 > returns a documented unsupported result until Corosio provides named-pipe transport. The daemon
 > uses issue #20's public graph interface for persistence, invalidation, and resident-value bounds.
+> It also performs #23 clean validation during idle slices and reports validation backlog and the
+> last divergence.
 
 > **Phase 4 local search is implemented.** `liquid search` and `repository::search` query a
 > content-addressed oramacore BM25F and positional-trigram index under `.liquid/index/`. The daemon
@@ -186,7 +192,7 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
-- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented daemon lifecycle, cursor fan-out, endpoint, status, and graph value eviction.
+- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, daemon lifecycle, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — the local BM25F and positional-trigram index, atomic publication, daemon updates, public API, CLI, and measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.

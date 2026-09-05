@@ -393,4 +393,99 @@ TEST(QueryGraph, reopen_validates_fingerprints_without_reexecuting) {
     ASSERT_EQ((*recorded)->dependencies.size(), 1U);
 }
 
+TEST(QueryGraphValidation, stale_value_is_named_audited_and_evicted) {
+    auto directory = graph_directory{};
+    write_file(directory.tree() / "unit.cpp", "int value = 42;\n");
+    auto compiles = std::atomic_uint64_t{};
+    auto links = std::atomic_uint64_t{};
+    const auto key = liquid::query_key{"compile", as_bytes("unit.cpp")};
+    {
+        auto opened = liquid::runtime::block_on(liquid::graph::open(
+            directory.state(), registry(&compiles, &links), {.working_tree = directory.tree()}));
+        ASSERT_TRUE(opened) << opened.error().message;
+        auto original = liquid::runtime::block_on(opened->demand(key));
+        ASSERT_TRUE(original) << original.error().message;
+        ASSERT_TRUE(liquid::runtime::block_on(
+            opened->inject_stale_value_for_testing(key, as_bytes("wrong"))));
+        auto stale = liquid::runtime::block_on(opened->demand(key));
+        ASSERT_TRUE(stale) << stale.error().message;
+        EXPECT_EQ(as_text(stale->bytes), "wrong");
+        EXPECT_EQ(compiles, 1U);
+        EXPECT_EQ(opened->validation_status().backlog, 1U);
+
+        auto report = liquid::runtime::block_on(opened->validate({.rate = 20, .all = true}));
+        ASSERT_TRUE(report) << report.error().message;
+        ASSERT_EQ(report->records.size(), 1U);
+        EXPECT_EQ(report->considered, 1U);
+        EXPECT_EQ(report->validated, 1U);
+        EXPECT_EQ(report->divergences, 1U);
+        EXPECT_EQ(report->records.front().query.kind, "compile");
+        ASSERT_EQ(report->records.front().inputs.size(), 1U);
+        EXPECT_EQ(
+            std::get<liquid::graph_input_key>(report->records.front().inputs.front().key).name,
+            "unit.cpp");
+        EXPECT_FALSE(report->records.front().agreement);
+        EXPECT_NE(liquid::to_string(report->records.front().incremental),
+                  liquid::to_string(report->records.front().clean));
+        EXPECT_EQ(report->backlog, 0U);
+        EXPECT_TRUE(report->last_divergence);
+        EXPECT_TRUE(opened->validation_status().last_divergence);
+
+        auto repaired = liquid::runtime::block_on(opened->demand(key));
+        ASSERT_TRUE(repaired) << repaired.error().message;
+        EXPECT_EQ(as_text(repaired->bytes), "42");
+        EXPECT_EQ(compiles, 3U);
+    }
+
+    auto reopened = liquid::runtime::block_on(liquid::graph::open(
+        directory.state(), registry(&compiles, &links), {.working_tree = directory.tree()}));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto records = liquid::runtime::block_on(reopened->validation_records());
+    ASSERT_TRUE(records) << records.error().message;
+    ASSERT_EQ(records->size(), 1U);
+    EXPECT_FALSE(records->front().agreement);
+    EXPECT_TRUE(reopened->validation_status().last_divergence);
+}
+
+TEST(QueryGraphValidation, full_pass_has_no_divergence) {
+    auto directory = graph_directory{};
+    write_file(directory.tree() / "unit.cpp", "int value = 42;\n");
+    auto compiles = std::atomic_uint64_t{};
+    auto links = std::atomic_uint64_t{};
+    auto opened = liquid::runtime::block_on(liquid::graph::open(
+        directory.state(), registry(&compiles, &links), {.working_tree = directory.tree()}));
+    ASSERT_TRUE(opened) << opened.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(opened->demand({"link", as_bytes("unit.cpp")})));
+
+    auto report = liquid::runtime::block_on(opened->validate({.rate = 20, .all = true}));
+    ASSERT_TRUE(report) << report.error().message;
+    EXPECT_EQ(report->considered, 2U);
+    EXPECT_EQ(report->validated, 2U);
+    EXPECT_EQ(report->divergences, 0U);
+    EXPECT_EQ(report->backlog, 0U);
+    EXPECT_FALSE(report->last_divergence);
+    EXPECT_EQ(opened->validation_status().validated, 2U);
+}
+
+TEST(QueryGraphValidation, default_rate_selects_one_in_twenty_targets) {
+    auto directory = graph_directory{};
+    auto compiles = std::atomic_uint64_t{};
+    auto links = std::atomic_uint64_t{};
+    auto opened = liquid::runtime::block_on(liquid::graph::open(
+        directory.state(), registry(&compiles, &links), {.working_tree = directory.tree()}));
+    ASSERT_TRUE(opened) << opened.error().message;
+    for (auto index = 0; index != 21; ++index) {
+        const auto name = "unit-" + std::to_string(index) + ".cpp";
+        write_file(directory.tree() / name, "int value = " + std::to_string(index) + ";\n");
+        ASSERT_TRUE(liquid::runtime::block_on(opened->demand({"compile", as_bytes(name)})));
+    }
+
+    auto report = liquid::runtime::block_on(opened->validate());
+    ASSERT_TRUE(report) << report.error().message;
+    EXPECT_EQ(report->considered, 2U);
+    EXPECT_EQ(report->validated, 2U);
+    EXPECT_EQ(report->divergences, 0U);
+    EXPECT_EQ(report->backlog, 19U);
+}
+
 } // namespace

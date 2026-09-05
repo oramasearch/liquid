@@ -603,6 +603,19 @@ TEST(BuildWrap, verify_and_replay_reexecute_wrapped_actions) {
                         " verified=" + std::to_string(made->actions) + " divergent=false"),
               std::string::npos)
         << text;
+    const auto graph_output = fixture.project().parent_path() / "graph-verify-output";
+    const auto graph_command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                               shell_quote(LIQUID_CLI) + " verify --graph --all >" +
+                               shell_quote(graph_output.string()) + " 2>&1";
+    const auto graph_status = std::system(graph_command.c_str());
+    auto graph_input = std::ifstream{graph_output};
+    const auto graph_text =
+        std::string{std::istreambuf_iterator<char>{graph_input}, std::istreambuf_iterator<char>{}};
+    ASSERT_EQ(graph_status, 0) << graph_text;
+    EXPECT_NE(graph_text.find("graph_divergent=0 backlog=0"), std::string::npos) << graph_text;
+    EXPECT_NE(graph_text.find("actions_verified=" + std::to_string(made->actions)),
+              std::string::npos)
+        << graph_text;
     ASSERT_FALSE(made->trace_actions.empty());
     const auto replay_output = fixture.project().parent_path() / "replay-output";
     const auto replay_command = "cd " + shell_quote(fixture.project().string()) + " && " +

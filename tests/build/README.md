@@ -9,7 +9,10 @@ SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages
 results, attestations, traces, and result-scoped SBOMs.
 
 `test_graph.cpp` covers canonical demand, read-order dependencies, red-green validation, early
-cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Its
+cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Clean
+validation cases cover the default one-in-twenty selection, a zero-divergence full pass, and a
+deliberately stale value that is named with its input, audited, evicted, recomputed, and retained
+as a divergence record after reopen. Its
 restart case kills `graph_crash_fixture.cpp` during an active demand, reopens the last complete
 root, counts one input fingerprint read and no query executions, and checks the public recorded
 query hook.
@@ -58,8 +61,8 @@ with the container's system toolchain. `test_wrap.cpp` proves inner and outer hi
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
 compiler entry, parallel compilation-database seeding, and sandbox-only hook variables. The Linux
-CLI case runs `liquid verify --all`, checks that every wrapped action agrees, then replays one action
-through `liquid replay --json`.
+CLI case runs `liquid verify --all` and `liquid verify --graph --all`, checks that every wrapped
+action and query agrees, then replays one action through `liquid replay --json`.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
 and toolchain-tree leaf. Its query-graph cases make a comment-only translation-unit edit execute
 one compiler while preserving the object and link result, then make a semantic edit execute the

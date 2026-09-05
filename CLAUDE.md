@@ -55,7 +55,9 @@ comparison, and optional verification recording; remote inputs hydrate through t
 transport-neutral blob source. Liquid #20 adds the persisted demand-driven query graph, canonical
 query and input fingerprints, red-green validation, early cutoff, durability-filtered invalidation,
 cooperative cancellation, recorded-input retrieval, and `action_result` nodes for direct and
-wrapped builds. Liquid #65 adds the versioned frontend C ABI, dynamic and static module
+wrapped builds. Liquid #23 adds sampled clean recomputation in fresh graph instances, durable
+validation records, divergence reporting and eviction, idle scheduling, and graph-wide CLI
+verification. Liquid #65 adds the versioned frontend C ABI, dynamic and static module
 registration, tree-sitter C/C++ unit discovery, Clang C++ definition actions, relocatable-object
 assembly, and unit-keyed graph invalidation. Liquid #64 adds signed zstd delta delivery with
 verified local and registered-remote blob fetch plus chunk fallback. Liquid #21 adds the

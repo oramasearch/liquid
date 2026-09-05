@@ -15,7 +15,8 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, and #18 implement
+**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
+and #23 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -29,8 +30,9 @@ unsupported until Phase 6. The disk cache validates observed manifests before a 
 result's TAAP signature and persists its action index. `wrap` discovers a project's invoked tools,
 pins their content tree in `config.wrap.toolchain`, splits the mount stream at output-producing leaf
 processes, publishes the inner and outer actions, and serves valid results through the sandbox-only
-exec hook. Verification re-executes sampled cached actions, emits signed attestations, and
-quarantines divergent results. Each result references verified, device-signed `slsa_provenance/1`
+exec hook. Verification re-executes sampled cached actions, while graph verification cleanly
+recomputes persisted `action_result` nodes before that sandbox pass. Both paths quarantine
+divergent values. Each result references verified, device-signed `slsa_provenance/1`
 and `sbom/1` attestations derived from its action and manifest. Before execution, repository policy
 can require verified registered-profile attestations for source and toolchain blobs. Issue #18 adds
 a remote executor alongside #17's remote blob interface, input and toolchain transfer, cost-based
@@ -334,6 +336,14 @@ command completes on the shared runtime and returns without waiting; `--no-verif
 The on-demand forms are `liquid verify <action>`, `liquid verify --all`, and `liquid verify
 --changed`.
 
+`liquid verify --graph` first compares sampled persisted `action_result` query values with new
+graph instances that resolve current nondivergent action-index entries without reading graph
+values. `--all` performs the full graph pass. It then invokes this section's action verifier with
+the matching sample or full selection, which reconstructs and executes actions in fresh recorded
+sandboxes. Each graph comparison is retained as an audit record; divergence names its query and
+inputs, evicts the graph value, and exits nonzero. The complete graph contract is in
+[`incremental-engine.md`](incremental-engine.md#continuous-clean-rebuild-validation-23).
+
 Each selected action is reconstructed from its content-addressed input and re-executed in a fresh
 instance of the exact recorded sandbox definition. Verification compares exit status, stdout,
 stderr, and every declared output by digest. Agreement writes a device-signed
@@ -445,12 +455,12 @@ the host.
 
 ## What remains beyond Phase 2
 
-The demand-driven graph now makes action results and ordinary queries one engine in Phase 4 #20;
+The demand-driven graph now makes action results and ordinary queries one engine in Phase 4 #20,
+and #23 continuously validates its saved values;
 its contract and proof are in [`incremental-engine.md`](incremental-engine.md). Issue #65 adds
 unit-keyed definition actions and translation-unit assembly through replaceable frontend modules;
-the ABI and proof are in [`frontends.md`](frontends.md). There is no production worker (Phase 3) or
-daemon. Actions remain the coarse end of the spectrum features/04 describes; frontend queries add
-the fine end.
+the ABI and proof are in [`frontends.md`](frontends.md). Actions remain the coarse end of the
+spectrum features/04 describes; frontend queries add the fine end.
 
 Measured remote transfer timing remains Phase 3 work; #18 records absent bytes and its deterministic
 transfer estimate. Continuous daemon profiles remain Phase 4 work. The stored trace and its Chrome
@@ -465,8 +475,8 @@ trace-event projection expose recorded scheduling fields but do not invent measu
 - A pure action receives a signature-valid `reproducibility/1` attestation.
 - An action that writes random bytes is detected, named in the alert, marked divergent, and not
   served after reopening the repository.
-- A rate of one verifies every action, and `liquid verify --all` verifies every action in a wrapped
-  recursive-Make fixture.
+- A rate of one verifies every action. The wrapped recursive-Make fixture requires both `liquid
+  verify --all` and `liquid verify --graph --all` to report no divergence.
 - `liquid replay` reproduces a recorded nonzero exit with identical stdout, stderr, and output,
   replays an indexed hit by action digest, reports the first changed output byte, and fetches a
   missing input chunk through the on-disk remote double. Its default leaves verification and

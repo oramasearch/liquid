@@ -18,8 +18,9 @@ repository storage or file contents.
 
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
-`verify.cpp` parses action, all, and changed selectors, calls the public verification API, prints
-attestation outcomes and critical output differences, and returns failure on divergence.
+`verify.cpp` parses action, all, changed, and graph selectors, calls the public verification APIs,
+prints action attestations or graph audit records, names critical query inputs and output
+differences, and returns failure on divergence.
 The same command group implements `replay`: it parses an action or result plus `--json` and
 `--record`, calls the public replay API, and treats a matching recorded nonzero exit as success.
 
@@ -58,3 +59,5 @@ path.
 
 Repository status includes bytes still remote in both text and JSON. Build explanation renderers
 also name the non-hermetic-read reason and its path for remote-eligibility diagnostics.
+Status also projects daemon graph-validation backlog and the last divergence in text and JSON.
+Wrap output includes its graph backlog and last divergence record.

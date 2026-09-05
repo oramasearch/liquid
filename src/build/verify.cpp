@@ -281,6 +281,58 @@ auto selected(const objects::action_index_entry& entry,
     return false;
 }
 
+struct graph_query_request {
+    action_input input;
+    digest sandbox;
+    std::vector<observed_input> manifest;
+};
+
+struct graph_query_state {
+    build_detail::disk_cache* cache{};
+    std::map<std::string, std::pair<std::uint64_t, graph_query_request>> requests;
+};
+
+auto graph_bytes(std::string_view value) -> std::vector<std::byte> {
+    return {reinterpret_cast<const std::byte*>(value.data()),
+            reinterpret_cast<const std::byte*>(value.data() + value.size())};
+}
+
+auto graph_text(std::span<const std::byte> value) -> std::string {
+    return {reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
+runtime::task<std::vector<std::byte>> clean_action_result_query(query_context& context,
+                                                                std::vector<std::byte> arguments,
+                                                                graph_query_state* state) {
+    const auto candidate = graph_text(arguments);
+    const auto found = state->requests.find(candidate);
+    if (found == state->requests.end()) {
+        co_return std::unexpected(verification_error(
+            errc::not_found, "graph query has no indexed action result", candidate));
+    }
+    auto cache_entry = co_await context.read(
+        graph_input_key{graph_input_kind::environment, "action-result/" + candidate});
+    if (!cache_entry) {
+        co_return std::unexpected(cache_entry.error());
+    }
+    for (const auto& input : found->second.second.manifest) {
+        auto read =
+            co_await context.read(graph_input_key{graph_input_kind::working_tree_blob, input.path});
+        if (!read) {
+            co_return std::unexpected(read.error());
+        }
+    }
+    auto lookup =
+        co_await state->cache->lookup(found->second.second.input, found->second.second.sandbox);
+    if (!lookup) {
+        co_return std::unexpected(lookup.error());
+    }
+    if (!lookup->hit) {
+        co_return std::vector<std::byte>{};
+    }
+    co_return graph_bytes(to_string(lookup->hit->value));
+}
+
 runtime::task<replay_report>
 reexecute_one(repository& source, digest result, const action_result& recorded, bool explain) {
     auto action_bytes = co_await repository_detail::build_access::get(source, recorded.action);
@@ -531,6 +583,93 @@ runtime::task<verify_report> verify(std::filesystem::path working_tree, verify_o
     co_return co_await verify(*source, std::move(options));
 }
 
+runtime::task<graph_verify_report> verify_graph(std::filesystem::path working_tree,
+                                                graph_verify_options options) {
+    if (options.rate == 0) {
+        co_return std::unexpected(
+            verification_error(errc::invalid_argument, "graph verification rate must be positive"));
+    }
+    auto code = std::error_code{};
+    working_tree = std::filesystem::canonical(working_tree, code);
+    if (code || !std::filesystem::is_directory(working_tree)) {
+        co_return std::unexpected(verification_error(errc::invalid_argument,
+                                                     "verify working tree is not a directory",
+                                                     working_tree.string()));
+    }
+    auto cache_directory = options.cache_directory
+                               ? liquid::result<std::filesystem::path>{*options.cache_directory}
+                               : wrap_cache_directory(working_tree);
+    if (!cache_directory) {
+        co_return std::unexpected(cache_directory.error());
+    }
+    auto source = co_await repository::open(*cache_directory / "repository");
+    if (!source) {
+        co_return std::unexpected(source.error());
+    }
+    auto cache = build_detail::disk_cache{*source};
+    auto opened_cache = co_await cache.open();
+    if (!opened_cache) {
+        co_return std::unexpected(opened_cache.error());
+    }
+    auto state = graph_query_state{.cache = &cache};
+    for (const auto& entry : cache.entries()) {
+        if (entry.divergent) {
+            continue;
+        }
+        const auto candidate = to_string(entry.candidate);
+        const auto found = state.requests.find(candidate);
+        if (found != state.requests.end() && entry.sequence <= found->second.first) {
+            continue;
+        }
+        auto result_bytes = co_await repository_detail::build_access::get(*source, entry.result);
+        if (!result_bytes) {
+            co_return std::unexpected(result_bytes.error());
+        }
+        auto result = objects::decode_result(*result_bytes);
+        if (!result) {
+            co_return std::unexpected(result.error());
+        }
+        auto action_bytes = co_await repository_detail::build_access::get(*source, result->action);
+        if (!action_bytes) {
+            co_return std::unexpected(action_bytes.error());
+        }
+        auto action = objects::decode_action(*action_bytes);
+        if (!action) {
+            co_return std::unexpected(action.error());
+        }
+        state.requests.insert_or_assign(
+            candidate,
+            std::pair{entry.sequence,
+                      graph_query_request{action->input, action->sandbox, result->manifest}});
+    }
+    auto registry = query_registry{};
+    auto registered = registry.add(
+        {.name = "action_result",
+         .compute = [&state](query_context& context, std::vector<std::byte> arguments) {
+             return clean_action_result_query(context, std::move(arguments), &state);
+         }});
+    if (!registered) {
+        co_return std::unexpected(registered.error());
+    }
+    auto queries = co_await graph::open(
+        *cache_directory / "query-graph", std::move(registry), {.working_tree = working_tree});
+    if (!queries) {
+        co_return std::unexpected(queries.error());
+    }
+    auto graph_report = co_await queries->validate({.rate = options.rate, .all = options.all});
+    if (!graph_report) {
+        co_return std::unexpected(graph_report.error());
+    }
+    auto action_report = co_await verify(
+        *source,
+        {.selection = options.all ? verify_selection::all : verify_selection::sample,
+         .explain = options.explain});
+    if (!action_report) {
+        co_return std::unexpected(action_report.error());
+    }
+    co_return graph_verify_report{std::move(*graph_report), std::move(*action_report)};
+}
+
 runtime::task<replay_report> replay(repository& source, digest target, replay_options options) {
     auto cache = build_detail::disk_cache{source};
     auto opened = co_await cache.open();
@@ -591,13 +730,15 @@ replay(std::filesystem::path working_tree, digest target, replay_options options
 namespace liquid::build_detail {
 namespace {
 
-runtime::task<void> run_scheduled_verification(repository source) {
+runtime::task<void> run_scheduled_graph_validation(std::filesystem::path working_tree,
+                                                   std::filesystem::path cache_directory) {
     auto [yield_error] = co_await runtime::delay(std::chrono::nanoseconds{1});
     if (yield_error) {
         co_return std::unexpected(
-            error{errc::internal, yield_error.message(), "scheduled verification"});
+            error{errc::internal, yield_error.message(), "scheduled graph validation"});
     }
-    auto verified = co_await build::verify(source, {.selection = verify_selection::sample});
+    auto verified = co_await build::verify_graph(std::move(working_tree),
+                                                 {.cache_directory = std::move(cache_directory)});
     if (!verified) {
         co_return std::unexpected(verified.error());
     }
@@ -606,8 +747,11 @@ runtime::task<void> run_scheduled_verification(repository source) {
 
 } // namespace
 
-void schedule_verification(repository source) {
-    runtime::spawn(run_scheduled_verification(std::move(source)), [](result<void>) {});
+void schedule_graph_validation(std::filesystem::path working_tree,
+                               std::filesystem::path cache_directory) {
+    runtime::spawn(
+        run_scheduled_graph_validation(std::move(working_tree), std::move(cache_directory)),
+        [](result<void>) {});
 }
 
 } // namespace liquid::build_detail

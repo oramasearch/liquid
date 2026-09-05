@@ -1,11 +1,10 @@
 #pragma once
 
-namespace liquid {
-class repository;
-}
+#include <filesystem>
 
 namespace liquid::build_detail {
 
-void schedule_verification(repository source);
+void schedule_graph_validation(std::filesystem::path working_tree,
+                               std::filesystem::path cache_directory);
 
 } // namespace liquid::build_detail

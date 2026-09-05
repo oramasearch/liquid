@@ -57,8 +57,11 @@ privileged Linux environment they also prove a second identical execution launch
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.
 Portable query-graph tests cover early cutoff, durability-filtered walks, cooperative cancellation,
-interrupted-process recovery, fingerprint-only restart validation, and recorded input retrieval.
-`liquid-graph-measure` reports cold-start validation over the repository's regular files.
+interrupted-process recovery, fingerprint-only restart validation, recorded input retrieval,
+one-in-twenty clean sampling, stale-value detection, durable audit records, and eviction before
+repair. `liquid-graph-measure` reports cold-start and full clean-rebuild validation over the
+repository's regular files. Daemon coverage injects a stale cached query and observes its idle
+validation backlog and divergence status.
 Frontend tests load the Clang implementation as a separate shared object, register the same ABI
 statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
 to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
@@ -74,7 +77,8 @@ nested-repository pins, signatures, and universal inference markers; CLI cases i
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
 `compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,
-rate-one sampling, and CLI verification of every wrapped action.
+rate-one sampling, and CLI verification of every wrapped action. The same wrap fixture performs a
+complete graph pass and requires zero query divergences.
 Portable build
 diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
 statistics, recorded scheduling decisions and inputs, and the JSON forms of `why` and `cache stats`.

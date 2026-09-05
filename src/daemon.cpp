@@ -78,6 +78,97 @@ auto bool_field(const cbor::value& source, std::string_view name) -> const bool*
     return value ? std::get_if<bool>(&value->data) : nullptr;
 }
 
+auto validation_value(const graph_validation_record& record) -> cbor::value {
+    auto inputs = cbor::value::array{};
+    for (const auto& input : record.inputs) {
+        if (const auto* key = std::get_if<graph_input_key>(&input.key)) {
+            inputs.push_back(map({{"type", "input"},
+                                  {"kind", static_cast<std::uint64_t>(key->kind)},
+                                  {"name", key->name},
+                                  {"fingerprint", to_string(input.fingerprint)}}));
+            continue;
+        }
+        const auto& key = std::get<query_key>(input.key);
+        inputs.push_back(
+            map({{"type", "query"},
+                 {"kind", key.kind},
+                 {"arguments", cbor::value::bytes{key.arguments.begin(), key.arguments.end()}},
+                 {"fingerprint", to_string(input.fingerprint)}}));
+    }
+    return map({{"id", to_string(record.id)},
+                {"query_kind", record.query.kind},
+                {"query_arguments",
+                 cbor::value::bytes{record.query.arguments.begin(), record.query.arguments.end()}},
+                {"inputs", cbor::value{std::move(inputs)}},
+                {"incremental", to_string(record.incremental)},
+                {"clean", to_string(record.clean)},
+                {"agreement", record.agreement},
+                {"at", static_cast<std::uint64_t>(record.at.time_since_epoch().count())}});
+}
+
+auto decode_validation(const cbor::value& value) -> result<graph_validation_record> {
+    const auto* id_text = text_field(value, "id");
+    const auto* query_kind = text_field(value, "query_kind");
+    const auto* query_arguments_value = field(value, "query_arguments");
+    const auto* inputs_value = field(value, "inputs");
+    const auto* incremental_text = text_field(value, "incremental");
+    const auto* clean_text = text_field(value, "clean");
+    const auto* agreement = bool_field(value, "agreement");
+    const auto* at = unsigned_field(value, "at");
+    const auto* query_arguments =
+        query_arguments_value ? std::get_if<cbor::value::bytes>(&query_arguments_value->data)
+                              : nullptr;
+    const auto* inputs =
+        inputs_value ? std::get_if<cbor::value::array>(&inputs_value->data) : nullptr;
+    if (!id_text || !query_kind || !query_arguments || !inputs || !incremental_text ||
+        !clean_text || !agreement || !at) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon validation status"));
+    }
+    auto id = parse_digest(*id_text);
+    auto incremental = parse_digest(*incremental_text);
+    auto clean = parse_digest(*clean_text);
+    if (!id || !incremental || !clean) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon validation digest"));
+    }
+    auto output =
+        graph_validation_record{.id = *id,
+                                .query = {*query_kind, *query_arguments},
+                                .incremental = *incremental,
+                                .clean = *clean,
+                                .agreement = *agreement,
+                                .at = std::chrono::sys_seconds{std::chrono::seconds{*at}}};
+    for (const auto& input : *inputs) {
+        const auto* type = text_field(input, "type");
+        const auto* fingerprint_text = text_field(input, "fingerprint");
+        if (!type || !fingerprint_text) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon validation input"));
+        }
+        auto fingerprint = parse_digest(*fingerprint_text);
+        if (!fingerprint) {
+            return std::unexpected(fingerprint.error());
+        }
+        if (*type == "input") {
+            const auto* input_kind = unsigned_field(input, "kind");
+            const auto* name = text_field(input, "name");
+            if (!input_kind || *input_kind < 1 || *input_kind > 4 || !name) {
+                return std::unexpected(failure(errc::corrupt, "invalid daemon graph input key"));
+            }
+            output.inputs.push_back(
+                {graph_input_key{static_cast<graph_input_kind>(*input_kind), *name}, *fingerprint});
+            continue;
+        }
+        const auto* kind = text_field(input, "kind");
+        const auto* arguments_value = field(input, "arguments");
+        const auto* arguments =
+            arguments_value ? std::get_if<cbor::value::bytes>(&arguments_value->data) : nullptr;
+        if (*type != "query" || !kind || !arguments) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon query dependency"));
+        }
+        output.inputs.push_back({query_key{*kind, *arguments}, *fingerprint});
+    }
+    return output;
+}
+
 auto encode_frame(std::uint8_t type, std::span<const std::byte> payload)
     -> result<std::vector<std::byte>> {
     if (payload.size() > maximum_frame) {
@@ -146,7 +237,11 @@ auto status_value(const daemon_status& status) -> cbor::value {
          {"graph_keys", cbor::value{status.graph_keys}},
          {"graph_values", cbor::value{status.graph_values}},
          {"graph_memory", cbor::value{status.graph_memory_bytes}},
-         {"graph_ceiling", cbor::value{status.graph_memory_ceiling}}});
+         {"graph_ceiling", cbor::value{status.graph_memory_ceiling}},
+         {"graph_validation_backlog", cbor::value{status.graph_validation_backlog}},
+         {"last_graph_divergence",
+          status.last_graph_divergence ? validation_value(*status.last_graph_divergence)
+                                       : cbor::value{}}});
 }
 
 auto encode_status(const daemon_status& status) -> result<std::vector<std::byte>> {
@@ -196,6 +291,8 @@ auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
     const auto* graph_values = unsigned_field(*decoded, "graph_values");
     const auto* graph_memory = unsigned_field(*decoded, "graph_memory");
     const auto* graph_ceiling = unsigned_field(*decoded, "graph_ceiling");
+    const auto* graph_validation_backlog = unsigned_field(*decoded, "graph_validation_backlog");
+    const auto* last_graph_divergence_value = field(*decoded, "last_graph_divergence");
     const auto* capture_state = text_field(*decoded, "capture_state");
     const auto* capture_pending = unsigned_field(*decoded, "capture_pending");
     const auto* capture_overflow = unsigned_field(*decoded, "capture_overflow");
@@ -206,8 +303,9 @@ auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
     const auto* targets =
         targets_value ? std::get_if<cbor::value::array>(&targets_value->data) : nullptr;
     if (!running || !pid || !endpoint || !last_drip || !invalidated || !targets || !graph_keys ||
-        !graph_values || !graph_memory || !graph_ceiling || !capture_state || !capture_pending ||
-        !capture_overflow || !capture_recrawl || !capture_cursor) {
+        !graph_values || !graph_memory || !graph_ceiling || !graph_validation_backlog ||
+        !last_graph_divergence_value || !capture_state || !capture_pending || !capture_overflow ||
+        !capture_recrawl || !capture_cursor) {
         return std::unexpected(failure(errc::corrupt, "invalid daemon status"));
     }
     auto output = daemon_status{.running = *running,
@@ -223,7 +321,15 @@ auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
                                 .graph_keys = *graph_keys,
                                 .graph_values = *graph_values,
                                 .graph_memory_bytes = *graph_memory,
-                                .graph_memory_ceiling = *graph_ceiling};
+                                .graph_memory_ceiling = *graph_ceiling,
+                                .graph_validation_backlog = *graph_validation_backlog};
+    if (!std::holds_alternative<cbor::null>(last_graph_divergence_value->data)) {
+        auto divergence = decode_validation(*last_graph_divergence_value);
+        if (!divergence) {
+            return std::unexpected(divergence.error());
+        }
+        output.last_graph_divergence = std::move(*divergence);
+    }
     if (!last_drip->empty()) {
         auto parsed = parse_digest(*last_drip);
         if (!parsed) {
@@ -517,6 +623,7 @@ struct service_state {
     std::atomic<bool> stopping{};
     std::atomic<bool> stopped{};
     std::atomic<std::int64_t> last_activity_ns{};
+    std::chrono::steady_clock::time_point last_validation{};
 #ifndef _WIN32
     unix_handles handles;
 #endif
@@ -541,6 +648,7 @@ auto current_status(const std::shared_ptr<service_state>& state) -> daemon_statu
         }
     }
     const auto graph_status = state->query_graph.statistics();
+    const auto validation_status = state->query_graph.validation_status();
 #ifdef _WIN32
     const auto process_id = std::uint64_t{};
 #else
@@ -556,7 +664,9 @@ auto current_status(const std::shared_ptr<service_state>& state) -> daemon_statu
             .graph_keys = graph_status.keys,
             .graph_values = graph_status.resident_values,
             .graph_memory_bytes = graph_status.resident_value_bytes,
-            .graph_memory_ceiling = graph_status.memory_ceiling};
+            .graph_memory_ceiling = graph_status.memory_ceiling,
+            .graph_validation_backlog = validation_status.backlog,
+            .last_graph_divergence = validation_status.last_divergence};
 }
 
 auto service_state::enqueue(daemon_delivery delivery) -> void {
@@ -596,6 +706,17 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                 }
                 continue;
             }
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (state->query_graph.validation_status().backlog != 0 &&
+            now - state->last_validation >= state->options.graph_validation_interval) {
+            auto validated = co_await state->query_graph.validate(
+                {.rate = state->options.graph_validation_rate, .limit = 1});
+            if (!validated) {
+                co_return std::unexpected(validated.error());
+            }
+            state->last_validation = now;
+            continue;
         }
         const auto idle = std::chrono::steady_clock::duration{
             std::chrono::steady_clock::now().time_since_epoch().count() -
@@ -726,6 +847,11 @@ runtime::task<daemon> daemon::start(std::filesystem::path checkout, daemon_optio
             co_return std::unexpected(
                 failure(errc::invalid_argument, "daemon idle timeout must be positive"));
         }
+        if (options.graph_validation_rate == 0 ||
+            options.graph_validation_interval <= std::chrono::milliseconds{0}) {
+            co_return std::unexpected(failure(errc::invalid_argument,
+                                              "daemon graph validation settings must be positive"));
+        }
         auto state = std::make_shared<service_state>();
         state->checkout = std::move(checkout);
         state->directory = state->checkout / ".liquid" / "daemon";
@@ -751,7 +877,7 @@ runtime::task<daemon> daemon::start(std::filesystem::path checkout, daemon_optio
         state->handles = **handles;
         auto loaded_graph = co_await graph::open(
             state->directory / "query-graph",
-            query_registry{},
+            std::move(state->options.graph_queries),
             {.working_tree = state->checkout, .memory_ceiling = state->options.graph_memory});
         if (!loaded_graph) {
             co_return std::unexpected(loaded_graph.error());
