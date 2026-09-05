@@ -440,6 +440,16 @@ if(LIQUID_REALWORLD_TESTS)
   set_tests_properties(git-realworld PROPERTIES LABELS realworld)
 endif()
 
+option(LIQUID_CONTENT_CHAIN_TESTS "Register the opt-in content-addressed build chain" OFF)
+if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
+  add_test(NAME content-addressed-build-chain
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONTENT_CHAIN_ROOT=${CMAKE_CURRENT_BINARY_DIR}/content-addressed-build-chain
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/build/content-addressed-chain.cmake)
+  set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
+endif()
+
 add_executable(liquid-repository-scenario repository/scenario.cpp)
 target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)

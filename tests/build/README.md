@@ -91,6 +91,12 @@ Its cross-project case compiles an upstream object twice across a comment-only s
 both signed result claims into a downstream project, and asserts that the identical output tree
 causes zero downstream processes and a named unchanged-input explanation.
 
+`content-addressed-chain.cmake` is the opt-in `realworld` fixture. It fetches zlib 1.3.1 and libpng
+1.6.44 through pinned SHA-256 archives, builds zlib, builds libpng from zlib's named output tree,
+and links a small program from libpng's named output tree. It asserts the zero-process downstream
+comment-only rebuild and the changed-object link path, then prints all process counts and host load
+average.
+
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.
 

@@ -210,6 +210,26 @@ machines with different implementations have different sandbox digests and canno
 | ZIP, JAR, wheel, and other codec archives | Deferred to #29's `canonicalise`; this implementation does not add a second ZIP reader. |
 | Other bytes | Stored unchanged. Reproducibility verification detects any remaining producer variance. |
 
+### Measured cascade cutoff
+
+The privileged Linux `content-addressed-build-chain` fixture downloads SHA-256-pinned zlib 1.3.1
+and libpng 1.6.44 sources, builds representative real translation units and deterministic archives,
+and links a program that calls zlib through libpng's exported dependency tree. Each downstream
+project uses `--input` on the preceding normalized output tree. One recorded run reported:
+
+```text
+CHAIN initial zlib=6 libpng=9 program=2
+CHAIN comment zlib=2 libpng=0 program=0
+CHAIN semantic zlib=2 libpng=2 program=1
+CHAIN load_average=36.86 30.04 26.84 14/761 2004
+```
+
+The comment-only zlib edit executed its compiler path but reproduced the same complete output-tree
+digest, including the normalized archive, so neither downstream project started a process. The
+function-body edit changed the zlib object; libpng reran only the consumers of changed bytes and the
+program link reran. The load-average line is captured with the process counts so the measurement is
+interpretable under concurrent local container load.
+
 ## The sandbox: observation by the mount, enforcement by the platform
 
 Observation and enforcement are separate layers, and only enforcement differs per platform.
