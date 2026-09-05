@@ -55,6 +55,11 @@ are in [sbom.md](sbom.md).
 digests, algorithm id, and delta-record digest. Fetch verifies the signature and exact catalog to
 record mapping before loading the patch; [distribution.md](distribution.md#delta-encoding-for-delivery-64)
 defines the record and final target verification.
+`abi_compatibility/1` is issued automatically during action-result publication when a built shared
+library has an earlier descriptor for the same output path. The current library blob is its subject,
+`compatible_with` names the earlier blob, `compatibility` records the deterministic verdict, and
+`notes` records the change count. The repository device identity signs it through the same issuer
+path as provenance and SBOM claims. [abi.md](abi.md) defines extraction and verdict rules.
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's

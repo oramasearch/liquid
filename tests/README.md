@@ -93,6 +93,10 @@ rejection, and the DSSE/in-toto projection's canonical attestation digest round-
 cache-hit case also proves that the existing provenance attestation is reused without re-signing.
 Portable SBOM cases prove the SPDX/CycloneDX required structure, exact input and toolchain digests,
 nested-repository pins, signatures, and universal inference markers; CLI cases invoke both formats.
+Portable ABI cases decode digest-pinned ELF, Mach-O, and PE fixtures, while native shared-library
+fixtures exercise exported functions and objects, additions, removals, GNU symbol versions, debug
+signatures, canonical records, signed compatibility attestations, and stable CLI JSON. The
+privileged wrapper case checks the incompatible build event and opt-in failing exit status.
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
 `compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,

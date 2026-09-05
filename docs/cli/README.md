@@ -53,7 +53,7 @@ that the table and `liquid --help` name the same commands.
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
@@ -63,6 +63,7 @@ that the table and `liquid --help` name the same commands.
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
 | `policy` | `policy <check\|explain> [target]` | Check or explain build-input policy. | available |
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
+| `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
@@ -265,6 +266,15 @@ SPDX 2.3 or CycloneDX 1.5 document. A regular file with no producing result uses
 Mach-O, or PE composition analysis instead. The claim and every component then carry
 `inferred=true` and `derived=false`; the command never presents inferred components as graph facts.
 
+`abi show <path|digest> [--json]` prints a linked-library descriptor from a regular file or from the
+current repository's record for an output blob. `abi diff <a> <b> [--json]` compares two such
+operands; `<result-digest>:<output-path>` selects an exact build. The JSON projection is versioned
+and deterministic. An incompatible report is information and does not make `abi diff` fail.
+
+Successful wrapping prints one `abi-break:` line for every incompatible rebuilt library, including
+the previous blob and at most the first three sorted changes. It normally preserves the build exit
+status. `--fail-on-abi-break` changes a successful wrap to status 1 when any such event occurs.
+
 ## Examples
 
 ```sh
@@ -316,6 +326,8 @@ liquid policy check build/output.o
 liquid policy explain build/output.o
 liquid sbom build/output.o --spdx
 liquid sbom /usr/bin/tool --cyclonedx
+liquid abi show build/libexample.so --json
+liquid abi diff blake3:<old-result>:build/libexample.so blake3:<new-result>:build/libexample.so --json
 liquid wrap cmake -S . -B build -G Ninja
 liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
 liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081

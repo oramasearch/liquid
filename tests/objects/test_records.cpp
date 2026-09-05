@@ -145,6 +145,8 @@ TEST(Records, result_records_round_trip_positive_observed_time) {
     complete.started_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'001}};
     complete.finished_at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'002}};
     complete.provenance = example_digest(0x06);
+    complete.abis = {example_digest(0x07)};
+    complete.abi_compatibility = {example_digest(0x08)};
     complete.schedule =
         liquid::execution_schedule{.decision = liquid::execution_decision::race,
                                    .inputs = {.history = {{.exec = std::chrono::milliseconds{7}}},
@@ -179,6 +181,36 @@ TEST(Records, result_records_round_trip_positive_observed_time) {
     EXPECT_EQ(decoded->schedule->inputs.history.front().exec, std::chrono::milliseconds{7});
     EXPECT_EQ(decoded->schedule->inputs.remote_missing_bytes, 1024U);
     EXPECT_EQ(decoded->schedule->reason, "test race");
+    ASSERT_EQ(decoded->abis.size(), 1U);
+    EXPECT_EQ(liquid::to_string(decoded->abis.front()), liquid::to_string(complete.abis.front()));
+    ASSERT_EQ(decoded->abi_compatibility.size(), 1U);
+    EXPECT_EQ(liquid::to_string(decoded->abi_compatibility.front()),
+              liquid::to_string(complete.abi_compatibility.front()));
+}
+
+TEST(Records, abi_descriptors_are_canonical_and_round_trip) {
+    const auto descriptor =
+        liquid::abi_descriptor{.subject = example_digest(0x42),
+                               .binary = liquid::abi_binary_kind::elf,
+                               .architecture = "x86_64",
+                               .install_name = "libexample.so.1",
+                               .exported_symbols = {{.name = "example",
+                                                     .version = "EXAMPLE_1.0",
+                                                     .kind = liquid::abi_symbol_kind::function,
+                                                     .size = 17,
+                                                     .binding = "global",
+                                                     .visibility = "default",
+                                                     .signature = "int (const char *)"}},
+                               .needed_libraries = {"libc.so.6"}};
+
+    auto encoded = liquid::objects::encode(descriptor);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_abi(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(*decoded, descriptor);
+    auto reencoded = liquid::objects::encode(*decoded);
+    ASSERT_TRUE(reencoded) << reencoded.error().message;
+    EXPECT_EQ(*reencoded, *encoded);
 }
 
 TEST(Records, build_trace_round_trips_actions_edges_timing_and_cache_outcome) {

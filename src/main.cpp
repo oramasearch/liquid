@@ -60,6 +60,7 @@ auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
+auto abi(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -219,6 +220,11 @@ constexpr auto commands = std::to_array<command>({
      "print a derived or explicitly inferred SBOM",
      "available",
      liquid_cli::sbom},
+    {"abi",
+     "abi <show|diff> ... [--json]",
+     "show or compare library ABIs",
+     "available",
+     liquid_cli::abi},
     {"symbols",
      "symbols <path>",
      "show compiler or syntactic symbols for a source path",
@@ -227,7 +233,7 @@ constexpr auto commands = std::to_array<command>({
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "
-     "[--no-cache] [--no-verify] [--explain] <command> "
+     "[--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> "
      "[args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
