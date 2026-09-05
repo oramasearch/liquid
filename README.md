@@ -41,7 +41,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and removals, change cuts, references, snapshots, historical document state, composition,
 > conflict values, operation- and session-scoped local-intent undo, advisory
 > locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
-> and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
+> one-drip streaming file writes, and caller-stated write bases with stale-reasoning refusal,
+> disjoint re-validation, and forced re-planning records are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
 > Directory CRDT checkpoints are compact and shallow-loaded, remote changes are observed through
 > patches, and every automerge apply, merge, and sync-receive failure is checked.
@@ -355,8 +356,9 @@ target_link_libraries(app PRIVATE liquid::liquid)
 
 Submodule consumers may define `Boost::capy` and `Boost::corosio` first; liquid reuses those targets
 instead of adding its vendored checkouts again. The exact tested revisions and minimum-pin rule are
-documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite builds a
-separate lake-shaped consumer project with Capy, Corosio, and nlohmann/json already present.
+documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite installs the
+already-built package into a test-local prefix and builds a separate `find_package` consumer without
+rebuilding liquid or its dependencies.
 
 ## Implementation
 

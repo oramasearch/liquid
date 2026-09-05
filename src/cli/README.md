@@ -19,6 +19,11 @@ through the daemon, and consumes `build_handle` for both repository and `build -
 printing the stable JSON projection one event per line. `test.cpp` opens the wrapped build repository
 through the public repository API, runs an optional test filter, and prints each streamed test result.
 
+`repo.cpp` implements the scripted `write` command's base, cursor, dependency-path, and stale
+policy parsing through public repository APIs. Status projects persisted agent policy, and
+`log --ops --json` projects signed drip bases and re-validation results without reading repository
+storage directly.
+
 `anchor.cpp` parses `<path>:<line>@<change> --to <change>`, calls the public text-anchor mapper,
 and prints the target coordinate plus moved, approximate, and deleted state. It does not inspect
 repository storage or file contents.
@@ -61,8 +66,9 @@ the listener executor and never include the private protocol codec.
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 
-`history.cpp` implements `log --ops` and its `ops` alias through the public operation-log API.
-Both JSON forms include the operation session. Undo accepts one operation ID or a session with
+`history.cpp` implements `ops` through the public operation-log API. Its JSON form includes the
+operation session. `repo.cpp` implements `log --ops` through the signed drip API. Undo accepts one
+operation ID or a session with
 repeatable path and drip filters, and renders every applied or skipped report entry.
 
 `workers.cpp` implements the scheduler and worker daemons with flag-over-environment

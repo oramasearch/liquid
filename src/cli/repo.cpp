@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <print>
 #include <span>
 #include <string>
@@ -178,6 +179,16 @@ auto open_repository() -> liquid::result<liquid::repository> {
     return liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
 }
 
+auto strings_json(const std::vector<std::string>& values) -> std::string {
+    auto output = std::string{"["};
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        output += index == 0 ? "" : ",";
+        output += json_string(values[index]);
+    }
+    output += ']';
+    return output;
+}
+
 } // namespace
 
 auto repo_init(int argc, char** argv) -> int {
@@ -202,6 +213,66 @@ auto repo_init(int argc, char** argv) -> int {
         }
     }
     std::println("initialised {}", path.string());
+    return 0;
+}
+
+auto repo_write(int argc, char** argv) -> int {
+    if (argc < 5) {
+        return usage("write requires <path>, --from <file>, and --base <change>[@<cursor>]");
+    }
+    auto path = std::string{argv[0]};
+    auto source = std::optional<std::filesystem::path>{};
+    auto options = liquid::write_options{};
+    for (auto index = 1; index < argc; ++index) {
+        const auto argument = std::string_view{argv[index]};
+        if (argument == "--from" && index + 1 < argc) {
+            source = std::filesystem::path{argv[++index]};
+        } else if (argument == "--base" && index + 1 < argc) {
+            const auto value = std::string_view{argv[++index]};
+            const auto separator = value.find('@');
+            const auto change_text = value.substr(0, separator);
+            auto change = liquid::parse_digest(change_text);
+            if (!change) {
+                return fail(change.error());
+            }
+            auto base = liquid::write_base{.change = liquid::change_id{*change}};
+            if (separator != std::string_view::npos) {
+                const auto cursor = value.substr(separator + 1);
+                if (cursor.empty()) {
+                    return usage("write base cursor must not be empty");
+                }
+                base.cursor = liquid::journal_cursor{std::string{cursor}};
+            }
+            options.base = std::move(base);
+        } else if (argument == "--depends-on" && index + 1 < argc) {
+            options.depends_on.emplace_back(argv[++index]);
+        } else if (argument == "--on-stale" && index + 1 < argc) {
+            const auto choice = std::string_view{argv[++index]};
+            if (choice == "refuse") {
+                options.on_stale = liquid::write_options::stale_action::refuse;
+            } else if (choice == "disjoint") {
+                options.on_stale = liquid::write_options::stale_action::accept_if_disjoint;
+            } else if (choice == "force") {
+                options.on_stale = liquid::write_options::stale_action::force;
+            } else {
+                return usage("write --on-stale accepts refuse, disjoint, or force");
+            }
+        } else {
+            return usage("invalid write option");
+        }
+    }
+    if (!source || !options.base) {
+        return usage("write requires --from and --base");
+    }
+    auto repository = open_repository();
+    if (!repository) {
+        return fail(repository.error());
+    }
+    auto written = liquid::runtime::block_on(
+        repository->write_file(std::move(path), std::move(*source), std::move(options)));
+    if (!written) {
+        return fail(written.error());
+    }
     return 0;
 }
 
@@ -241,7 +312,8 @@ auto repo_status(int argc, char** argv) -> int {
     if (json) {
         std::println(
             "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
-            "directories\":{},\"head\":{},\"capture\":{{\"state\":{},\"pending_drips\":{},"
+            "directories\":{},\"head\":{},\"agents\":{{\"require_base\":{},\"actors\":{}}},"
+            "\"capture\":{{\"state\":{},\"pending_drips\":{},"
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
             "\"daemon\":{{\"available\":{},\"running\":{},"
             "\"pid\":{},\"graph_keys\":{},\"graph_values\":{},\"graph_memory\":{},"
@@ -254,6 +326,8 @@ auto repo_status(int argc, char** argv) -> int {
             current->conflicts.size(),
             current->oversized_directories.size(),
             current->head ? json_string(head) : "null",
+            current->agents.require_base ? "true" : "false",
+            strings_json(current->agents.actors),
             json_string(daemon_current && daemon_current->capture.state ==
                                               liquid::capture_status::state::paused
                             ? "paused"
@@ -283,6 +357,10 @@ auto repo_status(int argc, char** argv) -> int {
         std::println("conflicts={}", current->conflicts.size());
         std::println("oversized_directories={}", current->oversized_directories.size());
         std::println("head={}", head);
+        std::println("agents_require_base={}", current->agents.require_base);
+        for (const auto& actor : current->agents.actors) {
+            std::println("agent_actor={}", actor);
+        }
         std::println("daemon_available={}", daemon_current.has_value());
         std::println("capture_state={}",
                      daemon_current &&
@@ -340,18 +418,72 @@ auto repo_status(int argc, char** argv) -> int {
 }
 
 auto repo_log(int argc, char** argv) -> int {
-    if (argc >= 1 && std::string_view{argv[0]} == "--ops") {
-        return history_operations(argc - 1, argv + 1);
-    }
     auto json = false;
-    if (argc == 1 && std::string_view{argv[0]} == "--json") {
-        json = true;
-    } else if (argc != 0) {
-        return usage("log accepts --json or --ops [--json]");
+    auto ops = false;
+    for (auto index = 0; index < argc; ++index) {
+        const auto argument = std::string_view{argv[index]};
+        if (argument == "--json") {
+            json = true;
+        } else if (argument == "--ops") {
+            ops = true;
+        } else {
+            return usage("log accepts only --ops and --json");
+        }
     }
     auto repository = open_repository();
     if (!repository) {
         return fail(repository.error());
+    }
+    if (ops) {
+        auto drips = liquid::runtime::block_on(repository->drips());
+        if (!drips) {
+            return fail(drips.error());
+        }
+        if (json) {
+            std::print("[");
+            for (std::size_t index = 0; index < drips->size(); ++index) {
+                const auto& drip = (*drips)[index];
+                auto paths = std::vector<std::string>{};
+                for (const auto& operation : drip.ops) {
+                    paths.push_back(operation.path);
+                }
+                const auto reasoned_from =
+                    drip.reasoned_from
+                        ? json_string(liquid::to_string(drip.reasoned_from->change.value))
+                        : "null";
+                const auto cursor = drip.reasoned_from && drip.reasoned_from->cursor
+                                        ? json_string(drip.reasoned_from->cursor->token)
+                                        : "null";
+                const auto revalidated =
+                    !drip.revalidated
+                        ? "null"
+                        : json_string(*drip.revalidated == liquid::stale_revalidation::disjoint
+                                          ? "disjoint"
+                                          : "forced");
+                std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},\"at\":{},"
+                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{}}}",
+                           index == 0 ? "" : ",",
+                           json_string(liquid::to_string(drip.id.value)),
+                           json_string(liquid::to_string(drip.base.value)),
+                           strings_json(paths),
+                           json_string(drip.by.taap_id),
+                           drip.at.time_since_epoch().count(),
+                           reasoned_from,
+                           cursor,
+                           revalidated);
+            }
+            std::println("]");
+        } else {
+            for (const auto& drip : *drips) {
+                std::println("{} {} {}",
+                             liquid::to_string(drip.id.value),
+                             drip.by.taap_id,
+                             drip.revalidated == liquid::stale_revalidation::disjoint ? "disjoint"
+                             : drip.revalidated == liquid::stale_revalidation::forced ? "forced"
+                                                                                      : "");
+            }
+        }
+        return 0;
     }
     auto changes = liquid::runtime::block_on(repository->log());
     if (!changes) {

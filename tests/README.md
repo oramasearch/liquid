@@ -49,6 +49,10 @@ deleted regions and files, and a renamed node in one unsorted batch. CLI scenari
 command-documentation tests live in `cli/`. `test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
+`test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
+drip bodies, same-path line-hunk reports, declared read dependencies, disjoint and forced records,
+and a synchronized replica whose signed write arrives before refusal. The CLI scenario
+also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
 exclusion, and parse the CLI explanation contract. The opt-in measurement target records scan and
@@ -122,11 +126,12 @@ The privileged Linux build suite also proves eligible actions reject and name a 
 unknown-field retention, hash selection, and liquid record conversion. The codec stays private to
 libliquid, so this target compiles its private sources directly for static and shared builds.
 
-`consumer/` is an independent CMake project that adds the pinned Capy and Corosio checkouts plus
-nlohmann/json before liquid, then builds and runs an executable linked to `liquid::liquid`.
-`consumer-project-build` configures and builds it as one CTest step with the parent build's compiler
-and static/shared setting. `cli-identity-codec` creates and rotates an identity through the CLI,
-then decodes, re-encodes, and verifies the stored canonical-CBOR files through public libliquid API.
+`consumer/` is an independent CMake project that finds the installed liquid package, then builds
+and runs an executable linked to `liquid::liquid`. `consumer-project-build` installs the already-
+built parent artifacts into a test-local prefix, configures the consumer with the parent generator
+and C++ compiler, and compiles only the consumer source. `cli-identity-codec` creates and rotates an
+identity through the CLI, then decodes, re-encodes, and verifies the stored canonical-CBOR files
+through public libliquid API.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.

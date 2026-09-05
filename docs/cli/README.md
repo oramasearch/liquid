@@ -24,9 +24,10 @@ that the table and `liquid --help` name the same commands.
 | `version` | `version [--json]` | Print the library version. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `status` | `status [--json]` | Show repository status. | available |
+| `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
-| `log` | `log [--ops] [--json]` | Show change history, or recorded operations newest first. | available |
+| `log` | `log [--ops] [--json]` | Show change or signed drip history. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
@@ -38,7 +39,7 @@ that the table and `liquid --help` name the same commands.
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
 | `split` | `split <path> <into>` | Split a subtree into a repository. | available |
 | `combine` | `combine <repository> [--at <path>]` | Combine another repository. | available |
-| `ops` | `ops [--json]` | Alias for `log --ops`. | available |
+| `ops` | `ops [--json]` | List recorded operations. | available |
 | `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
 | `lock` | `lock <path>` | Advisory-lock a path. | available |
 | `unlock` | `unlock <path>` | Remove an advisory lock. | available |
@@ -75,14 +76,16 @@ that the table and `liquid --help` name the same commands.
 ## Output and errors
 
 `status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
-stats` accept `--json`. Operation JSON includes the stable operation-kind vocabulary and the
+stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
+and re-validation result. `ops --json` includes the stable operation-kind vocabulary and the
 32-digit session ID. `undo` prints one `applied <op-id>` line per inverse it appended and one
 `skipped <op-id> <path> <reason>` line when newer state prevented a path from changing. A session
 may be narrowed by repeating `--path` or `--drip`; those selectors require `--session` and cannot
 be combined with a positional operation ID.
 
-`status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
-remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
+`status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
+but not present in the local store, plus `agents.require_base` and the configured actor list.
+Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
 adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
@@ -118,6 +121,13 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`write` is the scripted-agent file path. `--base` names the change the caller read and may append
+the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read
+while planning. The default `--on-stale refuse` returns a conflict when head or journal state moved;
+`disjoint` accepts only an untouched written/read set, and `force` records a caller that already
+re-planned against `repository::explain_stale`. `log --ops --json` projects `reasoned_from`, cursor,
+paths, and `revalidated` (`disjoint`, `forced`, or null) from the signed body.
 
 `delta create <source> <target>` stores both artifacts, a `zstd-patch` blob, its delta record, and
 a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <delta> <source>
@@ -357,8 +367,8 @@ liquid watch
 
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
 two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
-combines it, reads JSON history and `log --ops`, exercises the `ops` alias, undoes a selected
-session path, verifies a locked mutation is
+combines it, reads JSON history and signed drips through `log --ops`, reads recorded operations
+through `ops`, undoes a selected session path, verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.
