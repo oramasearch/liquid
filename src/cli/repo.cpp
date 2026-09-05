@@ -20,6 +20,8 @@ namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
 auto history_operations(int argc, char** argv) -> int;
+auto log_timestamps(int argc, char** argv) -> int;
+auto verify_log_timestamps(int argc, char** argv) -> int;
 
 namespace {
 
@@ -418,72 +420,25 @@ auto repo_status(int argc, char** argv) -> int {
 }
 
 auto repo_log(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "timestamps") {
+        return log_timestamps(argc - 1, argv + 1);
+    }
+    if (argc >= 1 && std::string_view{argv[0]} == "verify") {
+        return verify_log_timestamps(argc - 1, argv + 1);
+    }
+    if (argc >= 1 && std::string_view{argv[0]} == "--ops") {
+        return history_operations(argc - 1, argv + 1);
+    }
     auto json = false;
-    auto ops = false;
-    for (auto index = 0; index < argc; ++index) {
-        const auto argument = std::string_view{argv[index]};
-        if (argument == "--json") {
-            json = true;
-        } else if (argument == "--ops") {
-            ops = true;
-        } else {
-            return usage("log accepts only --ops and --json");
-        }
+    if (argc == 1 && std::string_view{argv[0]} == "--json") {
+        json = true;
+    } else if (argc != 0) {
+        return usage(
+            "log accepts --json, --ops [--json], timestamps <log-url>, or verify --timestamps");
     }
     auto repository = open_repository();
     if (!repository) {
         return fail(repository.error());
-    }
-    if (ops) {
-        auto drips = liquid::runtime::block_on(repository->drips());
-        if (!drips) {
-            return fail(drips.error());
-        }
-        if (json) {
-            std::print("[");
-            for (std::size_t index = 0; index < drips->size(); ++index) {
-                const auto& drip = (*drips)[index];
-                auto paths = std::vector<std::string>{};
-                for (const auto& operation : drip.ops) {
-                    paths.push_back(operation.path);
-                }
-                const auto reasoned_from =
-                    drip.reasoned_from
-                        ? json_string(liquid::to_string(drip.reasoned_from->change.value))
-                        : "null";
-                const auto cursor = drip.reasoned_from && drip.reasoned_from->cursor
-                                        ? json_string(drip.reasoned_from->cursor->token)
-                                        : "null";
-                const auto revalidated =
-                    !drip.revalidated
-                        ? "null"
-                        : json_string(*drip.revalidated == liquid::stale_revalidation::disjoint
-                                          ? "disjoint"
-                                          : "forced");
-                std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},\"at\":{},"
-                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{}}}",
-                           index == 0 ? "" : ",",
-                           json_string(liquid::to_string(drip.id.value)),
-                           json_string(liquid::to_string(drip.base.value)),
-                           strings_json(paths),
-                           json_string(drip.by.taap_id),
-                           drip.at.time_since_epoch().count(),
-                           reasoned_from,
-                           cursor,
-                           revalidated);
-            }
-            std::println("]");
-        } else {
-            for (const auto& drip : *drips) {
-                std::println("{} {} {}",
-                             liquid::to_string(drip.id.value),
-                             drip.by.taap_id,
-                             drip.revalidated == liquid::stale_revalidation::disjoint ? "disjoint"
-                             : drip.revalidated == liquid::stale_revalidation::forced ? "forced"
-                                                                                      : "");
-            }
-        }
-        return 0;
     }
     auto changes = liquid::runtime::block_on(repository->log());
     if (!changes) {

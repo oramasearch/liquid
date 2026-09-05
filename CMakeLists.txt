@@ -540,6 +540,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/symbols.cpp
     src/cli/serve.cpp
     src/cli/sync.cpp
+    src/cli/transparency.cpp
     src/cli/test.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
@@ -553,7 +554,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE
-    liquid::liquid Boost::corosio Boost::http)
+    liquid::liquid Boost::corosio Boost::corosio_openssl Boost::http Boost::json)
 endif()
 
 # -----------------------------------------------------------------------------

@@ -9,6 +9,8 @@ Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, i
 identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
 `transparency/` records how the initial and renewed RFC 4998 fixtures were generated through lake's
 production timestamp service and contains the timestamp, trust, tampering, and renewal cases.
+The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
+URL or explicit TSA anchor file is absent.
 
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on

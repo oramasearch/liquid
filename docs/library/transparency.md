@@ -65,3 +65,15 @@ the CMS signature and TSA path at that generation time. Evidence verification ac
 DER record plus the decoded checkpoint signature value. It requires lake's version-1, one-algorithm,
 one-chain shape and verifies the first token over that signature value. Every later token is
 verified over the complete preserved DER of its immediate `ArchiveTimeStamp` predecessor.
+
+## Command line
+
+`liquid log timestamps <log-url>` fetches the current checkpoint and its lake-produced timestamp
+evidence for inspection. `liquid log verify --timestamps` takes its endpoint from `LIQUID_LOG_URL`,
+loads pinned PEM anchors from `LIQUID_TSA_TRUST_CERT`, fetches both records, decodes their base64url
+values strictly, and calls `evidence_record::verify`. `LIQUID_TOKEN` is forwarded as an optional
+bearer credential. No TSA is trusted by default, and system certificate roots are not consulted.
+
+The timestamp command verifies the RFC 3161 and RFC 4998 relationship to the checkpoint signature
+value. Authentication of the lake checkpoint signature, tiles, and inclusion or consistency proofs
+belongs to liquid #207 and composes with this check.
