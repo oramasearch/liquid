@@ -27,7 +27,7 @@ that the table and `liquid --help` name the same commands.
 | `log` | `log [--json]` | Show change history. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
-| `push` | `push <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
+| `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
 | `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
@@ -72,13 +72,22 @@ that the table and `liquid --help` name the same commands.
 `status`, `log`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache stats` accept
 `--json`; `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
 remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
-chunk. Its `daemon` object reports availability, process id, the last triggered drip, and graph
-memory counts, validation backlog, and the last graph divergence with its query and inputs. Text
-status adds one `daemon_target` line per ordered target with its cursor, distance behind capture,
-and successful delivery count.
-`push` and `pull` print metadata item, object, byte, and cursor counts. They use `LIQUID_TOKEN` as
-an optional bearer credential and never print it. A URL must use HTTP or HTTPS and identify one
-lake repository.
+chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
+counts, validation backlog, and the last graph divergence with its query and inputs. Text status
+adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
+successful delivery count.
+`push` and `pull` print metadata item, object, byte, and cursor counts. `push` then prints exactly
+one line per requested ref:
+
+```text
+reference=refs/heads/feature outcome=applied
+reference=refs/heads/main outcome=refused reason=branch requires approval
+```
+
+Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refuse every ref. A
+completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
+use `LIQUID_TOKEN` as an optional bearer credential and never print it. A URL must use HTTP or HTTPS
+and identify one lake repository.
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
@@ -86,10 +95,10 @@ sets `approximate`; and a removed line or file sets `deleted`.
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
-pattern; `*` matches any sequence and `?` one character. Supplying the flag rejects the complete
-push when any ref is outside all allowed patterns. Without it there is no built-in authentication
-policy, so the default is appropriate for local use; network services embed the public server with
-their own authorization callback.
+pattern; `*` matches any sequence and `?` one character. Supplying the flag refuses each ref outside
+all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
+there is no built-in authentication policy, so the default is appropriate for local use; network
+services embed the public server with their own authorization callback.
 `version --json` is also available for scripts. Text output is line-oriented and stable. A library
 error always has this shape and exits with status 1:
 

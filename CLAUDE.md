@@ -73,7 +73,8 @@ patch-based remote observation. Repositories can use a caller-owned shared store
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,
 missing-object sessions, the HTTP/1.1 lake client, and CLI push/pull. Liquid #165 adds the public
 repository sync server and the `serve sync` HTTP adapter; liquid #177 adds per-change and
-change-graph-derived reference authorization. Full materialisation works on
+change-graph-derived reference authorization; liquid #189 adds per-reference accepted/refused
+outcomes and opt-in atomic pushes. Full materialisation works on
 every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,

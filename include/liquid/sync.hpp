@@ -50,17 +50,27 @@ struct LIQUID_EXPORT sync_transfer_report {
     std::uint64_t bytes{};
 };
 
+enum class sync_ref_outcome_kind : std::uint8_t { applied = 1, refused = 2 };
+
+struct LIQUID_EXPORT sync_ref_outcome {
+    std::string name;
+    sync_ref_outcome_kind outcome{sync_ref_outcome_kind::applied};
+    std::string reason;
+};
+
 struct LIQUID_EXPORT sync_report {
     journal_cursor cursor;
     std::uint64_t metadata_items{};
     sync_transfer_report sent;
     sync_transfer_report received;
+    std::vector<sync_ref_outcome> references;
 };
 
 struct LIQUID_EXPORT sync_endpoint_options {
     std::string bearer_token;
     journal_cursor cursor;
     std::size_t batch_items{256};
+    bool atomic{};
 };
 
 struct LIQUID_EXPORT sync_ref_update {
@@ -70,7 +80,15 @@ struct LIQUID_EXPORT sync_ref_update {
     bool fast_forward{};
 };
 
-using sync_authorizer = std::function<runtime::task<void>(
+enum class sync_ref_verdict_kind : std::uint8_t { accepted = 1, refused = 2 };
+
+struct LIQUID_EXPORT sync_ref_verdict {
+    std::string name;
+    sync_ref_verdict_kind verdict{sync_ref_verdict_kind::accepted};
+    std::string reason;
+};
+
+using sync_authorizer = std::function<runtime::task<std::vector<sync_ref_verdict>>(
     const sync_item&, std::span<const sync_ref_update> reference_updates)>;
 
 struct LIQUID_EXPORT sync_server_options {

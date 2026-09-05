@@ -94,7 +94,7 @@ constexpr auto commands = std::to_array<command>({
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
     {"push",
-     "push <url>",
+     "push [--atomic] <url>",
      "push repository changes and objects",
      "available",
      liquid_cli::sync_push},
