@@ -24,7 +24,8 @@ historical snapshot without replaying that history through the working-tree docu
 `liquid init`, `liquid import <path>`, and the build wrapper. It reports the optional one-drip
 import identifier and file and byte counts. `.liquidignore` and caller patterns exclude paths;
 links are skipped unless `follow_symlinks` is selected. The working tree is compared by blob
-identity while it is walked, so an unchanged import produces no drip.
+identity while it is walked, so an unchanged import produces no drip and a non-empty drip names
+only the changed paths.
 
 ## Repository metadata
 

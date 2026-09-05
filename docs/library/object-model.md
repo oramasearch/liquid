@@ -221,8 +221,9 @@ field without changing these path, identity, conflict, or text fields.
 `repository::import_tree(root, import_options)` walks a local directory one directory at a time,
 hashes every included regular file through the object store, and compares the resulting blob record
 identity with the current working tree. Only added, removed, content-changed, or mode-changed
-entries alter the tree. A non-empty import records one `import` drip; an unchanged tree returns no
-drip. `tree_import_report` returns that optional drip identifier plus `files_seen`, `changed`,
+entries alter the tree. A non-empty import records one `import` drip whose entry list contains only
+the changed paths; an unchanged tree returns no drip. `tree_import_report` returns that optional
+drip identifier plus `files_seen`, `changed`,
 `bytes_hashed`, and `bytes_written`.
 
 `import_options::ignore_patterns` supplements `.liquidignore` at the imported root. Patterns use

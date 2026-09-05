@@ -1872,14 +1872,24 @@ struct repository::impl {
                                    reinterpret_cast<const std::byte*>(text.data() + text.size())};
         co_return co_await store_detail::write_file(journal_marker(), std::move(encoded));
     }
-    runtime::task<void>
-    append_drip(std::string operation, const node_id& node, std::chrono::sys_seconds at) {
-        auto body = cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
-                                      {"kind", "drip"},
-                                      {"author", cbor::value{signing_key.identity().taap_id}},
-                                      {"at", cbor::value{at.time_since_epoch().count()}},
-                                      {"node", bytes(node)},
-                                      {"operation", cbor::value{std::move(operation)}}}));
+    runtime::task<void> append_drip(std::string operation,
+                                    const node_id& node,
+                                    std::chrono::sys_seconds at,
+                                    std::span<const std::string> changed_paths = {}) {
+        auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{1}}},
+                                       {"kind", "drip"},
+                                       {"author", cbor::value{signing_key.identity().taap_id}},
+                                       {"at", cbor::value{at.time_since_epoch().count()}},
+                                       {"node", bytes(node)},
+                                       {"operation", cbor::value{std::move(operation)}}};
+        if (!changed_paths.empty()) {
+            auto entries = cbor::value::array{};
+            for (const auto& path : changed_paths) {
+                entries.push_back(cbor::value{path});
+            }
+            fields.emplace_back("entries", cbor::value{std::move(entries)});
+        }
+        auto body = cbor::encode(cbor::value{std::move(fields)});
         if (!body) {
             co_return std::unexpected(body.error());
         }
@@ -2297,7 +2307,8 @@ struct repository::impl {
                                          const std::filesystem::path& directory,
                                          std::string relative,
                                          const import_options& options,
-                                         tree_import_report& report) {
+                                         tree_import_report& report,
+                                         std::vector<std::string>& changed_paths) {
         auto code = std::error_code{};
         const auto flags =
             std::filesystem::directory_options::skip_permission_denied |
@@ -2345,7 +2356,7 @@ struct repository::impl {
                                 .first;
                 }
                 auto imported = co_await import_directory(
-                    found->second, iterator->path(), path, options, report);
+                    found->second, iterator->path(), path, options, report, changed_paths);
                 if (!imported) {
                     co_return std::unexpected(imported.error());
                 }
@@ -2398,6 +2409,7 @@ struct repository::impl {
             }
             ++report.changed;
             report.bytes_written += size;
+            changed_paths.push_back(path);
         }
         if (code) {
             co_return std::unexpected(failure(errc::io, code.message(), directory.string()));
@@ -2414,6 +2426,7 @@ struct repository::impl {
                 code.clear();
                 if (found->second.kind == entry_kind::file) {
                     ++report.changed;
+                    changed_paths.push_back(path);
                 }
                 found = destination.entries.erase(found);
                 continue;
@@ -2733,8 +2746,9 @@ runtime::task<tree_import_report> repository::import_tree(std::filesystem::path 
         options.ignore_patterns.push_back(std::move(pattern));
     }
     auto report = tree_import_report{};
-    auto imported =
-        co_await impl_->import_directory(impl_->current.root, root, {}, options, report);
+    auto changed_paths = std::vector<std::string>{};
+    auto imported = co_await impl_->import_directory(
+        impl_->current.root, root, {}, options, report, changed_paths);
     if (!imported) {
         co_return std::unexpected(imported.error());
     }
@@ -2752,7 +2766,7 @@ runtime::task<tree_import_report> repository::import_tree(std::filesystem::path 
                             impl_->current.root.node,
                             std::nullopt);
     const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    auto drip = co_await impl_->append_drip("import", impl_->current.root.node, at);
+    auto drip = co_await impl_->append_drip("import", impl_->current.root.node, at, changed_paths);
     if (!drip) {
         co_return std::unexpected(drip.error());
     }
