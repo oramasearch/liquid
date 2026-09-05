@@ -360,6 +360,7 @@ set_target_properties(liquid_metadata_objects PROPERTIES
 add_library(libliquid
   src/attestation/registry.cpp
   src/build/cache.cpp
+  src/build/events.cpp
   src/build/executor.cpp
   src/build/distribution.cpp
   src/build/enumeration.cpp
@@ -372,6 +373,7 @@ add_library(libliquid
   src/build/why.cpp
   src/build/policy.cpp
   src/build/sbom.cpp
+  src/build/tests.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
@@ -531,7 +533,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/symbols.cpp
     src/cli/serve.cpp
     src/cli/sync.cpp
-    src/cli/serve.cpp
+    src/cli/test.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp

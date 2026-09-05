@@ -28,10 +28,12 @@
 #include <unistd.h>
 #endif
 
+#include "build/events.hpp"
 #include "daemon/fanout.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/repository.hpp"
 #include "search/index.hpp"
 
 namespace liquid {
@@ -76,6 +78,288 @@ auto unsigned_field(const cbor::value& source, std::string_view name) -> const s
 auto bool_field(const cbor::value& source, std::string_view name) -> const bool* {
     const auto* value = field(source, name);
     return value ? std::get_if<bool>(&value->data) : nullptr;
+}
+
+auto strings_value(const std::vector<std::string>& values) -> cbor::value {
+    auto output = cbor::value::array{};
+    output.reserve(values.size());
+    for (const auto& value : values) {
+        output.emplace_back(value);
+    }
+    return cbor::value{std::move(output)};
+}
+
+auto decode_strings(const cbor::value& source, std::string_view name)
+    -> result<std::vector<std::string>> {
+    const auto* value = field(source, name);
+    const auto* array = value ? std::get_if<cbor::value::array>(&value->data) : nullptr;
+    if (!array) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon string array"));
+    }
+    auto output = std::vector<std::string>{};
+    output.reserve(array->size());
+    for (const auto& item : *array) {
+        const auto* text = std::get_if<std::string>(&item.data);
+        if (!text) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon string value"));
+        }
+        output.push_back(*text);
+    }
+    return output;
+}
+
+auto action_input_value(const action_input& input) -> cbor::value {
+    auto environment = cbor::value::array{};
+    for (const auto& [name, value] : input.env) {
+        environment.push_back(map({{"name", name}, {"value", value}}));
+    }
+    return map(
+        {{"command", strings_value(input.command)},
+         {"cwd", input.cwd},
+         {"environment", cbor::value{std::move(environment)}},
+         {"outputs", strings_value(input.outputs)},
+         {"inputs", to_string(input.inputs)},
+         {"toolchain", to_string(input.toolchain)},
+         {"os", input.platform.os},
+         {"arch", input.platform.arch},
+         {"timeout",
+          input.timeout ? static_cast<std::uint64_t>(input.timeout->count()) : std::uint64_t{}},
+         {"has_timeout", input.timeout.has_value()},
+         {"remote_eligible", input.remote_eligible}});
+}
+
+auto decode_action_input(const cbor::value& source) -> result<action_input> {
+    auto command = decode_strings(source, "command");
+    auto outputs = decode_strings(source, "outputs");
+    const auto* cwd = text_field(source, "cwd");
+    const auto* environment_value = field(source, "environment");
+    const auto* environment =
+        environment_value ? std::get_if<cbor::value::array>(&environment_value->data) : nullptr;
+    const auto* inputs_text = text_field(source, "inputs");
+    const auto* toolchain_text = text_field(source, "toolchain");
+    const auto* os = text_field(source, "os");
+    const auto* arch = text_field(source, "arch");
+    const auto* timeout = unsigned_field(source, "timeout");
+    const auto* has_timeout = bool_field(source, "has_timeout");
+    const auto* remote_eligible = bool_field(source, "remote_eligible");
+    if (!command || !outputs || !cwd || !environment || !inputs_text || !toolchain_text || !os ||
+        !arch || !timeout || !has_timeout || !remote_eligible) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build input"));
+    }
+    auto inputs = parse_digest(*inputs_text);
+    auto toolchain = parse_digest(*toolchain_text);
+    if (!inputs || !toolchain) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build digest"));
+    }
+    auto output = action_input{.command = std::move(*command),
+                               .cwd = *cwd,
+                               .outputs = std::move(*outputs),
+                               .inputs = *inputs,
+                               .toolchain = *toolchain,
+                               .platform = {*os, *arch},
+                               .remote_eligible = *remote_eligible};
+    if (*has_timeout) {
+        output.timeout = std::chrono::seconds{*timeout};
+    }
+    for (const auto& item : *environment) {
+        const auto* name = text_field(item, "name");
+        const auto* value = text_field(item, "value");
+        if (!name || !value) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon build environment"));
+        }
+        output.env.emplace(*name, *value);
+    }
+    return output;
+}
+
+auto build_event_value(const build_event& event) -> cbor::value {
+    auto outputs = cbor::value::array{};
+    for (const auto& output : event.outputs) {
+        outputs.push_back(map({{"path", output.path},
+                               {"mode", static_cast<std::uint64_t>(output.mode)},
+                               {"blob", to_string(output.blob)}}));
+    }
+    auto diagnostics = cbor::value::array{};
+    for (const auto& diagnostic : event.diagnostics) {
+        diagnostics.push_back(map({{"file", diagnostic.file},
+                                   {"line", diagnostic.line},
+                                   {"column", diagnostic.column},
+                                   {"severity", static_cast<std::uint64_t>(diagnostic.severity)},
+                                   {"message", diagnostic.message}}));
+    }
+    auto critical_path = cbor::value::array{};
+    for (const auto& action : event.critical_path) {
+        critical_path.push_back(
+            map({{"action", to_string(action.action)},
+                 {"result", to_string(action.result.value)},
+                 {"duration", static_cast<std::uint64_t>(action.duration.count())},
+                 {"cache", static_cast<std::uint64_t>(action.cache)}}));
+    }
+    auto execution = cbor::value{};
+    if (event.execution) {
+        execution = map({{"kind", static_cast<std::uint64_t>(event.execution->kind)},
+                         {"worker", event.execution->worker}});
+    }
+    auto test = cbor::value{};
+    if (event.test) {
+        test = map({{"name", event.test->name},
+                    {"status", static_cast<std::uint64_t>(event.test->status)},
+                    {"output", event.test->output},
+                    {"duration", static_cast<std::uint64_t>(event.test->duration.count())},
+                    {"hit", event.test->hit}});
+    }
+    auto summary = cbor::value{};
+    if (event.summary) {
+        summary = map({{"exit", static_cast<std::uint64_t>(event.summary->exit)},
+                       {"actions", event.summary->actions},
+                       {"hits", event.summary->hits},
+                       {"failures", event.summary->failures},
+                       {"duration", static_cast<std::uint64_t>(event.summary->duration.count())}});
+    }
+    return map({{"sequence", event.sequence},
+                {"kind", static_cast<std::uint64_t>(event.kind)},
+                {"action", event.action ? to_string(*event.action) : ""},
+                {"result", event.result ? to_string(event.result->value) : ""},
+                {"execution", std::move(execution)},
+                {"outputs", cbor::value{std::move(outputs)}},
+                {"diagnostics", cbor::value{std::move(diagnostics)}},
+                {"critical_path", cbor::value{std::move(critical_path)}},
+                {"test", std::move(test)},
+                {"summary", std::move(summary)}});
+}
+
+auto parse_event_digest(const std::string& text, std::string_view field_name)
+    -> result<std::optional<digest>> {
+    if (text.empty()) {
+        return std::optional<digest>{};
+    }
+    auto parsed = parse_digest(text);
+    if (!parsed) {
+        return std::unexpected(
+            failure(errc::corrupt, "invalid daemon build event digest", std::string{field_name}));
+    }
+    return std::optional<digest>{*parsed};
+}
+
+auto decode_build_event(const cbor::value& source) -> result<build_event> {
+    const auto* sequence = unsigned_field(source, "sequence");
+    const auto* kind = unsigned_field(source, "kind");
+    const auto* action_text = text_field(source, "action");
+    const auto* result_text = text_field(source, "result");
+    const auto* execution_value = field(source, "execution");
+    const auto* outputs_value = field(source, "outputs");
+    const auto* diagnostics_value = field(source, "diagnostics");
+    const auto* critical_value = field(source, "critical_path");
+    const auto* test_value = field(source, "test");
+    const auto* summary_value = field(source, "summary");
+    const auto* outputs =
+        outputs_value ? std::get_if<cbor::value::array>(&outputs_value->data) : nullptr;
+    const auto* diagnostics =
+        diagnostics_value ? std::get_if<cbor::value::array>(&diagnostics_value->data) : nullptr;
+    const auto* critical =
+        critical_value ? std::get_if<cbor::value::array>(&critical_value->data) : nullptr;
+    if (!sequence || !kind ||
+        *kind > static_cast<std::uint64_t>(build_event_kind::build_finished) || !action_text ||
+        !result_text || !execution_value || !outputs || !diagnostics || !critical || !test_value ||
+        !summary_value) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build event"));
+    }
+    auto action = parse_event_digest(*action_text, "action");
+    auto result_value = parse_event_digest(*result_text, "result");
+    if (!action || !result_value) {
+        return std::unexpected(action ? result_value.error() : action.error());
+    }
+    auto event = build_event{
+        .kind = static_cast<build_event_kind>(*kind), .sequence = *sequence, .action = *action};
+    if (*result_value) {
+        event.result = result_id{**result_value};
+    }
+    if (!std::holds_alternative<cbor::null>(execution_value->data)) {
+        const auto* execution_kind = unsigned_field(*execution_value, "kind");
+        const auto* worker = text_field(*execution_value, "worker");
+        if (!execution_kind || *execution_kind > 1 || !worker) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon build execution"));
+        }
+        event.execution =
+            action_execution{static_cast<action_execution_kind>(*execution_kind), *worker};
+    }
+    for (const auto& item : *outputs) {
+        const auto* path = text_field(item, "path");
+        const auto* mode = unsigned_field(item, "mode");
+        const auto* blob_text = text_field(item, "blob");
+        if (!path || !mode || !blob_text) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon build output"));
+        }
+        auto blob = parse_digest(*blob_text);
+        if (!blob) {
+            return std::unexpected(blob.error());
+        }
+        event.outputs.push_back({*path, static_cast<std::uint32_t>(*mode), *blob});
+    }
+    for (const auto& item : *diagnostics) {
+        const auto* file = text_field(item, "file");
+        const auto* line = unsigned_field(item, "line");
+        const auto* column = unsigned_field(item, "column");
+        const auto* severity = unsigned_field(item, "severity");
+        const auto* message = text_field(item, "message");
+        if (!file || !line || !column || !severity || *severity > 3 || !message) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon build diagnostic"));
+        }
+        event.diagnostics.push_back({*file,
+                                     *line,
+                                     *column,
+                                     static_cast<frontend_diagnostic_severity>(*severity),
+                                     *message});
+    }
+    for (const auto& item : *critical) {
+        const auto* action_value = text_field(item, "action");
+        const auto* result_id_value = text_field(item, "result");
+        const auto* duration = unsigned_field(item, "duration");
+        const auto* cache = unsigned_field(item, "cache");
+        if (!action_value || !result_id_value || !duration || !cache || *cache > 2) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon critical path"));
+        }
+        auto action_id = parse_digest(*action_value);
+        auto result_id_digest = parse_digest(*result_id_value);
+        if (!action_id || !result_id_digest) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon critical path digest"));
+        }
+        event.critical_path.push_back({.result = {std::move(*result_id_digest)},
+                                       .action = std::move(*action_id),
+                                       .duration = std::chrono::milliseconds{*duration},
+                                       .cache = static_cast<cache_status>(*cache)});
+    }
+    if (!std::holds_alternative<cbor::null>(test_value->data)) {
+        const auto* name = text_field(*test_value, "name");
+        const auto* status = unsigned_field(*test_value, "status");
+        const auto* output = text_field(*test_value, "output");
+        const auto* duration = unsigned_field(*test_value, "duration");
+        const auto* hit = bool_field(*test_value, "hit");
+        if (!name || !status || *status > 1 || !output || !duration || !hit) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon test result"));
+        }
+        event.test = test_result{*name,
+                                 static_cast<test_status>(*status),
+                                 *output,
+                                 std::chrono::milliseconds{*duration},
+                                 *hit};
+    }
+    if (!std::holds_alternative<cbor::null>(summary_value->data)) {
+        const auto* exit = unsigned_field(*summary_value, "exit");
+        const auto* actions = unsigned_field(*summary_value, "actions");
+        const auto* hits = unsigned_field(*summary_value, "hits");
+        const auto* failures = unsigned_field(*summary_value, "failures");
+        const auto* duration = unsigned_field(*summary_value, "duration");
+        if (!exit || !actions || !hits || !failures || !duration) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon build summary"));
+        }
+        event.summary = build_summary{static_cast<int>(*exit),
+                                      *actions,
+                                      *hits,
+                                      *failures,
+                                      std::chrono::milliseconds{*duration}};
+    }
+    return event;
 }
 
 auto validation_value(const graph_validation_record& record) -> cbor::value {
@@ -186,9 +470,21 @@ auto encode_frame(std::uint8_t type, std::span<const std::byte> payload)
     return output;
 }
 
+auto encode_request(cbor::value request) -> result<std::vector<std::byte>> {
+    auto payload = cbor::encode(std::move(request));
+    if (!payload) {
+        return std::unexpected(payload.error());
+    }
+    return encode_frame(1, *payload);
+}
+
 auto encode_request(std::string_view operation) -> result<std::vector<std::byte>> {
-    auto payload = cbor::encode(
-        map({{"v", cbor::value{std::uint64_t{1}}}, {"op", cbor::value{std::string{operation}}}}));
+    return encode_request(
+        map({{"v", cbor::value{std::uint64_t{1}}}, {"op", std::string{operation}}}));
+}
+
+auto encode_success(cbor::value value) -> result<std::vector<std::byte>> {
+    auto payload = cbor::encode(std::move(value));
     if (!payload) {
         return std::unexpected(payload.error());
     }
@@ -274,6 +570,21 @@ auto decode_payload(std::span<const std::byte> frame, std::uint8_t expected_type
         return std::unexpected(failure(errc::corrupt, "invalid daemon frame length"));
     }
     return cbor::decode(frame.subspan(5));
+}
+
+auto decode_response(std::span<const std::byte> frame) -> result<cbor::value> {
+    if (!frame.empty() && std::to_integer<std::uint8_t>(frame.front()) == 2) {
+        auto decoded = decode_payload(frame, 2);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        const auto* message = text_field(*decoded, "message");
+        const auto* context = text_field(*decoded, "context");
+        return std::unexpected(failure(errc::internal,
+                                       message ? *message : "daemon request failed",
+                                       context ? *context : "daemon protocol"));
+    }
+    return decode_payload(frame, 1);
 }
 
 auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
@@ -556,7 +867,7 @@ auto accept_request(int listener) -> result<std::optional<accepted_request>> {
     return std::optional<accepted_request>{{connection, std::move(*frame)}};
 }
 
-auto request(const std::filesystem::path& endpoint, std::string operation)
+auto request(const std::filesystem::path& endpoint, std::vector<std::byte> frame)
     -> result<std::vector<std::byte>> {
     auto address = socket_address(endpoint);
     if (!address) {
@@ -575,12 +886,7 @@ auto request(const std::filesystem::path& endpoint, std::string operation)
                     std::strerror(code),
                     endpoint.string()));
     }
-    auto frame = encode_request(operation);
-    if (!frame) {
-        close_descriptor(descriptor);
-        return std::unexpected(frame.error());
-    }
-    auto written = write_all(descriptor, *frame);
+    auto written = write_all(descriptor, frame);
     if (!written) {
         close_descriptor(descriptor);
         return std::unexpected(written.error());
@@ -588,6 +894,15 @@ auto request(const std::filesystem::path& endpoint, std::string operation)
     auto response = read_frame(descriptor);
     close_descriptor(descriptor);
     return response;
+}
+
+auto request(const std::filesystem::path& endpoint, std::string_view operation)
+    -> result<std::vector<std::byte>> {
+    auto frame = encode_request(operation);
+    if (!frame) {
+        return std::unexpected(frame.error());
+    }
+    return request(endpoint, std::move(*frame));
 }
 
 #endif
@@ -616,6 +931,13 @@ struct service_state {
     std::unique_ptr<daemon_detail::fanout> fanout;
     std::optional<capture> capture_handle;
     std::optional<subscription> capture_subscription;
+    struct build_session {
+        repository source;
+        build_handle handle;
+        build_event_subscription subscription;
+    };
+    std::map<std::uint64_t, build_session> builds;
+    std::uint64_t next_build{};
     std::mutex queue_mutex;
     std::mutex completion_mutex;
     std::deque<daemon_delivery> queue;
@@ -688,6 +1010,134 @@ auto service_state::dequeue() -> std::optional<daemon_delivery> {
 }
 
 #ifndef _WIN32
+runtime::task<std::vector<std::byte>>
+process_build_request(const std::shared_ptr<service_state>& state,
+                      const cbor::value& request_value,
+                      std::string_view operation) {
+    if (operation == "build_start") {
+        const auto* input_value = field(request_value, "input");
+        if (!input_value) {
+            co_return encode_error(failure(errc::invalid_argument, "missing daemon build input"));
+        }
+        auto input = decode_action_input(*input_value);
+        if (!input) {
+            co_return encode_error(input.error());
+        }
+        auto source = co_await repository::open(state->checkout);
+        if (!source) {
+            co_return encode_error(source.error());
+        }
+        auto handle = source->build(std::move(*input));
+        if (!handle) {
+            co_return encode_error(handle.error());
+        }
+        auto subscription = handle->events();
+        if (!subscription) {
+            co_return encode_error(subscription.error());
+        }
+        const auto id = ++state->next_build;
+        state->builds.emplace(id,
+                              service_state::build_session{std::move(*source),
+                                                           std::move(*handle),
+                                                           std::move(*subscription)});
+        co_return encode_success(map({{"v", std::uint64_t{1}}, {"build", id}}));
+    }
+    const auto* id = unsigned_field(request_value, "build");
+    if (!id) {
+        co_return encode_error(failure(errc::invalid_argument, "missing daemon build id"));
+    }
+    auto session = state->builds.find(*id);
+    if (session == state->builds.end()) {
+        co_return encode_error(failure(errc::not_found, "daemon build is not active"));
+    }
+    auto event = co_await session->second.subscription.next();
+    if (!event) {
+        co_return encode_error(event.error());
+    }
+    if (!*event) {
+        state->builds.erase(session);
+        co_return encode_success(map({{"v", std::uint64_t{1}}, {"done", true}}));
+    }
+    auto response = encode_success(
+        map({{"v", std::uint64_t{1}}, {"done", false}, {"event", build_event_value(**event)}}));
+    if ((**event).kind == build_event_kind::build_finished) {
+        state->builds.erase(session);
+    }
+    co_return response;
+}
+
+runtime::task<std::vector<std::byte>> send_daemon_request(std::filesystem::path endpoint,
+                                                          std::vector<std::byte> frame) {
+    auto response = co_await runtime::offload(
+        [endpoint = std::move(endpoint), frame = std::move(frame)]() mutable {
+            return request(endpoint, std::move(frame));
+        });
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    if (!*response) {
+        co_return std::unexpected(response->error());
+    }
+    co_return std::move(**response);
+}
+
+runtime::task<void> proxy_build_events(std::filesystem::path endpoint,
+                                       std::vector<std::byte> start_frame,
+                                       build_detail::event_producer producer) {
+    auto response = co_await send_daemon_request(endpoint, std::move(start_frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto started = decode_response(*response);
+    if (!started) {
+        co_return std::unexpected(started.error());
+    }
+    const auto* id = unsigned_field(*started, "build");
+    if (!id) {
+        co_return std::unexpected(failure(errc::corrupt, "invalid daemon build response"));
+    }
+    while (true) {
+        auto next_frame =
+            encode_request(map({{"v", std::uint64_t{1}}, {"op", "build_next"}, {"build", *id}}));
+        if (!next_frame) {
+            co_return std::unexpected(next_frame.error());
+        }
+        response = co_await send_daemon_request(endpoint, std::move(*next_frame));
+        if (!response) {
+            co_return std::unexpected(response.error());
+        }
+        auto next = decode_response(*response);
+        if (!next) {
+            co_return std::unexpected(next.error());
+        }
+        const auto* done = bool_field(*next, "done");
+        if (!done) {
+            co_return std::unexpected(failure(errc::corrupt, "invalid daemon event response"));
+        }
+        if (*done) {
+            co_return std::unexpected(
+                failure(errc::corrupt, "daemon build ended without a summary"));
+        }
+        const auto* event_value = field(*next, "event");
+        if (!event_value) {
+            co_return std::unexpected(failure(errc::corrupt, "missing daemon build event"));
+        }
+        auto event = decode_build_event(*event_value);
+        if (!event) {
+            co_return std::unexpected(event.error());
+        }
+        if (event->kind == build_event_kind::build_finished) {
+            if (!event->summary) {
+                co_return std::unexpected(
+                    failure(errc::corrupt, "daemon build summary is missing"));
+            }
+            producer.finish(*event->summary);
+            co_return {};
+        }
+        producer.publish(std::move(*event));
+    }
+}
+
 runtime::task<void> run_service(std::shared_ptr<service_state> state) {
     auto retry_after = std::chrono::steady_clock::time_point::min();
     while (!state->stopping.load(std::memory_order_acquire)) {
@@ -756,6 +1206,8 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                 auto changed = *operation == "pause" ? co_await state->capture_handle->pause()
                                                      : co_await state->capture_handle->resume();
                 response = changed ? encode_acknowledgement() : encode_error(changed.error());
+            } else if (*operation == "build_start" || *operation == "build_next") {
+                response = co_await process_build_request(state, *decoded, *operation);
             } else {
                 response = encode_error(
                     failure(errc::invalid_argument, "unknown daemon request", *operation));
@@ -1076,6 +1528,31 @@ runtime::task<void> daemon::resume_capture() {
         co_return std::unexpected(decoded.error());
     }
     co_return {};
+#endif
+}
+
+runtime::task<build_handle> daemon::build(action_input input) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(input);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map(
+        {{"v", std::uint64_t{1}}, {"op", "build_start"}, {"input", action_input_value(input)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto stream = build_detail::event_access::create();
+    auto producer = stream.producer;
+    runtime::spawn(proxy_build_events(impl_->endpoint, std::move(*frame), producer),
+                   [producer](result<void> completed) {
+                       if (!completed) {
+                           producer.fail(completed.error(), {});
+                       }
+                   });
+    co_return std::move(stream.handle);
 #endif
 }
 

@@ -11,8 +11,8 @@
 > a retained GPU text layer inside Dear ImGui.
 
 **Status:** the demand-driven query graph in #20, per-checkout daemon in #21, continuous clean
-validation in #23, per-definition frontend granularity in #65, local search index in #22, and
-measured search planner in #67 are
+ validation in #23, per-definition frontend granularity in #65, local search index in #22, symbol
+ records in #66, measured search planner in #67, and public build/test streams in #193 are
 implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
 bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
@@ -38,6 +38,42 @@ arguments. An **action** is the coarse end of the same spectrum: its inputs are 
 command, its value is a result record. The engine does not distinguish them: `execute` from Phase 2
 becomes the `action_result` query, `wrap`'s per-tool actions become nodes, and every derived thing
 liquify asks for (a parse, a stub, a symbol table, a diagnostic list, a completion) is a query too.
+
+## Tests are actions (#193)
+
+`repository::tests()` returns the test targets known by the repository, sorted by name. A
+`test_target` contains its name, command, labels, observed input paths, working directory,
+toolchain, platform, and optional timeout. `repository::register_test(test_target)` is the native
+definition hook: it validates and persists the target without coupling the public API to CMake.
+
+During a successful observed CMake build, `wrap` reads generated `CTestTestfile.cmake` files. It
+records each `add_test` command and its `LABELS`; an executable produced inside the working tree is
+copied into the wrap repository and pinned by the wrap toolchain digest. Target records live under
+the wrapper repository's `.liquid-build/tests/` projection. They are rebuildable metadata rather
+than a new object-store record kind.
+
+`repository::run_tests(filter)` returns the same `build_handle` used by builds. An empty filter
+selects every target. Otherwise a target is selected when its name or one label contains the
+filter. Each selected test is passed through `build::execute`, so the action cache validates the
+paths the test actually read. An unchanged manifest produces `action_hit` and reuses stdout,
+stderr, exit status, and duration; a changed observed input produces an ordinary miss and new
+result. After each terminal action event, the stream publishes:
+
+```text
+test_result { name, status: passed | failed, output, duration, hit }
+```
+
+`output` is combined stdout and stderr. A nonzero test exit produces both `action_failed` with a
+frontend-shaped diagnostic and a failed test result, then the build continues with the remaining
+selected tests. `build_finished.exit` is zero only when all selected tests pass. The stored target's
+input list is refreshed from the latest observed manifest, so `tests()` reports the dependencies
+the cache will validate.
+
+The daemon carries build handles through `build_start` and `build_next` operations on its existing
+version-1 framed CBOR connection. Each server session owns its repository, handle, and subscription
+until `build_finished`; an attached in-process consumer receives decoded public `build_event`
+values rather than protocol types. This is the interface liquify uses for inline build and test
+results.
 
 Every query value carries a **fingerprint**: the digest of its canonical encoding. Every query
 records the queries and inputs it read while computing (the observed-dependency principle from the

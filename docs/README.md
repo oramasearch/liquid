@@ -10,11 +10,11 @@ notes so that each claim has a clear role.
 | [`standards/`](standards/) | External standards liquid depends on. |
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, edit-surviving text anchors, compact/shallow CRDT checkpoints, measured open cost, and how composition, conflicts, undo and locks work. Design for liquid #2, #3, #136, #165, #166, and #174. |
-| [`library/build-engine.md`](library/build-engine.md) | Phase 2's design plus #18's remote scheduling record and #166's paged public record enumeration: action and result records, observation by the mount with per-platform enforcement, cache lookup, retained timing and scheduling traces, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
+| [`library/build-engine.md`](library/build-engine.md) | Phase 2's design plus #18's remote scheduling record, #166's paged public record enumeration, and #193's public build streams: action and result records, observation by the mount with per-platform enforcement, cache lookup, event ordering and JSON projection, retained timing and scheduling traces, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
 | [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, #18 scheduling, #16 REAPI interoperability, and #63's scheduler and workers. |
 | [`library/workers.md`](library/workers.md) | Scheduler and worker protocol, bounded requeue, TAAP result identity, configuration, control endpoints, and deployment shape. |
 | [`api/README.md`](api/README.md) | Scheduler and worker network capability maps. |
-| [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
+| [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, build-stream forwarding, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
 | [`library/frontends.md`](library/frontends.md) | The versioned frontend C ABI, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
 | [`library/search.md`](library/search.md) | Issues #22 and #67's BM25F, positional-trigram, and mapped-scan executors; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
 | [`library/symbols.md`](library/symbols.md) | Content-addressed per-translation-unit symbol records, query behavior, fallback labelling, public repository access, and CLI use. |
@@ -43,5 +43,7 @@ notes so that each claim has a clear role.
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
+| [`cli/build-events.md`](cli/build-events.md) | The `liquid build --events` JSON-lines schema, ordering, exit status, and edit behavior. |
+| [`cli/test.md`](cli/test.md) | CMake/native test discovery, filtering, cached action behavior, output, and exit status. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10 executor checkpoint and the mount-proof dependency on #130. |

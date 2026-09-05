@@ -86,6 +86,19 @@ static int print_random(const char* destination) {
     return 0;
 }
 
+static int read_file(const char* source) {
+    char buffer[4096];
+    int input = open(source, O_RDONLY);
+    ssize_t count;
+    if (input < 0) {
+        return 2;
+    }
+    while ((count = read(input, buffer, sizeof(buffer))) > 0) {
+    }
+    close(input);
+    return count < 0 ? 3 : 0;
+}
+
 static int fail_recorded(const char* destination) {
     static const char output_text[] = "recorded failure output\n";
     static const char stdout_text[] = "recorded failure stdout\n";
@@ -125,6 +138,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "random") == 0 && argc == 3) {
         return print_random(argv[2]);
+    }
+    if (strcmp(argv[1], "read") == 0 && argc == 3) {
+        return read_file(argv[2]);
     }
     if (strcmp(argv[1], "fail") == 0 && argc == 3) {
         return fail_recorded(argv[2]);

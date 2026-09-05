@@ -12,6 +12,8 @@ its configured idle exit or `liquid daemon --shutdown`. Windows repository comma
 available, but daemon attachment returns the documented unsupported result because the current
 Corosio revision has no named-pipe transport.
 
+Focused command contracts: [`build --events`](build-events.md) and [`test`](test.md).
+
 ## Commands
 
 This table is generated from the command table in `src/main.cpp`. The `cli-help-docs` test checks
@@ -52,7 +54,8 @@ that the table and `liquid --help` name the same commands.
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
-| `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its timing, dependency, and scheduling trace. | available on Linux with FUSE and on macOS with macFUSE |
+| `build` | `build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Profile a build, stream events, or export its timing, dependency, and scheduling trace. | available on Linux with FUSE and on macOS with macFUSE |
+| `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
@@ -191,6 +194,14 @@ decision, timing history, size class, input and missing bytes, remote-query flag
 locality, batch capability and size, local and remote estimates, and decision reason. Chrome events
 carry the same fields in their `args` object.
 
+`liquid build --events <command> [args...]` runs the same observed wrapper and writes one versioned
+JSON object per event to standard output. It returns the build summary's exit status. The complete
+field and ordering contract is in [`build-events.md`](build-events.md).
+
+`liquid test [filter]` opens the current project's wrap repository and runs CMake-discovered or
+natively registered test targets as cached actions. It prints one result line per selected target
+and returns nonzero when a selected test fails. See [`test.md`](test.md).
+
 `liquid why-slow <target>` accepts an output path, action digest, or result digest from the latest
 trace. It prints the longest dependency path ending at that action, followed by queued, sandbox,
 exec, hash, and store durations plus the recorded scheduling fields for every action. When both an
@@ -296,8 +307,10 @@ liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
 liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081
 liquid wrap --scheduler 127.0.0.1:50051 make -j8
 liquid wrap --jobs 8 --explain cmake --build build
+liquid build --events cmake --build build
 liquid build --profile cmake --build build
 liquid build trace --chrome > build-trace.json
+liquid test quick
 liquid why build/CMakeFiles/app.dir/main.cpp.o
 liquid why blake3:<action-or-result-digest> --json
 liquid why-slow build/app

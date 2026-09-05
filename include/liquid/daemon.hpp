@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "liquid/build.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
@@ -79,6 +80,7 @@ public:
     [[nodiscard]] runtime::task<daemon_status> status();
     [[nodiscard]] runtime::task<void> pause_capture();
     [[nodiscard]] runtime::task<void> resume_capture();
+    [[nodiscard]] runtime::task<build_handle> build(action_input input);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();
 

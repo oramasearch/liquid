@@ -53,7 +53,8 @@ boost::capy::task<> complete_spawn(task<void> coroutine,
 } // namespace
 
 struct context::impl {
-    impl(unsigned count, bool keep_alive) : io(runtime_options(), count), runners(count) {
+    impl(unsigned count, bool keep_alive, unsigned concurrency_hint)
+        : io(runtime_options(), concurrency_hint), runners(count) {
         if (!keep_alive)
             return;
         guard.emplace(boost::capy::make_work_guard(io.get_executor()));
@@ -82,8 +83,9 @@ struct context::impl {
 };
 
 context::context() : context(runtime_threads(), false) {}
-context::context(unsigned runners, bool keep_alive)
-    : impl_(std::make_unique<impl>(runners, keep_alive)) {}
+context::context(unsigned runners, bool keep_alive) : context(runners, keep_alive, runners) {}
+context::context(unsigned runners, bool keep_alive, unsigned concurrency_hint)
+    : impl_(std::make_unique<impl>(runners, keep_alive, concurrency_hint)) {}
 context::~context() = default;
 context::context(context&&) noexcept = default;
 context& context::operator=(context&&) noexcept = default;
@@ -127,6 +129,12 @@ void run_on_pool(boost::capy::task<> coroutine) {
 
 void spawn(task<void> coroutine, std::function<void(result<void>)> on_done) {
     boost::capy::run_async(default_context().executor())(
+        complete_spawn(std::move(coroutine), std::move(on_done)));
+}
+
+void spawn_serial(task<void> coroutine, std::function<void(result<void>)> on_done) {
+    static context serial{1, true, 2};
+    boost::capy::run_async(serial.executor())(
         complete_spawn(std::move(coroutine), std::move(on_done)));
 }
 

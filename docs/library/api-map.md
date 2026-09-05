@@ -53,23 +53,23 @@ owning issue in `error::context`.
 | `liquid/liquid.hpp` | now | implemented | umbrella |
 | `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
-| `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
+| `liquid/runtime.hpp` | #97, #193 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `spawn_serial`, `offload`, `context` |
 | `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
-| `liquid/frontend.hpp` | #65, #66 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, and the unit-keyed query-graph coordinator |
+| `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
-| `liquid/daemon.hpp` | #21, #23 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, attach, and shutdown |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #57, #60, #56, #58, #61, #193 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, input policy, configure facts, retention, tests, and SBOMs | action execution and results, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/daemon.hpp` | #21, #23, #193 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
@@ -102,6 +102,7 @@ boost::capy::any_executor context::executor() const;
 context& default_context();           // process-wide shared context for spawned I/O work
 template <class T> result<T> block_on(task<T>);                // run to completion on a private context (CLI, tests)
 void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared runtime context
+void spawn_serial(task<void>, std::function<void(result<void>)> on_done); // fire-and-forget on a single-runner I/O context
 template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking CPU work on the compute pool; resumes on the caller's executor
 }
 ```
@@ -116,6 +117,7 @@ capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard
 |---|---|---|
 | `block_on` | CLI and tests | a new private context, run to task completion |
 | `spawn` | long-lived I/O work | the process-wide shared runtime context |
+| `spawn_serial` | ordered long-lived I/O work | the process-wide single-runner event context |
 | `offload` | blocking CPU work | the compute pool; resumes on the caller executor |
 
 ### `liquid/hash.hpp`
@@ -286,6 +288,9 @@ every successful result buffer; the loader copies and releases it before returni
 canonical schemas are in [`frontends.md`](frontends.md).
 
 ```cpp
+enum class frontend_diagnostic_severity { note, warning, error, fatal };
+struct frontend_diagnostic { std::string file; std::uint64_t line, column;
+                             frontend_diagnostic_severity severity; std::string message; };
 enum class frontend_unit_kind : std::uint8_t { declaration = 1, definition = 2, type = 3 };
 struct frontend_source_position { std::uint64_t byte, line, column; };
 struct frontend_source_range { frontend_source_position start, end; };
@@ -664,6 +669,8 @@ class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
   static runtime::task<repository> open(std::filesystem::path, repository_options = {});
+  static runtime::task<repository> open_build(std::filesystem::path working_tree,
+                                               repository_options = {});
   runtime::task<tree> root();                            // the working copy is a change
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
@@ -715,6 +722,11 @@ class repository {
   runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
   runtime::task<retention_explanation> retain_explain(digest);       // live rule/lease or eviction
   runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
+  result<build_handle> build(action_input);
+  result<build_handle> build(action_input, remote_executor&);
+  runtime::task<void> register_test(test_target);           // native definition hook
+  runtime::task<std::vector<test_target>> tests();
+  result<build_handle> run_tests(std::string filter = {});
   runtime::task<void> set_policy(policy_config);           // validate and checkpoint config.policy
   runtime::task<sync_export> export_drips(journal_cursor, std::span<sync_item>);
   runtime::task<sync_import_report> import_drips(std::span<const sync_item>);
@@ -854,6 +866,27 @@ enum class cache_miss_reason { input_changed, command_changed, environment_chang
   toolchain_changed, sandbox_changed, never_built, divergent_result_quarantined, unknown,
   policy_refused, non_hermetic_read };
 struct action_input { /* command, roots, platform, timeout */ bool remote_eligible; };
+enum class build_event_kind { action_queued, action_started, action_hit, action_done,
+  action_failed, critical_path_updated, test_result, build_finished };
+enum class action_execution_kind { local, remote };
+struct action_execution { action_execution_kind kind; std::string worker; };
+enum class test_status { passed, failed };
+struct test_result { std::string name; test_status status; std::string output;
+                     std::chrono::milliseconds duration; bool hit; };
+struct test_target { std::string name; std::vector<std::string> command, labels, inputs;
+                     std::string cwd; digest toolchain; liquid::platform platform;
+                     std::optional<std::chrono::seconds> timeout; };
+struct build_summary { int exit; std::uint64_t actions, hits, failures;
+                       std::chrono::milliseconds duration; };
+struct build_event { build_event_kind kind; std::uint64_t sequence;
+  std::optional<digest> action; std::optional<result_id> result;
+  std::optional<action_execution> execution; std::vector<action_output> outputs;
+  std::vector<frontend_diagnostic> diagnostics; std::vector<critical_action> critical_path;
+  std::optional<test_result> test; std::optional<build_summary> summary; };
+class build_event_subscription { public: runtime::task<std::optional<build_event>> next(); };
+class build_handle { public: result<build_event_subscription> events() const;
+                     runtime::task<build_summary> wait(); };
+result<std::string> event_json(const build_event&);
 struct cache_miss { cache_miss_reason reason; std::string path;
   std::optional<digest> expected, actual; /* argv, environment, tool, line, attribution, detail */ };
 enum class policy_scope : std::uint8_t { paths, toolchain, all_inputs };
@@ -960,6 +993,10 @@ struct replay_report {
   std::vector<reproducibility_difference> differences; std::optional<digest> attestation;
 };
 namespace build {
+result<build_handle> start(repository&, action_input);
+result<build_handle> start(repository&, action_input, remote_executor&);
+result<build_handle> start_wrap(std::filesystem::path, std::vector<std::string>,
+                                wrap_options = {});
 execution_schedule choose_execution(scheduling_inputs);
 runtime::task<result_id> execute(repository&, action_input);
 runtime::task<std::vector<std::byte>> execute_symbol_action(repository&, action_input,
@@ -1154,6 +1191,7 @@ class daemon {
   runtime::task<daemon_status> status();
   runtime::task<void> pause_capture();
   runtime::task<void> resume_capture();
+  runtime::task<build_handle> build(action_input);
   runtime::task<void> shutdown();
   runtime::task<void> wait();
 };
@@ -1166,7 +1204,9 @@ delivery. During otherwise idle slices, the host validates one pending graph tar
 supplied query registry. `daemon_status` contains capture telemetry, the last invalidated paths,
 every target's cursor distance and error, graph key, resident-value, byte-use, and ceiling counts,
 plus validation backlog and the most recent divergence. The local
-wire payload is canonical CBOR in the sync protocol's five-byte frame. Windows entry points return
+wire payload is canonical CBOR in the sync protocol's five-byte frame. Build sessions add
+`build_start` and `build_next` operations and forward every public event through that same frame.
+Windows entry points return
 `errc::unsupported` while Corosio lacks named-pipe transport.
 
 `capture_status` makes overflow and recrawl visible because watcher events are hints, not a

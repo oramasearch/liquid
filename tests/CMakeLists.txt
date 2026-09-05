@@ -49,6 +49,7 @@ add_executable(liquid-tests
   build/test_executor.cpp
   build/test_remote_outputs.cpp
   build/test_distribution.cpp
+  build/test_events.cpp
   build/test_policy.cpp
   build/test_facts.cpp
   build/test_graph.cpp
@@ -98,6 +99,7 @@ if(UNIX)
 endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+  LIQUID_SOURCE_ROOT="${PROJECT_SOURCE_DIR}"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")

@@ -48,6 +48,7 @@ auto cache(int argc, char** argv) -> int;
 auto git_import(int argc, char** argv) -> int;
 auto git_export(int argc, char** argv) -> int;
 auto build(int argc, char** argv) -> int;
+auto test(int argc, char** argv) -> int;
 auto why_slow(int argc, char** argv) -> int;
 auto facts(int argc, char** argv) -> int;
 auto delta(int argc, char** argv) -> int;
@@ -228,11 +229,16 @@ constexpr auto commands = std::to_array<command>({
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build --profile [--remote <endpoint>|--scheduler <endpoint>] [remote options] <command> "
-     "[args...] | build trace [--chrome]",
+     "build --events <command> [args...] | build --profile [remote options] <command> [args...] | "
+     "build trace [--chrome]",
      "profile a build or export its trace",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::build},
+    {"test",
+     "test [filter]",
+     "run discovered tests as cached actions",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::test},
     {"why",
      "why <target> [--json]",
      "explain the latest cache lookup",
