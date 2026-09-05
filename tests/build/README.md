@@ -71,9 +71,11 @@ compiler and linker and change the link result.
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.
 
-`test_symbols.cpp` verifies the CMake fixture's definitions and references, the Clang frontend's
-per-translation-unit symbol record, stable cross-file reference identifier, repository-store round
-trip, the `liquid symbols` CLI scenario, and the explicitly labelled tree-sitter fallback.
+`test_symbols.cpp` verifies the Clang frontend's derived action description, compiler-output
+record decoding, stable cross-file reference identifier, repository-store round trip, and the
+explicitly labelled tree-sitter fallback. The Linux `symbols-cli` fixture records a CMake-fixture
+compile with `liquid wrap`, then verifies compiler symbols for its header; macOS excludes that
+fixture because wrapped action execution requires macFUSE.
 
 The real identical-execution cache test verifies every result's provenance and asserts that a hit
 reuses the original attestation digest.

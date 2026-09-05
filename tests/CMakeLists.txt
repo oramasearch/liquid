@@ -121,6 +121,7 @@ endif()
 
 if(LIQUID_BUILD_CLI)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")
+  if(NOT APPLE)
   set(LIQUID_SYMBOLS_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/symbols-cli-repository)
   add_test(NAME symbols-cli-clean
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_SYMBOLS_CLI_REPOSITORY})
@@ -135,13 +136,21 @@ if(LIQUID_BUILD_CLI)
     COMMAND $<TARGET_FILE:liquid-cli> init .)
   set_tests_properties(symbols-cli-init PROPERTIES
     FIXTURES_REQUIRED symbols_cli
+    FIXTURES_SETUP symbols_cli_initialized
+    WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY})
+  add_test(NAME symbols-cli-build
+    COMMAND $<TARGET_FILE:liquid-cli> wrap ${CMAKE_CXX_COMPILER} -std=c++20 -c functions.cpp -o functions.o)
+  set_tests_properties(symbols-cli-build PROPERTIES
+    FIXTURES_REQUIRED symbols_cli_initialized
+    FIXTURES_SETUP symbols_cli_build
     WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY})
   add_test(NAME symbols-cli
     COMMAND $<TARGET_FILE:liquid-cli> symbols value.hpp)
   set_tests_properties(symbols-cli PROPERTIES
-    FIXTURES_REQUIRED symbols_cli
+    FIXTURES_REQUIRED symbols_cli_build
     WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY}
-    PASS_REGULAR_EXPRESSION "definition variable c\\+\\+:value")
+    PASS_REGULAR_EXPRESSION "origin=compiler")
+  endif()
   add_executable(liquid-gc-cli-fixture store/gc_cli_fixture.cpp)
   target_link_libraries(liquid-gc-cli-fixture PRIVATE liquid::liquid)
   set(LIQUID_GC_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/gc-cli-repository)

@@ -331,6 +331,7 @@ public:
     [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
     map_anchors(std::span<const text_anchor> anchors, change_id target);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
+    [[nodiscard]] runtime::task<action_input> action(digest id);
     [[nodiscard]] runtime::task<record_page<repository_attestation>>
     attestations(attestation_filter filter = {});
     [[nodiscard]] runtime::task<record_page<repository_attestation>>

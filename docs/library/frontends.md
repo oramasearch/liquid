@@ -24,7 +24,8 @@ module name and one or more language names, then supplies these operations:
 | `units` | language, source blob, context | array of unit maps |
 | `compile_unit` | one unit map, context | executable frontend-action map |
 | `assemble` | array of unit fingerprints and output byte strings, context | translation-unit output map |
-| `symbols` | language, source blob, context | per-translation-unit symbol output map |
+| `symbols` | language, source blob, context | derived symbol-action description |
+| `symbols_from_output` | language, source blob, symbol-action stdout | per-translation-unit symbol output map |
 
 Every operation receives progress and cancellation callbacks. Return values use caller-independent
 owned bytes with an explicit release callback. ABI status values distinguish invalid input,
@@ -78,12 +79,12 @@ same toolchain compiler with `-r` and returns canonical CBOR containing the relo
 Windows module returns a portable ordered unit-output value; per-definition Clang object assembly
 there remains outside the supported target set.
 
-For `symbols`, the Clang module invokes that configured compiler with `-ast-dump=json`, retaining
-definitions and resolved declaration references from the compiler AST. The tree-sitter module
-emits syntax-only occurrences when no compiler frontend is available. Symbol extraction defaults
-to `clang++` and C++20 only when the supplied toolchain context does not select a compiler or
-language standard. The bundled Linux image's versioned `clang++-19` is tried when `clang++` is not
-available.
+For `symbols`, the Clang module describes an AST-dump action derived from a recorded compile
+action. The build-engine adapter runs it through the normal sandboxed action executor and passes
+its stdout to `symbols_from_output`, which retains definitions and resolved declaration references
+from the compiler AST. The tree-sitter module emits syntax-only occurrences when no compiler
+frontend is available. `frontend_graph::build` does not demand the symbols query: editors request
+it independently after the compile has completed.
 
 ## Graph behavior
 
@@ -101,25 +102,29 @@ current action-query keys in unit order.
 
 ## Measurement
 
-The registered `frontend-one-function-measure` CTest runs `liquid-frontend-measure` against liquid's
-own `src/store/faults.cpp`, which has two definitions. It performs an in-memory edit inside
-`visit_fault`, executes the emitted Clang action, reassembles the translation-unit object, asserts
-one action and one assembly, and records the elapsed milliseconds. On an Apple M3 Max macOS host on
-2026-09-04:
+`liquid-frontend-measure` uses liquid's own `src/store/faults.cpp`, which has two definitions. It
+performs an in-memory edit inside `visit_fault`, executes the emitted Clang action, and reassembles
+the translation-unit object. It measures the edit once without a symbol demand and once with a
+subsequent independent symbol demand in the same session. On an Apple M3 Max macOS host on
+2026-09-04, at the lowest available load during concurrent work:
 
 ```text
-frontend one-function edit: file=src/store/faults.cpp units=2 actions_run=1 assemblies_run=1 elapsed_ms=496
+sysctl -n vm.loadavg
+{ 65.90 109.00 97.52 }
+symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=10015 per_unit_ms=10015
+frontend one-function edit: symbols=disabled elapsed_ms=402 symbols=enabled elapsed_ms=410 delta_ms=8
 ```
 
-Run the measurement test from a configured static build with:
+Run the measurement from a configured static build with:
 
 ```sh
-cmake --build build
-ctest --test-dir build -R frontend-one-function-measure --output-on-failure
+cmake --build build --target liquid-frontend-measure
+build/tests/liquid-frontend-measure . build/frontend-measure-state
 ```
 
-The wall value includes module discovery, one real compiler process, relocatable-object assembly,
-and graph/store publication. It is a local development measurement, not a cross-host benchmark.
+The edit delta is the relevant result: the symbol query does not delay compile or relink. The
+symbol value includes the independent compiler AST action and decoding. These local development
+measurements are context, not cross-host benchmarks.
 
 ## How to verify
 
@@ -127,9 +132,7 @@ The portable frontend tests prove language registration, static registration, tr
 ranges, canonical action generation, per-definition fingerprints, progress/error ownership, and
 the CMake fixture's body/header invalidation behavior. `public-frontend-c-header` compiles the ABI as
 C. The Clang module test loads `$<TARGET_FILE:liquid-frontend-clang>`, which proves the module is a
-separate shared object rather than code folded into libliquid; macOS and Linux also inspect its
-defined external symbols and require the ABI v1 entry point to be the only export. The own-tree
-measurement is part of the default macOS/Linux CTest suite.
+separate shared object rather than code folded into libliquid.
 
 Run the repository's static, shared, and Linux-container proofs from [`../build/ci.md`](../build/ci.md).
 

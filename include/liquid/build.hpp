@@ -446,6 +446,8 @@ namespace build {
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
                                                              action_input input);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<std::byte>> execute_symbol_action(
+    repository& source, action_input compile_action, std::span<const std::byte> symbol_action);
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
 record_remote_result(repository& source, action_input input, action_result value);
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id>

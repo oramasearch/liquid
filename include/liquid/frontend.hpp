@@ -119,6 +119,11 @@ public:
                                std::span<const std::byte> context_cbor = {},
                                frontend_callbacks callbacks = {}) const
         -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto symbols_from_output(std::string_view language,
+                                           std::span<const std::byte> blob,
+                                           std::span<const std::byte> action_output,
+                                           frontend_callbacks callbacks = {}) const
+        -> result<std::vector<std::byte>>;
 
 private:
     struct impl;
@@ -149,6 +154,7 @@ struct LIQUID_EXPORT frontend_build_request {
     std::string source_path;
     std::vector<std::byte> source;
     std::vector<std::byte> context_cbor;
+    std::string compile_action;
 };
 
 struct LIQUID_EXPORT frontend_unit_output {
@@ -183,6 +189,7 @@ public:
                      std::shared_ptr<frontend_module> module,
                      frontend_action_executor execute) -> runtime::task<frontend_graph>;
     auto build(frontend_build_request request) -> runtime::task<frontend_build_report>;
+    auto symbols(frontend_build_request request) -> runtime::task<symbol_record>;
     auto mark_changed(std::string path, durability tier = durability::low) -> result<std::uint64_t>;
     [[nodiscard]] auto statistics() const -> graph_statistics;
 

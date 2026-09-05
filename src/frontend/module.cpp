@@ -530,6 +530,46 @@ auto frontend_module::symbols(std::string_view language,
     return bytes;
 }
 
+auto frontend_module::symbols_from_output(std::string_view language,
+                                          std::span<const std::byte> blob,
+                                          std::span<const std::byte> action_output,
+                                          frontend_callbacks callbacks) const
+    -> result<std::vector<std::byte>> {
+    if (!impl_ || !supports(language) || !impl_->descriptor->symbols_from_output) {
+        return std::unexpected(frontend_error(errc::unsupported,
+                                              "frontend cannot decode symbol action output",
+                                              std::string{language}));
+    }
+    auto bridge = callback_bridge{};
+    auto abi = abi_callbacks(callbacks, bridge);
+    auto output = liquid_frontend_owned_bytes_v1{};
+    auto abi_error = liquid_frontend_error_v1{};
+    const auto language_text = std::string{language};
+    const auto status = impl_->descriptor->symbols_from_output(
+        impl_->descriptor->module_context,
+        language_text.c_str(),
+        {reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size()},
+        {reinterpret_cast<const std::uint8_t*>(action_output.data()), action_output.size()},
+        &abi,
+        &output,
+        &abi_error);
+    if (status != LIQUID_FRONTEND_STATUS_OK) {
+        return std::unexpected(
+            frontend_error(status_code(status),
+                           abi_error.message ? abi_error.message : "symbol action decoding failed",
+                           std::string{name()}));
+    }
+    auto copied = copy_output(output, name());
+    if (!copied) {
+        return std::unexpected(copied.error());
+    }
+    auto bytes = std::move(*copied);
+    if (auto canonical = canonical_value(bytes, "frontend symbols"); !canonical) {
+        return std::unexpected(canonical.error());
+    }
+    return bytes;
+}
+
 struct frontend_registry::impl {
     std::vector<frontend_module> modules;
 };

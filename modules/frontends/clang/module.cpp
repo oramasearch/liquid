@@ -166,40 +166,6 @@ auto compiler_arguments(const cbor_value& context) -> std::vector<std::string> {
     return output;
 }
 
-auto compiler_output(std::string_view compiler,
-                     const std::vector<std::string>& arguments,
-                     const std::filesystem::path& input,
-                     std::string& failure) -> std::optional<std::string> {
-    auto command = shell_quote(compiler);
-    command += " -std=c++20";
-    for (const auto& argument : arguments) {
-        command += " " + shell_quote(argument);
-    }
-    command += " -x c++ -fsyntax-only -fparse-all-comments -Xclang -ast-dump=json ";
-    command += shell_quote(input.string());
-    const auto ast = input.parent_path() / "ast.json";
-    const auto diagnostics = input.parent_path() / "ast.log";
-    command += " > " + shell_quote(ast.string());
-    command += " 2> " + shell_quote(diagnostics.string());
-    if (std::system(command.c_str()) != 0) {
-        auto stream = std::ifstream{diagnostics, std::ios::binary};
-        failure =
-            std::string{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
-        if (failure.empty()) {
-            failure = "the compiler returned a failure status";
-        }
-        return std::nullopt;
-    }
-    auto input_stream = std::ifstream{ast, std::ios::binary};
-    auto output =
-        std::string{std::istreambuf_iterator<char>{input_stream}, std::istreambuf_iterator<char>{}};
-    if (output.empty()) {
-        failure = "the AST output is empty";
-        return std::nullopt;
-    }
-    return output;
-}
-
 auto integer_field(const nlohmann::json& value, std::string_view name)
     -> std::optional<std::size_t> {
     const auto found = value.find(name);
@@ -345,33 +311,15 @@ void extract_symbols(const nlohmann::json& node,
     }
 }
 
-auto compiler_symbols(const cbor_value& context,
-                      std::span<const std::uint8_t> source,
+auto symbols_from_ast(std::span<const std::uint8_t> source,
+                      std::span<const std::uint8_t> action_output,
                       std::string& failure)
     -> std::optional<std::vector<liquid_frontend::syntax_symbol>> {
-    assembly_directory directory;
-    if (directory.path().empty()) {
-        failure = "cannot create a temporary directory";
-        return std::nullopt;
-    }
-    const auto input = directory.path() / "translation-unit.cpp";
-    auto file = std::ofstream{input, std::ios::binary | std::ios::trunc};
-    file.write(reinterpret_cast<const char*>(source.data()),
-               static_cast<std::streamsize>(source.size()));
-    file.close();
-    const auto* configured = text_field(context, "compiler");
-    auto output = compiler_output(
-        configured ? *configured : "clang++", compiler_arguments(context), input, failure);
-    if (!output && !configured) {
-        output = compiler_output("clang++-19", compiler_arguments(context), input, failure);
-    }
-    if (!output) {
-        if (failure.empty()) {
-            failure = "the compiler did not produce an AST";
-        }
-        return std::nullopt;
-    }
-    auto tree = nlohmann::json::parse(*output, nullptr, false);
+    auto tree = nlohmann::json::parse(
+        reinterpret_cast<const char*>(action_output.data()),
+        reinterpret_cast<const char*>(action_output.data() + action_output.size()),
+        nullptr,
+        false);
     if (tree.is_discarded()) {
         failure = "the compiler produced invalid AST JSON";
         return std::nullopt;
@@ -576,14 +524,64 @@ auto symbols(void*,
                                      LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT,
                                      "symbol context must be canonical CBOR");
     }
+    const auto* compile_action = text_field(*context, "compile_action");
+    if (!compile_action || compile_action->empty()) {
+        return liquid_frontend::fail(error,
+                                     LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT,
+                                     "symbol context requires the recorded compile action");
+    }
+    auto reads = cbor_value::array{};
+    for (auto& read : quoted_includes({blob.data, blob.size})) {
+        reads.emplace_back(std::move(read));
+    }
+    if (const auto* value = liquid_frontend::cbor_find(*context, "reads")) {
+        if (const auto* supplied = std::get_if<cbor_value::array>(&value->data)) {
+            reads.insert(reads.end(), supplied->begin(), supplied->end());
+        }
+    }
+    auto flags = cbor_value::array{};
+    flags.emplace_back("-fsyntax-only");
+    flags.emplace_back("-fparse-all-comments");
+    flags.emplace_back("-Xclang");
+    flags.emplace_back("-ast-dump=json");
     liquid_frontend::progress(callbacks, "symbols", 0, 1);
+    auto action = cbor_value::map{
+        {"v", std::uint64_t{1}},
+        {"kind", "clang-symbols"},
+        {"compile_action", *compile_action},
+        {"flags", std::move(flags)},
+        {"reads", std::move(reads)},
+        {"source", cbor_value::bytes{blob.data, blob.data + blob.size}},
+    };
+    liquid_frontend::progress(callbacks, "symbols", 1, 1);
+    return liquid_frontend::return_bytes(
+        liquid_frontend::cbor_encode(cbor_value{std::move(action)}), output);
+}
+
+auto symbols_from_output(void*,
+                         const char* language,
+                         liquid_frontend_bytes_v1 blob,
+                         liquid_frontend_bytes_v1 action_output,
+                         const liquid_frontend_callbacks_v1* callbacks,
+                         liquid_frontend_owned_bytes_v1* output,
+                         liquid_frontend_error_v1* error) -> int {
+    if (!language || std::string_view{language} != "c++" || !output ||
+        (!blob.data && blob.size != 0) || (!action_output.data && action_output.size != 0)) {
+        return liquid_frontend::fail(error,
+                                     LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT,
+                                     "clang frontend requires C++ symbol action output");
+    }
+    if (liquid_frontend::cancelled(callbacks)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_CANCELLED, "symbol decoding was cancelled");
+    }
     auto failure = std::string{};
-    const auto found = compiler_symbols(*context, {blob.data, blob.size}, failure);
+    const auto found =
+        symbols_from_ast({blob.data, blob.size}, {action_output.data, action_output.size}, failure);
     if (!found) {
         return liquid_frontend::fail(
-            error, LIQUID_FRONTEND_STATUS_INTERNAL, "clang could not extract symbols: " + failure);
+            error, LIQUID_FRONTEND_STATUS_INTERNAL, "clang could not decode symbols: " + failure);
     }
-    liquid_frontend::progress(callbacks, "symbols", 1, 1);
     return liquid_frontend::return_bytes(
         liquid_frontend::encode_symbols(liquid_frontend::syntax_language::cpp, "compiler", *found),
         output);
@@ -603,6 +601,7 @@ const liquid_frontend_module_v1 module = {
     compile_unit,
     assemble,
     symbols,
+    symbols_from_output,
     nullptr,
 };
 

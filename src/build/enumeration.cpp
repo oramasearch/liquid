@@ -175,6 +175,18 @@ runtime::task<record_page<repository_result>> repository::results(result_filter 
     });
 }
 
+runtime::task<action_input> repository::action(digest id) {
+    auto bytes = co_await repository_detail::build_access::get(*this, id);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto record = objects::decode_action(*bytes);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    co_return std::move(record->input);
+}
+
 runtime::task<record_page<repository_attestation>>
 repository::attestations(attestation_filter filter) {
     auto valid = validate_page(filter.page);

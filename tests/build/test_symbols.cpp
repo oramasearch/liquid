@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -40,30 +39,32 @@ auto bytes(std::string_view text) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(text.data() + text.size())};
 }
 
-auto compiler_context(const std::filesystem::path& include_directory = {})
-    -> std::vector<std::byte> {
-    auto fields = liquid::encoding::cbor::value::map{};
-    fields.emplace_back("compiler", LIQUID_CXX_COMPILER);
-    if (!include_directory.empty()) {
-        auto arguments = liquid::encoding::cbor::value::array{};
-        arguments.emplace_back("-I" + include_directory.string());
-        fields.emplace_back("arguments", std::move(arguments));
+auto field(const liquid::encoding::cbor::value& value, std::string_view name)
+    -> const liquid::encoding::cbor::value* {
+    const auto* object = std::get_if<liquid::encoding::cbor::value::map>(&value.data);
+    if (!object) {
+        return nullptr;
     }
+    const auto found = std::ranges::find_if(*object, [&](const auto& entry) {
+        const auto* key = std::get_if<std::string>(&entry.first.data);
+        return key && *key == name;
+    });
+    return found == object->end() ? nullptr : &found->second;
+}
+
+auto compiler_context() -> std::vector<std::byte> {
+    auto fields = liquid::encoding::cbor::value::map{};
+    fields.emplace_back("compile_action", "blake3:recorded-compile");
     auto encoded = liquid::encoding::cbor::encode(liquid::encoding::cbor::value{std::move(fields)});
     EXPECT_TRUE(encoded) << encoded.error().message;
     return encoded.value_or(std::vector<std::byte>{});
 }
 
-auto read_text(const std::filesystem::path& path) -> std::string {
-    auto input = std::ifstream{path, std::ios::binary};
-    return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
-}
-
-auto record(liquid::frontend_module& module,
-            std::string_view source,
-            std::span<const std::byte> context = {}) -> liquid::symbol_record {
+auto compiler_record(liquid::frontend_module& module,
+                     std::string_view source,
+                     std::string_view action_output) -> liquid::symbol_record {
     const auto input = bytes(source);
-    auto raw = module.symbols("c++", input, context);
+    auto raw = module.symbols_from_output("c++", input, bytes(action_output));
     EXPECT_TRUE(raw) << raw.error().message;
     if (!raw) {
         return {};
@@ -79,6 +80,17 @@ auto record(liquid::frontend_module& module,
         return {};
     }
     return *decoded;
+}
+
+auto symbol_action(liquid::frontend_module& module) -> liquid::encoding::cbor::value {
+    auto action = module.symbols("c++", bytes("int value;"), compiler_context());
+    EXPECT_TRUE(action) << action.error().message;
+    if (!action) {
+        return {};
+    }
+    auto decoded = liquid::encoding::cbor::decode(*action);
+    EXPECT_TRUE(decoded) << decoded.error().message;
+    return decoded.value_or(liquid::encoding::cbor::value{});
 }
 
 auto has_definition(const liquid::symbol_record& record, std::string_view name) -> bool {
@@ -98,10 +110,14 @@ auto first_reference(const liquid::symbol_record& record, std::string_view name)
 TEST(Symbols, CompilerRecordResolvesAReferenceAcrossTranslationUnits) {
     auto module = liquid::frontend_module::load(LIQUID_CLANG_FRONTEND);
     ASSERT_TRUE(module);
-    const auto context = compiler_context();
-    const auto definition = record(*module, "int shared() { return 7; }\n", context);
-    const auto reference =
-        record(*module, "int shared();\nint use() { return shared(); }\n", context);
+    const auto definition = compiler_record(
+        *module,
+        "int shared() { return 7; }\n",
+        R"({"kind":"TranslationUnitDecl","inner":[{"kind":"FunctionDecl","name":"shared","loc":{"offset":4},"range":{"end":{"offset":9,"tokLen":1}},"inner":[{"kind":"CompoundStmt"}]}]})");
+    const auto reference = compiler_record(
+        *module,
+        "int shared();\nint use() { return shared(); }\n",
+        R"({"kind":"TranslationUnitDecl","inner":[{"kind":"FunctionDecl","name":"use","loc":{"offset":18},"range":{"end":{"offset":20,"tokLen":1}},"inner":[{"kind":"CompoundStmt"},{"kind":"DeclRefExpr","loc":{"offset":33},"range":{"end":{"offset":33,"tokLen":6}},"referencedDecl":{"name":"shared"}}]}]})");
     ASSERT_TRUE(has_definition(definition, "shared"));
     const auto* use = first_reference(reference, "shared");
     ASSERT_NE(use, nullptr);
@@ -124,24 +140,28 @@ TEST(Symbols, CompilerRecordResolvesAReferenceAcrossTranslationUnits) {
 TEST(Symbols, TreeSitterFallbackLabelsSyntacticResults) {
     auto module = liquid::frontend_module::load(LIQUID_TREE_SITTER_FRONTEND);
     ASSERT_TRUE(module);
-    const auto value = record(*module, "int fallback() { return 1; }\n");
+    const auto input = bytes("int fallback() { return 1; }\n");
+    auto raw = module->symbols("c++", input);
+    ASSERT_TRUE(raw);
+    auto subject = liquid::hash(liquid::algorithm::blake3, input);
+    ASSERT_TRUE(subject);
+    auto decoded = liquid::decode_frontend_symbols(*subject, *raw);
+    ASSERT_TRUE(decoded);
+    const auto value = *decoded;
     EXPECT_EQ(value.origin, liquid::symbol_origin::syntactic);
     EXPECT_TRUE(has_definition(value, "fallback"));
 }
 
-TEST(Symbols, CompilerRecordMatchesTheCmakeFixture) {
+TEST(Symbols, CompilerActionUsesTheRecordedCompileIdentity) {
     auto module = liquid::frontend_module::load(LIQUID_CLANG_FRONTEND);
     ASSERT_TRUE(module);
-    const auto fixture = std::filesystem::path{LIQUID_FRONTEND_FIXTURES};
-    const auto context = compiler_context(fixture);
-    const auto functions = record(*module, read_text(fixture / "functions.cpp"), context);
-    const auto header = record(*module, read_text(fixture / "value.hpp"), context);
-    EXPECT_TRUE(has_definition(functions, "left"));
-    EXPECT_TRUE(has_definition(functions, "right"));
-    EXPECT_TRUE(has_definition(header, "value"));
-    const auto* reference = first_reference(functions, "value");
-    ASSERT_NE(reference, nullptr);
-    EXPECT_EQ(reference->symbol, "c++:value");
+    const auto action = symbol_action(*module);
+    const auto* kind = field(action, "kind");
+    const auto* compile_action = field(action, "compile_action");
+    ASSERT_NE(kind, nullptr);
+    ASSERT_NE(compile_action, nullptr);
+    EXPECT_EQ(std::get<std::string>(kind->data), "clang-symbols");
+    EXPECT_EQ(std::get<std::string>(compile_action->data), "blake3:recorded-compile");
 }
 
 } // namespace

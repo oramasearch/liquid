@@ -363,6 +363,7 @@ add_library(libliquid
   src/build/executor.cpp
   src/build/distribution.cpp
   src/build/enumeration.cpp
+  src/build/frontend.cpp
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp

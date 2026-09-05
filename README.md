@@ -61,8 +61,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > discovers C and C++ units, while the Clang C++ module emits definition actions and assembles their
 > outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 > that definition's new action; recorded header reads invalidate the definitions that use them.
-> Liquid #66 adds content-addressed per-translation-unit symbol records from the frontend build,
-> a labelled tree-sitter fallback, graph retrieval, repository access, and `liquid symbols <path>`.
+> Liquid #66 adds content-addressed per-translation-unit symbol records from a query over recorded
+> compile actions, a labelled tree-sitter fallback, graph retrieval, repository access, and
+> `liquid symbols <path>`.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,

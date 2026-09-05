@@ -313,6 +313,12 @@ class frontend_module {
       std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
   result<std::vector<std::byte>> assemble(std::span<const std::byte> unit_outputs_cbor,
       std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> symbols(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
+      frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> symbols_from_output(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> action_output,
+      frontend_callbacks = {}) const;
 };
 class frontend_registry {
  public:
@@ -323,7 +329,7 @@ class frontend_registry {
   result<const frontend_module*> find(std::string_view language) const;
 };
 struct frontend_build_request {
-  std::string language, source_path; std::vector<std::byte> source, context_cbor;
+  std::string language, source_path, compile_action; std::vector<std::byte> source, context_cbor;
 };
 struct frontend_unit_output {
   frontend_unit unit; std::vector<std::byte> action, output; bool action_ran;
@@ -341,6 +347,7 @@ class frontend_graph {
       std::filesystem::path working_tree, std::shared_ptr<frontend_module>,
       frontend_action_executor);
   runtime::task<frontend_build_report> build(frontend_build_request);
+  runtime::task<symbol_record> symbols(frontend_build_request);
   result<std::uint64_t> mark_changed(std::string path, durability = durability::low);
   graph_statistics statistics() const;
 };
@@ -357,7 +364,10 @@ handles are move-only; their public copy operations are deleted.
 identifier, display name, kind, definition/reference role, source range, and optional container and
 documentation. `encode_symbols` and `decode_symbols` round-trip the canonical stored record.
 `decode_frontend_symbols(subject, bytes)` binds a frontend operation's per-unit output to its blob
-subject. `frontend_module::symbols(language, blob, context, callbacks)` invokes the ABI operation.
+subject. `frontend_module::symbols(language, blob, context, callbacks)` describes a symbol action,
+and `frontend_module::symbols_from_output(language, blob, stdout, callbacks)` decodes its action
+output. `frontend_graph::symbols(request)` is separate from `build(request)` and invokes the
+injected action executor only when the symbol query is demanded.
 `repository::store_symbols(record)` stores and associates a record, while
 `repository::symbols(subject)` returns the associated public value.
 
@@ -672,6 +682,7 @@ class repository {
   runtime::task<std::vector<mapped_anchor>> map_anchors(std::span<const text_anchor>,
                                                         change_id target);
   runtime::task<record_page<repository_result>> results(result_filter = {});
+  runtime::task<action_input> action(digest);
   runtime::task<record_page<repository_attestation>> attestations(attestation_filter = {});
   runtime::task<record_page<repository_attestation>> attestations(digest subject,
                                                                    record_page_options = {});
@@ -936,6 +947,8 @@ struct replay_report {
 namespace build {
 execution_schedule choose_execution(scheduling_inputs);
 runtime::task<result_id> execute(repository&, action_input);
+runtime::task<std::vector<std::byte>> execute_symbol_action(repository&, action_input,
+                                                             std::span<const std::byte>);
 runtime::task<result_id> record_remote_result(repository&, action_input, action_result);
 runtime::task<result_id> execute(repository&, action_input, remote_executor&);
 runtime::task<std::vector<result_id>> execute_batch(repository&, std::vector<action_input>,

@@ -83,6 +83,7 @@ auto with_source(frontend_build_request& request) -> result<std::vector<std::byt
     };
     put("source", request.source);
     put("source_path", request.source_path);
+    put("compile_action", request.compile_action);
     return cbor::encode(*value);
 }
 
@@ -131,7 +132,18 @@ auto symbols_arguments(const frontend_build_request& request, std::span<const st
         {"language", request.language},
         {"source", cbor::value::bytes{request.source.begin(), request.source.end()}},
         {"context", cbor::value::bytes{context.begin(), context.end()}},
+        {"compile_action", request.compile_action},
     }));
+}
+
+auto action_kind(std::span<const std::byte> action) -> result<std::optional<std::string>> {
+    auto decoded = canonical(action, "frontend action");
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto* value = find(*decoded, "kind");
+    const auto* kind = value ? std::get_if<std::string>(&value->data) : nullptr;
+    return kind ? std::optional<std::string>{*kind} : std::nullopt;
 }
 
 struct query_state {
@@ -233,7 +245,7 @@ auto execute_assembly_query(std::shared_ptr<query_state> state,
 }
 
 auto execute_symbols_query(std::shared_ptr<query_state> state,
-                           query_context&,
+                           query_context& context,
                            std::vector<std::byte> arguments)
     -> runtime::task<std::vector<std::byte>> {
     auto decoded = canonical(arguments, "symbols query");
@@ -247,15 +259,38 @@ auto execute_symbols_query(std::shared_ptr<query_state> state,
         language_value ? std::get_if<std::string>(&language_value->data) : nullptr;
     const auto* source =
         source_value ? std::get_if<cbor::value::bytes>(&source_value->data) : nullptr;
-    const auto* context =
+    const auto* context_bytes =
         context_value ? std::get_if<cbor::value::bytes>(&context_value->data) : nullptr;
-    if (!language || !source || !context) {
+    if (!language || !source || !context_bytes) {
         co_return std::unexpected(
             frontend_error(errc::corrupt, "symbols query is invalid", "symbols"));
     }
-    auto output = state->module->symbols(*language, *source, *context);
+    auto output = state->module->symbols(*language, *source, *context_bytes);
     if (!output) {
         co_return std::unexpected(output.error());
+    }
+    auto kind = action_kind(*output);
+    if (!kind) {
+        co_return std::unexpected(kind.error());
+    }
+    if (state->module->name() == "clang-cpp") {
+        if (!*kind || **kind != "clang-symbols") {
+            co_return std::unexpected(frontend_error(
+                errc::corrupt, "clang frontend did not describe a symbol action", "symbols"));
+        }
+        auto arguments = action_arguments(*output);
+        if (!arguments) {
+            co_return std::unexpected(arguments.error());
+        }
+        auto action_output =
+            co_await context.read(query_key{std::string{action_query_kind}, std::move(*arguments)});
+        if (!action_output) {
+            co_return std::unexpected(action_output.error());
+        }
+        output = state->module->symbols_from_output(*language, *source, action_output->bytes);
+        if (!output) {
+            co_return std::unexpected(output.error());
+        }
     }
     auto subject = hash(algorithm::blake3, *source);
     if (!subject) {
@@ -347,20 +382,6 @@ runtime::task<frontend_build_report> frontend_graph::build(frontend_build_reques
         co_return std::unexpected(units.error());
     }
     auto report = frontend_build_report{};
-    auto symbol_arguments = symbols_arguments(request, *context);
-    if (!symbol_arguments) {
-        co_return std::unexpected(symbol_arguments.error());
-    }
-    auto symbol_value = co_await impl_->subject.demand(
-        query_key{std::string{symbols_query_kind}, std::move(*symbol_arguments)});
-    if (!symbol_value) {
-        co_return std::unexpected(symbol_value.error());
-    }
-    auto symbols = decode_symbols(symbol_value->bytes);
-    if (!symbols) {
-        co_return std::unexpected(symbols.error());
-    }
-    report.symbols = std::move(*symbols);
     auto assembly_actions = cbor::value::array{};
     const auto actions_before = impl_->state->actions.load();
     const auto assemblies_before = impl_->state->assemblies.load();
@@ -410,6 +431,27 @@ runtime::task<frontend_build_report> frontend_graph::build(frontend_build_reques
     report.actions_run = impl_->state->actions.load() - actions_before;
     report.assemblies_run = impl_->state->assemblies.load() - assemblies_before;
     co_return report;
+}
+
+runtime::task<symbol_record> frontend_graph::symbols(frontend_build_request request) {
+    if (!impl_) {
+        co_return std::unexpected(
+            frontend_error(errc::invalid_argument, "frontend graph is empty", "frontend"));
+    }
+    auto context = with_source(request);
+    if (!context) {
+        co_return std::unexpected(context.error());
+    }
+    auto arguments = symbols_arguments(request, *context);
+    if (!arguments) {
+        co_return std::unexpected(arguments.error());
+    }
+    auto value = co_await impl_->subject.demand(
+        query_key{std::string{symbols_query_kind}, std::move(*arguments)});
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    co_return decode_symbols(value->bytes);
 }
 
 auto frontend_graph::mark_changed(std::string path, durability tier) -> result<std::uint64_t> {

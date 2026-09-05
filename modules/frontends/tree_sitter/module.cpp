@@ -111,6 +111,7 @@ const liquid_frontend_module_v1 module = {
     assemble,
     symbols,
     nullptr,
+    nullptr,
 };
 
 } // namespace
