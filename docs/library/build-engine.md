@@ -210,6 +210,10 @@ machines with different implementations have different sandbox digests and canno
 | ZIP, JAR, wheel, and other codec archives | Deferred to #29's `canonicalise`; this implementation does not add a second ZIP reader. |
 | Other bytes | Stored unchanged. Reproducibility verification detects any remaining producer variance. |
 
+The static and shared-library proof configurations run the same normaliser tests. In the shared
+configuration, the test target compiles the private normaliser and sandbox-definition helpers
+directly so those implementation details stay outside the public library ABI.
+
 ### Measured cascade cutoff
 
 The privileged Linux `content-addressed-build-chain` fixture downloads SHA-256-pinned zlib 1.3.1

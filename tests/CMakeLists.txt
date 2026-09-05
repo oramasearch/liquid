@@ -62,6 +62,13 @@ add_executable(liquid-tests
   build/test_wrap.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
+if(BUILD_SHARED_LIBS)
+  target_sources(liquid-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/build/content.cpp
+    ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
+    ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    ${PROJECT_SOURCE_DIR}/src/store/references.cpp)
+endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp)
 endif()
