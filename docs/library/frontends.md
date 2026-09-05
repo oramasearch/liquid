@@ -82,7 +82,8 @@ For `symbols`, the Clang module invokes that configured compiler with `-ast-dump
 definitions and resolved declaration references from the compiler AST. The tree-sitter module
 emits syntax-only occurrences when no compiler frontend is available. Symbol extraction defaults
 to `clang++` and C++20 only when the supplied toolchain context does not select a compiler or
-language standard.
+language standard. The bundled Linux image's versioned `clang++-19` is tried when `clang++` is not
+available.
 
 ## Graph behavior
 

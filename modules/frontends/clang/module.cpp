@@ -360,8 +360,11 @@ auto compiler_symbols(const cbor_value& context,
                static_cast<std::streamsize>(source.size()));
     file.close();
     const auto* configured = text_field(context, "compiler");
-    const auto output = compiler_output(
+    auto output = compiler_output(
         configured ? *configured : "clang++", compiler_arguments(context), input, failure);
+    if (!output && !configured) {
+        output = compiler_output("clang++-19", compiler_arguments(context), input, failure);
+    }
     if (!output) {
         if (failure.empty()) {
             failure = "the compiler did not produce an AST";
