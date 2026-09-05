@@ -292,22 +292,34 @@ TEST(Repository, import_tree_preserves_ignored_entries_in_a_paged_tree) {
     for (auto index = std::size_t{}; index != file_count; ++index) {
         write_file(source / "sources" / std::to_string(index), payload);
     }
-    write_file(source / "build" / "CMakeCache.txt", content("configured"));
     auto created =
         liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
     ASSERT_TRUE(created) << created.error().message;
     auto repository = std::move(*created);
     ASSERT_TRUE(liquid::runtime::block_on(repository.import_tree(source)));
 
+    repository = {};
+    auto reopened = liquid::runtime::block_on(
+        liquid::repository::open(location.path() / "target", {.defer_tree_load = true}));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    repository = std::move(*reopened);
+
+    write_file(source / "build" / "CMakeCache.txt", content("configured"));
     auto options = liquid::import_options{};
+    options.ignore_patterns = {"build/**", "!build", "!build/**"};
+    const auto included = liquid::runtime::block_on(repository.import_tree(source, options));
+    ASSERT_TRUE(included) << included.error().message;
+    ASSERT_TRUE(included->drip.has_value());
+    EXPECT_EQ(included->changed, 1U);
+    const auto cache = liquid::runtime::block_on(repository.read("build/CMakeCache.txt"));
+    ASSERT_TRUE(cache) << cache.error().message;
+    EXPECT_EQ(*cache, content("configured"));
+
     options.ignore_patterns = {"build/**"};
     const auto unchanged = liquid::runtime::block_on(repository.import_tree(source, options));
     ASSERT_TRUE(unchanged) << unchanged.error().message;
     EXPECT_FALSE(unchanged->drip.has_value());
     EXPECT_EQ(unchanged->changed, 0U);
-    const auto cache = liquid::runtime::block_on(repository.read("build/CMakeCache.txt"));
-    ASSERT_TRUE(cache) << cache.error().message;
-    EXPECT_EQ(*cache, content("configured"));
 }
 
 TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {

@@ -2350,7 +2350,6 @@ struct repository::impl {
             auto matches = glob_matches(pattern, path);
             if (pattern.ends_with("/**")) {
                 auto root = pattern.substr(0, pattern.size() - 3);
-                root.remove_suffix(1);
                 matches =
                     matches || glob_matches(root, path) || same_path_or_descendant(path, root);
             }

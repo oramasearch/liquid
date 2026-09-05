@@ -230,7 +230,7 @@ drip identifier plus `files_seen`, `changed`,
 root. Patterns use the repository glob rules; a leading slash anchors at that root and a trailing
 slash selects the directory and its descendants. A `/**` rule also excludes that directory itself,
 so the walk never opens its descendants. Rules are evaluated in order; a later `!` rule includes a
-path again. `wrap` uses that form for the requested preconfigured build directory, which is an input
+path again, including the directory selected by an earlier `/**` rule. `wrap` uses that form for the requested preconfigured build directory, which is an input
 to the wrapped CMake build even when the repository ignores build directories. By default symbolic
 links are skipped.
 
