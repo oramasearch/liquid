@@ -74,7 +74,7 @@ owning issue in `error::context`.
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
-| `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/sync.hpp` | #160, #165, #177, #189, #202, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, whole-graph and metadata-only `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull, node stores, and lake clients |
 
 ### `liquid/error.hpp`
 
@@ -500,6 +500,7 @@ struct sync_report {
   journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received;
   std::vector<sync_ref_outcome> references;
 };
+struct sync_metadata_report { std::uint64_t trees, blobs, bytes_remote; };
 struct sync_endpoint_options { /* token, cursor, batch size */ bool atomic; };
 struct sync_ref_update {
   std::string name; std::optional<change_id> old_head; change_id new_head; bool fast_forward;
@@ -524,6 +525,7 @@ class sync_session {
  public:
   runtime::task<sync_transfer_report> send(std::span<const digest> roots);
   runtime::task<sync_transfer_report> receive(std::span<const digest> roots);
+  runtime::task<sync_metadata_report> receive_metadata(std::span<const digest> roots);
 };
 class sync_endpoint final : public remote_blob_source {
  public:
@@ -544,6 +546,8 @@ the byte-span handlers and do not include private codec headers.
 upstream directory sync messages, refs, and referenced object roots. `import_drips(span)` verifies
 and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
 in [sync.md](sync.md); pack frames remain private wire data.
+`receive_metadata` accepts tree roots, stores only tree and blob records, registers blob content at
+the session's remote source and instance, and reports fetched record counts plus bytes still remote.
 
 ### `liquid/delta.hpp`
 

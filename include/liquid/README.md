@@ -4,6 +4,9 @@ Installed C++ headers in this directory define libliquid's supported API. `liqui
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.
 
+`sync.hpp` includes metadata-only tree receipt for node-store and other lazy-hydration clients.
+It records remote blob locations without fetching content chunks.
+
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.

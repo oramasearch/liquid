@@ -8,6 +8,9 @@ bytes.
 `session.cpp` walks references from caller-provided roots. Send asks the peer for its missing set
 before uploading; receive range-reads absent objects, verifies each full digest, stores it, and then
 continues through its references while preserving each transmitted digest algorithm.
+`receive_metadata` follows only tree and blob records, registers each blob's whole-content digest
+against the session's source and instance, and counts bytes whose chunks remain remote without
+requesting any content chunk.
 
 `server.cpp` implements the public transport-neutral `sync_server`. It owns the private codec,
 checks repository/store pairing, derives old/new ref updates and fast-forward state from the change

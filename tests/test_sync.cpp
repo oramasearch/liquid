@@ -34,6 +34,8 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
+#include "objects/records.hpp"
+#include "repository/store_access.hpp"
 #include "temporary_directory.hpp"
 
 namespace {
@@ -141,6 +143,38 @@ auto send_all(int socket, std::string_view value) -> bool {
     }
     return true;
 }
+
+class counting_store_source final : public liquid::remote_blob_source {
+public:
+    explicit counting_store_source(liquid::store& source) : source_(&source) {}
+
+    auto requests() const -> const std::vector<liquid::digest>& {
+        return requests_;
+    }
+
+    liquid::runtime::task<std::vector<liquid::digest>>
+    find_missing(std::string, std::vector<liquid::digest>) override {
+        co_return std::vector<liquid::digest>{};
+    }
+
+    liquid::runtime::task<std::uint64_t> read_range(std::string,
+                                                    liquid::digest blob,
+                                                    std::uint64_t offset,
+                                                    std::span<std::byte> output) override {
+        requests_.push_back(blob);
+        co_return co_await source_->read(blob, offset, output);
+    }
+
+    liquid::runtime::task<void>
+    write(std::string, liquid::digest, std::vector<std::byte>) override {
+        co_return std::unexpected(
+            liquid::error{liquid::errc::unsupported, "counting source is read only"});
+    }
+
+private:
+    liquid::store* source_{};
+    std::vector<liquid::digest> requests_;
+};
 
 template <class T>
 liquid::runtime::task<void>
@@ -397,6 +431,68 @@ auto export_all(liquid::repository& repository) -> liquid::result<std::vector<li
             return output;
         }
     }
+}
+
+TEST(Sync, ReceiveMetadataRegistersBlobsWithoutFetchingChunks) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    auto source_store =
+        liquid::runtime::block_on(liquid::store::open(source_path.path() / "store"));
+    ASSERT_TRUE(source_store);
+    auto source_options = liquid::repository_options{};
+    source_options.store = &*source_store;
+    auto source =
+        liquid::runtime::block_on(liquid::repository::create("image-source", source_options));
+    ASSERT_TRUE(source);
+    auto content = std::vector<std::byte>(512U * 1024U);
+    for (auto index = std::size_t{}; index < content.size(); ++index) {
+        content[index] = std::byte{static_cast<unsigned char>((index * 31U) & 0xffU)};
+    }
+    auto content_id = liquid::runtime::block_on(source_store->put(content));
+    ASSERT_TRUE(content_id);
+    auto source_blob =
+        liquid::repository_detail::store_access::blob_for(*source_store, *content_id);
+    ASSERT_TRUE(source_blob);
+    source_blob->remote = liquid::remote_blob_location{"source-url", "image-instance"};
+    ASSERT_TRUE(liquid::runtime::block_on(source->write_remote("image.bin", *source_blob)));
+    auto root = liquid::runtime::block_on(source->root_digest());
+    ASSERT_TRUE(root);
+    auto tree_bytes = liquid::runtime::block_on(source_store->get(*root));
+    ASSERT_TRUE(tree_bytes);
+    auto tree = liquid::objects::decode_tree(*tree_bytes);
+    ASSERT_TRUE(tree);
+    ASSERT_EQ(tree->entries.size(), 1U);
+    const auto blob_record = tree->entries.front().ref;
+    auto blob_bytes = liquid::runtime::block_on(source_store->get(blob_record));
+    ASSERT_TRUE(blob_bytes);
+    auto blob = liquid::objects::decode_blob(*blob_bytes);
+    ASSERT_TRUE(blob);
+
+    auto remote = std::make_shared<counting_store_source>(*source_store);
+    auto destination_options = liquid::store_options{};
+    destination_options.remote_sources.emplace("source-url", remote);
+    auto destination = liquid::runtime::block_on(
+        liquid::store::open(destination_path.path() / "store", destination_options));
+    ASSERT_TRUE(destination);
+    auto session = liquid::sync_session{*destination, *remote, "source-url", "image-instance"};
+    const auto roots = std::array<liquid::digest, 1>{*root};
+    auto report = liquid::runtime::block_on(session.receive_metadata(roots));
+    ASSERT_TRUE(report) << report.error().message << " (" << report.error().context << ")";
+    EXPECT_EQ(report->trees, 1U);
+    EXPECT_EQ(report->blobs, 1U);
+    EXPECT_EQ(report->bytes_remote, blob->size);
+
+    auto availability = liquid::runtime::block_on(destination->has(blob->content));
+    ASSERT_TRUE(availability);
+    EXPECT_EQ(*availability, liquid::blob_availability::remote);
+    for (const auto& chunk : blob->chunks) {
+        auto present = liquid::runtime::block_on(destination->contains(chunk));
+        ASSERT_TRUE(present);
+        EXPECT_FALSE(*present);
+    }
+    ASSERT_EQ(remote->requests().size(), 2U);
+    EXPECT_EQ(liquid::to_string(remote->requests()[0]), liquid::to_string(*root));
+    EXPECT_EQ(liquid::to_string(remote->requests()[1]), liquid::to_string(blob_record));
 }
 
 TEST(Sync, exchanges_disk_repositories_and_only_new_objects) {

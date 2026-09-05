@@ -50,6 +50,12 @@ struct LIQUID_EXPORT sync_transfer_report {
     std::uint64_t bytes{};
 };
 
+struct LIQUID_EXPORT sync_metadata_report {
+    std::uint64_t trees{};
+    std::uint64_t blobs{};
+    std::uint64_t bytes_remote{};
+};
+
 enum class sync_ref_outcome_kind : std::uint8_t { applied = 1, refused = 2 };
 
 struct LIQUID_EXPORT sync_ref_outcome {
@@ -125,6 +131,7 @@ private:
 class LIQUID_EXPORT sync_session {
 public:
     sync_session(store& local, remote_blob_source& peer, std::string instance);
+    sync_session(store& local, remote_blob_source& peer, std::string source, std::string instance);
     ~sync_session();
     sync_session(sync_session&&) noexcept;
     sync_session& operator=(sync_session&&) noexcept;
@@ -133,6 +140,8 @@ public:
 
     [[nodiscard]] runtime::task<sync_transfer_report> send(std::span<const digest> roots);
     [[nodiscard]] runtime::task<sync_transfer_report> receive(std::span<const digest> roots);
+    [[nodiscard]] runtime::task<sync_metadata_report>
+    receive_metadata(std::span<const digest> roots);
 
 private:
     struct impl;

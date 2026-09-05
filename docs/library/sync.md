@@ -184,6 +184,15 @@ cursor and the push's `atomic` choice in `sync_endpoint_options`; `sync_report::
 the applied or refused result and reason for each ref, and the returned report supplies the next
 cursor to retain. All waiting operations are Capy tasks.
 
+`sync_session::receive_metadata(roots)` is the image-root variant. Each root is a tree record. It
+range-reads and digest-verifies absent tree and blob records, stores those records locally, and
+stops at each decoded blob instead of reading its chunks. The session registers the blob's
+whole-content digest, ordered chunks, and sizes with `{source, instance}` from its constructor.
+`sync_metadata_report::trees` and `blobs` count records fetched from the peer; local records are
+walked but not counted again. `bytes_remote` sums the registered chunk sizes not already local.
+Consequently `store::has(blob.content)` reports `remote` for a wholly absent payload immediately
+after receipt, and a later store or VFS read hydrates through the registered source.
+
 ## Local server command
 
 `liquid serve sync <path>` opens an existing repository and serves the five routes above with the
