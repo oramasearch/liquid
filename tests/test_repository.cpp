@@ -318,6 +318,12 @@ TEST(Repository, import_tree_preserves_ignored_entries_in_a_paged_tree) {
     ASSERT_TRUE(cache) << cache.error().message;
     EXPECT_EQ(*cache, content("configured"));
 
+    const auto recorded = liquid::runtime::block_on(repository.cut("record paged import"));
+    ASSERT_TRUE(recorded) << recorded.error().message << ": " << recorded.error().context;
+    const auto recorded_cache = liquid::runtime::block_on(repository.read("build/CMakeCache.txt"));
+    ASSERT_TRUE(recorded_cache) << recorded_cache.error().message;
+    EXPECT_EQ(*recorded_cache, content("configured"));
+
     options.ignore_patterns = {"build/**"};
     const auto unchanged = liquid::runtime::block_on(repository.import_tree(source, options));
     ASSERT_TRUE(unchanged) << unchanged.error().message;

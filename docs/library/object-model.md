@@ -254,6 +254,10 @@ repository journal budget documented in [`build-engine.md`](build-engine.md); re
 checkpoints the already-paged tree. Thus importing is bounded by `O(depth + changed entries +
 journal budget)`, rather than the size of either tree.
 
+Recording a change after a paged import reuses an unloaded root page directly. It does not turn the
+unloaded entry map into an empty tree, so configured inputs retained by a deferred open remain in
+the recorded snapshot.
+
 ## Anchors
 
 Issue #174 adds text positions that follow a file from one change to another without changing the

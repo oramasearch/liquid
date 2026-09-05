@@ -200,6 +200,7 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
         fixture.project(), fixture.cache(), {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"});
     ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
     ASSERT_EQ(configured->exit, 0);
+    EXPECT_TRUE(std::filesystem::is_regular_file(fixture.project() / "build/CMakeCache.txt"));
     auto first =
         run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, false, 3);
     ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;

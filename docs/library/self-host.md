@@ -98,6 +98,8 @@ private repository's current tree, and writes one drip only when entries changed
 tree writes no drip. Its retained state is `O(depth + changed entries + 64 KiB journal budget)`.
 Ignored generated entries are retained from the prior paged tree, so synchronising sources for a
 subsequent wrapped build cannot remove the configured CMake cache from the observed filesystem.
+The following change cut retains that deferred root page instead of rebuilding it from an unloaded
+entry map, preserving those configured inputs through the wrapper's snapshot record.
 The Linux self-host container has an 8 GiB memory limit; that bound applies to source import as
 well as result restoration and repository checkpoints.
 

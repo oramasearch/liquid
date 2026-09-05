@@ -3465,9 +3465,12 @@ runtime::task<change_id> repository::cut(std::string message) {
 runtime::task<change_id> repository::record(change_input input) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    auto root = co_await impl_->snapshot(impl_->current.root);
-    if (!root)
-        co_return std::unexpected(root.error());
+    auto root = result<digest>{impl_->current.root.object};
+    if (!impl_->current.root_is_paged || !impl_->current.root.entries.empty()) {
+        root = co_await impl_->snapshot(impl_->current.root);
+        if (!root)
+            co_return std::unexpected(root.error());
+    }
     const auto recorded = co_await record_from_tree(std::move(input), *root);
     if (!recorded)
         co_return std::unexpected(recorded.error());
