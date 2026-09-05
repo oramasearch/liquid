@@ -368,6 +368,7 @@ add_library(libliquid
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
+  src/build/plan.cpp
   src/build/provenance.cpp
   src/build/trace.cpp
   src/build/why.cpp
