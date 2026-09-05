@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <ranges>
 #include <set>
@@ -29,6 +30,7 @@
 #endif
 
 #include "build/events.hpp"
+#include "build/wrap.hpp"
 #include "daemon/fanout.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/drive.hpp"
@@ -46,6 +48,47 @@ constexpr auto maximum_frame = std::uint32_t{16U * 1024U * 1024U};
 
 auto failure(errc code, std::string message, std::string context = {}) -> error {
     return {code, std::move(message), std::move(context)};
+}
+
+auto daemon_checkout(std::filesystem::path checkout) -> result<std::filesystem::path> {
+    checkout = std::filesystem::weakly_canonical(std::filesystem::absolute(checkout));
+    if (std::filesystem::is_regular_file(checkout / "LIQUID_REPO")) {
+        return checkout;
+    }
+    auto cache = build::wrap_cache_directory(checkout);
+    if (!cache) {
+        return std::unexpected(cache.error());
+    }
+    const auto repository = *cache / "repository";
+    if (!std::filesystem::is_regular_file(repository / "LIQUID_REPO")) {
+        return std::unexpected(failure(
+            errc::not_configured,
+            "repository has no recorded build configuration; run liquid wrap <command> first",
+            checkout.string()));
+    }
+    return repository;
+}
+
+auto error_code(std::string_view name) -> errc {
+    for (const auto code : {errc::ok,
+                            errc::not_found,
+                            errc::already_exists,
+                            errc::conflict,
+                            errc::invalid_argument,
+                            errc::unsupported,
+                            errc::corrupt,
+                            errc::io,
+                            errc::locked,
+                            errc::unauthorized,
+                            errc::unavailable,
+                            errc::busy,
+                            errc::internal,
+                            errc::not_configured}) {
+        if (to_string(code) == name) {
+            return code;
+        }
+    }
+    return errc::internal;
 }
 
 auto map(std::initializer_list<std::pair<cbor::value, cbor::value>> fields) -> cbor::value {
@@ -169,6 +212,169 @@ auto decode_action_input(const cbor::value& source) -> result<action_input> {
             return std::unexpected(failure(errc::corrupt, "invalid daemon build environment"));
         }
         output.env.emplace(*name, *value);
+    }
+    return output;
+}
+
+auto build_target_value(const build_target& target) -> cbor::value {
+    return map({{"name", target.name}});
+}
+
+auto decode_build_target(const cbor::value& source) -> result<build_target> {
+    const auto* name = text_field(source, "name");
+    if (!name) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build target"));
+    }
+    return build_target{*name};
+}
+
+auto build_plan_input_value(const action_input& input) -> cbor::value {
+    auto environment = cbor::value::map{};
+    for (const auto& [name, value] : input.env) {
+        environment.emplace_back(name, value);
+    }
+    return map({{"command", strings_value(input.command)},
+                {"cwd", input.cwd},
+                {"env", cbor::value{std::move(environment)}},
+                {"outputs", strings_value(input.outputs)},
+                {"inputs", to_string(input.inputs)},
+                {"toolchain", to_string(input.toolchain)},
+                {"platform", map({{"os", input.platform.os}, {"arch", input.platform.arch}})},
+                {"timeout_s",
+                 input.timeout ? cbor::value{static_cast<std::uint64_t>(input.timeout->count())}
+                               : cbor::value{cbor::null{}}},
+                {"remote_eligible", input.remote_eligible}});
+}
+
+auto decode_build_plan_input(const cbor::value& source) -> result<action_input> {
+    auto command = decode_strings(source, "command");
+    auto outputs = decode_strings(source, "outputs");
+    const auto* cwd = text_field(source, "cwd");
+    const auto* environment_value = field(source, "env");
+    const auto* environment =
+        environment_value ? std::get_if<cbor::value::map>(&environment_value->data) : nullptr;
+    const auto* inputs_text = text_field(source, "inputs");
+    const auto* toolchain_text = text_field(source, "toolchain");
+    const auto* platform = field(source, "platform");
+    const auto* os = platform ? text_field(*platform, "os") : nullptr;
+    const auto* arch = platform ? text_field(*platform, "arch") : nullptr;
+    const auto* timeout_value = field(source, "timeout_s");
+    const auto* remote_eligible = bool_field(source, "remote_eligible");
+    if (!command || !outputs || !cwd || !environment || !inputs_text || !toolchain_text || !os ||
+        !arch || !timeout_value || !remote_eligible) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build plan input"));
+    }
+    auto inputs = parse_digest(*inputs_text);
+    auto toolchain = parse_digest(*toolchain_text);
+    if (!inputs || !toolchain) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build plan digest"));
+    }
+    auto output = action_input{.command = std::move(*command),
+                               .cwd = *cwd,
+                               .outputs = std::move(*outputs),
+                               .inputs = *inputs,
+                               .toolchain = *toolchain,
+                               .platform = {*os, *arch},
+                               .remote_eligible = *remote_eligible};
+    for (const auto& [name_value, value_value] : *environment) {
+        const auto* name = std::get_if<std::string>(&name_value.data);
+        const auto* value = std::get_if<std::string>(&value_value.data);
+        if (!name || !value) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon build plan environment"));
+        }
+        output.env.emplace(*name, *value);
+    }
+    if (const auto* timeout = std::get_if<std::uint64_t>(&timeout_value->data)) {
+        output.timeout = std::chrono::seconds{*timeout};
+    } else if (!std::holds_alternative<cbor::null>(timeout_value->data)) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build plan timeout"));
+    }
+    return output;
+}
+
+auto build_plan_action_value(const build_plan_action& action) -> cbor::value {
+    auto dependencies = cbor::value::array{};
+    dependencies.reserve(action.dependencies.size());
+    for (const auto& dependency : action.dependencies) {
+        dependencies.emplace_back(to_string(dependency));
+    }
+    return map(
+        {{"v", action.v},
+         {"action", to_string(action.action)},
+         {"dependencies", cbor::value{std::move(dependencies)}},
+         {"state", action.state == cache_status::hit ? "hit" : "miss"},
+         {"result",
+          action.result ? cbor::value{to_string(action.result->value)} : cbor::value{cbor::null{}}},
+         {"input", build_plan_input_value(action.input)}});
+}
+
+auto decode_build_plan_action(const cbor::value& source) -> result<build_plan_action> {
+    const auto* version = unsigned_field(source, "v");
+    const auto* action_text = text_field(source, "action");
+    const auto* dependencies_value = field(source, "dependencies");
+    const auto* dependencies =
+        dependencies_value ? std::get_if<cbor::value::array>(&dependencies_value->data) : nullptr;
+    const auto* state = text_field(source, "state");
+    const auto* result_value = field(source, "result");
+    const auto* input_value = field(source, "input");
+    if (!version || *version != 1 || !action_text || !dependencies || !state ||
+        (*state != "hit" && *state != "miss") || !result_value || !input_value) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build plan action"));
+    }
+    auto action = parse_digest(*action_text);
+    auto input = decode_build_plan_input(*input_value);
+    if (!action || !input) {
+        return std::unexpected(action ? input.error() : action.error());
+    }
+    auto output =
+        build_plan_action{.action = *action,
+                          .input = std::move(*input),
+                          .state = *state == "hit" ? cache_status::hit : cache_status::miss};
+    for (const auto& item : *dependencies) {
+        const auto* text = std::get_if<std::string>(&item.data);
+        if (!text) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon build plan dependency"));
+        }
+        auto dependency = parse_digest(*text);
+        if (!dependency) {
+            return std::unexpected(dependency.error());
+        }
+        output.dependencies.push_back(*dependency);
+    }
+    if (const auto* result_text = std::get_if<std::string>(&result_value->data)) {
+        auto result = parse_digest(*result_text);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        output.result = result_id{*result};
+    } else if (!std::holds_alternative<cbor::null>(result_value->data)) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build plan result"));
+    }
+    return output;
+}
+
+auto build_plan_value(const std::vector<build_plan_action>& plan) -> cbor::value {
+    auto actions = cbor::value::array{};
+    actions.reserve(plan.size());
+    for (const auto& action : plan) {
+        actions.push_back(build_plan_action_value(action));
+    }
+    return cbor::value{std::move(actions)};
+}
+
+auto decode_build_plan(const cbor::value& source) -> result<std::vector<build_plan_action>> {
+    const auto* actions = std::get_if<cbor::value::array>(&source.data);
+    if (!actions) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon build plan"));
+    }
+    auto output = std::vector<build_plan_action>{};
+    output.reserve(actions->size());
+    for (const auto& item : *actions) {
+        auto action = decode_build_plan_action(item);
+        if (!action) {
+            return std::unexpected(action.error());
+        }
+        output.push_back(std::move(*action));
     }
     return output;
 }
@@ -579,9 +785,10 @@ auto decode_response(std::span<const std::byte> frame) -> result<cbor::value> {
         if (!decoded) {
             return std::unexpected(decoded.error());
         }
+        const auto* code = text_field(*decoded, "code");
         const auto* message = text_field(*decoded, "message");
         const auto* context = text_field(*decoded, "context");
-        return std::unexpected(failure(errc::internal,
+        return std::unexpected(failure(code ? error_code(*code) : errc::internal,
                                        message ? *message : "daemon request failed",
                                        context ? *context : "daemon protocol"));
     }
@@ -962,7 +1169,7 @@ struct service_state {
     std::optional<capture> capture_handle;
     std::optional<subscription> capture_subscription;
     struct build_session {
-        repository source;
+        std::shared_ptr<repository> source;
         build_handle handle;
         build_event_subscription subscription;
     };
@@ -1040,10 +1247,77 @@ auto service_state::dequeue() -> std::optional<daemon_delivery> {
 }
 
 #ifndef _WIN32
+runtime::task<repository> open_configured_build(const std::filesystem::path& checkout) {
+    auto wrapped = co_await repository::open_build(checkout);
+    if (wrapped) {
+        co_return std::move(*wrapped);
+    }
+    if (wrapped.error().code != errc::not_configured) {
+        co_return std::unexpected(wrapped.error());
+    }
+    auto source = co_await repository::open(checkout);
+    if (!source) {
+        co_return std::unexpected(wrapped.error());
+    }
+    auto plan = co_await source->build_plan();
+    if (!plan) {
+        co_return std::unexpected(plan.error());
+    }
+    co_return std::move(*source);
+}
+
 runtime::task<std::vector<std::byte>>
 process_build_request(const std::shared_ptr<service_state>& state,
                       const cbor::value& request_value,
                       std::string_view operation) {
+    if (operation == "build_plan") {
+        const auto* target_value = field(request_value, "target");
+        if (!target_value) {
+            co_return encode_error(failure(errc::invalid_argument, "missing daemon build target"));
+        }
+        auto target = decode_build_target(*target_value);
+        if (!target) {
+            co_return encode_error(target.error());
+        }
+        auto source = co_await open_configured_build(state->checkout);
+        if (!source) {
+            co_return encode_error(source.error());
+        }
+        auto plan = co_await source->build_plan(std::move(*target));
+        if (!plan) {
+            co_return encode_error(plan.error());
+        }
+        co_return encode_success(map({{"v", std::uint64_t{1}}, {"plan", build_plan_value(*plan)}}));
+    }
+    if (operation == "build_repository") {
+        const auto* target_value = field(request_value, "target");
+        if (!target_value) {
+            co_return encode_error(failure(errc::invalid_argument, "missing daemon build target"));
+        }
+        auto target = decode_build_target(*target_value);
+        if (!target) {
+            co_return encode_error(target.error());
+        }
+        auto source = co_await open_configured_build(state->checkout);
+        if (!source) {
+            co_return encode_error(source.error());
+        }
+        auto owned_source = std::make_shared<repository>(std::move(*source));
+        auto handle = owned_source->build(std::move(*target));
+        if (!handle) {
+            co_return encode_error(handle.error());
+        }
+        auto subscription = handle->events();
+        if (!subscription) {
+            co_return encode_error(subscription.error());
+        }
+        const auto id = ++state->next_build;
+        state->builds.emplace(id,
+                              service_state::build_session{std::move(owned_source),
+                                                           std::move(*handle),
+                                                           std::move(*subscription)});
+        co_return encode_success(map({{"v", std::uint64_t{1}}, {"build", id}}));
+    }
     if (operation == "build_start") {
         const auto* input_value = field(request_value, "input");
         if (!input_value) {
@@ -1057,7 +1331,8 @@ process_build_request(const std::shared_ptr<service_state>& state,
         if (!source) {
             co_return encode_error(source.error());
         }
-        auto handle = source->build(std::move(*input));
+        auto owned_source = std::make_shared<repository>(std::move(*source));
+        auto handle = owned_source->build(std::move(*input));
         if (!handle) {
             co_return encode_error(handle.error());
         }
@@ -1067,7 +1342,7 @@ process_build_request(const std::shared_ptr<service_state>& state,
         }
         const auto id = ++state->next_build;
         state->builds.emplace(id,
-                              service_state::build_session{std::move(*source),
+                              service_state::build_session{std::move(owned_source),
                                                            std::move(*handle),
                                                            std::move(*subscription)});
         co_return encode_success(map({{"v", std::uint64_t{1}}, {"build", id}}));
@@ -1236,7 +1511,8 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                 auto changed = *operation == "pause" ? co_await state->capture_handle->pause()
                                                      : co_await state->capture_handle->resume();
                 response = changed ? encode_acknowledgement() : encode_error(changed.error());
-            } else if (*operation == "build_start" || *operation == "build_next") {
+            } else if (*operation == "build_start" || *operation == "build_next" ||
+                       *operation == "build_plan" || *operation == "build_repository") {
                 response = co_await process_build_request(state, *decoded, *operation);
             } else {
                 response = encode_error(
@@ -1320,7 +1596,11 @@ runtime::task<daemon> daemon::start(std::filesystem::path checkout, daemon_optio
     co_return std::unexpected(unsupported_endpoint());
 #else
     try {
-        checkout = std::filesystem::weakly_canonical(std::filesystem::absolute(checkout));
+        auto resolved = daemon_checkout(std::move(checkout));
+        if (!resolved) {
+            co_return std::unexpected(resolved.error());
+        }
+        checkout = std::move(*resolved);
         if (!std::filesystem::exists(checkout / "LIQUID_REPO")) {
             co_return std::unexpected(
                 failure(errc::not_found, "checkout is not a liquid repository", checkout.string()));
@@ -1438,7 +1718,11 @@ runtime::task<daemon> daemon::attach(std::filesystem::path checkout) {
     static_cast<void>(checkout);
     co_return std::unexpected(unsupported_endpoint());
 #else
-    checkout = std::filesystem::weakly_canonical(std::filesystem::absolute(checkout));
+    auto resolved = daemon_checkout(std::move(checkout));
+    if (!resolved) {
+        co_return std::unexpected(resolved.error());
+    }
+    checkout = std::move(*resolved);
     auto implementation = std::make_unique<impl>();
     auto endpoint = endpoint_path(checkout);
     if (!endpoint) {
@@ -1579,6 +1863,61 @@ runtime::task<build_handle> daemon::build(action_input input) {
 #else
     auto frame = encode_request(map(
         {{"v", std::uint64_t{1}}, {"op", "build_start"}, {"input", action_input_value(input)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto stream = build_detail::event_access::create();
+    auto producer = stream.producer;
+    runtime::spawn(proxy_build_events(impl_->endpoint, std::move(*frame), producer),
+                   [producer](result<void> completed) {
+                       if (!completed) {
+                           producer.fail(completed.error(), {});
+                       }
+                   });
+    co_return std::move(stream.handle);
+#endif
+}
+
+runtime::task<std::vector<build_plan_action>> daemon::build_plan(build_target target) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(target);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map(
+        {{"v", std::uint64_t{1}}, {"op", "build_plan"}, {"target", build_target_value(target)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    const auto* plan_value = field(*decoded, "plan");
+    if (!plan_value) {
+        co_return std::unexpected(failure(errc::corrupt, "missing daemon build plan"));
+    }
+    co_return decode_build_plan(*plan_value);
+#endif
+}
+
+runtime::task<build_handle> daemon::build(build_target target) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(target);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map({{"v", std::uint64_t{1}},
+                                     {"op", "build_repository"},
+                                     {"target", build_target_value(target)}}));
     if (!frame) {
         co_return std::unexpected(frame.error());
     }

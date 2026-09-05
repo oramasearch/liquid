@@ -32,6 +32,8 @@ and result leases across reopen, retains the action-index root, and owns per-han
 and critical alerts exposed by `repository::cache_stats`.
 `repository::build` starts the same event-producing action path exposed in `liquid/build.hpp`; the
 repository must outlive its build handle because execution continues against its store and signer.
+The `build_target` overload plans the recorded graph and starts every selected action, while
+`root_digest` returns the current stored tree record for public action construction.
 `register_test`, `tests`, and `run_tests` delegate native target storage, sorted discovery, and
 cached execution to `src/build/tests.cpp`. `open_build` resolves the persistent repository owned by
 an observed working-tree build so CLI test runs use the same target and action state as `wrap`.

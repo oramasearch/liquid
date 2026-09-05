@@ -75,6 +75,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Public build handles now stream queued, started, hit, done, failed, critical-path, and finished
 > events through the library and daemon. CMake test registrations become discoverable cached
 > actions, with `liquid build --events` providing JSON Lines and `liquid test` reporting results.
+> Configured repository builds now expose complete public action plans with dependency edges and
+> validated hit state. `repository::build()` and the daemon start the whole selected build in one
+> call, `repository::root_digest()` exposes the current tree record, and `liquid build --plan`
+> prints the daemon plan schema as JSON Lines.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,

@@ -81,6 +81,9 @@ public:
     [[nodiscard]] runtime::task<daemon_status> status();
     [[nodiscard]] runtime::task<void> pause_capture();
     [[nodiscard]] runtime::task<void> resume_capture();
+    [[nodiscard]] runtime::task<std::vector<build_plan_action>>
+    build_plan(build_target target = {});
+    [[nodiscard]] runtime::task<build_handle> build(build_target target);
     [[nodiscard]] runtime::task<build_handle> build(action_input input);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();

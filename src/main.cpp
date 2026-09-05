@@ -245,9 +245,10 @@ constexpr auto commands = std::to_array<command>({
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build --events <command> [args...] | build --profile [remote options] <command> [args...] | "
-     "build trace [--chrome]",
-     "profile a build or export its trace",
+     "build [target] | build --plan [target] | build --events <command> [args...] | "
+     "build --profile [remote options] <command> [args...] | build trace [--chrome]",
+     "plan or start a configured repository build, profile a command, stream events, or export a "
+     "trace",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::build},
     {"test",

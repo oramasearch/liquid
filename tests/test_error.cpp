@@ -21,6 +21,7 @@ TEST(Error, EveryCodeHasAName) {
         std::pair{liquid::errc::unauthorized, "unauthorized"},
         std::pair{liquid::errc::unavailable, "unavailable"},
         std::pair{liquid::errc::busy, "busy"},
+        std::pair{liquid::errc::not_configured, "not_configured"},
         std::pair{liquid::errc::internal, "internal"},
         std::pair{liquid::errc::not_remote, "not_remote"},
     };

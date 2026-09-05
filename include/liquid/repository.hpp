@@ -367,6 +367,7 @@ public:
     [[nodiscard]] static runtime::task<repository> open_build(std::filesystem::path working_tree,
                                                               repository_options options = {});
     [[nodiscard]] runtime::task<tree> root();
+    [[nodiscard]] runtime::task<digest> root_digest();
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
     [[nodiscard]] runtime::task<std::vector<std::byte>> read_decrypted(std::string path);
@@ -444,6 +445,9 @@ public:
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);
     [[nodiscard]] runtime::task<cache_report> cache_stats();
+    [[nodiscard]] runtime::task<std::vector<build_plan_action>>
+    build_plan(build_target target = {});
+    [[nodiscard]] result<build_handle> build(build_target target = {});
     [[nodiscard]] result<build_handle> build(action_input input);
     [[nodiscard]] result<build_handle> build(action_input input, remote_executor& remote);
     [[nodiscard]] runtime::task<void> register_test(test_target target);

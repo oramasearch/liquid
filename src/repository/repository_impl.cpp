@@ -3282,6 +3282,11 @@ runtime::task<::liquid::tree> repository::root() {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return co_await impl_->root_tree();
 }
+runtime::task<digest> repository::root_digest() {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return co_await impl_->snapshot(impl_->current.root);
+}
 runtime::task<change_id> repository::head() {
     if (!impl_ || !impl_->current.head)
         co_return std::unexpected(failure(errc::not_found, "repository has no change"));
