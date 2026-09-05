@@ -32,6 +32,7 @@ add_executable(liquid-tests
   test_store.cpp
   test_temporary_directory.cpp
   test_transparency.cpp
+  ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp
@@ -71,11 +72,15 @@ target_link_libraries(liquid-tests PRIVATE
   liquid_monocypher
   orama::oramacore-cpp
   GTest::gtest_main
+  Boost::assert
+  Boost::config
+  Boost::throw_exception
   Boost::corosio
   Boost::corosio_openssl)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
+  ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)

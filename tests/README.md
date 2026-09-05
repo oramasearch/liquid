@@ -12,6 +12,8 @@ production timestamp service and contains the timestamp, trust, tampering, and r
 OpenSSL generates ephemeral RSA and P-384 signatures only in the test process so the private
 verification engine is checked against an independent implementation for PKCS#1 v1.5, RSA-PSS,
 ECDSA, SHA-256, and SHA-384; no OpenSSL call enters the verification path.
+The main test binary compiles the private signature translation unit directly so this coverage also
+runs when libliquid's internal symbols are hidden by a shared build.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
 
