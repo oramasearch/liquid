@@ -2340,17 +2340,25 @@ struct repository::impl {
         co_return result<void>{};
     }
     auto ignored(std::string_view path, const import_options& options) const -> bool {
-        return std::ranges::any_of(options.ignore_patterns, [&](const auto& pattern) {
-            if (glob_matches(pattern, path)) {
-                return true;
+        auto ignored = false;
+        for (const auto& configured : options.ignore_patterns) {
+            auto pattern = std::string_view{configured};
+            const auto included = pattern.starts_with('!');
+            if (included) {
+                pattern.remove_prefix(1);
             }
-            if (!pattern.ends_with("/**")) {
-                return false;
+            auto matches = glob_matches(pattern, path);
+            if (pattern.ends_with("/**")) {
+                auto root = pattern.substr(0, pattern.size() - 3);
+                root.remove_suffix(1);
+                matches =
+                    matches || glob_matches(root, path) || same_path_or_descendant(path, root);
             }
-            auto root = std::string_view{pattern}.substr(0, pattern.size() - 3);
-            root.remove_suffix(1);
-            return same_path_or_descendant(path, root);
-        });
+            if (matches) {
+                ignored = !included;
+            }
+        }
+        return ignored;
     }
     runtime::task<void> import_directory(working_entry& destination,
                                          const std::filesystem::path& directory,
@@ -2952,6 +2960,7 @@ runtime::task<tree_import_report> repository::import_tree(std::filesystem::path 
                                           code ? code.message() : "import root is not a directory",
                                           root.string()));
     }
+    auto caller_patterns = std::move(options.ignore_patterns);
     for (const auto name : {".gitignore", ".liquidignore"}) {
         auto ignore_file = std::ifstream{root / name};
         auto pattern = std::string{};
@@ -2959,8 +2968,9 @@ runtime::task<tree_import_report> repository::import_tree(std::filesystem::path 
             if (pattern.empty() || pattern.starts_with('#')) {
                 continue;
             }
-            if (pattern.starts_with('/')) {
-                pattern.erase(0, 1);
+            const auto offset = pattern.starts_with('!') ? std::size_t{1} : std::size_t{};
+            if (pattern.size() > offset && pattern[offset] == '/') {
+                pattern.erase(offset, 1);
             }
             if (pattern.ends_with('/')) {
                 pattern += "**";
@@ -2968,6 +2978,9 @@ runtime::task<tree_import_report> repository::import_tree(std::filesystem::path 
             options.ignore_patterns.push_back(std::move(pattern));
         }
     }
+    options.ignore_patterns.insert(options.ignore_patterns.end(),
+                                   std::make_move_iterator(caller_patterns.begin()),
+                                   std::make_move_iterator(caller_patterns.end()));
     auto report = tree_import_report{};
     auto changed_paths = std::vector<std::string>{};
     auto tree_changed = false;

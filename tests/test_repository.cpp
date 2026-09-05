@@ -178,19 +178,21 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     write_file(source / "ignored.txt", content("ignored"));
     write_file(source / "caller-ignored.txt", content("ignored"));
     write_file(source / "caller-ignored-directory" / "nested.txt", content("ignored"));
-    write_file(source / ".gitignore", content("ignored.txt\n"));
+    write_file(source / "build-wrapped" / "CMakeCache.txt", content("configured"));
+    write_file(source / ".gitignore", content("ignored.txt\nbuild-*/\n"));
     auto created =
         liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
     ASSERT_TRUE(created) << created.error().message;
     auto repository = std::move(*created);
 
     auto options = liquid::import_options{};
-    options.ignore_patterns = {"caller-ignored.txt", "caller-ignored-directory/**"};
+    options.ignore_patterns = {
+        "caller-ignored.txt", "caller-ignored-directory/**", "!build-wrapped", "!build-wrapped/**"};
     const auto first = liquid::runtime::block_on(repository.import_tree(source, options));
     ASSERT_TRUE(first) << first.error().message;
     EXPECT_TRUE(first->drip.has_value());
-    EXPECT_EQ(first->files_seen, 2U);
-    EXPECT_EQ(first->changed, 2U);
+    EXPECT_EQ(first->files_seen, 3U);
+    EXPECT_EQ(first->changed, 3U);
     EXPECT_GT(first->bytes_hashed, 0U);
     EXPECT_GT(first->bytes_written, 0U);
     const auto ignored = liquid::runtime::block_on(repository.read("ignored.txt"));
@@ -200,6 +202,9 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     const auto ignored_directory =
         liquid::runtime::block_on(repository.read("caller-ignored-directory/nested.txt"));
     EXPECT_FALSE(ignored_directory);
+    const auto included_build =
+        liquid::runtime::block_on(repository.read("build-wrapped/CMakeCache.txt"));
+    ASSERT_TRUE(included_build) << included_build.error().message;
 
     repository = {};
     auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path() / "target"));

@@ -505,7 +505,8 @@ auto wrap_hook_path() -> liquid::result<std::filesystem::path> {
 runtime::task<void> sync_sources(repository& source,
                                  const std::filesystem::path& root,
                                  const std::filesystem::path& cache,
-                                 wrap_state& state) {
+                                 wrap_state& state,
+                                 const std::vector<std::string>& command) {
     auto options = import_options{};
     options.message = "synchronise wrap sources";
     options.ignore_patterns = {
@@ -518,6 +519,24 @@ runtime::task<void> sync_sources(repository& source,
     if (!relative_cache.empty() && !relative_cache.starts_with("../")) {
         options.ignore_patterns.push_back(relative_cache);
         options.ignore_patterns.push_back(relative_cache + "/**");
+    }
+    for (auto index = std::size_t{}; index != command.size(); ++index) {
+        auto build_directory = std::string_view{};
+        if (command[index] == "--build" && index + 1 != command.size()) {
+            build_directory = command[index + 1];
+        } else if (command[index].starts_with("--build=")) {
+            build_directory = std::string_view{command[index]}.substr(8);
+        }
+        if (build_directory.empty()) {
+            continue;
+        }
+        const auto relative =
+            std::filesystem::path{build_directory}.lexically_normal().generic_string();
+        if (relative.empty() || relative.starts_with("../") || relative.starts_with('/')) {
+            continue;
+        }
+        options.ignore_patterns.push_back("!" + relative);
+        options.ignore_patterns.push_back("!" + relative + "/**");
     }
     auto imported = co_await source.import_tree(root, std::move(options));
     if (!imported) {
@@ -2382,7 +2401,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!queries) {
         co_return std::unexpected(queries.error());
     }
-    auto synced = co_await sync_sources(*source, working_tree, *cache_directory, *state);
+    auto synced = co_await sync_sources(*source, working_tree, *cache_directory, *state, command);
     if (!synced)
         co_return std::unexpected(synced.error());
     auto cut = co_await source->cut("wrap input snapshot");
