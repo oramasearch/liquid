@@ -22,9 +22,10 @@ auto fail(const liquid::error& value) -> int {
 }
 
 auto usage() -> int {
-    std::println(stderr,
-                 "error: usage: log [--ops] [--json] | log verify <log-url> <attestation-base64url> | "
-                 "log consistency <log-url> | log scan <log-url> <identity>");
+    std::println(
+        stderr,
+        "error: usage: log [--ops] [--json] | log verify <log-url> <attestation-base64url> | "
+        "log consistency <log-url> | log scan <log-url> <identity>");
     return 2;
 }
 
@@ -69,10 +70,12 @@ auto print_checkpoint(const liquid::transparency::checkpoint_trust& value) -> vo
 } // namespace
 
 auto transparency_log(int argc, char** argv) -> int {
-    if (argc == 0 || (argc == 1 && (std::string_view{argv[0]} == "--json" ||
-                                    std::string_view{argv[0]} == "--ops")) ||
-        (argc == 2 && std::string_view{argv[0]} == "--ops" &&
-         std::string_view{argv[1]} == "--json")) {
+    if (argc == 0 ||
+        (argc == 1 &&
+         (std::string_view{argv[0]} == "--json" || std::string_view{argv[0]} == "--ops")) ||
+        (argc == 2 &&
+         ((std::string_view{argv[0]} == "--ops" && std::string_view{argv[1]} == "--json") ||
+          (std::string_view{argv[0]} == "--json" && std::string_view{argv[1]} == "--ops")))) {
         return repo_log(argc, argv);
     }
     const auto operation = std::string_view{argv[0]};

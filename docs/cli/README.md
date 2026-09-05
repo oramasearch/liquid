@@ -134,6 +134,7 @@ that record only when Lake provides a valid append-only proof. `log scan <log-ur
 lists canonical entries naming the identity. A first accepted checkpoint prints
 `bootstrap_warning=true`; operators should record that trust decision. `verify --log <log-url>`
 requires the agreeing action's reproducibility attestation to be included in the same verified log.
+The existing `log --ops` and `log --json` options may be supplied in either order.
 
 `delta create <source> <target>` stores both artifacts, a `zstd-patch` blob, its delta record, and
 a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <delta> <source>
