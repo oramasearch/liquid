@@ -61,7 +61,7 @@ owning issue in `error::context`.
 | `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
 | `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
-| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
@@ -80,7 +80,7 @@ owning issue in `error::context`.
 ```cpp
 enum class errc : std::uint16_t {
   ok = 0, not_found, already_exists, conflict, invalid_argument, unsupported,
-  corrupt, io, locked, unauthorized, unavailable, busy, internal
+  corrupt, io, locked, unauthorized, unavailable, busy, internal, not_remote
 };
 struct error { errc code; std::string message; std::string context; };  // context: a path, a digest, an op id
 template <class T> using result = std::expected<T, error>;
@@ -379,6 +379,12 @@ injected action executor only when the symbol query is demanded.
 ### `liquid/store.hpp`
 
 ```cpp
+class blob_write_through {
+ public:
+  virtual runtime::task<void> put(digest content, std::span<const std::byte> bytes,
+                                  std::span<const digest> chunks,
+                                  std::span<const std::uint64_t> chunk_sizes) = 0;
+};
 struct store_options {
   algorithm hash_algorithm{algorithm::blake3};
   std::uint64_t pack_size{};
@@ -386,6 +392,7 @@ struct store_options {
   std::string write_key;               // empty selects keyring::default_key_id()
   bool durable{};
   std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
+  std::shared_ptr<blob_write_through> write_through;
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -415,6 +422,7 @@ class store {                          // the chunk store: chunks, packs, liquid
   runtime::task<bool> contains(digest);
   runtime::task<blob_availability> has(digest);
   runtime::task<void> register_remote(blob);
+  runtime::task<void> evict(digest);
   std::vector<digest> attestations(digest subject) const;
   runtime::task<std::optional<object_key_version>> key_version(digest);
   runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
@@ -426,7 +434,9 @@ Chunking (FastCDC), packs, compression, the index and its tuning are internal; n
 appears in a signature. File I/O is Corosio's `random_access_file` and `stream_file` on the
 io_context's worker pool, behind the private boundary. `store_options` names the plaintext hash
 algorithm, pack size, optional keyring, optional write key id, optional durable pack-write
-acknowledgement, and the remote source map. A non-null keyring enables trust-domain encrypted objects; see
+acknowledgement, remote source map, and optional write-through callback. `store::evict` returns
+`errc::not_remote` unless the whole-content digest has a persisted remote registration. A non-null
+keyring enables trust-domain encrypted objects; see
 [encryption.md](encryption.md).
 
 ### `liquid/remote.hpp`

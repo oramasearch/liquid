@@ -20,6 +20,7 @@
 #include "faults.hpp"
 #include "hash/sha256.h"
 #include "identity/key_version.hpp"
+#include "mapped_file.hpp"
 #include "objects/records.hpp"
 #include "references.hpp"
 
@@ -1015,12 +1016,23 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
                                    : hash(algorithm_value, bytes);
         if (!id)
             co_return std::unexpected(id.error());
-        auto stored = co_await store_chunk(
-            *id, std::vector<std::byte>(bytes.begin(), bytes.end()), encryption);
-        if (!stored)
-            co_return std::unexpected(stored.error());
         object.chunks.push_back(*id);
         object.chunk_sizes.push_back(part.size);
+    }
+    if (options_.write_through) {
+        auto written =
+            co_await options_.write_through->put(whole, input, object.chunks, object.chunk_sizes);
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+    }
+    for (auto index = std::size_t{}; index < ranges.size(); ++index) {
+        const auto part = ranges[index];
+        const auto bytes = std::span<const std::byte>(input).subspan(part.offset, part.size);
+        auto stored = co_await store_chunk(
+            object.chunks[index], std::vector<std::byte>(bytes.begin(), bytes.end()), encryption);
+        if (!stored)
+            co_return std::unexpected(stored.error());
     }
     auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
     const auto descriptor_id = encryption
@@ -1055,121 +1067,217 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     co_return whole;
 }
 
+runtime::task<stored_object>
+store_backend::scan_file(std::filesystem::path source,
+                         std::optional<crypto_detail::domain_keys> encryption,
+                         std::string key_id,
+                         bool store_chunks) {
+    const auto executor = co_await boost::capy::this_coro::executor;
+    boost::corosio::random_access_file file(executor.context());
+    file.open(source, boost::corosio::file_base::read_only);
+    const auto source_size = file.size();
+    auto hash_key = std::optional<crypto_detail::key>{};
+    if (encryption) {
+        hash_key = encryption->chunk_mac;
+    }
+    auto whole_hasher = incremental_digest{options_.hash_algorithm, hash_key};
+    auto streaming = chunker{};
+    auto object = stored_object{};
+    object.size = source_size;
+    object.key_id = std::move(key_id);
+    auto window = std::vector<std::byte>(
+        static_cast<std::size_t>(std::min<std::uint64_t>(file_window_size, source_size)));
+    auto offset = std::uint64_t{};
+    while (offset < source_size) {
+        const auto wanted =
+            static_cast<std::size_t>(std::min<std::uint64_t>(window.size(), source_size - offset));
+        auto read = std::size_t{};
+        while (read < wanted) {
+            auto [ec, count] = co_await file.read_some_at(
+                offset + read, boost::capy::mutable_buffer(window.data() + read, wanted - read));
+            if (ec || count == 0) {
+                co_return std::unexpected(store_error(
+                    errc::io, ec ? ec.message() : "unexpected end of file", source.string()));
+            }
+            read += count;
+        }
+        const auto input = std::span<const std::byte>(window).first(wanted);
+        whole_hasher.update(input);
+        for (auto& chunk : streaming.feed(input)) {
+            const auto id = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, chunk)
+                                       : hash(options_.hash_algorithm, chunk);
+            if (!id) {
+                co_return std::unexpected(id.error());
+            }
+            const auto chunk_size = chunk.size();
+            if (store_chunks) {
+                auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+                if (!stored) {
+                    co_return std::unexpected(stored.error());
+                }
+            }
+            object.chunks.push_back(*id);
+            object.chunk_sizes.push_back(chunk_size);
+        }
+        offset += wanted;
+    }
+    if (source_size <= window.size()) {
+        object.kind = detect_object_kind(std::span<const std::byte>(window).first(window.size()));
+    }
+    file.close();
+    for (auto& chunk : streaming.finish()) {
+        const auto id = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, chunk)
+                                   : hash(options_.hash_algorithm, chunk);
+        if (!id) {
+            co_return std::unexpected(id.error());
+        }
+        const auto chunk_size = chunk.size();
+        if (store_chunks) {
+            auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+        }
+        object.chunks.push_back(*id);
+        object.chunk_sizes.push_back(chunk_size);
+    }
+    object.id = whole_hasher.finish();
+    co_return object;
+}
+
 runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
     auto [lock_error, guard] = co_await mutation_.scoped_lock();
-    if (lock_error)
+    if (lock_error) {
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put_file"));
+    }
     try {
-        std::optional<crypto_detail::domain_keys> encryption;
-        std::string key_id;
+        auto encryption = std::optional<crypto_detail::domain_keys>{};
+        auto key_id = std::string{};
         if (options_.keys) {
             if (options_.write_key.empty()) {
                 auto default_key = options_.keys->default_key_id();
-                if (!default_key)
+                if (!default_key) {
                     co_return std::unexpected(default_key.error());
+                }
                 key_id = std::move(*default_key);
             } else {
                 key_id = options_.write_key;
             }
             auto versioned = co_await options_.keys->write_key(key_id);
-            if (!versioned)
+            if (!versioned) {
                 co_return std::unexpected(versioned.error());
+            }
             key_id = std::move(*versioned);
             auto data = co_await options_.keys->data_key(key_id, true);
-            if (!data)
+            if (!data) {
                 co_return std::unexpected(data.error());
+            }
             auto derived = crypto_detail::derive_domain_keys(*data);
             crypto_detail::wipe(*data);
-            if (!derived)
+            if (!derived) {
                 co_return std::unexpected(derived.error());
+            }
             encryption = std::move(*derived);
         }
 
-        const auto executor = co_await boost::capy::this_coro::executor;
-        boost::corosio::random_access_file file(executor.context());
-        file.open(source, boost::corosio::file_base::read_only);
-        const auto source_size = file.size();
-        auto hash_key = std::optional<crypto_detail::key>{};
-        if (encryption)
-            hash_key = encryption->chunk_mac;
-        auto whole_hasher = incremental_digest{options_.hash_algorithm, hash_key};
-        auto streaming = chunker{};
-        auto object = stored_object{};
-        object.size = source_size;
-        object.key_id = key_id;
-        auto window = std::vector<std::byte>(
-            static_cast<std::size_t>(std::min<std::uint64_t>(file_window_size, source_size)));
-        auto offset = std::uint64_t{};
-        while (offset < source_size) {
-            const auto wanted = static_cast<std::size_t>(
-                std::min<std::uint64_t>(window.size(), source_size - offset));
-            auto read = std::size_t{};
-            while (read < wanted) {
-                auto [ec, count] = co_await file.read_some_at(
-                    offset + read,
-                    boost::capy::mutable_buffer(window.data() + read, wanted - read));
-                if (ec || count == 0) {
-                    co_return std::unexpected(store_error(
-                        errc::io, ec ? ec.message() : "unexpected end of file", source.string()));
-                }
-                read += count;
-            }
-            const auto input = std::span<const std::byte>(window).first(wanted);
-            whole_hasher.update(input);
-            for (auto& chunk : streaming.feed(input)) {
-                const auto id = encryption
-                                    ? crypto_detail::keyed_digest(encryption->chunk_mac, chunk)
-                                    : hash(options_.hash_algorithm, chunk);
-                if (!id)
-                    co_return std::unexpected(id.error());
-                const auto chunk_size = chunk.size();
-                auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
-                if (!stored)
-                    co_return std::unexpected(stored.error());
-                object.chunks.push_back(*id);
-                object.chunk_sizes.push_back(chunk_size);
-            }
-            offset += wanted;
+        const auto writes_through = static_cast<bool>(options_.write_through);
+        auto scanned = co_await scan_file(source, encryption, key_id, !writes_through);
+        if (!scanned) {
+            co_return std::unexpected(scanned.error());
         }
-        if (source_size <= window.size())
-            object.kind =
-                detect_object_kind(std::span<const std::byte>(window).first(window.size()));
-        file.close();
-        for (auto& chunk : streaming.finish()) {
-            const auto id = encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, chunk)
-                                       : hash(options_.hash_algorithm, chunk);
-            if (!id)
-                co_return std::unexpected(id.error());
-            const auto chunk_size = chunk.size();
-            auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
-            if (!stored)
-                co_return std::unexpected(stored.error());
-            object.chunks.push_back(*id);
-            object.chunk_sizes.push_back(chunk_size);
-        }
-        object.id = whole_hasher.finish();
-        if (objects_.contains(to_string(object.id)))
+        auto object = std::move(*scanned);
+        if (objects_.contains(to_string(object.id))) {
             co_return object.id;
+        }
+
+        if (writes_through) {
+            auto mapping = mapped_file{};
+            auto input = std::span<const std::byte>{};
+            if (object.size != 0) {
+                auto opened = mapping.open(source);
+                if (!opened) {
+                    co_return std::unexpected(opened.error());
+                }
+                input = mapping.bytes();
+            }
+            if (input.size() != object.size) {
+                co_return std::unexpected(store_error(
+                    errc::io, "source size changed while it was read", source.string()));
+            }
+
+            const auto expected_chunks = object.chunks;
+            const auto expected_sizes = object.chunk_sizes;
+            const auto hash_algorithm = options_.hash_algorithm;
+            auto verified = co_await runtime::offload(
+                [input, expected_chunks, expected_sizes, encryption, hash_algorithm] {
+                    auto offset = std::size_t{};
+                    for (auto index = std::size_t{}; index < expected_chunks.size(); ++index) {
+                        const auto size = static_cast<std::size_t>(expected_sizes[index]);
+                        const auto chunk = input.subspan(offset, size);
+                        const auto actual =
+                            encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, chunk)
+                                       : hash(hash_algorithm, chunk);
+                        if (!actual || actual->alg != expected_chunks[index].alg ||
+                            actual->bytes != expected_chunks[index].bytes) {
+                            return false;
+                        }
+                        offset += size;
+                    }
+                    return offset == input.size();
+                });
+            if (!verified) {
+                co_return std::unexpected(verified.error());
+            }
+            if (!*verified) {
+                co_return std::unexpected(
+                    store_error(errc::io, "source changed while it was read", source.string()));
+            }
+
+            auto written = co_await options_.write_through->put(
+                object.id, input, object.chunks, object.chunk_sizes);
+            if (!written) {
+                co_return std::unexpected(written.error());
+            }
+
+            auto offset = std::size_t{};
+            for (auto index = std::size_t{}; index < object.chunks.size(); ++index) {
+                const auto size = static_cast<std::size_t>(object.chunk_sizes[index]);
+                const auto chunk = input.subspan(offset, size);
+                auto stored =
+                    co_await store_chunk(object.chunks[index],
+                                         std::vector<std::byte>(chunk.begin(), chunk.end()),
+                                         encryption);
+                if (!stored) {
+                    co_return std::unexpected(stored.error());
+                }
+                offset += size;
+            }
+        }
+
         auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
         const auto descriptor_id =
             encryption ? crypto_detail::keyed_digest(encryption->chunk_mac, descriptor)
                        : hash(options_.hash_algorithm, descriptor);
-        if (!descriptor_id)
+        if (!descriptor_id) {
             co_return std::unexpected(descriptor_id.error());
+        }
         auto descriptor_stored =
             co_await store_chunk(*descriptor_id, std::move(descriptor), encryption);
-        if (!descriptor_stored)
+        if (!descriptor_stored) {
             co_return std::unexpected(descriptor_stored.error());
+        }
         object.descriptor = *descriptor_id;
         object.has_descriptor = true;
         const auto whole = object.id;
         auto saved = co_await add_object(std::move(object));
-        if (!saved)
+        if (!saved) {
             co_return std::unexpected(saved.error());
+        }
         index_.set_highest_pack_id(descriptor_stored->location.pack_id);
         auto flushed = co_await index_.flush();
-        if (!flushed)
+        if (!flushed) {
             co_return std::unexpected(flushed.error());
+        }
         co_return whole;
     } catch (const std::system_error& caught) {
         co_return std::unexpected(store_error(errc::io, caught.what(), source.string()));
@@ -1566,6 +1674,10 @@ runtime::task<void> store_backend::register_remote(blob value) {
     }
     remotes_[to_string(value.content)] = std::move(value);
     co_return co_await save_remotes();
+}
+
+runtime::task<void> store_backend::evict(digest id) {
+    co_return co_await collector(*this).evict(id);
 }
 
 result<std::uint64_t> store_backend::remote_bytes(digest blob_record) const {

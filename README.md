@@ -21,7 +21,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error, digest, identity
 > document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
-> BLAKE3 identifiers. Repository-local BM25F, substring, and regex search over the working tree or
+> BLAKE3 identifiers. Store owners can await a whole-content write-through callback before the
+> first local pack write and evict remote-registered local copies without losing their remote
+> location. Repository-local BM25F, substring, and regex search over the working tree or
 > named refs is implemented with measured cost planning, current mapped scans, stable explanations,
 > and atomic per-drip publication. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,

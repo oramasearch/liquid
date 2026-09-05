@@ -1,12 +1,20 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <memory>
+#include <numeric>
+#include <optional>
 #include <random>
+#include <ranges>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "liquid/identity.hpp"
@@ -77,6 +85,332 @@ void write_bytes(const std::filesystem::path& path, std::span<const std::byte> c
 auto read_bytes(const std::filesystem::path& path) -> std::vector<char> {
     auto input = std::ifstream{path, std::ios::binary};
     return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
+
+auto store_files(const std::filesystem::path& root)
+    -> std::map<std::filesystem::path, std::vector<char>> {
+    auto files = std::map<std::filesystem::path, std::vector<char>>{};
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        if (entry.is_regular_file()) {
+            files.emplace(std::filesystem::relative(entry.path(), root), read_bytes(entry.path()));
+        }
+    }
+    return files;
+}
+
+auto pack_bytes(const std::filesystem::path& root) -> std::uint64_t {
+    auto total = std::uint64_t{};
+    for (const auto& entry : std::filesystem::directory_iterator(root / "packs")) {
+        if (entry.is_regular_file() && entry.path().extension() == ".pack") {
+            total += entry.file_size();
+        }
+    }
+    return total;
+}
+
+struct write_observation {
+    liquid::digest content{};
+    std::vector<std::byte> bytes;
+    std::vector<liquid::digest> chunks;
+    std::vector<std::uint64_t> chunk_sizes;
+    bool resumed_on_executor{};
+    bool pack_unchanged_while_waiting{};
+};
+
+class recording_write_through final : public liquid::blob_write_through {
+public:
+    explicit recording_write_through(std::filesystem::path root) : root_(std::move(root)) {}
+
+    void fail(liquid::digest content) {
+        failing_ = liquid::to_string(content);
+    }
+
+    auto observations() const -> const std::vector<write_observation>& {
+        return observations_;
+    }
+
+    liquid::runtime::task<void> put(liquid::digest content,
+                                    std::span<const std::byte> contents,
+                                    std::span<const liquid::digest> chunks,
+                                    std::span<const std::uint64_t> chunk_sizes) override {
+        const auto before_executor = co_await boost::capy::this_coro::executor;
+        const auto before_pack = pack_bytes(root_);
+        auto [wait_error] = co_await liquid::runtime::delay(std::chrono::milliseconds{1});
+        if (wait_error) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::internal, wait_error.message(), "write-through test"});
+        }
+        const auto after_executor = co_await boost::capy::this_coro::executor;
+        observations_.push_back(write_observation{content,
+                                                  {contents.begin(), contents.end()},
+                                                  {chunks.begin(), chunks.end()},
+                                                  {chunk_sizes.begin(), chunk_sizes.end()},
+                                                  before_executor == after_executor,
+                                                  before_pack == pack_bytes(root_)});
+        if (failing_ && *failing_ == liquid::to_string(content)) {
+            co_return std::unexpected(liquid::error{liquid::errc::unavailable,
+                                                    "write-through refused content",
+                                                    liquid::to_string(content)});
+        }
+        co_return liquid::result<void>{};
+    }
+
+private:
+    std::filesystem::path root_;
+    std::optional<std::string> failing_;
+    std::vector<write_observation> observations_;
+};
+
+class memory_blob_service final : public liquid::blob_write_through,
+                                  public liquid::remote_blob_source {
+public:
+    liquid::runtime::task<void> put(liquid::digest content,
+                                    std::span<const std::byte> contents,
+                                    std::span<const liquid::digest> chunks,
+                                    std::span<const std::uint64_t> chunk_sizes) override {
+        content_ = content;
+        bytes_.assign(contents.begin(), contents.end());
+        chunks_.assign(chunks.begin(), chunks.end());
+        chunk_sizes_.assign(chunk_sizes.begin(), chunk_sizes.end());
+        co_return liquid::result<void>{};
+    }
+
+    auto registered_blob() const -> liquid::blob {
+        return liquid::blob{chunks_,
+                            bytes_.size(),
+                            chunk_sizes_,
+                            content_,
+                            liquid::remote_blob_location{"memory", "durable"}};
+    }
+
+    liquid::runtime::task<std::vector<liquid::digest>>
+    find_missing(std::string instance, std::vector<liquid::digest> blobs) override {
+        if (instance != "durable") {
+            co_return std::unexpected(liquid::error{
+                liquid::errc::invalid_argument, "unknown instance", std::move(instance)});
+        }
+        auto missing = std::vector<liquid::digest>{};
+        for (const auto& blob : blobs) {
+            if (liquid::to_string(blob) != liquid::to_string(content_)) {
+                missing.push_back(blob);
+            }
+        }
+        co_return missing;
+    }
+
+    liquid::runtime::task<std::uint64_t> read_range(std::string instance,
+                                                    liquid::digest content,
+                                                    std::uint64_t offset,
+                                                    std::span<std::byte> output) override {
+        if (instance != "durable" || liquid::to_string(content) != liquid::to_string(content_)) {
+            co_return std::unexpected(liquid::error{
+                liquid::errc::not_found, "remote content is unavailable", std::move(instance)});
+        }
+        if (offset >= bytes_.size()) {
+            co_return std::uint64_t{};
+        }
+        const auto count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(output.size(), bytes_.size() - offset));
+        std::copy_n(bytes_.begin() + static_cast<std::size_t>(offset), count, output.begin());
+        co_return count;
+    }
+
+    liquid::runtime::task<void>
+    write(std::string instance, liquid::digest content, std::vector<std::byte> contents) override {
+        if (instance != "durable") {
+            co_return std::unexpected(liquid::error{
+                liquid::errc::invalid_argument, "unknown instance", std::move(instance)});
+        }
+        auto actual = liquid::hash(content.alg, contents);
+        if (!actual || liquid::to_string(*actual) != liquid::to_string(content)) {
+            co_return std::unexpected(liquid::error{
+                liquid::errc::corrupt, "remote write digest mismatch", liquid::to_string(content)});
+        }
+        content_ = content;
+        bytes_ = std::move(contents);
+        co_return liquid::result<void>{};
+    }
+
+private:
+    liquid::digest content_{};
+    std::vector<std::byte> bytes_;
+    std::vector<liquid::digest> chunks_;
+    std::vector<std::uint64_t> chunk_sizes_;
+};
+
+struct concurrent_put_results {
+    liquid::result<liquid::digest> failing;
+    liquid::result<liquid::digest> successful;
+};
+
+liquid::runtime::task<concurrent_put_results> concurrent_puts(liquid::store* store,
+                                                              std::vector<std::byte> failing,
+                                                              std::vector<std::byte> successful) {
+    auto [wait_error, first, second] = co_await liquid::runtime::when_all(
+        liquid::runtime::as_io(store->put(std::move(failing))),
+        liquid::runtime::as_io(store->put(std::move(successful))));
+    if (wait_error) {
+        co_return std::unexpected(liquid::error{
+            liquid::errc::internal, wait_error.message(), "concurrent store put test"});
+    }
+    co_return concurrent_put_results{std::move(first), std::move(second)};
+}
+
+TEST(Store, WriteThroughFailureLeavesStoreUnchanged) {
+    temporary_store temporary;
+    const auto source = bytes(512U * 1024U, 201);
+    const auto expected = liquid::hash(liquid::algorithm::blake3, source);
+    ASSERT_TRUE(expected) << expected.error().message;
+    auto hook = std::make_shared<recording_write_through>(temporary.path());
+    hook->fail(*expected);
+    auto options = liquid::store_options{};
+    options.write_through = hook;
+    auto store = open_store(temporary.path(), std::move(options));
+    const auto before = store_files(temporary.path());
+
+    const auto stored = liquid::runtime::block_on(store.put(source));
+
+    ASSERT_FALSE(stored);
+    EXPECT_EQ(stored.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(store_files(temporary.path()), before);
+    const auto availability = liquid::runtime::block_on(store.has(*expected));
+    ASSERT_TRUE(availability) << availability.error().message;
+    EXPECT_EQ(*availability, liquid::blob_availability::absent);
+    ASSERT_EQ(hook->observations().size(), 1U);
+    EXPECT_TRUE(hook->observations().front().resumed_on_executor);
+    EXPECT_TRUE(hook->observations().front().pack_unchanged_while_waiting);
+}
+
+TEST(Store, WriteThroughReceivesWholeMappedFileAndChunkTable) {
+    temporary_store temporary;
+    temporary_store source_root;
+    const auto source = bytes(8U * 1024U * 1024U + 117U, 202);
+    const auto source_path = source_root.path() / "source.bin";
+    write_bytes(source_path, source);
+    auto hook = std::make_shared<recording_write_through>(temporary.path());
+    auto options = liquid::store_options{};
+    options.write_through = hook;
+    auto store = open_store(temporary.path(), std::move(options));
+
+    const auto stored = liquid::runtime::block_on(store.put_file(source_path));
+
+    ASSERT_TRUE(stored) << stored.error().message;
+    const auto stored_again = liquid::runtime::block_on(store.put_file(source_path));
+    ASSERT_TRUE(stored_again) << stored_again.error().message;
+    EXPECT_EQ(liquid::to_string(*stored_again), liquid::to_string(*stored));
+    ASSERT_EQ(hook->observations().size(), 1U);
+    const auto& observed = hook->observations().front();
+    EXPECT_EQ(liquid::to_string(observed.content), liquid::to_string(*stored));
+    EXPECT_EQ(observed.bytes, source);
+    EXPECT_EQ(observed.chunks.size(), observed.chunk_sizes.size());
+    EXPECT_EQ(
+        std::accumulate(observed.chunk_sizes.begin(), observed.chunk_sizes.end(), std::uint64_t{}),
+        source.size());
+    auto offset = std::size_t{};
+    for (auto index = std::size_t{}; index < observed.chunks.size(); ++index) {
+        const auto size = static_cast<std::size_t>(observed.chunk_sizes[index]);
+        const auto actual = liquid::hash(observed.chunks[index].alg,
+                                         std::span<const std::byte>(source).subspan(offset, size));
+        ASSERT_TRUE(actual) << actual.error().message;
+        EXPECT_EQ(liquid::to_string(*actual), liquid::to_string(observed.chunks[index]));
+        offset += size;
+    }
+    EXPECT_EQ(offset, source.size());
+    EXPECT_TRUE(observed.resumed_on_executor);
+    EXPECT_TRUE(observed.pack_unchanged_while_waiting);
+}
+
+TEST(Store, ConcurrentWriteThroughFailureDoesNotAffectSuccessfulPut) {
+    temporary_store temporary;
+    const auto failing_source = bytes(768U * 1024U, 203);
+    const auto successful_source = bytes(768U * 1024U, 204);
+    const auto failing_id = liquid::hash(liquid::algorithm::blake3, failing_source);
+    ASSERT_TRUE(failing_id) << failing_id.error().message;
+    auto hook = std::make_shared<recording_write_through>(temporary.path());
+    hook->fail(*failing_id);
+    auto options = liquid::store_options{};
+    options.write_through = hook;
+    auto store = open_store(temporary.path(), std::move(options));
+
+    const auto results =
+        liquid::runtime::block_on(concurrent_puts(&store, failing_source, successful_source));
+
+    ASSERT_TRUE(results) << results.error().message;
+    ASSERT_FALSE(results->failing);
+    EXPECT_EQ(results->failing.error().code, liquid::errc::unavailable);
+    ASSERT_TRUE(results->successful) << results->successful.error().message;
+    const auto failed_availability = liquid::runtime::block_on(store.has(*failing_id));
+    ASSERT_TRUE(failed_availability) << failed_availability.error().message;
+    EXPECT_EQ(*failed_availability, liquid::blob_availability::absent);
+    const auto stored = liquid::runtime::block_on(store.get(*results->successful));
+    ASSERT_TRUE(stored) << stored.error().message;
+    EXPECT_EQ(*stored, successful_source);
+    ASSERT_EQ(hook->observations().size(), 2U);
+    EXPECT_TRUE(std::ranges::all_of(hook->observations(), [](const auto& observation) {
+        return observation.resumed_on_executor && observation.pack_unchanged_while_waiting;
+    }));
+}
+
+TEST(Store, EvictsRemoteRegisteredContentAndHydratesItAgain) {
+    temporary_store temporary;
+    const auto source = bytes(768U * 1024U, 205);
+    auto service = std::make_shared<memory_blob_service>();
+    auto options = liquid::store_options{};
+    options.write_through = service;
+    options.remote_sources.emplace("memory", service);
+    auto store = open_store(temporary.path(), options);
+    const auto stored = liquid::runtime::block_on(store.put(source));
+    ASSERT_TRUE(stored) << stored.error().message;
+    const auto remote = service->registered_blob();
+    ASSERT_GE(remote.chunks.size(), 3U);
+    const auto registered = liquid::runtime::block_on(store.register_remote(remote));
+    ASSERT_TRUE(registered) << registered.error().message;
+
+    const auto evicted = liquid::runtime::block_on(store.evict(*stored));
+    ASSERT_TRUE(evicted) << evicted.error().message;
+    const auto remote_only = liquid::runtime::block_on(store.has(*stored));
+    ASSERT_TRUE(remote_only) << remote_only.error().message;
+    EXPECT_EQ(*remote_only, liquid::blob_availability::remote);
+    const auto collected = liquid::runtime::block_on(store.collect());
+    ASSERT_TRUE(collected) << collected.error().message;
+    EXPECT_GT(collected->packs_deleted, 0U);
+
+    store = {};
+    store = open_store(temporary.path(), options);
+    const auto after_reopen = liquid::runtime::block_on(store.has(*stored));
+    ASSERT_TRUE(after_reopen) << after_reopen.error().message;
+    EXPECT_EQ(*after_reopen, liquid::blob_availability::remote);
+    const auto offset = remote.chunk_sizes.front() - 1U;
+    auto range = std::vector<std::byte>(static_cast<std::size_t>(remote.chunk_sizes[1] + 2U));
+    const auto read = liquid::runtime::block_on(store.read(*stored, offset, range));
+    ASSERT_TRUE(read) << read.error().message;
+    EXPECT_EQ(*read, range.size());
+    EXPECT_EQ(
+        range,
+        std::vector<std::byte>(source.begin() + static_cast<std::size_t>(offset),
+                               source.begin() + static_cast<std::size_t>(offset) + range.size()));
+
+    const auto evicted_again = liquid::runtime::block_on(store.evict(*stored));
+    ASSERT_TRUE(evicted_again) << evicted_again.error().message;
+    const auto hydrated = liquid::runtime::block_on(store.get(*stored));
+    ASSERT_TRUE(hydrated) << hydrated.error().message;
+    EXPECT_EQ(*hydrated, source);
+}
+
+TEST(Store, RefusesToEvictContentThatIsNotRegisteredRemote) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    const auto source = bytes(256U * 1024U, 206);
+    const auto stored = liquid::runtime::block_on(store.put(source));
+    ASSERT_TRUE(stored) << stored.error().message;
+
+    const auto evicted = liquid::runtime::block_on(store.evict(*stored));
+
+    ASSERT_FALSE(evicted);
+    EXPECT_EQ(evicted.error().code, liquid::errc::not_remote);
+    const auto retained = liquid::runtime::block_on(store.get(*stored));
+    ASSERT_TRUE(retained) << retained.error().message;
+    EXPECT_EQ(*retained, source);
 }
 
 TEST(Store, ChunkingProducesStableObjectIdentity) {

@@ -26,6 +26,16 @@ namespace repository_detail {
 struct store_access;
 }
 
+class LIQUID_EXPORT blob_write_through {
+public:
+    virtual ~blob_write_through() = default;
+
+    [[nodiscard]] virtual runtime::task<void> put(digest content,
+                                                  std::span<const std::byte> bytes,
+                                                  std::span<const digest> chunks,
+                                                  std::span<const std::uint64_t> chunk_sizes) = 0;
+};
+
 struct LIQUID_EXPORT store_options {
     algorithm hash_algorithm{algorithm::blake3};
     std::uint64_t pack_size{};
@@ -33,6 +43,7 @@ struct LIQUID_EXPORT store_options {
     std::string write_key;
     bool durable{};
     std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
+    std::shared_ptr<blob_write_through> write_through;
 };
 
 enum class blob_availability : std::uint8_t { absent, remote, local };
@@ -118,6 +129,7 @@ public:
     [[nodiscard]] runtime::task<bool> contains(digest id);
     [[nodiscard]] runtime::task<blob_availability> has(digest id);
     [[nodiscard]] runtime::task<void> register_remote(blob value);
+    [[nodiscard]] runtime::task<void> evict(digest id);
     [[nodiscard]] std::vector<digest> attestations(digest subject) const;
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<lease> lease_root(digest id, std::chrono::seconds ttl);

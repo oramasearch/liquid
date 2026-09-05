@@ -22,9 +22,11 @@ TEST(Error, EveryCodeHasAName) {
         std::pair{liquid::errc::unavailable, "unavailable"},
         std::pair{liquid::errc::busy, "busy"},
         std::pair{liquid::errc::internal, "internal"},
+        std::pair{liquid::errc::not_remote, "not_remote"},
     };
 
-    for (const auto& [code, name] : cases) EXPECT_EQ(liquid::to_string(code), name);
+    for (const auto& [code, name] : cases)
+        EXPECT_EQ(liquid::to_string(code), name);
 }
 
 TEST(Error, UnknownCodeHasAStableName) {

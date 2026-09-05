@@ -43,6 +43,16 @@ whose content and chunk digests are identical without resolving the remote regis
 Verified sync insertion selects the transmitted digest algorithm after checking the bytes, while
 ordinary local insertion continues to use the store configuration.
 
+The optional `blob_write_through` receives the complete content digest, byte span, and ordered
+chunk table once before any pack mutation. Memory puts retain their input across the await. File
+puts first scan in bounded windows, verify a read-only file mapping against that table, and retain
+the mapping across the await before copying one chunk at a time into packs.
+
+Remote-registered eviction removes the local object entry, adds tombstones for unshared cached
+chunks and its descriptor, and rebuilds the index while preserving `remotes.meta`. It does not
+rewrite packs; ordinary collection and compaction reclaim their dead frames. Registrations already
+remote-only make eviction a successful no-op, while unregistered content returns `not_remote`.
+
 REAPI negotiation may require SHA-256 objects in a repository whose ordinary identity is BLAKE3.
 The repository and REAPI adapters can insert verified raw objects under an explicit supported
 algorithm; the object map and pack path retain both identities without changing the store default.

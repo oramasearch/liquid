@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
+#include <set>
 #include <span>
 #include <vector>
 
@@ -31,8 +33,16 @@ public:
     explicit collector(store_backend& store) : store_(store) {}
     [[nodiscard]] runtime::task<collection_report> run(collection_options options);
     [[nodiscard]] runtime::task<void> redact(std::span<const digest> ids);
+    [[nodiscard]] runtime::task<void> evict(digest id);
 
 private:
+    [[nodiscard]] runtime::task<void> remove_local(collection_manifest manifest,
+                                                   std::set<std::string> target_objects,
+                                                   std::set<std::string> target_chunks,
+                                                   std::optional<std::string> excluded_remote,
+                                                   bool compact,
+                                                   bool refresh_subjects);
+
     store_backend& store_;
 };
 

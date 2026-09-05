@@ -15,7 +15,9 @@ stability, unique child creation, cleanup, and the failure diagnostic.
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
-versions, exact-version revocation failures, and wrong-KEK atomicity. `test_repository.cpp` pins the
+versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
+success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
+eviction, collector reclamation, and range/full rehydration. `test_repository.cpp` pins the
 exact readability report for revisions written before and after rotation and its three disclosure
 statements.
 
