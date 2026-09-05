@@ -84,6 +84,11 @@ checkpoint interval, and requires peak RSS below 512 MiB on
 both supported desktop platforms. The test keeps the payload small so it measures buffering,
 not capacity.
 
+The Linux FUSE-backed CMake fixture also runs the same wrapped build twice. It requires the
+second outer cache hit to remain below 512 MiB peak RSS and verifies that the private repository's
+pending-drip count did not advance. The platform-neutral tree-import RSS test covers the same
+bound where FUSE is unavailable.
+
 Wrapper source synchronization uses `repository::import_tree`, not an individual write for every
 source on every run. It streams the source directory, compares each file's blob identity with the
 private repository's current tree, and writes one drip only when entries changed. An unchanged
