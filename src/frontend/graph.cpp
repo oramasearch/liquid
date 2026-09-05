@@ -159,7 +159,10 @@ auto execute_action_query(std::shared_ptr<query_state> state,
     -> runtime::task<std::vector<std::byte>> {
     auto decoded = canonical(arguments, "frontend action query");
     if (!decoded) {
-        co_return std::unexpected(decoded.error());
+        co_return std::unexpected(
+            frontend_error(decoded.error().code,
+                           "frontend action arguments: " + decoded.error().message,
+                           "frontend action"));
     }
     const auto* action_value = find(*decoded, "action");
     const auto* reads_value = find(*decoded, "reads");
@@ -183,7 +186,14 @@ auto execute_action_query(std::shared_ptr<query_state> state,
         }
     }
     ++state->actions;
-    co_return co_await state->execute(*action);
+    auto output = co_await state->execute(*action);
+    if (!output) {
+        co_return std::unexpected(
+            frontend_error(output.error().code,
+                           "frontend action execution: " + output.error().message,
+                           "frontend action"));
+    }
+    co_return std::move(*output);
 }
 
 auto execute_assembly_query(std::shared_ptr<query_state> state,
@@ -281,11 +291,17 @@ auto execute_symbols_query(std::shared_ptr<query_state> state,
         auto action_output =
             co_await context.read(query_key{std::string{action_query_kind}, std::move(*arguments)});
         if (!action_output) {
-            co_return std::unexpected(action_output.error());
+            co_return std::unexpected(
+                frontend_error(action_output.error().code,
+                               "symbol action query: " + action_output.error().message,
+                               "symbols"));
         }
         output = state->module->symbols_from_output(*language, *source, action_output->bytes);
         if (!output) {
-            co_return std::unexpected(output.error());
+            co_return std::unexpected(
+                frontend_error(output.error().code,
+                               "symbol compiler output: " + output.error().message,
+                               "symbols"));
         }
     }
     auto subject = hash(algorithm::blake3, *source);
@@ -294,11 +310,13 @@ auto execute_symbols_query(std::shared_ptr<query_state> state,
     }
     auto symbols = decode_frontend_symbols(*subject, *output);
     if (!symbols) {
-        co_return std::unexpected(symbols.error());
+        co_return std::unexpected(frontend_error(
+            symbols.error().code, "symbol record: " + symbols.error().message, "symbols"));
     }
     auto encoded = encode_symbols(*symbols);
     if (!encoded) {
-        co_return std::unexpected(encoded.error());
+        co_return std::unexpected(frontend_error(
+            encoded.error().code, "symbol record encoding: " + encoded.error().message, "symbols"));
     }
     co_return std::move(*encoded);
 }

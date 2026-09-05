@@ -682,7 +682,7 @@ class repository {
   runtime::task<std::vector<mapped_anchor>> map_anchors(std::span<const text_anchor>,
                                                         change_id target);
   runtime::task<record_page<repository_result>> results(result_filter = {});
-  runtime::task<action_input> action(digest);
+  runtime::task<action_input> action(digest); // action or result record
   runtime::task<record_page<repository_attestation>> attestations(attestation_filter = {});
   runtime::task<record_page<repository_attestation>> attestations(digest subject,
                                                                    record_page_options = {});
@@ -948,13 +948,14 @@ namespace build {
 execution_schedule choose_execution(scheduling_inputs);
 runtime::task<result_id> execute(repository&, action_input);
 runtime::task<std::vector<std::byte>> execute_symbol_action(repository&, action_input,
-                                                             std::span<const std::byte>);
+                                                             std::vector<std::byte>);
 runtime::task<result_id> record_remote_result(repository&, action_input, action_result);
 runtime::task<result_id> execute(repository&, action_input, remote_executor&);
 runtime::task<std::vector<result_id>> execute_batch(repository&, std::vector<action_input>,
                                                     remote_executor&);
 runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
+result<std::filesystem::path> wrap_cache_directory(const std::filesystem::path&);
 runtime::task<verify_report> verify(repository&, verify_options = {});
 runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
 runtime::task<graph_verify_report> verify_graph(std::filesystem::path,

@@ -18,8 +18,11 @@ record. `repository::symbols(source_digest)` resolves that association and decod
 
 Symbols are a query over recorded compile actions. `liquid build` and `liquid wrap` retain each
 compile action's input tree, toolchain tree, command, and result manifest in the build graph.
-`liquid symbols <path>` finds the most recent recorded compile action that read `<path>`. For a
-header, it queries every recorded translation unit that read the header. For each translation unit,
+The command opens the recorded build graph's cache repository when it is present, rather than
+creating a second association in the working repository.
+`liquid symbols <path>` finds the most recent recorded compile action whose input tree includes
+`<path>`. For a header, it queries every recorded translation unit whose input tree includes that
+header. For each translation unit,
 the frontend describes a symbol action derived from that compile action: the same input and
 toolchain trees, the compile command with its object-output options replaced by AST extraction
 options, and the symbol record as its output contract.
@@ -27,6 +30,10 @@ options, and the symbol record as its output contract.
 The build-engine adapter executes that description through `liquid::build::execute`. The resulting
 action is sandboxed, input-keyed, cacheable, replayable, and eligible for remote execution under
 the same policy as the compile it mirrors. The frontend never starts a compiler process itself.
+The derived action declares the compile's complete toolchain tree: compiler, dynamic closure,
+Clang resources, and required Linux driver-identification files. Its library search path is `/lib`,
+the toolchain's read-only sandbox alias, and is part of the action key; no host library or system
+configuration path is permitted.
 The graph recognizes the action description by its canonical `clang-symbols` kind and decodes the
 resulting compiler stdout into the stored record.
 If there is no matching recorded compile action, the command reports `no recorded compile action

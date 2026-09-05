@@ -181,6 +181,18 @@ runtime::task<action_input> repository::action(digest id) {
         co_return std::unexpected(bytes.error());
     }
     auto record = objects::decode_action(*bytes);
+    if (record) {
+        co_return std::move(record->input);
+    }
+    auto action_result = objects::decode_result(*bytes);
+    if (!action_result) {
+        co_return std::unexpected(record.error());
+    }
+    bytes = co_await repository_detail::build_access::get(*this, action_result->action);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    record = objects::decode_action(*bytes);
     if (!record) {
         co_return std::unexpected(record.error());
     }

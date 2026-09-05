@@ -447,7 +447,7 @@ namespace build {
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
                                                              action_input input);
 [[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<std::byte>> execute_symbol_action(
-    repository& source, action_input compile_action, std::span<const std::byte> symbol_action);
+    repository& source, action_input compile_action, std::vector<std::byte> symbol_action);
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
 record_remote_result(repository& source, action_input input, action_result value);
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
@@ -474,6 +474,8 @@ generate_sbom(repository& source, std::string output_path, sbom_format format);
 [[nodiscard]] LIQUID_EXPORT runtime::task<wrap_report> wrap(std::filesystem::path working_tree,
                                                             std::vector<std::string> command,
                                                             wrap_options options = {});
+[[nodiscard]] LIQUID_EXPORT auto wrap_cache_directory(const std::filesystem::path& working_tree)
+    -> liquid::result<std::filesystem::path>;
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(repository& source,
                                                                 verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(std::filesystem::path working_tree,

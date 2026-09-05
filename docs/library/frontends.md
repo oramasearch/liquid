@@ -110,9 +110,9 @@ subsequent independent symbol demand in the same session. On an Apple M3 Max mac
 
 ```text
 sysctl -n vm.loadavg
-{ 45.72 79.50 87.97 }
-symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=10535 per_unit_ms=10535
-frontend one-function edit: symbols=disabled elapsed_ms=444 symbols=enabled elapsed_ms=438 delta_ms=-6
+{ 110.96 68.28 57.47 }
+symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=14039 per_unit_ms=14039
+frontend one-function edit: symbols=disabled elapsed_ms=766 symbols=enabled elapsed_ms=713 delta_ms=-53
 ```
 
 Run the measurement from a configured static build with:

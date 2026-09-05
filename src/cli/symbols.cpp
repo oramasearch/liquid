@@ -47,9 +47,40 @@ auto kind_name(liquid::symbol_kind kind) -> std::string_view {
     }
 }
 
-auto reads_path(const liquid::action_result& value, std::string_view path) -> bool {
-    return std::ranges::any_of(value.manifest,
-                               [&](const auto& input) { return input.path == path; });
+auto input_tree_contains_path(liquid::repository& repository,
+                              liquid::digest root,
+                              std::string_view path) -> liquid::result<bool> {
+    auto parts = std::vector<std::string>{};
+    for (const auto& part : std::filesystem::path{path}) {
+        const auto value = part.generic_string();
+        if (!value.empty() && value != ".") {
+            parts.push_back(value);
+        }
+    }
+    if (parts.empty()) {
+        return false;
+    }
+
+    for (auto index = std::size_t{}; index != parts.size(); ++index) {
+        auto tree = liquid::runtime::block_on(repository.tree(root));
+        if (!tree) {
+            return std::unexpected(liquid::error{
+                tree.error().code, tree.error().message, "input tree " + liquid::to_string(root)});
+        }
+        const auto found =
+            std::ranges::find(tree->entries, parts[index], &liquid::tree_entry::name);
+        if (found == tree->entries.end()) {
+            return false;
+        }
+        if (index + 1 == parts.size()) {
+            return true;
+        }
+        if (found->kind != liquid::node_kind::tree) {
+            return false;
+        }
+        root = found->ref;
+    }
+    return false;
 }
 
 auto is_compile(const liquid::action_input& input) -> bool {
@@ -84,12 +115,19 @@ auto recorded_compile_actions(liquid::repository& repository, std::string_view p
             return std::unexpected(page.error());
         }
         for (const auto& result : page->records) {
-            if (!reads_path(result.value, path)) {
-                continue;
-            }
             auto action = liquid::runtime::block_on(repository.action(result.value.action));
             if (!action) {
-                return std::unexpected(action.error());
+                return std::unexpected(
+                    liquid::error{action.error().code,
+                                  action.error().message,
+                                  "recorded action " + liquid::to_string(result.value.action)});
+            }
+            auto contains_path = input_tree_contains_path(repository, action->inputs, path);
+            if (!contains_path) {
+                return std::unexpected(contains_path.error());
+            }
+            if (!*contains_path) {
+                continue;
             }
             auto source_path = translation_unit_path(result.value);
             if (is_compile(*action) && source_path) {
@@ -131,8 +169,16 @@ auto symbols(int argc, char** argv) -> int {
         return usage();
     }
     const auto path = std::string{argv[0]};
-    auto repository =
-        liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
+    auto repository_path = std::filesystem::current_path();
+    auto cache_directory = liquid::build::wrap_cache_directory(repository_path);
+    if (!cache_directory) {
+        return fail(cache_directory.error());
+    }
+    const auto build_repository = *cache_directory / "repository";
+    if (std::filesystem::exists(build_repository / "LIQUID_REPO")) {
+        repository_path = build_repository;
+    }
+    auto repository = liquid::runtime::block_on(liquid::repository::open(repository_path));
     if (!repository) {
         return fail(repository.error());
     }
@@ -160,7 +206,9 @@ auto symbols(int argc, char** argv) -> int {
         for (auto& compile : *recorded) {
             auto source = liquid::runtime::block_on(repository->read(compile.source_path));
             if (!source) {
-                return fail(source.error());
+                return fail(liquid::error{source.error().code,
+                                          source.error().message,
+                                          "recorded source " + compile.source_path});
             }
             auto action = std::make_shared<liquid::action_input>(std::move(compile.action));
             auto module_value = liquid::frontend_module::load(frontend_module_path(true));
@@ -173,10 +221,12 @@ auto symbols(int argc, char** argv) -> int {
                 std::filesystem::current_path(),
                 module,
                 [&repository, action](std::vector<std::byte> descriptor) {
-                    return liquid::build::execute_symbol_action(*repository, *action, descriptor);
+                    return liquid::build::execute_symbol_action(
+                        *repository, *action, std::move(descriptor));
                 }));
             if (!graph) {
-                return fail(graph.error());
+                return fail(liquid::error{
+                    graph.error().code, graph.error().message, "symbol graph " + compile.id});
             }
             auto record =
                 liquid::runtime::block_on(graph->symbols({.language = "c++",
@@ -184,7 +234,8 @@ auto symbols(int argc, char** argv) -> int {
                                                           .source = *source,
                                                           .compile_action = compile.id}));
             if (!record) {
-                return fail(record.error());
+                return fail(liquid::error{
+                    record.error().code, record.error().message, "symbol query " + compile.id});
             }
             records.push_back(std::move(*record));
         }
