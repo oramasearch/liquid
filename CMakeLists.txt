@@ -404,6 +404,7 @@ add_library(libliquid
   src/identity.cpp
   src/identity/taap.cpp
   src/crypto/crypto.cpp
+  src/net/http_client.cpp
   src/object.cpp
   src/objects/records.cpp
   src/protobuf/wire.cpp
