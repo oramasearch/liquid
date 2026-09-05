@@ -28,7 +28,7 @@ that the table and `liquid --help` name the same commands.
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
-| `serve` | `serve sync <path> [--listen <address>] [--port <port>]` | Serve one repository over the sync protocol. | available |
+| `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
 | `anchor` | `anchor <path>:<line>@<change> --to <change>` | Map a text position between changes. | available |
@@ -83,8 +83,11 @@ The path follows a `node_id` rename; insertions and removals above shift the lin
 sets `approximate`; and a removed line or file sets `deleted`.
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
-listener. It has no built-in authentication policy, so the default is appropriate for local use;
-network services embed the public server with their own authorization callback.
+listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
+pattern; `*` matches any sequence and `?` one character. Supplying the flag rejects the complete
+push when any ref is outside all allowed patterns. Without it there is no built-in authentication
+policy, so the default is appropriate for local use; network services embed the public server with
+their own authorization callback.
 `version --json` is also available for scripts. Text output is line-oriented and stable. A library
 error always has this shape and exits with status 1:
 

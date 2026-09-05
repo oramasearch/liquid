@@ -98,7 +98,7 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::sync_pull},
     {"serve",
-     "serve sync <path> [--listen <address>] [--port <port>]",
+     "serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...",
      "serve a repository over the sync protocol",
      "available",
      liquid_cli::serve},

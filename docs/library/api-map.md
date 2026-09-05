@@ -73,7 +73,7 @@ owning issue in `error::context`.
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
-| `liquid/sync.hpp` | #160, #165, Phase 6 | implemented | signed metadata items and reports, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/sync.hpp` | #160, #165, #177, Phase 6 | implemented | signed metadata items and reports, change-graph-derived ref authorization, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
 
@@ -439,7 +439,11 @@ enum class sync_item_kind : std::uint8_t { drip = 1, change = 2, directory = 3, 
 struct sync_item;       // signed actor/body, repository and directory IDs, root marker, ref value
 struct sync_export { journal_cursor cursor; std::size_t count; bool done; std::vector<digest> objects; };
 struct sync_report { journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received; };
-using sync_authorizer = std::function<runtime::task<void>(const sync_item&)>;
+struct sync_ref_update {
+  std::string name; std::optional<change_id> old_head; change_id new_head; bool fast_forward;
+};
+using sync_authorizer = std::function<runtime::task<void>(
+    const sync_item&, std::span<const sync_ref_update>)>;
 struct sync_server_options { sync_authorizer authorize; std::size_t batch_items{256}; };
 class sync_server {
  public:
@@ -466,8 +470,10 @@ class sync_endpoint final : public remote_blob_source {
 ```
 
 `sync_server` verifies that an explicitly supplied store belongs to the repository. Its optional
-authorization task runs for change items before an atomic metadata import; transport adapters call
-the byte-span handlers and do not include private codec headers.
+authorization task runs in metadata-frame order for changes and refs before an atomic import.
+Change calls carry the ref updates that newly reach them; ref calls carry the server-known old
+head, proposed new head, and a fast-forward value computed from the change graph. Transport
+adapters call the byte-span handlers and do not include private codec headers.
 `repository::export_drips(cursor, span)` emits bounded pages of journal records, signed changes,
 upstream directory sync messages, refs, and referenced object roots. `import_drips(span)` verifies
 and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
