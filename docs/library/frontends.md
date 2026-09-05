@@ -81,7 +81,8 @@ there remains outside the supported target set.
 For `symbols`, the Clang module invokes that configured compiler with `-ast-dump=json`, retaining
 definitions and resolved declaration references from the compiler AST. The tree-sitter module
 emits syntax-only occurrences when no compiler frontend is available. Symbol extraction defaults
-to C++20 only when the supplied toolchain context does not select a language standard.
+to `clang++` and C++20 only when the supplied toolchain context does not select a compiler or
+language standard.
 
 ## Graph behavior
 

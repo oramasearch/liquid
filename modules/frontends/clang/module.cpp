@@ -361,7 +361,7 @@ auto compiler_symbols(const cbor_value& context,
     file.close();
     const auto* configured = text_field(context, "compiler");
     const auto output = compiler_output(
-        configured ? *configured : "c++", compiler_arguments(context), input, failure);
+        configured ? *configured : "clang++", compiler_arguments(context), input, failure);
     if (!output) {
         if (failure.empty()) {
             failure = "the compiler did not produce an AST";
