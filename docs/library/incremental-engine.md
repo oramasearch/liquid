@@ -181,12 +181,12 @@ scan over blobs by cost (index availability, term selectivity, corpus size), and
 choice the way `liquid why` explains a cache miss.
 
 **Measurement.** On the Apple M3 Max macOS host on 2026-09-04, at
-`sysctl -n vm.loadavg` = `{ 45.72 79.50 87.97 }`, the Clang frontend extracted 41 occurrences
+`sysctl -n vm.loadavg` = `{ 110.96 68.28 57.47 }`, the Clang frontend extracted 41 occurrences
 from liquid's `src/store/faults.cpp` in one translation unit:
 
 ```text
-symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=10535 per_unit_ms=10535
-frontend one-function edit: symbols=disabled elapsed_ms=444 symbols=enabled elapsed_ms=438 delta_ms=-6
+symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=14039 per_unit_ms=14039
+frontend one-function edit: symbols=disabled elapsed_ms=766 symbols=enabled elapsed_ms=713 delta_ms=-53
 ```
 
 The edit measurements were taken in the same session; the symbol demand followed the edit. The
