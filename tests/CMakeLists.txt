@@ -359,6 +359,7 @@ add_executable(liquid-header-tests
   headers/build.cpp
   headers/daemon.cpp
   headers/drip.cpp
+  headers/edit.cpp
   headers/delta.cpp
   headers/error.cpp
   headers/export.cpp

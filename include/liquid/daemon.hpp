@@ -11,6 +11,7 @@
 
 #include "liquid/build.hpp"
 #include "liquid/drip.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/graph.hpp"
@@ -84,6 +85,9 @@ public:
     build_plan(build_target target = {});
     [[nodiscard]] runtime::task<build_handle> build(build_target target);
     [[nodiscard]] runtime::task<build_handle> build(action_input input);
+    [[nodiscard]] runtime::task<edit_preview> preview_edit(edit_request request,
+                                                           edit_attribution attribution);
+    [[nodiscard]] runtime::task<edit_result> apply_edit(edit_preview preview);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();
 

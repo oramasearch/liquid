@@ -18,7 +18,7 @@ checked, transactions roll back, commit metadata and incremental saves exist, re
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
 checkpoints can be loaded shallowly.
 
-**Status: implemented for liquid #2, #3, and #41.** The private automerge-cpp wrapper, canonical CBOR
+**Status: implemented for liquid #2, #3, #41, and #205.** The private automerge-cpp wrapper, canonical CBOR
 codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
 working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
 composition, conflict values, session-scoped operation inversion, historical document reads,
@@ -212,13 +212,14 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `split(path, into)` | new `repo` record and document; the subtree's entries move (same `node_id`s) into it; the original keeps `path` as a `repo` entry. History of the subtree is preserved by construction: the old changes still reference the old trees, and the new repository's `root_change` names the change it was split from. |
 | `combine(other, at)` | one change with parents in both repositories (`change_ref` carries `repo_id`); path collisions become conflict values. |
 | `operations()` / `undo(op_id)` | every mutation appends an `op` record to `ops` (`{ id, kind, from, to, at, by, session, inverse }`). `operations()` returns them newest first; `undo` applies the selected inverse as a new operation and returns applied and skipped paths. Undo never rewrites history. |
+| `preview_edit(request, attribution)` / `apply_edit(preview)` | Preview records exact range-local replacements and file digests. Apply checks every input before writing one drip per file, then groups every entry effect into one attributed `structural_edit` operation so one undo restores the complete edit. |
 | `undo_session(session, options)` | reverses the matching session newest first, optionally restricted to paths or drip IDs. Each touched directory is one wrapper transaction; candidates are published only after every transaction succeeds. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
 
 ### Operation records and inverses
 
 The operation vocabulary is `write`, `mkdir`, `move`, `remove`, `set_ref`, `record`, `nest`,
-`split`, `combine`, `lock`, `unlock`, `redact`, `merge`, `set_mode`, and `undo`. A cut and the
+`split`, `combine`, `lock`, `unlock`, `redact`, `merge`, `set_mode`, `structural_edit`, and `undo`. A cut and the
 explicit `record` APIs use `record`, because their mutation is the reference-head transition.
 `import_drips` records the remote batch as one `merge` operation; its range identifies the batch,
 and imported operation records remain unchanged.

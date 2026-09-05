@@ -89,3 +89,8 @@ shallow documents.
 
 `repository::store_symbols` stores one canonical symbol record and its source-blob association.
 `repository::symbols` resolves and decodes that content-addressed value.
+
+Structural-edit preview reads those working-tree blobs and symbol records, producing exact
+range-local replacements and refusal records. Apply validates every before digest before the
+first write, replays only the previewed replacements through `repository::write`, checks after
+digests, and groups all per-file effects into one attributed `structural_edit` operation for undo.

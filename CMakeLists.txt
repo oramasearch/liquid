@@ -385,6 +385,8 @@ add_library(libliquid
   src/daemon/fanout.cpp
   src/drip.cpp
   src/delta.cpp
+  src/edit.cpp
+  src/edit_codec.cpp
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
