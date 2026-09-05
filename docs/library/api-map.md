@@ -65,6 +65,7 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
+| `liquid/resolve.hpp` | #25 | package model, records, parser, and universe loading implemented | plain spec/package/concretisation values, canonical record codecs, filesystem and repository universe loading, asynchronous resolution, stable explanations and JSON |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
@@ -1372,6 +1373,8 @@ access, compact/shallow metadata checkpoints, upstream sync framing, and patch o
 (manifest, segments, BM25F term records, and positional trigrams), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
+The `src/resolve/` concretizer and CDCL clauses are also private; public callers provide package
+records and receive content-addressed concretisations without depending on the engine encoding.
 
 ## ABI policy
 

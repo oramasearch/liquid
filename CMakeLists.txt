@@ -413,6 +413,8 @@ add_library(libliquid
   src/workers/worker.cpp
   src/repository/diff.cpp
   src/repository/merge.cpp
+  src/resolve/records.cpp
+  src/resolve/spec.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
   src/runtime/runtime.cpp
