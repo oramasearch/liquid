@@ -1,11 +1,10 @@
-# Nested CMake consumer
+# Installed CMake consumer
 
-This is a separate CMake project that reproduces lake's dependency order: it adds liquid's pinned
-Capy and Corosio checkouts and nlohmann/json 3.11.3 before adding liquid. Its executable links
-`liquid::liquid`, calls the public identity decoder, and uses nlohmann/json so all supplied targets
-participate in the build.
+This is a separate CMake project that consumes the installed liquid package. Its executable finds
+the package with `find_package(liquid CONFIG REQUIRED)`, links `liquid::liquid`, and calls the
+public identity decoder.
 
-The parent suite registers `consumer-project-build`. That CTest step creates a clean nested build,
-configures this project with the parent's compiler and static/shared setting, builds the executable,
-and runs it. It therefore verifies the real `add_subdirectory` path independently of liquid's own
-CMake project.
+The parent suite registers `consumer-project-build`. That CTest step installs the already-built
+parent artifacts into a test-local prefix, creates a clean consumer build with the parent's
+generator and C++ compiler, builds only the consumer executable, and runs it. It verifies the
+static or shared installed package without rebuilding liquid or its dependencies.

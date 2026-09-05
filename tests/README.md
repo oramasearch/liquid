@@ -122,11 +122,12 @@ The privileged Linux build suite also proves eligible actions reject and name a 
 unknown-field retention, hash selection, and liquid record conversion. The codec stays private to
 libliquid, so this target compiles its private sources directly for static and shared builds.
 
-`consumer/` is an independent CMake project that adds the pinned Capy and Corosio checkouts plus
-nlohmann/json before liquid, then builds and runs an executable linked to `liquid::liquid`.
-`consumer-project-build` configures and builds it as one CTest step with the parent build's compiler
-and static/shared setting. `cli-identity-codec` creates and rotates an identity through the CLI,
-then decodes, re-encodes, and verifies the stored canonical-CBOR files through public libliquid API.
+`consumer/` is an independent CMake project that finds the installed liquid package, then builds
+and runs an executable linked to `liquid::liquid`. `consumer-project-build` installs the already-
+built parent artifacts into a test-local prefix, configures the consumer with the parent generator
+and C++ compiler, and compiles only the consumer source. `cli-identity-codec` creates and rotates an
+identity through the CLI, then decodes, re-encodes, and verifies the stored canonical-CBOR files
+through public libliquid API.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.
