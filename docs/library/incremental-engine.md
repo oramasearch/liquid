@@ -10,12 +10,13 @@
 > Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
 > a retained GPU text layer inside Dear ImGui.
 
-**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, and per-definition
-frontend granularity in #65, and local search index in #22 are implemented, including persisted red-green validation,
+**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, continuous clean
+validation in #23, per-definition frontend granularity in #65, and local search index in #22 are
+implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
 bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
 atomic per-drip search publication.
-The clean-rebuild scheduler, symbols, and planner remain with their listed issues.
+Symbols and the planner remain with their listed issues.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -71,7 +72,8 @@ checkout, excluding `.git`, `.liquid-build`, and build directories, then reopene
 the graph. On an Apple M3 Max macOS host on 2026-09-04:
 
 ```text
-graph cold-start validation: files=3656 fingerprint_reads=3656 executions=0 hits=3656 elapsed_ms=3038
+graph cold-start validation: files=3714 fingerprint_reads=3714 executions=0 hits=3714 elapsed_ms=9841
+graph clean-rebuild validation: targets=3714 divergences=0 backlog=0 elapsed_ms=131687
 ```
 
 Run it with `cmake --build build --target liquid-graph-measure`, followed by
@@ -143,12 +145,37 @@ last drip, changed paths, delivery count, cursor, error, and cursor distance for
 
 ## Continuous clean-rebuild validation (#23)
 
-Phase 2's sampled re-execution verifies actions; Phase 4 verifies the graph: on idle capacity the
-daemon picks sampled targets, rebuilds them from clean in a fresh sandbox, and compares outputs
-with the incremental result. A divergence is reported with the query that was wrong and its
-recorded inputs, as a critical alert and an audit-able record, and the offending value is
-evicted so the next demand recomputes it. Zero divergences on the reference projects (liquid
-itself from #59, the wrap fixtures) is the acceptance.
+Every completed query value is eligible. A node stores the fingerprint most recently validated;
+changing its value clears that marker. `graph::validation_status` reports eligible, validated, and
+backlog counts plus the most recent divergence. Ordinary validation selects the first and every
+twentieth unvalidated node in canonical graph order. `graph_validation_options::rate` changes that
+interval, `limit` bounds one idle slice, and `all` ignores both the sample history and prior
+validation markers for an explicit full pass.
+
+Each validation slice opens one new graph beneath an atomically allocated empty validation
+directory, copies only caller-supplied input overrides, and demands the selected canonical queries
+through the same registry. It therefore reads working-tree, environment, and toolchain inputs again
+and cannot reuse saved values from the incremental graph. Dependencies computed during that clean
+pass may serve later selected targets in the same pass. The directory is removed after comparison.
+The validation instance keeps those new values only in memory and does not publish temporary node
+roots or values. The daemon performs one target per idle slice and exposes the rate and slice interval through
+`daemon_options`; the detached CLI maps `LIQUID_GRAPH_VALIDATION_RATE` and
+`LIQUID_GRAPH_VALIDATION_MS` to those fields.
+
+Each comparison writes a content-addressed `query-validation` record and links its digest from the
+graph root. The record contains the canonical query, its recursively recorded leaf inputs and
+fingerprints, both result fingerprints, agreement, `notice` or `critical` severity, and wall-clock
+second. Records and validation
+markers survive reopen. A disagreement clears the offending node's stored value and root entry,
+so the next demand executes it, while the audit record remains. The report, daemon status, and
+`liquid status` preserve the most recent disagreement; command output labels a newly observed
+disagreement `critical` and names the query and inputs.
+
+Wrapped action queries use the same comparison before Phase 2 re-executes an action verification
+sample in recorded fresh action sandboxes. `liquid verify --graph` runs the default
+sample and `liquid verify --graph --all` runs a complete graph and action pass. The wrap report
+prints graph backlog and the last divergence, and its existing background verification switch now
+schedules graph validation together with action verification. `--no-verify` disables that work.
 
 ## Granularity: per translation unit, then per definition (#65)
 
@@ -210,7 +237,8 @@ in-process:
    query interface) and liquify #1's shell work that does not need the graph (the retained text
    layer).
 2. liquid #65 (**implemented:** frontend module boundary and C++ per definition, with C/C++ syntax
-   fallback), #66 (symbols), #22 (local index on drip), #23 (validation on the reference projects);
+   fallback), #66 (symbols), #22 (local index on drip), #23 (**implemented:** validation on the
+   reference projects);
    liquify #5 (interactive analysis)
    and #1 (the editor on the graph).
 3. liquid #67 (the planner); liquify #6 (inline build, test, deploy).
@@ -219,7 +247,12 @@ in-process:
 
 `QueryGraph` tests cover read-order red-green validation, early cutoff, exact volatile
 invalidation walks, cancellation by a second demand, interrupted-process recovery, shallow value
-loading, fingerprint-only restart validation, and the #23 retrieval hook. The mount-backed CMake
+loading, fingerprint-only restart validation, one-in-twenty clean sampling, full-pass agreement,
+and a deliberately stale value that is named, audited, evicted, recomputed, and recovered after
+reopen. `Daemon` proves the idle worker reports that disagreement over its public status API. The
+mount-backed recursive-Make fixture runs `liquid verify --graph --all` and requires zero graph and
+action divergences. `liquid-graph-measure` runs a full clean pass over liquid's own regular files;
+its recorded result appears above with the graph contract. The mount-backed CMake
 fixture proves a comment edit executes one compile process with identical object and link results,
 while a one-line semantic edit executes one compile and the link and changes the link result.
 `FrontendModule` and `FrontendGraph` prove dynamic and static registration, C fallback units, exact

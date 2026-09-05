@@ -1,6 +1,9 @@
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <print>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -25,6 +28,15 @@ auto usage(std::string_view message) -> int {
 
 auto digest_text(const std::optional<liquid::digest>& value) -> std::string {
     return value ? liquid::to_string(*value) : "missing";
+}
+
+auto hex(std::span<const std::byte> value) -> std::string {
+    auto output = std::string{};
+    output.reserve(value.size() * 2);
+    for (const auto byte : value) {
+        output += std::format("{:02x}", std::to_integer<std::uint8_t>(byte));
+    }
+    return output;
 }
 
 auto json_string(std::string_view value) -> std::string {
@@ -137,14 +149,19 @@ void print_replay_text(const liquid::replay_report& report, bool recorded) {
 auto verify(int argc, char** argv) -> int {
     auto options = liquid::verify_options{};
     auto selector = false;
+    auto graph_mode = false;
     for (auto index = 0; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
+        if (argument == "--graph") {
+            graph_mode = true;
+            continue;
+        }
         if (argument == "--explain") {
             options.explain = true;
             continue;
         }
         if (selector) {
-            return usage("verify accepts one of <action>|--all|--changed");
+            return usage("verify accepts one of <action>|--all|--changed or --graph [--all]");
         }
         if (argument == "--all") {
             options.selection = liquid::verify_selection::all;
@@ -163,6 +180,59 @@ auto verify(int argc, char** argv) -> int {
         options.selection = liquid::verify_selection::action;
         options.action = *action;
         selector = true;
+    }
+    if (graph_mode) {
+        if (options.selection == liquid::verify_selection::action ||
+            options.selection == liquid::verify_selection::changed) {
+            return usage("verify --graph accepts only --all and --explain");
+        }
+        auto report = liquid::runtime::block_on(
+            liquid::build::verify_graph(std::filesystem::current_path(),
+                                        {.all = options.selection == liquid::verify_selection::all,
+                                         .explain = options.explain}));
+        if (!report) {
+            return fail(report.error());
+        }
+        auto divergent = report->graph.divergences != 0;
+        for (const auto& record : report->graph.records) {
+            std::println("query={} arguments={} record={} agreement={} inputs={}",
+                         record.query.kind,
+                         hex(record.query.arguments),
+                         liquid::to_string(record.id),
+                         record.agreement,
+                         record.inputs.size());
+            if (record.agreement) {
+                continue;
+            }
+            std::println(stderr,
+                         "critical: query={} arguments={} incremental={} clean={}",
+                         record.query.kind,
+                         hex(record.query.arguments),
+                         liquid::to_string(record.incremental),
+                         liquid::to_string(record.clean));
+            for (const auto& input : record.inputs) {
+                if (const auto* key = std::get_if<liquid::graph_input_key>(&input.key)) {
+                    std::println(stderr,
+                                 "input: {} fingerprint={}",
+                                 key->name,
+                                 liquid::to_string(input.fingerprint));
+                }
+            }
+        }
+        for (const auto& action : report->actions.actions) {
+            if (!action.agreement) {
+                divergent = true;
+            }
+        }
+        std::println("graph_considered={} graph_validated={} graph_divergent={} backlog={} "
+                     "actions_verified={} elapsed_ms={}",
+                     report->graph.considered,
+                     report->graph.validated,
+                     report->graph.divergences,
+                     report->graph.backlog,
+                     report->actions.actions.size(),
+                     report->graph.elapsed.count());
+        return divergent ? 1 : 0;
     }
     if (!selector) {
         return usage("verify requires an action digest, --all, or --changed");

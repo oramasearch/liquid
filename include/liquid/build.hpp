@@ -10,6 +10,7 @@
 
 #include "liquid/attestation.hpp"
 #include "liquid/export.hpp"
+#include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/remote.hpp"
@@ -342,6 +343,8 @@ struct LIQUID_EXPORT wrap_report {
     std::vector<critical_action> critical_path;
     std::vector<build_trace_action> trace_actions;
     std::uint64_t probes_started{};
+    std::uint64_t graph_validation_backlog{};
+    std::optional<graph_validation_record> last_graph_divergence;
 };
 
 struct LIQUID_EXPORT why_slow_report {
@@ -396,6 +399,18 @@ struct LIQUID_EXPORT verified_action {
 struct LIQUID_EXPORT verify_report {
     std::uint64_t considered{};
     std::vector<verified_action> actions;
+};
+
+struct LIQUID_EXPORT graph_verify_options {
+    bool all{};
+    bool explain{};
+    std::uint32_t rate{20};
+    std::optional<std::filesystem::path> cache_directory;
+};
+
+struct LIQUID_EXPORT graph_verify_report {
+    graph_validation_report graph;
+    verify_report actions;
 };
 
 struct LIQUID_EXPORT replay_options {
@@ -461,6 +476,8 @@ generate_sbom(repository& source, std::string output_path, sbom_format format);
                                                                 verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(std::filesystem::path working_tree,
                                                                 verify_options options = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<graph_verify_report>
+verify_graph(std::filesystem::path working_tree, graph_verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>
 replay(repository& source, digest target, replay_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>

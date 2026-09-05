@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -75,6 +76,40 @@ struct LIQUID_EXPORT graph_statistics {
     std::uint64_t memory_ceiling{};
 };
 
+struct LIQUID_EXPORT graph_validation_record {
+    digest id;
+    query_key query;
+    std::vector<recorded_dependency> inputs;
+    digest incremental;
+    digest clean;
+    bool agreement{};
+    std::chrono::sys_seconds at;
+};
+
+struct LIQUID_EXPORT graph_validation_options {
+    std::uint32_t rate{20};
+    bool all{};
+    std::uint64_t limit{};
+};
+
+struct LIQUID_EXPORT graph_validation_status {
+    std::uint64_t eligible{};
+    std::uint64_t validated{};
+    std::uint64_t backlog{};
+    std::uint64_t records{};
+    std::optional<graph_validation_record> last_divergence;
+};
+
+struct LIQUID_EXPORT graph_validation_report {
+    std::uint64_t considered{};
+    std::uint64_t validated{};
+    std::uint64_t divergences{};
+    std::uint64_t backlog{};
+    std::chrono::milliseconds elapsed{};
+    std::vector<graph_validation_record> records;
+    std::optional<graph_validation_record> last_divergence;
+};
+
 class query_context;
 
 using query_argument_encoder =
@@ -131,6 +166,12 @@ public:
     [[nodiscard]] result<std::uint64_t> mark_changed(graph_input_key key, durability tier);
     [[nodiscard]] result<std::uint64_t> mark_changed(query_key key);
     [[nodiscard]] runtime::task<std::optional<recorded_query>> recorded(query_key key);
+    [[nodiscard]] runtime::task<graph_validation_report>
+    validate(graph_validation_options options = {});
+    [[nodiscard]] graph_validation_status validation_status() const;
+    [[nodiscard]] runtime::task<std::vector<graph_validation_record>> validation_records();
+    [[nodiscard]] runtime::task<void> inject_stale_value_for_testing(query_key key,
+                                                                     std::vector<std::byte> value);
     [[nodiscard]] runtime::task<void> flush();
     [[nodiscard]] graph_statistics statistics() const;
 

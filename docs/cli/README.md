@@ -49,7 +49,7 @@ that the table and `liquid --help` name the same commands.
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
-| `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its timing, dependency, and scheduling trace. | available on Linux with FUSE and on macOS with macFUSE |
@@ -73,8 +73,9 @@ that the table and `liquid --help` name the same commands.
 `--json`; `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
 remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, and graph
-memory counts. Text status adds one `daemon_target` line per ordered target with its cursor,
-distance behind capture, and successful delivery count.
+memory counts, validation backlog, and the last graph divergence with its query and inputs. Text
+status adds one `daemon_target` line per ordered target with its cursor, distance behind capture,
+and successful delivery count.
 `push` and `pull` print metadata item, object, byte, and cursor counts. They use `LIQUID_TOKEN` as
 an optional bearer credential and never print it. A URL must use HTTP or HTTPS and identify one
 lake repository.
@@ -116,8 +117,9 @@ adds one `miss:` line for each changed manifest path. `--jobs`
 sets driver parallelism and the compilation-database seed width; `--no-cache` executes and records
 the observation without publishing or serving cache entries. The persistent project cache defaults
 to the platform cache directory and can be relocated with `LIQUID_WRAP_CACHE`. On completion,
-`wrap` schedules the configured local verification sample on the shared runtime; `--no-verify`
-skips that background work.
+`wrap` reports graph validation backlog and the last divergence, then schedules the configured
+graph and action verification samples on the shared runtime; `--no-verify` skips that background
+work.
 
 `--target <triple>` selects configure facts for that target. A foreign target is lookup-only: if
 an Autotools `conftest` or CMake `try_compile` is not answered by matching facts, `wrap` reports an
@@ -131,6 +133,12 @@ record. `facts export` writes the `fact-bundle/1` JSON record used by later remo
 cached result, and `--changed` selects results without a recorded verification. Each line names the
 action, result, signed attestation, and agreement. Divergence prints a `critical:` line naming every
 differing output and exits with status 1; `--explain` adds the first differing byte and its values.
+`--graph` instead cleanly recomputes the default one-in-twenty query sample through new graph
+instances, retains an audit record for each comparison, and then runs the action sample in fresh
+sandboxes. `--graph --all` runs complete graph and action passes. Its summary reports considered,
+validated, divergent, backlog, verified-action, and elapsed counts. A graph disagreement prints a
+critical line naming the query, its recorded input paths and fingerprints, and both result
+fingerprints before exiting with status 1.
 
 `replay` opens the same cache and accepts an action or result digest. An action selects its newest
 indexed result. The action runs locally with its recorded input tree, toolchain, environment,

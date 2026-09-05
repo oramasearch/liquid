@@ -1483,6 +1483,12 @@ runtime::task<void> complete_report(const std::filesystem::path& cache_directory
     co_return build_detail::update_cache_stats(cache_directory, report);
 }
 
+void add_graph_validation_status(wrap_report& report, const graph& queries) {
+    const auto status = queries.validation_status();
+    report.graph_validation_backlog = status.backlog;
+    report.last_graph_divergence = status.last_divergence;
+}
+
 runtime::task<void> collect_manifest(repository& source,
                                      digest root,
                                      std::string prefix,
@@ -2635,8 +2641,9 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
             if (!completed) {
                 co_return std::unexpected(completed.error());
             }
+            add_graph_validation_status(report, *queries);
             if (options.verify) {
-                build_detail::schedule_verification(std::move(*source));
+                build_detail::schedule_graph_validation(working_tree, *cache_directory);
                 report.verification_scheduled = true;
             }
             co_return report;
@@ -2717,8 +2724,9 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!completed) {
         co_return std::unexpected(completed.error());
     }
+    add_graph_validation_status(report, *queries);
     if (options.verify) {
-        build_detail::schedule_verification(std::move(*source));
+        build_detail::schedule_graph_validation(working_tree, *cache_directory);
         report.verification_scheduled = true;
     }
     co_return report;
