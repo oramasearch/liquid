@@ -176,13 +176,16 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     const auto source = location.path() / "source";
     write_file(source / "kept.txt", content("first"));
     write_file(source / "ignored.txt", content("ignored"));
+    write_file(source / "caller-ignored.txt", content("ignored"));
     write_file(source / ".liquidignore", content("ignored.txt\n"));
     auto created =
         liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
     ASSERT_TRUE(created) << created.error().message;
     auto repository = std::move(*created);
 
-    const auto first = liquid::runtime::block_on(repository.import_tree(source));
+    auto options = liquid::import_options{};
+    options.ignore_patterns = {"caller-ignored.txt"};
+    const auto first = liquid::runtime::block_on(repository.import_tree(source, options));
     ASSERT_TRUE(first) << first.error().message;
     EXPECT_TRUE(first->drip.has_value());
     EXPECT_EQ(first->files_seen, 2U);
@@ -191,10 +194,12 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     EXPECT_GT(first->bytes_written, 0U);
     const auto ignored = liquid::runtime::block_on(repository.read("ignored.txt"));
     EXPECT_FALSE(ignored);
+    const auto caller_ignored = liquid::runtime::block_on(repository.read("caller-ignored.txt"));
+    EXPECT_FALSE(caller_ignored);
 
     const auto before = repository.status();
     ASSERT_TRUE(before) << before.error().message;
-    const auto unchanged = liquid::runtime::block_on(repository.import_tree(source));
+    const auto unchanged = liquid::runtime::block_on(repository.import_tree(source, options));
     ASSERT_TRUE(unchanged) << unchanged.error().message;
     EXPECT_FALSE(unchanged->drip.has_value());
     EXPECT_EQ(unchanged->changed, 0U);
