@@ -1,3 +1,3 @@
 #pragma once
 
-inline constexpr int value = 4;
+#define VALUE 4

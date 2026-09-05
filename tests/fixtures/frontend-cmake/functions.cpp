@@ -1,9 +1,9 @@
 #include "value.hpp"
 
 int left() {
-    return value + 1;
+    return VALUE + 1;
 }
 
 int right() {
-    return value + 2;
+    return VALUE + 2;
 }

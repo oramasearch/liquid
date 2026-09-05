@@ -19,9 +19,10 @@ query hook.
 
 `test_frontend.cpp` loads the Clang frontend dynamically, registers its descriptor statically,
 checks that its shared object exports only the ABI v1 entry point, and asks the tree-sitter fallback
-for a C definition. Its copied CMake fixture compiles two definition objects with the configured
-compiler. A one-body edit executes one action and assembly, while a changed quoted header executes
-both recorded readers and assembly. `frontend-one-function-measure` is a registered macOS/Linux
+for a C definition. Its copied CMake fixture uses `VALUE` from a quoted header and compiles two
+definition objects with the configured compiler. A one-body edit executes one action and assembly,
+while a changed quoted header executes both recorded readers and assembly.
+`frontend-one-function-measure` is a registered macOS/Linux
 CTest that performs the same count assertion against `src/store/faults.cpp` and prints its elapsed
 milliseconds.
 
