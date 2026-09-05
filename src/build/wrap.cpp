@@ -16,6 +16,7 @@
 #include <thread>
 
 #if !defined(_WIN32)
+#include <sys/resource.h>
 #include <unistd.h>
 #endif
 #if defined(__APPLE__)
@@ -50,6 +51,22 @@ namespace {
 constexpr auto virtual_root = std::string_view{"/liquid/work"};
 
 static_assert(build_detail::restored_output_files_in_flight == 1);
+
+auto peak_rss_bytes() -> std::uint64_t {
+#if defined(_WIN32)
+    return 0;
+#else
+    auto usage = rusage{};
+    if (::getrusage(RUSAGE_SELF, &usage) != 0) {
+        return 0;
+    }
+#if defined(__APPLE__)
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024;
+#endif
+#endif
+}
 
 struct observation_log {
     mutable std::mutex mutex;
@@ -1373,6 +1390,7 @@ runtime::task<void> complete_report(const std::filesystem::path& cache_directory
                                     wrap_report& report) {
     report.wall_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started);
+    report.peak_rss_bytes = peak_rss_bytes();
     report.cache.hits = report.hits;
     report.cache.misses = report.misses;
     report.cache.disk.hits = report.hits - report.cache.remote.hits;

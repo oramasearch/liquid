@@ -264,10 +264,12 @@ auto wrap(int argc, char** argv) -> int {
     for (const auto& action : result->critical_path) {
         critical_path_time += action.duration;
     }
-    std::println("wall_ms={} critical_path_ms={} parallelism={:.2f} queued_ms={} sandbox_ms={} "
-                 "exec_ms={} hash_ms={} store_ms={} bytes_served={} bytes_rebuilt={} trace={}",
+    std::println("wall_ms={} critical_path_ms={} peak_rss_bytes={} parallelism={:.2f} queued_ms={} "
+                 "sandbox_ms={} exec_ms={} hash_ms={} store_ms={} bytes_served={} bytes_rebuilt={} "
+                 "trace={}",
                  result->wall_time.count(),
                  critical_path_time.count(),
+                 result->peak_rss_bytes,
                  result->parallelism,
                  result->phase_totals.queued.count(),
                  result->phase_totals.sandbox.count(),

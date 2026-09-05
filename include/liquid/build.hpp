@@ -337,6 +337,7 @@ struct LIQUID_EXPORT wrap_report {
     cache_report cache;
     std::optional<digest> trace;
     std::chrono::milliseconds wall_time{};
+    std::uint64_t peak_rss_bytes{};
     action_timing phase_totals;
     double parallelism{};
     std::vector<critical_action> critical_path;

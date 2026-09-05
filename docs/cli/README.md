@@ -99,7 +99,9 @@ a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <del
 registered remote blobs when necessary, then reports `method=delta` or `method=chunks`.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
-number of uncached feature probes observed, plus the outer action's status. `--explain`
+number of uncached feature probes observed, plus the outer action's status. Its final timing line
+includes `peak_rss_bytes`, the process high-water mark normalized to bytes: Linux reports
+`getrusage(RUSAGE_SELF).ru_maxrss` in KiB and macOS reports it in bytes. `--explain`
 adds one `miss:` line for each changed manifest path. `--jobs`
 sets driver parallelism and the compilation-database seed width; `--no-cache` executes and records
 the observation without publishing or serving cache entries. The persistent project cache defaults
