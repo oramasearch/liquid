@@ -40,11 +40,12 @@ selectors, calls `repository::search`, and prints the public ranked hit records.
 the index files directly.
 
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
-optional `LIQUID_TOKEN` to the endpoint and prints stable metadata, object, byte, and cursor counts.
+optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
+byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
 `serve.cpp` implements `serve sync` with the public `sync_server` and the vendored
 `oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
-authorization callback. Request handlers await library tasks on the listener executor and never
-include the private protocol codec.
+authorization callback and returns one verdict per update. Request handlers await library tasks on
+the listener executor and never include the private protocol codec.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).

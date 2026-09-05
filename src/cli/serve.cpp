@@ -335,24 +335,24 @@ auto glob_matches(std::string_view pattern, std::string_view value) -> bool {
 }
 
 auto reference_authorizer(std::vector<std::string> patterns) -> liquid::sync_authorizer {
-    return [patterns = std::move(patterns)](
-               const liquid::sync_item& item,
-               std::span<const liquid::sync_ref_update> updates) -> liquid::runtime::task<void> {
-        if (item.kind != liquid::sync_item_kind::reference) {
-            co_return liquid::result<void>{};
+    return [patterns = std::move(patterns)](const liquid::sync_item& item,
+                                            std::span<const liquid::sync_ref_update> updates)
+               -> liquid::runtime::task<std::vector<liquid::sync_ref_verdict>> {
+        auto verdicts = std::vector<liquid::sync_ref_verdict>{};
+        verdicts.reserve(updates.size());
+        for (const auto& update : updates) {
+            auto verdict = liquid::sync_ref_verdict{update.name};
+            const auto allowed = item.kind != liquid::sync_item_kind::reference ||
+                                 std::ranges::any_of(patterns, [&](const auto& pattern) {
+                                     return glob_matches(pattern, update.name);
+                                 });
+            if (!allowed) {
+                verdict.verdict = liquid::sync_ref_verdict_kind::refused;
+                verdict.reason = "reference is not allowed";
+            }
+            verdicts.push_back(std::move(verdict));
         }
-        if (updates.size() != 1) {
-            co_return std::unexpected(liquid::error{
-                liquid::errc::internal, "reference update context is missing", "serve sync"});
-        }
-        const auto& update = updates.front();
-        const auto allowed = std::ranges::any_of(
-            patterns, [&](const auto& pattern) { return glob_matches(pattern, update.name); });
-        if (!allowed) {
-            co_return std::unexpected(
-                liquid::error{liquid::errc::unauthorized, "reference is not allowed", update.name});
-        }
-        co_return liquid::result<void>{};
+        co_return verdicts;
     };
 }
 

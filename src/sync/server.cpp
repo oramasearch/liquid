@@ -96,10 +96,15 @@ auto reference_authorizations(repository& subject, store& objects, std::span<con
 
     auto graph = change_graph{objects};
     auto output = std::vector<reference_authorization>{};
+    auto proposed_names = std::set<std::string>{};
     for (auto index = std::size_t{}; index < items.size(); ++index) {
         const auto& item = items[index];
         if (item.kind != sync_item_kind::reference) {
             continue;
+        }
+        if (!proposed_names.insert(item.name).second) {
+            co_return std::unexpected(server_error(
+                errc::invalid_argument, "push contains duplicate reference updates", item.name));
         }
         auto old_head = std::optional<change_id>{};
         if (const auto found = current_heads.find(item.name); found != current_heads.end()) {
@@ -130,13 +135,80 @@ auto reference_authorizations(repository& subject, store& objects, std::span<con
     co_return output;
 }
 
+auto refused_outcomes(std::span<const reference_authorization> references, std::string reason)
+    -> std::vector<sync_ref_outcome> {
+    auto output = std::vector<sync_ref_outcome>{};
+    output.reserve(references.size());
+    for (const auto& reference : references) {
+        output.push_back(
+            sync_ref_outcome{reference.update.name, sync_ref_outcome_kind::refused, reason});
+    }
+    return output;
+}
+
+auto invoke_authorizer(sync_authorizer& authorize,
+                       const sync_item& item,
+                       std::span<const sync_ref_update> updates)
+    -> runtime::task<std::vector<sync_ref_verdict>> {
+    try {
+        co_return co_await authorize(item, updates);
+    } catch (const std::exception& exception) {
+        co_return std::unexpected(
+            server_error(errc::internal, exception.what(), "sync authorizer"));
+    } catch (...) {
+        co_return std::unexpected(
+            server_error(errc::internal, "unknown exception", "sync authorizer"));
+    }
+}
+
+auto apply_verdicts(std::span<const sync_ref_update> updates,
+                    std::span<const sync_ref_verdict> verdicts,
+                    std::vector<sync_ref_outcome>& outcomes) -> result<void> {
+    if (updates.size() != verdicts.size()) {
+        return std::unexpected(
+            server_error(errc::internal, "sync authorizer returned the wrong number of verdicts"));
+    }
+    auto seen = std::set<std::string>{};
+    for (const auto& verdict : verdicts) {
+        if (!seen.insert(verdict.name).second ||
+            std::ranges::find(updates, verdict.name, &sync_ref_update::name) == updates.end()) {
+            return std::unexpected(server_error(
+                errc::internal, "sync authorizer returned an unknown reference", verdict.name));
+        }
+        if (verdict.verdict != sync_ref_verdict_kind::accepted &&
+            verdict.verdict != sync_ref_verdict_kind::refused) {
+            return std::unexpected(server_error(
+                errc::internal, "sync authorizer returned an invalid verdict", verdict.name));
+        }
+        if (verdict.verdict != sync_ref_verdict_kind::refused) {
+            continue;
+        }
+        const auto outcome = std::ranges::find(outcomes, verdict.name, &sync_ref_outcome::name);
+        if (outcome == outcomes.end()) {
+            return std::unexpected(server_error(
+                errc::internal, "sync authorizer reference context is missing", verdict.name));
+        }
+        if (outcome->outcome == sync_ref_outcome_kind::applied) {
+            outcome->outcome = sync_ref_outcome_kind::refused;
+            outcome->reason = verdict.reason;
+        }
+    }
+    return {};
+}
+
 auto authorize_push(sync_authorizer& authorize,
                     repository& subject,
                     store& objects,
-                    std::span<const sync_item> items) -> runtime::task<void> {
+                    std::span<const sync_item> items)
+    -> runtime::task<std::vector<sync_ref_outcome>> {
     auto references = co_await reference_authorizations(subject, objects, items);
     if (!references) {
         co_return std::unexpected(references.error());
+    }
+    auto outcomes = std::vector<sync_ref_outcome>{};
+    outcomes.reserve(references->size());
+    for (const auto& reference : *references) {
+        outcomes.push_back(sync_ref_outcome{reference.update.name});
     }
     for (auto index = std::size_t{}; index < items.size(); ++index) {
         const auto& item = items[index];
@@ -148,9 +220,16 @@ auto authorize_push(sync_authorizer& authorize,
                     updates.push_back(reference.update);
                 }
             }
-            auto authorized = co_await authorize(item, updates);
-            if (!authorized) {
-                co_return std::unexpected(authorized.error());
+            if (updates.empty()) {
+                continue;
+            }
+            auto verdicts = co_await invoke_authorizer(authorize, item, updates);
+            if (!verdicts) {
+                co_return refused_outcomes(*references, verdicts.error().message);
+            }
+            auto applied = apply_verdicts(updates, *verdicts, outcomes);
+            if (!applied) {
+                co_return std::unexpected(applied.error());
             }
             continue;
         }
@@ -163,12 +242,72 @@ auto authorize_push(sync_authorizer& authorize,
             co_return std::unexpected(
                 server_error(errc::internal, "reference authorization context is missing"));
         }
-        auto authorized = co_await authorize(item, std::span{&found->update, std::size_t{1}});
-        if (!authorized) {
-            co_return std::unexpected(authorized.error());
+        auto updates = std::span{&found->update, std::size_t{1}};
+        auto verdicts = co_await invoke_authorizer(authorize, item, updates);
+        if (!verdicts) {
+            co_return refused_outcomes(*references, verdicts.error().message);
+        }
+        auto applied = apply_verdicts(updates, *verdicts, outcomes);
+        if (!applied) {
+            co_return std::unexpected(applied.error());
         }
     }
-    co_return result<void>{};
+    co_return outcomes;
+}
+
+auto default_outcomes(std::span<const sync_item> items) -> result<std::vector<sync_ref_outcome>> {
+    auto names = std::set<std::string>{};
+    auto output = std::vector<sync_ref_outcome>{};
+    for (const auto& item : items) {
+        if (item.kind != sync_item_kind::reference) {
+            continue;
+        }
+        if (!names.insert(item.name).second) {
+            return std::unexpected(server_error(
+                errc::invalid_argument, "push contains duplicate reference updates", item.name));
+        }
+        output.push_back(sync_ref_outcome{item.name});
+    }
+    return output;
+}
+
+void apply_atomic_rule(std::vector<sync_ref_outcome>& outcomes) {
+    const auto refused = std::ranges::any_of(outcomes, [](const auto& outcome) {
+        return outcome.outcome == sync_ref_outcome_kind::refused;
+    });
+    if (!refused) {
+        return;
+    }
+    for (auto& outcome : outcomes) {
+        if (outcome.outcome == sync_ref_outcome_kind::applied) {
+            outcome.outcome = sync_ref_outcome_kind::refused;
+            outcome.reason = "atomic push refused because another reference was refused";
+        }
+    }
+}
+
+auto accepted_items(std::span<const sync_item> items, std::span<const sync_ref_outcome> outcomes)
+    -> std::vector<sync_item> {
+    const auto has_references = !outcomes.empty();
+    const auto has_accepted_reference = std::ranges::any_of(outcomes, [](const auto& outcome) {
+        return outcome.outcome == sync_ref_outcome_kind::applied;
+    });
+    if (has_references && !has_accepted_reference) {
+        return {};
+    }
+    auto output = std::vector<sync_item>{};
+    output.reserve(items.size());
+    for (const auto& item : items) {
+        if (item.kind != sync_item_kind::reference) {
+            output.push_back(item);
+            continue;
+        }
+        const auto outcome = std::ranges::find(outcomes, item.name, &sync_ref_outcome::name);
+        if (outcome != outcomes.end() && outcome->outcome == sync_ref_outcome_kind::applied) {
+            output.push_back(item);
+        }
+    }
+    return output;
 }
 
 } // namespace
@@ -203,19 +342,35 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
     if (!incoming) {
         co_return std::unexpected(incoming.error());
     }
+    if (!incoming->outcomes.empty()) {
+        co_return std::unexpected(
+            server_error(errc::invalid_argument, "push request contains reference outcomes"));
+    }
+    auto outcomes = default_outcomes(incoming->items);
+    if (!outcomes) {
+        co_return std::unexpected(outcomes.error());
+    }
     if (impl_->options.authorize) {
-        auto authorized = co_await authorize_push(
+        outcomes = co_await authorize_push(
             impl_->options.authorize, *impl_->subject, *impl_->objects, incoming->items);
-        if (!authorized) {
-            co_return std::unexpected(authorized.error());
+        if (!outcomes) {
+            co_return std::unexpected(outcomes.error());
         }
     }
-    auto imported = co_await impl_->subject->import_drips(incoming->items);
-    if (!imported) {
-        co_return std::unexpected(imported.error());
+    if (incoming->atomic) {
+        apply_atomic_rule(*outcomes);
     }
-    co_return sync_detail::encode_metadata(
-        sync_detail::metadata_document{.cursor = incoming->cursor});
+    auto items = accepted_items(incoming->items, *outcomes);
+    if (!items.empty()) {
+        auto imported = co_await impl_->subject->import_drips(items);
+        if (!imported) {
+            co_return std::unexpected(imported.error());
+        }
+    }
+    co_return sync_detail::encode_metadata(sync_detail::metadata_document{
+        .cursor = incoming->cursor,
+        .outcomes = std::move(*outcomes),
+    });
 }
 
 runtime::task<std::vector<std::byte>> sync_server::handle_pull(std::span<const std::byte> request) {
@@ -231,7 +386,8 @@ runtime::task<std::vector<std::byte>> sync_server::handle_pull(std::span<const s
     if (!incoming) {
         co_return std::unexpected(incoming.error());
     }
-    if (!incoming->items.empty() || !incoming->objects.empty()) {
+    if (!incoming->items.empty() || !incoming->objects.empty() || !incoming->outcomes.empty() ||
+        incoming->atomic) {
         co_return std::unexpected(
             server_error(errc::invalid_argument, "pull request contains metadata or objects"));
     }

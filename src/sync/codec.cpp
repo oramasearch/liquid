@@ -115,6 +115,53 @@ auto decode_digests(const cbor::value& value) -> result<std::vector<digest>> {
     return output;
 }
 
+auto outcome_array(std::span<const sync_ref_outcome> values) -> cbor::value {
+    auto output = cbor::value::array{};
+    output.reserve(values.size());
+    for (const auto& value : values) {
+        auto fields = cbor::value::map{
+            {"name", value.name},
+            {"outcome",
+             value.outcome == sync_ref_outcome_kind::applied ? cbor::value{"applied"}
+                                                             : cbor::value{"refused"}},
+        };
+        if (value.outcome == sync_ref_outcome_kind::refused) {
+            fields.emplace_back("reason", value.reason);
+        }
+        output.emplace_back(cbor::value{std::move(fields)});
+    }
+    return cbor::value{std::move(output)};
+}
+
+auto decode_outcomes(const cbor::value& value) -> result<std::vector<sync_ref_outcome>> {
+    const auto* input = std::get_if<cbor::value::array>(&value.data);
+    if (!input) {
+        return std::unexpected(failure("reference outcomes are not an array"));
+    }
+    auto output = std::vector<sync_ref_outcome>{};
+    output.reserve(input->size());
+    for (const auto& item : *input) {
+        const auto* name_field = find(item, "name");
+        const auto* outcome_field = find(item, "outcome");
+        const auto* reason_field = find(item, "reason");
+        const auto* name = name_field ? std::get_if<std::string>(&name_field->data) : nullptr;
+        const auto* outcome =
+            outcome_field ? std::get_if<std::string>(&outcome_field->data) : nullptr;
+        const auto* reason = reason_field ? std::get_if<std::string>(&reason_field->data) : nullptr;
+        if (!name || !outcome || (*outcome != "applied" && *outcome != "refused") ||
+            (*outcome == "refused" && !reason)) {
+            return std::unexpected(failure("invalid reference outcome"));
+        }
+        output.push_back(sync_ref_outcome{
+            .name = *name,
+            .outcome = *outcome == "applied" ? sync_ref_outcome_kind::applied
+                                             : sync_ref_outcome_kind::refused,
+            .reason = reason ? *reason : std::string{},
+        });
+    }
+    return output;
+}
+
 void put_u32_be(std::vector<std::byte>& output, std::uint32_t value) {
     for (const auto shift : {24U, 16U, 8U, 0U}) {
         output.push_back(std::byte{static_cast<std::uint8_t>(value >> shift)});
@@ -291,10 +338,17 @@ auto encode_metadata(const metadata_document& document) -> result<std::vector<st
         return text ? *text : std::string{};
     });
     auto output = std::vector<std::byte>{};
-    auto header = map({{"v", std::uint64_t{1}},
-                       {"cursor", document.cursor.token},
-                       {"refs", cbor::value{std::move(refs)}},
-                       {"objects", digest_array(objects)}});
+    auto header_fields = cbor::value::map{{"v", std::uint64_t{1}},
+                                          {"cursor", document.cursor.token},
+                                          {"refs", cbor::value{std::move(refs)}},
+                                          {"objects", digest_array(objects)}};
+    if (document.atomic) {
+        header_fields.emplace_back("atomic", true);
+    }
+    if (!document.outcomes.empty()) {
+        header_fields.emplace_back("outcomes", outcome_array(document.outcomes));
+    }
+    auto header = cbor::value{std::move(header_fields)};
     if (auto appended = append_frame(output, 1, header); !appended) {
         return std::unexpected(appended.error());
     }
@@ -344,19 +398,35 @@ auto decode_metadata(std::span<const std::byte> input) -> result<metadata_docume
             const auto* version_field = find(*decoded, "v");
             const auto* cursor_field = find(*decoded, "cursor");
             const auto* objects_field = find(*decoded, "objects");
+            const auto* atomic_field = find(*decoded, "atomic");
+            const auto* outcomes_field = find(*decoded, "outcomes");
             const auto* version =
                 version_field ? std::get_if<std::uint64_t>(&version_field->data) : nullptr;
             const auto* cursor =
                 cursor_field ? std::get_if<std::string>(&cursor_field->data) : nullptr;
+            const auto* atomic = atomic_field ? std::get_if<bool>(&atomic_field->data) : nullptr;
             if (!version || *version != 1 || !cursor || !objects_field) {
                 return std::unexpected(failure("invalid metadata header"));
+            }
+            if (atomic_field && !atomic) {
+                return std::unexpected(failure("invalid metadata atomic flag"));
             }
             auto objects = decode_digests(*objects_field);
             if (!objects) {
                 return std::unexpected(objects.error());
             }
+            auto outcomes = std::vector<sync_ref_outcome>{};
+            if (outcomes_field) {
+                auto decoded_outcomes = decode_outcomes(*outcomes_field);
+                if (!decoded_outcomes) {
+                    return std::unexpected(decoded_outcomes.error());
+                }
+                outcomes = std::move(*decoded_outcomes);
+            }
             output.cursor.token = *cursor;
             output.objects = std::move(*objects);
+            output.outcomes = std::move(outcomes);
+            output.atomic = atomic ? *atomic : false;
             saw_header = true;
             continue;
         }
