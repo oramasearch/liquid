@@ -945,6 +945,7 @@ runtime::task<saved_action> publish_action(repository& source,
                                            digest sandbox,
                                            const observation_log& observed,
                                            const std::set<std::string>& writes,
+                                           const std::set<std::string>* complete_outputs,
                                            digest empty_blob,
                                            int exit,
                                            std::chrono::sys_seconds started_at,
@@ -995,6 +996,18 @@ runtime::task<saved_action> publish_action(repository& source,
                                         .reason = "wrap has no remote executor configured"};
     value.started_at = started_at;
     value.finished_at = finished_at;
+    if (complete_outputs) {
+        auto tree_outputs = co_await collect_action_outputs(source, *complete_outputs);
+        if (!tree_outputs) {
+            co_return std::unexpected(tree_outputs.error());
+        }
+        auto output_tree = co_await build_detail::store_output_tree(source, *tree_outputs);
+        if (!output_tree) {
+            co_return std::unexpected(output_tree.error());
+        }
+        value.output_tree = *output_tree;
+        value.record_version = 4;
+    }
     auto stored_result = co_await build_detail::store_result_with_provenance(source, value);
     if (!stored_result)
         co_return std::unexpected(stored_result.error());
@@ -2229,8 +2242,9 @@ runtime::task<void> publish_observed_run(repository& source,
     for (const auto& [pid, paths] : writes) {
         all_writes.insert(paths.begin(), paths.end());
     }
-    all_writes.insert(state.outputs.begin(), state.outputs.end());
-    auto normalised = co_await build_detail::normalise_repository_outputs(source, all_writes);
+    auto complete_outputs = all_writes;
+    complete_outputs.insert(state.outputs.begin(), state.outputs.end());
+    auto normalised = co_await build_detail::normalise_repository_outputs(source, complete_outputs);
     if (!normalised) {
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(normalised.error());
@@ -2353,6 +2367,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                                  sandbox,
                                                  *run.observations,
                                                  found->second,
+                                                 nullptr,
                                                  *empty_blob,
                                                  0,
                                                  run.started_at,
@@ -2410,6 +2425,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                                sandbox,
                                                *run.observations,
                                                all_writes,
+                                               &complete_outputs,
                                                *empty_blob,
                                                report.exit,
                                                run.started_at,

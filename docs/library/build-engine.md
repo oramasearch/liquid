@@ -234,6 +234,10 @@ function-body edit changed the zlib object; libpng reran only the consumers of c
 program link reran. The load-average line is captured with the process counts so the measurement is
 interpretable under concurrent local container load.
 
+The outer signed result claims the complete output tree accumulated across hit and miss children.
+Its ordinary `outputs` list still contains only paths written by the current driver run, preserving
+per-process output lookup and allowing an unchanged child result to remain the newest producer.
+
 ## The sandbox: observation by the mount, enforcement by the platform
 
 Observation and enforcement are separate layers, and only enforcement differs per platform.
