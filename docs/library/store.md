@@ -1,7 +1,7 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process stores with local chunks and registered remote blobs
-(liquid #1, #7, #8, #17, #46, #116).**
+**Status: implemented for single-process stores with local chunks, registered remote blobs,
+pre-pack write-through, and local eviction (liquid #1, #7, #8, #17, #46, #116, #199).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -115,6 +115,46 @@ hashed before `put_plain`, and the assembled object is hashed before `get` succe
 therefore enter packs through the same verified, deduplicated path as local writes. The separate
 metadata file is atomically replaced and survives reopen; it carries locations, not content.
 
+## Write-through ordering
+
+`store_options::write_through` is an optional shared `blob_write_through`. For a new whole-content
+identity, the store computes the whole digest and the complete ordered chunk digest/size table,
+then awaits exactly one `blob_write_through::put(content, bytes, chunks, chunk_sizes)` call before
+the first chunk or descriptor reaches a pack. A successful callback permits the ordinary local
+write. An error is returned unchanged; no pack frame, index run, index manifest, object map, or
+collection manifest is modified, and a previously unknown digest remains `absent`. A duplicate
+whole-content identity that is already present returns without another callback.
+
+The callback is a lazy Capy coroutine running on the caller's runtime executor. It performs its own
+I/O with Corosio or `runtime::offload`; it must not block the executor or call `runtime::block_on`.
+The byte and table spans remain valid until the returned task completes. The `chunks` and
+`chunk_sizes` spans have equal length, sizes sum to `bytes.size()`, and concatenating those logical
+chunks yields `bytes`. Plain stores report the selected BLAKE3 or SHA-256 identities. Encrypted
+stores report keyed chunk and whole-content identities while `bytes` remains plaintext.
+
+For `store::put`, `bytes` spans the caller-supplied in-memory content even when FastCDC produces
+many chunks. For `store::put_file`, the store first computes the digest and chunk table with its
+bounded 8 MiB streaming scan. It then gives the callback one read-only, file-backed mapping of the
+complete source; the mapping is not a heap copy and is valid only for that callback. The store
+verifies the mapped chunks against the streaming scan before invoking the callback and copies at
+most one chunk into the pack path at a time after success. An empty file is represented by an
+empty byte span and one zero-length chunk. Thus large files retain bounded heap use while the
+single callback can consume the content sequentially from `bytes`.
+
+## Evicting a local remote copy
+
+`store::evict(content)` requires a persisted registration for `content` in `remotes.meta`; an
+unregistered digest returns `errc::not_remote` and changes nothing. Eviction removes the local
+object entry and tombstones locally cached content chunks and the local chunk-list descriptor when
+they are not shared by another local object or registered remote blob. It publishes the object
+map, collection tombstones, and rebuilt chunk index in crash-safe order without changing the
+remote registration. Evicting an already remote-only registration succeeds without a write.
+
+When no retained object or registration shares every chunk, `has(content)` reports `remote`, and
+`get` or `read` hydrates verified bytes again through the registered `remote_blob_source`; range
+reads still fetch only intersecting chunks. Eviction does not rewrite a pack. Whole dead packs and
+space in partially dead packs are reclaimed by the existing collection and compaction paths.
+
 `put` acknowledges a chunk after its complete frame has been written. `store_options::durable`
 defaults to `false`; setting it to `true` calls `sync_data` on the pack before acknowledgement.
 The ordering makes a process crash safe: complete frames can be found by the recovery scan, and torn
@@ -127,9 +167,10 @@ is always verified against its digest, and collection reclaims unleased orphans.
 `store::put_file` opens its source with Corosio `random_access_file` and reads 8 MiB windows. A
 stateful FastCDC chunker carries only the current chunk across window boundaries, so it produces
 the same ordered cuts as `put` without retaining the input. BLAKE3, keyed BLAKE3, or SHA-256 is
-updated for each window and finalized only after the last byte. Each completed chunk is
-deduplicated and framed immediately; the whole-object chunk-list descriptor and `LQOBJ4` metadata
-are published at the end.
+updated for each window and finalized only after the last byte. Without a callback, each completed
+chunk is deduplicated and framed immediately. With a callback, the scan writes no frame; the
+verified file mapping is followed by chunk-at-a-time framing only after the callback succeeds. The
+whole-object chunk-list descriptor and `LQOBJ4` metadata are published at the end.
 
 `store::get_to_file` loads and verifies one chunk at a time and writes it with Corosio
 `random_access_file`. It incrementally verifies the whole-object digest before acknowledging the

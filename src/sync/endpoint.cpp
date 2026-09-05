@@ -227,7 +227,8 @@ auto parse_error_code(std::string_view value) -> std::optional<errc> {
                             errc::unauthorized,
                             errc::unavailable,
                             errc::busy,
-                            errc::internal}) {
+                            errc::internal,
+                            errc::not_remote}) {
         if (to_string(code) == value) {
             return code;
         }

@@ -23,6 +23,7 @@ enum class errc : std::uint16_t {
     unavailable,
     busy,
     internal,
+    not_remote,
 };
 
 struct LIQUID_EXPORT error {
@@ -31,9 +32,8 @@ struct LIQUID_EXPORT error {
     std::string context;
 };
 
-template <class T>
-using result = std::expected<T, error>;
+template <class T> using result = std::expected<T, error>;
 
 [[nodiscard]] LIQUID_EXPORT std::string_view to_string(errc code) noexcept;
 
-}  // namespace liquid
+} // namespace liquid
