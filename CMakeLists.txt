@@ -380,6 +380,7 @@ add_library(libliquid
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
+  src/cms.cpp
   src/daemon.cpp
   src/daemon/fanout.cpp
   src/drip.cpp
@@ -405,6 +406,7 @@ add_library(libliquid
   src/identity.cpp
   src/identity/taap.cpp
   src/crypto/crypto.cpp
+  src/crypto/signature.cpp
   src/object.cpp
   src/objects/records.cpp
   src/protobuf/wire.cpp
@@ -417,6 +419,7 @@ add_library(libliquid
   src/workers/control.cpp
   src/workers/scheduler.cpp
   src/workers/worker.cpp
+  src/x509.cpp
   src/repository/diff.cpp
   src/repository/merge.cpp
   src/remote.cpp
@@ -442,6 +445,7 @@ add_library(libliquid
   src/sync/endpoint.cpp
   src/sync/server.cpp
   src/sync/session.cpp
+  src/transparency.cpp
   src/version.cpp
   src/vfs.cpp
   src/vfs/fuse_fs.cpp
@@ -473,7 +477,8 @@ target_include_directories(libliquid PUBLIC
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${blake3_source_SOURCE_DIR}/c
           ${monocypher_source_SOURCE_DIR}/src
-          ${monocypher_source_SOURCE_DIR}/src/optional)
+          ${monocypher_source_SOURCE_DIR}/src/optional
+          ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_compile_definitions(libliquid PRIVATE
   LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"

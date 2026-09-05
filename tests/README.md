@@ -7,6 +7,8 @@ coverage uses the private Corosio connection adapter.
 
 Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
 identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
+`transparency/` records how the initial and renewed RFC 4998 fixtures were generated through lake's
+production timestamp service and contains the timestamp, trust, tampering, and renewal cases.
 
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on

@@ -38,3 +38,30 @@ object identifiers, and trailing data after a requested single element. Each ret
 retains both its content span and its complete encoded span. The remaining public headers,
 command-line operations, recorded fixtures, and verification implementation are delivered by
 liquid issue #210.
+
+The private signature engine accepts RSA keys from 2,048 through 4,096 bits and ECDSA public keys
+on P-256 or P-384. It verifies PKCS#1 v1.5, RSA-PSS, and DER ECDSA signatures with SHA-256 or
+SHA-384. SHA-384 and each signature scheme are verification-only; there is no key-generation or
+signing entry point.
+
+`liquid/x509.hpp` parses DER certificates, accepts one or more DER or PEM trust anchors, and builds
+a path at an explicitly supplied historical time. The timestamp leaf must permit digital
+signatures and carry a critical extended-key-usage extension containing only
+`id-kp-timeStamping`. Issuing certificates must be certificate authorities with `keyCertSign`.
+Unknown critical extensions, invalid certificate signatures, validity failures, loops, and paths
+that do not end in the configured anchor set are refused. An empty anchor set returns a named
+authorization failure; system roots are never an implicit default.
+
+`liquid/cms.hpp` verifies an embedded-content CMS `SignedData` value with exactly one signer. It
+requires canonical DER ordering for digest, signer, and signed-attribute sets; binds the signed
+`contentType` and `messageDigest` attributes to `id-ct-TSTInfo`; identifies the signer by issuer
+and serial number; verifies its signature; and validates its certificate path at the caller's
+historical time.
+
+`liquid/transparency.hpp` exposes the timestamp and evidence operations. A timestamp token hashes
+the supplied decoded checkpoint signature value with SHA-256 and compares it to the signed
+`messageImprint`; requires a signed nonce, policy, serial number, and generation time; then verifies
+the CMS signature and TSA path at that generation time. Evidence verification accepts the complete
+DER record plus the decoded checkpoint signature value. It requires lake's version-1, one-algorithm,
+one-chain shape and verifies the first token over that signature value. Every later token is
+verified over the complete preserved DER of its immediate `ArchiveTimeStamp` predecessor.

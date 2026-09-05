@@ -31,6 +31,7 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_store.cpp
   test_temporary_directory.cpp
+  test_transparency.cpp
   attestation/test_registry.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp
@@ -105,6 +106,8 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)

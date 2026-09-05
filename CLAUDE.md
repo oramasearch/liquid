@@ -102,6 +102,9 @@ Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and re
 approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
 line-hunk stale reports, and signed disjoint or forced re-validation records.
+Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
+3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
+anchors and historical certificate validation.
 
 ### Vocabulary — use these words exactly
 

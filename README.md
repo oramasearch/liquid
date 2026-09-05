@@ -52,7 +52,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install. `liquid import git` preserves reachable local Git
 > history and its identity mapping; `liquid export git` writes a standalone Git repository and reports
-> compatibility losses.
+> compatibility losses. Strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA
+> validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against explicitly pinned
+> TSA trust anchors at each token's historical generation time.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
