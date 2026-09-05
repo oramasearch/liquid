@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
@@ -20,8 +21,8 @@ namespace {
 class scan_workspace {
 public:
     scan_workspace()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-scan-test-" + std::to_string(next_.fetch_add(1)))) {
+        : path_(liquid::test::fixture_path("liquid-scan-test-" +
+                                           std::to_string(next_.fetch_add(1)))) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
     }

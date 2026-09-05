@@ -13,6 +13,7 @@
 #include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
 #include "monocypher-ed25519.h"
+#include "temporary_directory.hpp"
 
 namespace {
 
@@ -31,8 +32,7 @@ auto decode_hex(std::string_view input) -> std::vector<std::byte> {
 }
 
 auto rotation_home(std::string_view name) -> std::filesystem::path {
-    return std::filesystem::temp_directory_path() /
-           ("liquid-identity-rotation-" + std::string{name});
+    return liquid::test::fixture_path("liquid-identity-rotation-" + std::string{name});
 }
 
 auto set_identity_home(const std::filesystem::path& path) -> void {
@@ -108,7 +108,7 @@ TEST(Identity, Ed25519Rfc8032Vector) {
 }
 
 TEST(Identity, LocalSignerSignsAndVerifiesWithDomainSeparation) {
-    const auto home = std::filesystem::temp_directory_path() / "liquid-identity-test";
+    const auto home = liquid::test::fixture_path("liquid-identity-test");
     std::error_code code;
     std::filesystem::remove_all(home, code);
     setenv("LIQUID_HOME", home.c_str(), 1);
@@ -307,7 +307,7 @@ TEST(Identity, Argon2iDerivationIsDeterministicAndSalted) {
 }
 
 TEST(Identity, KeyFileProviderRequiresAnExactPrivateKeyFile) {
-    const auto path = std::filesystem::temp_directory_path() / "liquid-key-file-provider-test";
+    const auto path = liquid::test::fixture_path("liquid-key-file-provider-test");
     std::filesystem::remove(path);
     std::array<std::byte, 32> key{};
     key[0] = std::byte{0x42};

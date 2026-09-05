@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
@@ -21,8 +22,7 @@ namespace {
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-sbom-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-sbom-test-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

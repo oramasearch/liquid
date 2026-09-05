@@ -12,6 +12,7 @@
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "objects/records.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
@@ -65,8 +66,8 @@ TEST(RemoteInterop, CasAndActionCacheRoundTripWithConfiguredPeer) {
     EXPECT_EQ(*read_count, contents.size());
     EXPECT_EQ(read, contents);
 
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("liquid-reapi-peer-" + std::to_string(std::rand()));
+    const auto root =
+        liquid::test::fixture_path("liquid-reapi-peer-" + std::to_string(std::rand()));
     auto code = std::error_code{};
     std::filesystem::remove_all(root, code);
     auto created = liquid::runtime::block_on(liquid::repository::create(root));

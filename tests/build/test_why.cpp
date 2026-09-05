@@ -11,6 +11,7 @@
 #include <unistd.h>
 #endif
 
+#include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
@@ -26,9 +27,8 @@ namespace {
 class why_fixture {
 public:
     why_fixture()
-        : root_(
-              std::filesystem::temp_directory_path() /
-              ("liquid-why-test-" + std::to_string(process_id()) + "-" + std::to_string(next_++))),
+        : root_(liquid::test::fixture_path("liquid-why-test-" + std::to_string(process_id()) + "-" +
+                                           std::to_string(next_++))),
           project_(root_ / "project"), cache_(root_ / "cache") {
         auto code = std::error_code{};
         std::filesystem::remove_all(root_, code);

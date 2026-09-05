@@ -6,5 +6,8 @@ drip delivery, and duplicate cursor suppression for the search target.
 The test executable compiles the private index implementation directly so shared-library builds do
 not export internal test helpers.
 
+Index fixtures allocate their named directories beneath the unique process root specified in the
+parent [`README.md`](../README.md).
+
 `measure_index.cpp` builds `.liquid/index/` from a checkout and reports file, unique-blob, byte,
 build-time, and mean-query figures. CMake excludes the measurement target from normal builds.

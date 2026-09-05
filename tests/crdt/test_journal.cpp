@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include "../temporary_directory.hpp"
+
 namespace {
 
 TEST(CrdtJournal, replay_reproduces_document_heads) {
@@ -13,7 +15,7 @@ TEST(CrdtJournal, replay_reproduces_document_heads) {
     auto original = liquid::crdt::document::create(repository, "taap:user:steve", "laptop");
     ASSERT_TRUE(original.has_value());
 
-    auto directory = std::filesystem::temp_directory_path() / "liquid-crdt-journal-test";
+    auto directory = liquid::test::fixture_path("liquid-crdt-journal-test");
     std::filesystem::create_directories(directory);
     auto path = directory / "drips.cbor";
     std::filesystem::remove(path);
@@ -56,7 +58,7 @@ TEST(CrdtJournal, reads_records_from_a_plain_cursor) {
     repository[0] = std::byte{0x19};
     auto document = liquid::crdt::document::create(repository, "taap:user:steve", "laptop");
     ASSERT_TRUE(document.has_value());
-    auto directory = std::filesystem::temp_directory_path() / "liquid-crdt-journal-cursor-test";
+    auto directory = liquid::test::fixture_path("liquid-crdt-journal-cursor-test");
     std::filesystem::create_directories(directory);
     auto path = directory / "drips.cbor";
     std::filesystem::remove(path);
@@ -98,7 +100,7 @@ TEST(CrdtJournal, redaction_marker_changes_the_logical_view_without_rewriting) {
     repository[0] = std::byte{0x20};
     auto document = liquid::crdt::document::create(repository, "taap:user:steve", "laptop");
     ASSERT_TRUE(document);
-    auto directory = std::filesystem::temp_directory_path() / "liquid-crdt-journal-redaction-test";
+    auto directory = liquid::test::fixture_path("liquid-crdt-journal-redaction-test");
     std::filesystem::create_directories(directory);
     auto path = directory / "drips.cbor";
     std::filesystem::remove(path);

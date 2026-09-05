@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "build/repository_access.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -21,8 +22,7 @@ namespace {
 class temporary_store {
 public:
     temporary_store()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-gc-test-" + std::to_string(++counter_))) {
+        : path_(liquid::test::fixture_path("liquid-gc-test-" + std::to_string(++counter_))) {
         std::filesystem::remove_all(path_);
     }
     ~temporary_store() {

@@ -8,6 +8,7 @@
 #include <iterator>
 #include <string>
 
+#include "../temporary_directory.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/vfs.hpp"
 #include "repository/testing.hpp"
@@ -17,8 +18,7 @@ namespace {
 class temporary_tree {
 public:
     temporary_tree()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-vfs-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-vfs-test-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

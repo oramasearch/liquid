@@ -3,14 +3,14 @@
 #include <filesystem>
 #include <string>
 
+#include "../temporary_directory.hpp"
 #include "harness.hpp"
 
 namespace {
 
 class regression_workspace {
 public:
-    regression_workspace()
-        : path_(std::filesystem::temp_directory_path() / "liquid-gc-regression-seed-140") {
+    regression_workspace() : path_(liquid::test::fixture_path("liquid-gc-regression-seed-140")) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
     }

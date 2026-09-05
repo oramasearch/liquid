@@ -28,6 +28,7 @@ add_executable(liquid-tests
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
+  test_temporary_directory.cpp
   attestation/test_registry.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp

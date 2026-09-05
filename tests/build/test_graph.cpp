@@ -17,6 +17,7 @@
 #include <unistd.h>
 #endif
 
+#include "../temporary_directory.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/runtime.hpp"
 
@@ -45,8 +46,8 @@ class graph_directory {
 public:
     graph_directory() {
         static auto next = std::atomic_uint64_t{};
-        root_ = std::filesystem::temp_directory_path() /
-                ("liquid-query-graph-" + std::to_string(next.fetch_add(1)));
+        root_ =
+            liquid::test::fixture_path("liquid-query-graph-" + std::to_string(next.fetch_add(1)));
         std::filesystem::remove_all(root_);
         std::filesystem::create_directories(root_ / "tree");
     }
