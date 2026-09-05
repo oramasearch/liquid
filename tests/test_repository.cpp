@@ -222,21 +222,31 @@ TEST(Repository, import_tree_preserves_file_identity_and_records_removals) {
     ASSERT_TRUE(before) << before.error().message;
 
     write_file(source / "changed.txt", content("after"));
-    ASSERT_TRUE(std::filesystem::remove(source / "removed.txt"));
-    const auto imported = liquid::runtime::block_on(repository.import_tree(source));
-    ASSERT_TRUE(imported) << imported.error().message;
-    ASSERT_TRUE(imported->drip.has_value());
-    EXPECT_EQ(imported->changed, 2U);
-    const auto after = liquid::runtime::block_on(repository.root());
-    ASSERT_TRUE(after) << after.error().message;
-    const auto changes = liquid::runtime::block_on(repository.diff(*before, *after));
+    const auto changed = liquid::runtime::block_on(repository.import_tree(source));
+    ASSERT_TRUE(changed) << changed.error().message;
+    ASSERT_TRUE(changed->drip.has_value());
+    EXPECT_EQ(changed->changed, 1U);
+    const auto after_change = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(after_change) << after_change.error().message;
+    const auto changes = liquid::runtime::block_on(repository.diff(*before, *after_change));
     ASSERT_TRUE(changes) << changes.error().message;
     const auto modified =
         std::ranges::find(*changes, "changed.txt", &liquid::tree_diff_entry::path);
     ASSERT_NE(modified, changes->end());
     EXPECT_TRUE(has_change(*modified, liquid::tree_diff_kind::modified));
-    const auto removed = std::ranges::find(*changes, "removed.txt", &liquid::tree_diff_entry::path);
-    ASSERT_NE(removed, changes->end());
+    EXPECT_EQ(changes->size(), 1U);
+
+    ASSERT_TRUE(std::filesystem::remove(source / "removed.txt"));
+    const auto removed_import = liquid::runtime::block_on(repository.import_tree(source));
+    ASSERT_TRUE(removed_import) << removed_import.error().message;
+    ASSERT_TRUE(removed_import->drip.has_value());
+    EXPECT_EQ(removed_import->changed, 1U);
+    const auto after_removal = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(after_removal) << after_removal.error().message;
+    const auto removal = liquid::runtime::block_on(repository.diff(*after_change, *after_removal));
+    ASSERT_TRUE(removal) << removal.error().message;
+    const auto removed = std::ranges::find(*removal, "removed.txt", &liquid::tree_diff_entry::path);
+    ASSERT_NE(removed, removal->end());
     EXPECT_TRUE(has_change(*removed, liquid::tree_diff_kind::removed));
 }
 
