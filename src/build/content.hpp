@@ -19,6 +19,10 @@ namespace liquid::build_detail {
                                           digest base,
                                           std::span<const named_input> inputs)
     -> runtime::task<digest>;
+[[nodiscard]] auto refresh_dependency_input_tree(repository& source,
+                                                 digest base,
+                                                 digest recorded)
+    -> runtime::task<digest>;
 [[nodiscard]] auto import_wrap_inputs(repository& destination,
                                       const std::filesystem::path& cache_directory,
                                       std::span<const named_input> inputs) -> runtime::task<void>;

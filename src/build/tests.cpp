@@ -632,7 +632,14 @@ runtime::task<repository> repository::open_build(std::filesystem::path working_t
     if (!cache) {
         co_return std::unexpected(cache.error());
     }
-    co_return co_await repository::open(*cache / "repository", std::move(options));
+    const auto path = *cache / "repository";
+    if (!std::filesystem::is_regular_file(path / "LIQUID_REPO")) {
+        co_return std::unexpected(
+            error{errc::not_configured,
+                  "repository has no recorded build configuration; run liquid wrap <command> first",
+                  working_tree.string()});
+    }
+    co_return co_await repository::open(path, std::move(options));
 }
 
 result<build_handle> repository::run_tests(std::string filter) {

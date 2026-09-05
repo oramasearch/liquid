@@ -69,7 +69,8 @@ process, checks ordinary and atomic per-ref output, and invokes the real push an
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
 
-Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
+Build tests cover the disk action index's reopen and rebuild paths, public configured-plan schema,
+named configuration errors, and current root digests on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.

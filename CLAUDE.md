@@ -76,6 +76,9 @@ cursor-based stale-index exclusion, common located hit records, the public execu
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
+Liquid #200 adds public configured-build plans with complete action inputs, dependency edges and
+validated hit state, one-call repository and daemon builds, the current root-tree digest, and
+`liquid build --plan`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,

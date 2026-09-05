@@ -97,6 +97,21 @@ struct LIQUID_EXPORT execution_schedule {
 
 enum class cache_status : std::uint8_t { miss, hit, divergent };
 
+struct LIQUID_EXPORT build_target {
+    std::string name;
+};
+
+struct LIQUID_EXPORT build_plan_action {
+    std::uint64_t v{1};
+    digest action;
+    action_input input;
+    std::vector<digest> dependencies;
+    cache_status state{cache_status::miss};
+    std::optional<result_id> result;
+};
+
+[[nodiscard]] LIQUID_EXPORT result<std::string> plan_json(const build_plan_action& action);
+
 enum class cache_miss_reason : std::uint8_t {
     input_changed,
     command_changed,

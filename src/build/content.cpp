@@ -312,6 +312,37 @@ auto fold_dependency_inputs(repository& source, digest base, std::span<const nam
     co_return co_await store_tree(source, std::move(*root));
 }
 
+auto refresh_dependency_input_tree(repository& source, digest base, digest recorded)
+    -> runtime::task<digest> {
+    auto recorded_bytes = co_await repository_detail::build_access::get(source, recorded);
+    auto recorded_root = recorded_bytes ? objects::decode_tree(*recorded_bytes)
+                                        : result<tree>{std::unexpected(recorded_bytes.error())};
+    if (!recorded_root) {
+        co_return std::unexpected(recorded_root.error());
+    }
+    const auto dependency = std::ranges::find(recorded_root->entries, "deps", &tree_entry::name);
+    if (dependency == recorded_root->entries.end()) {
+        co_return base;
+    }
+    if (dependency->kind != node_kind::tree) {
+        co_return std::unexpected(
+            content_error(errc::corrupt, "recorded named dependency entry is not a tree", "deps"));
+    }
+    auto base_bytes = co_await repository_detail::build_access::get(source, base);
+    auto root = base_bytes ? objects::decode_tree(*base_bytes)
+                           : result<tree>{std::unexpected(base_bytes.error())};
+    if (!root) {
+        co_return std::unexpected(root.error());
+    }
+    if (std::ranges::find(root->entries, "deps", &tree_entry::name) != root->entries.end()) {
+        co_return std::unexpected(content_error(
+            errc::conflict, "input tree already contains the reserved deps directory"));
+    }
+    root->entries.push_back(*dependency);
+    std::ranges::sort(root->entries, {}, &tree_entry::name);
+    co_return co_await store_tree(source, std::move(*root));
+}
+
 auto import_wrap_inputs(repository& destination,
                         const std::filesystem::path& cache_directory,
                         std::span<const named_input> inputs) -> runtime::task<void> {
