@@ -11,6 +11,13 @@ results, attestations, traces, and result-scoped SBOMs.
 Filesystem fixtures allocate their named directories beneath the unique process root specified in
 the parent [`README.md`](../README.md).
 
+`test_events.cpp` covers subscription-point fan-out, terminal failure ordering, frontend-shaped
+diagnostics, and exact JSON-lines schema stability for the public build stream. The Linux wrap
+scenario edits a second input while a delayed action runs and checks that re-planning reports the
+untouched actions as hits. The mount-backed own-tree measurement edits a function body in
+`src/store/faults.cpp` inside a repository snapshot and prints call-to-start latency, event count,
+and load average.
+
 `test_graph.cpp` covers canonical demand, read-order dependencies, red-green validation, early
 cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Clean
 validation cases cover the default one-in-twenty selection, a zero-divergence full pass, and a
@@ -44,7 +51,7 @@ byte counts agree. It also tightens policy after a recorded build and proves `wh
 current refusal before treating the previous lookup as a hit or ordinary miss.
 
 `fixture.c` is the hermetic toolchain program materialised into each test repository. Its commands
-copy one input, print the fixed environment, emit random bytes, attempt denied access, or exercise
+copy or read one input, print the fixed environment, emit random bytes, attempt denied access, or exercise
 timeout cleanup. Its deterministic failure command writes fixed output, stdout, and stderr before
 returning a nonzero exit for replay coverage. Verification tests prove a pure agreement,
 signature-valid agreement and
@@ -67,10 +74,14 @@ cross-project configure facts with zero feature probes on reuse, foreign-target 
 compiler entry, parallel compilation-database seeding, and sandbox-only hook variables. The Linux
 CLI case runs `liquid verify --all` and `liquid verify --graph --all`, checks that every wrapped
 action and query agrees, then replays one action through `liquid replay --json`.
+It also parses every line from a failing `liquid build --events` run and checks that the command
+returns the recorded status.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
 and toolchain-tree leaf. Its query-graph cases make a comment-only translation-unit edit execute
 one compiler while preserving the object and link result, then make a semantic edit execute the
 compiler and linker and change the link result.
+The fixture registers a labelled smoke test, and the wrap scenario verifies its public target
+metadata.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.

@@ -16,7 +16,7 @@ The cache key then covers exactly what was read, and a miss can name the input t
 changed.
 
 **Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
-and #23 implement
+#23, and #193 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -40,6 +40,92 @@ local/remote/race selection, remote batching, and loser cancellation. Issue #16 
 network transport and validated remote cache tier. Issue #63 supplies liquid's scheduler and
 TAAP-signed worker fleet. Configure checks additionally populate a shared content-addressed fact
 base and can be answered across projects without starting the probe.
+
+## Public build handles and events (#193)
+
+`repository::build(action_input)` starts a direct action and returns a move-only `build_handle`.
+`build::start_wrap` does the same for an observed existing build; `daemon::build` forwards a handle
+over the daemon's framed CBOR protocol. A caller obtains any number of move-only subscriptions with
+`handle.events()` and awaits `subscription.next()`. `next()` returns the next event, then an empty
+optional after the terminal event. `handle.wait()` independently awaits the final summary.
+
+Each subscription is live rather than replayed. It sees every event published after its successful
+`events()` call, in increasing `sequence` order. Two subscriptions made at the same point therefore
+receive equal future events. A subscription made after completion is immediately closed. The
+repository and any caller-owned remote executor supplied to a direct build must outlive that build;
+wrapped and daemon builds own the state they need.
+
+The producer gives the first caller an asynchronous startup guard in which to call `events()` or
+`wait()`. This keeps an immediate subscription from racing the first queued event without retaining
+history for later subscribers. The guard is bounded, so an unobserved handle does not prevent its
+build from starting.
+
+The event kinds and ordering contract are:
+
+1. `action_queued` precedes `action_started` for an action. `action_started.execution` is `local` or
+   `remote`; a remote execution also carries the worker name once the scheduler supplies it.
+2. Exactly one of `action_hit`, `action_done`, or `action_failed` is the terminal state for that
+   queued action. A hit names the stored result. Done carries declared outputs. Failed carries one
+   or more frontend-shaped diagnostics: `file`, `line`, `column`, `severity`, and `message`.
+3. `critical_path_updated` follows the action terminal states represented by that path. More than
+   one update may occur when a wrapped build is planned again.
+4. `build_finished` is the last event. Its summary contains the process exit status, action, hit,
+   and failure counts, plus wall duration. No event follows it.
+
+The wrapper publishes one orchestration action first. Its `action` and `result` are null because it
+exists before the observed child action identities; it is not included in the summary's action
+count. Child actions then carry their content identities. Direct builds and tests likewise publish
+queue/start before the result-derived action digest is available, then place the digest on the
+terminal event.
+
+The stream is a Capy coroutine sequence. Publishers only enqueue values and post saved
+continuations to the subscribing executor. Filesystem snapshots, socket operations, and other
+blocking work use `runtime::offload`; no worker calls `block_on`, and no stream path creates a raw
+thread.
+
+Each build producer runs on Capy's single-runner event context. This preserves event order and keeps
+repository mutations serialized even when the process-wide runtime has multiple executor threads.
+Subscribers may consume the stream from different executors.
+
+### Editing during a wrapped build
+
+`start_wrap` snapshots source-file metadata when the orchestration action starts. After the command
+finishes it excludes paths produced by recorded actions and compares the remaining source files. A
+source edit during the run starts a new graph-backed wrap pass before `build_finished`. The second
+pass publishes ordinary action events, so untouched actions appear as `action_hit` and changed
+readers run again. The final summary describes the new pass.
+
+### JSON-lines projection
+
+`event_json` is the version-1 stable projection used by `liquid build --events`. Every line contains
+`v`, `sequence`, `type`, `action`, and `result`. Digests are text or null. Kind-specific members are:
+
+| Type | Additional member |
+|---|---|
+| `action_started` | `execution: {kind, worker}`; `worker` is null for local work |
+| `action_done` | `outputs: [{path, mode, blob}]` |
+| `action_failed` | `diagnostics: [{file, line, column, severity, message}]` |
+| `critical_path_updated` | `critical_path: [{action, result, duration_ms, hit}]` |
+| `test_result` | `test: {name, status, output, duration_ms, hit}` |
+| `build_finished` | `summary: {exit, actions, hits, failures, duration_ms}` |
+
+Fields not applicable to an event are omitted, except the five common fields. Strings use JSON
+escaping and each event is printed as one complete line. The command returns the summary exit
+status, including a recorded nonzero action result.
+
+### Own-tree measurement
+
+`BuildEvents.own_tree_one_function_edit_measurement` stores liquid's
+`src/store/faults.cpp` in an action repository, warms the observed read, inserts a comment in the
+body containing `injector->visit(event)`, and starts the changed action through
+`repository::build`. In the privileged Linux container on 2026-09-04 it reported:
+
+```text
+build event measurement: file=src/store/faults.cpp first_action_started_ms=2 event_count=5 load_average=8.81 11.74 10.25 4/680 655
+```
+
+The three load-average values are recorded beside the latency because the host was busy. The five
+events were queued, started, done, critical-path update, and finished.
 
 ## Records in the store
 

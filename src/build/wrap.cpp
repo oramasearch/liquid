@@ -32,6 +32,7 @@
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "build/tests.hpp"
 #include "build/trace.hpp"
 #include "build/verify.hpp"
 #include "build/why.hpp"
@@ -1102,6 +1103,49 @@ runtime::task<digest> store_phase2_tree(repository& source, tree value) {
     co_return co_await repository_detail::build_access::put_record(source, std::move(*bytes));
 }
 
+runtime::task<tree_entry>
+tree_file(repository& source, digest root, const std::filesystem::path& path) {
+    auto current = root;
+    auto components = std::vector<std::string>{};
+    for (const auto& component : path.lexically_normal()) {
+        const auto text = component.string();
+        if (!text.empty() && text != ".") {
+            components.push_back(text);
+        }
+    }
+    if (components.empty() || components.front() == "..") {
+        co_return std::unexpected(
+            wrap_error(errc::invalid_argument, "captured executable path is invalid", path));
+    }
+    for (auto index = std::size_t{}; index != components.size(); ++index) {
+        auto bytes = co_await repository_detail::build_access::get(source, current);
+        auto value = bytes ? objects::decode_tree(*bytes)
+                           : liquid::result<tree>{std::unexpected(bytes.error())};
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        const auto found = std::ranges::find(value->entries, components[index], &tree_entry::name);
+        if (found == value->entries.end()) {
+            co_return std::unexpected(
+                wrap_error(errc::not_found, "captured executable is absent from inputs", path));
+        }
+        if (index + 1 == components.size()) {
+            if (found->kind != node_kind::blob) {
+                co_return std::unexpected(
+                    wrap_error(errc::invalid_argument, "captured executable is not a file", path));
+            }
+            co_return *found;
+        }
+        if (found->kind != node_kind::tree) {
+            co_return std::unexpected(wrap_error(
+                errc::invalid_argument, "captured executable parent is not a directory", path));
+        }
+        current = found->ref;
+    }
+    co_return std::unexpected(
+        wrap_error(errc::internal, "captured executable lookup produced no result", path));
+}
+
 auto insert_tree_entry(tree& value, tree_entry entry) -> liquid::result<void> {
     const auto found = std::ranges::find(value.entries, entry.name, &tree_entry::name);
     if (found == value.entries.end()) {
@@ -1351,8 +1395,11 @@ runtime::task<digest> store_toolchain(repository& source,
     co_return co_await store_phase2_tree(source, std::move(root));
 }
 
-runtime::task<std::pair<digest, std::string>> phase2_toolchain_impl(
-    repository& source, digest recorded, digest, std::string_view, std::string_view command) {
+runtime::task<std::pair<digest, std::string>> phase2_toolchain_impl(repository& source,
+                                                                    digest recorded,
+                                                                    digest inputs,
+                                                                    std::string_view cwd,
+                                                                    std::string_view command) {
     auto root_bytes = co_await repository_detail::build_access::get(source, recorded);
     auto root = root_bytes ? objects::decode_tree(*root_bytes)
                            : liquid::result<tree>{std::unexpected(root_bytes.error())};
@@ -1372,11 +1419,35 @@ runtime::task<std::pair<digest, std::string>> phase2_toolchain_impl(
         co_return std::unexpected(entries.error());
     }
     const auto executable = std::ranges::find(entries->entries, program, &tree_entry::name);
-    if (executable == entries->entries.end() || executable->kind != node_kind::blob) {
-        co_return std::unexpected(
-            wrap_error(errc::not_found, "recorded toolchain has no compiler", program));
+    if (executable != entries->entries.end() && executable->kind == node_kind::blob) {
+        co_return std::pair{recorded, program};
     }
-    co_return std::pair{recorded, program};
+    auto command_path = std::filesystem::path{command};
+    if (command_path.is_absolute() && command_path.string().starts_with(virtual_root)) {
+        command_path = command_path.lexically_relative(virtual_root);
+    } else if (command_path.is_relative()) {
+        command_path = std::filesystem::path{cwd} / command_path;
+    }
+    auto input_executable = co_await tree_file(source, inputs, command_path);
+    if (!input_executable) {
+        co_return std::unexpected(input_executable.error());
+    }
+    input_executable->name = program;
+    auto inserted = insert_tree_entry(*entries, std::move(*input_executable));
+    if (!inserted) {
+        co_return std::unexpected(inserted.error());
+    }
+    auto bin_id = co_await store_phase2_tree(source, std::move(*entries));
+    if (!bin_id) {
+        co_return std::unexpected(bin_id.error());
+    }
+    bin->id = *bin_id;
+    bin->ref = *bin_id;
+    auto root_id = co_await store_phase2_tree(source, std::move(*root));
+    if (!root_id) {
+        co_return std::unexpected(root_id.error());
+    }
+    co_return std::pair{*root_id, program};
 }
 
 auto read_toolchain(const std::filesystem::path& path) -> liquid::result<std::optional<digest>> {
@@ -2822,6 +2893,13 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    report);
     if (!published)
         co_return std::unexpected(published.error());
+    if (*toolchain) {
+        auto tests =
+            co_await build_detail::discover_cmake_tests(*source, working_tree, **toolchain);
+        if (!tests) {
+            co_return std::unexpected(tests.error());
+        }
+    }
     auto primed = co_await prime_wrap_actions(*queries, query_state, *state, *sandbox);
     if (!primed) {
         co_return std::unexpected(primed.error());

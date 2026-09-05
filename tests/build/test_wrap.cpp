@@ -158,6 +158,68 @@ auto tree_blobs(liquid::repository& repository, liquid::digest root)
     return output;
 }
 
+liquid::runtime::task<void> edit_after_delay(std::filesystem::path path,
+                                             std::chrono::milliseconds delay) {
+    auto [delay_error] = co_await liquid::runtime::delay(delay);
+    if (delay_error) {
+        co_return std::unexpected(
+            liquid::error{liquid::errc::internal, delay_error.message(), "build event test"});
+    }
+    auto written = co_await liquid::runtime::offload([path = std::move(path)] {
+        auto output = std::ofstream{path, std::ios::app};
+        output << "changed during build\n";
+        if (!output) {
+            return liquid::result<void>{std::unexpected(
+                liquid::error{liquid::errc::io, "cannot edit build input", path.string()})};
+        }
+        return liquid::result<void>{};
+    });
+    if (!written) {
+        co_return std::unexpected(written.error());
+    }
+    co_return std::move(*written);
+}
+
+liquid::runtime::task<std::vector<liquid::build_event>>
+collect_with_edit(liquid::build_handle handle, std::filesystem::path edit) {
+    auto subscription = handle.events();
+    if (!subscription) {
+        co_return std::unexpected(subscription.error());
+    }
+    liquid::runtime::spawn(edit_after_delay(std::move(edit), std::chrono::milliseconds{30}),
+                           [](liquid::result<void> completed) { EXPECT_TRUE(completed); });
+    auto output = std::vector<liquid::build_event>{};
+    while (true) {
+        auto event = co_await subscription->next();
+        if (!event) {
+            co_return std::unexpected(event.error());
+        }
+        if (!*event) {
+            co_return output;
+        }
+        output.push_back(std::move(**event));
+    }
+}
+
+liquid::runtime::task<std::vector<liquid::build_event>>
+collect_events(liquid::build_handle handle) {
+    auto subscription = handle.events();
+    if (!subscription) {
+        co_return std::unexpected(subscription.error());
+    }
+    auto output = std::vector<liquid::build_event>{};
+    while (true) {
+        auto event = co_await subscription->next();
+        if (!event) {
+            co_return std::unexpected(event.error());
+        }
+        if (!*event) {
+            co_return output;
+        }
+        output.push_back(std::move(**event));
+    }
+}
+
 #if LIQUID_BUILD_HAS_FUSE && defined(__linux__)
 
 class scoped_environment {
@@ -210,6 +272,35 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     auto repository =
         liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
     ASSERT_TRUE(repository) << repository.error().message;
+    auto tests = liquid::runtime::block_on(repository->tests());
+    ASSERT_TRUE(tests) << tests.error().message;
+    ASSERT_EQ(tests->size(), 1U);
+    EXPECT_EQ(tests->front().name, "wrapped-smoke");
+    EXPECT_EQ(tests->front().labels, (std::vector<std::string>{"quick", "wrapped"}));
+    auto test_executable = liquid::runtime::block_on(repository->read("build/wrapped"));
+    ASSERT_TRUE(test_executable) << test_executable.error().message;
+    auto first_test = repository->run_tests("quick");
+    ASSERT_TRUE(first_test) << first_test.error().message;
+    auto first_test_events = liquid::runtime::block_on(collect_events(std::move(*first_test)));
+    ASSERT_TRUE(first_test_events) << first_test_events.error().message;
+    const auto first_test_result =
+        std::ranges::find_if(*first_test_events, [](const liquid::build_event& event) {
+            return event.test.has_value();
+        });
+    ASSERT_NE(first_test_result, first_test_events->end());
+    EXPECT_EQ(first_test_result->test->status, liquid::test_status::passed)
+        << first_test_result->test->output;
+    EXPECT_FALSE(first_test_result->test->hit);
+    auto second_test = repository->run_tests("wrapped-smoke");
+    ASSERT_TRUE(second_test) << second_test.error().message;
+    auto second_test_events = liquid::runtime::block_on(collect_events(std::move(*second_test)));
+    ASSERT_TRUE(second_test_events) << second_test_events.error().message;
+    const auto second_test_result =
+        std::ranges::find_if(*second_test_events, [](const liquid::build_event& event) {
+            return event.test.has_value();
+        });
+    ASSERT_NE(second_test_result, second_test_events->end());
+    EXPECT_TRUE(second_test_result->test->hit);
     auto cache = liquid::build_detail::disk_cache{*repository};
     auto cache_opened = liquid::runtime::block_on(cache.open());
     ASSERT_TRUE(cache_opened) << cache_opened.error().message;
@@ -569,6 +660,55 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
 #endif
 }
 
+TEST(BuildEvents, edit_during_build_replans_and_reports_untouched_hits) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    wrap_directory fixture{"make"};
+    const auto tool = fixture.project() / "sleep-tool";
+    auto code = std::error_code{};
+    std::filesystem::copy_file(
+        LIQUID_WRAP_SLEEP_TOOL, tool, std::filesystem::copy_options::overwrite_existing, code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::permissions(tool,
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace,
+                                 code);
+    ASSERT_FALSE(code) << code.message();
+    {
+        auto left = std::ofstream{fixture.project() / "event-left.txt"};
+        left << "left\n";
+        auto right = std::ofstream{fixture.project() / "event-right.txt"};
+        right << "right\n";
+    }
+    const auto script = "./sleep-tool event-left.txt event-left.out 150 && "
+                        "./sleep-tool event-right.txt event-right.out 150";
+    auto warmed = run_wrap(fixture.project(), fixture.cache(), {"/bin/sh", "-c", script}, false, 2);
+    ASSERT_TRUE(warmed) << warmed.error().message << ": " << warmed.error().context;
+    {
+        auto left = std::ofstream{fixture.project() / "event-left.txt", std::ios::app};
+        left << "before build\n";
+    }
+    auto handle =
+        liquid::build::start_wrap(fixture.project(),
+                                  {"/bin/sh", "-c", script},
+                                  {.jobs = 2,
+                                   .cache = true,
+                                   .verify = false,
+                                   .cache_directory = fixture.cache(),
+                                   .fact_directory = fixture.cache().parent_path() / "facts"});
+    ASSERT_TRUE(handle) << handle.error().message;
+    auto events = liquid::runtime::block_on(
+        collect_with_edit(std::move(*handle), fixture.project() / "event-right.txt"));
+    ASSERT_TRUE(events) << events.error().message;
+    const auto hits = std::ranges::count(
+        *events, liquid::build_event_kind::action_hit, &liquid::build_event::kind);
+    EXPECT_GE(hits, 2);
+    EXPECT_EQ(events->back().kind, liquid::build_event_kind::build_finished);
+}
+
 TEST(BuildWrap, why_reports_current_policy_refusal_for_a_recorded_target) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0)
         GTEST_SKIP() << "FUSE is unavailable";
@@ -598,6 +738,36 @@ TEST(BuildWrap, why_reports_current_policy_refusal_for_a_recorded_target) {
 }
 
 #if defined(LIQUID_CLI)
+
+TEST(BuildEvents, cli_prints_json_lines_and_preserves_failure_exit) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    wrap_directory fixture{"make"};
+    auto cache_environment =
+        scoped_environment{"LIQUID_WRAP_CACHE", (fixture.cache().parent_path() / "cli").string()};
+    ASSERT_TRUE(cache_environment.valid());
+    const auto output = fixture.cache().parent_path() / "build-events.jsonl";
+    const auto command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                         shell_quote(LIQUID_CLI) + " build --events /bin/sh -c " +
+                         shell_quote("exit 7") + " >" + shell_quote(output.string());
+    const auto status = std::system(command.c_str());
+    EXPECT_EQ(status, 7 * 256);
+    auto input = std::ifstream{output};
+    auto lines = std::uint64_t{};
+    auto failed = false;
+    auto finished = false;
+    for (auto line = std::string{}; std::getline(input, line);) {
+        auto json = liquid::formats::json::parse(line);
+        ASSERT_TRUE(json) << line;
+        ++lines;
+        failed = failed || line.find("\"type\":\"action_failed\"") != std::string::npos;
+        finished = finished || line.find("\"type\":\"build_finished\"") != std::string::npos;
+    }
+    EXPECT_GE(lines, 4U);
+    EXPECT_TRUE(failed);
+    EXPECT_TRUE(finished);
+}
 
 TEST(BuildWrap, verify_and_replay_reexecute_wrapped_actions) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0)

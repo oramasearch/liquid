@@ -3640,6 +3640,20 @@ runtime::task<cache_report> repository::cache_stats() {
     co_return impl_->cache_statistics;
 }
 
+result<build_handle> repository::build(action_input input) {
+    if (!impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return liquid::build::start(*this, std::move(input));
+}
+
+result<build_handle> repository::build(action_input input, remote_executor& remote) {
+    if (!impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return liquid::build::start(*this, std::move(input), remote);
+}
+
 runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
                                                     std::span<sync_item> output) {
     if (!impl_) {

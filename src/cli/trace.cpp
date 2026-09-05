@@ -2,6 +2,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
@@ -117,16 +118,60 @@ void print_action(const liquid::critical_action& action) {
     print_schedule(action.schedule);
 }
 
+auto print_build_events(liquid::build_handle handle) -> liquid::runtime::task<int> {
+    auto subscription = handle.events();
+    if (!subscription) {
+        co_return std::unexpected(subscription.error());
+    }
+    auto exit = 0;
+    while (true) {
+        auto event = co_await subscription->next();
+        if (!event) {
+            co_return std::unexpected(event.error());
+        }
+        if (!*event) {
+            break;
+        }
+        auto json = liquid::event_json(**event);
+        if (!json) {
+            co_return std::unexpected(json.error());
+        }
+        std::println("{}", *json);
+        if ((*event)->summary) {
+            exit = (*event)->summary->exit;
+        }
+    }
+    co_return exit;
+}
+
 } // namespace
 
 auto wrap(int argc, char** argv) -> int;
 
 auto build(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "--events") {
+        if (argc == 1) {
+            return usage("build --events <command> [args...]");
+        }
+        auto command = std::vector<std::string>{};
+        command.reserve(static_cast<std::size_t>(argc - 1));
+        for (auto index = 1; index != argc; ++index) {
+            command.emplace_back(argv[index]);
+        }
+        auto handle =
+            liquid::build::start_wrap(std::filesystem::current_path(), std::move(command));
+        if (!handle) {
+            return fail(handle.error());
+        }
+        auto result = liquid::runtime::block_on(print_build_events(std::move(*handle)));
+        return result ? *result : fail(result.error());
+    }
     if (argc >= 1 && std::string_view{argv[0]} == "--profile") {
         return wrap(argc - 1, argv + 1);
     }
     if (argc < 1 || std::string_view{argv[0]} != "trace") {
-        return usage("build --profile <command> [args...] | build trace [--chrome]");
+        return usage("build --events <command> [args...] | build --profile <command> [args...] | "
+                     "build trace [--chrome]");
     }
     const auto chrome = argc == 2 && std::string_view{argv[1]} == "--chrome";
     if (argc > 2 || (argc == 2 && !chrome)) {

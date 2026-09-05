@@ -66,6 +66,17 @@ storage, signing, cache and verification configuration, leases, counters, and cr
 export annotation gives static and shared builds the same internal test surface. Public build values
 and operations stay in `include/liquid/build.hpp`.
 
+`events.cpp` owns the public build handle and its coroutine-consumed event channels. Each
+subscription has an independent queue beginning at subscription time. Producers publish through
+executor wakeups, retain the completion summary for later waiters, and close every subscriber only
+after `build_finished`. The private producer hooks use the internal test export pattern so static
+and shared builds exercise the same deterministic fan-out cases. Direct actions and wrapped builds
+share this channel and diagnostic shape.
+`tests.cpp` persists native or CMake-discovered test targets under the repository build state,
+enumerates them by name, and executes filtered targets through the ordinary action cache. The
+observed manifest replaces the target's initial input hint after its first run, and test results are
+published on the build event channel.
+
 `why.cpp` resolves output paths, action digests, and result digests through the persistent lookup
 journal and action index. It classifies differences strictly from action/result records, manifests,
 stored trees and blobs, and repository history. It also owns the completed-wrap statistics

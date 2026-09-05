@@ -122,10 +122,12 @@ private:
     std::unique_ptr<impl> impl_;
 
     context(unsigned runners, bool keep_alive);
+    context(unsigned runners, bool keep_alive, unsigned concurrency_hint);
     void run(boost::capy::task<> coroutine);
 
     template <class T> friend result<T> block_on(task<T> coroutine);
     friend context& default_context();
+    friend void spawn_serial(task<void> coroutine, std::function<void(result<void>)> on_done);
 };
 
 [[nodiscard]] LIQUID_EXPORT auto default_context() -> context&;
@@ -147,6 +149,7 @@ template <class T> result<T> block_on(task<T> coroutine) {
 }
 
 LIQUID_EXPORT void spawn(task<void> coroutine, std::function<void(result<void>)> on_done);
+LIQUID_EXPORT void spawn_serial(task<void> coroutine, std::function<void(result<void>)> on_done);
 
 template <class Callable> task<std::invoke_result_t<Callable>> offload(Callable callable) {
     using output_type = std::invoke_result_t<Callable>;

@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "liquid/attestation.hpp"
 #include "liquid/export.hpp"
+#include "liquid/frontend.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
@@ -19,6 +21,9 @@
 namespace liquid {
 
 class repository;
+namespace build_detail {
+struct event_access;
+}
 
 struct LIQUID_EXPORT platform {
     std::string os;
@@ -302,6 +307,105 @@ struct LIQUID_EXPORT critical_action {
     std::optional<execution_schedule> schedule;
 };
 
+enum class build_event_kind : std::uint8_t {
+    action_queued,
+    action_started,
+    action_hit,
+    action_done,
+    action_failed,
+    critical_path_updated,
+    test_result,
+    build_finished,
+};
+
+enum class action_execution_kind : std::uint8_t { local, remote };
+
+struct LIQUID_EXPORT action_execution {
+    action_execution_kind kind{action_execution_kind::local};
+    std::string worker;
+};
+
+enum class test_status : std::uint8_t { passed, failed };
+
+struct LIQUID_EXPORT test_result {
+    std::string name;
+    test_status status{test_status::passed};
+    std::string output;
+    std::chrono::milliseconds duration{};
+    bool hit{};
+};
+
+struct LIQUID_EXPORT test_target {
+    std::string name;
+    std::vector<std::string> command;
+    std::vector<std::string> labels;
+    std::vector<std::string> inputs;
+    std::string cwd;
+    digest toolchain;
+    liquid::platform platform;
+    std::optional<std::chrono::seconds> timeout;
+};
+
+struct LIQUID_EXPORT build_summary {
+    int exit{};
+    std::uint64_t actions{};
+    std::uint64_t hits{};
+    std::uint64_t failures{};
+    std::chrono::milliseconds duration{};
+};
+
+struct LIQUID_EXPORT build_event {
+    build_event_kind kind{build_event_kind::action_queued};
+    std::uint64_t sequence{};
+    std::optional<digest> action;
+    std::optional<result_id> result;
+    std::optional<action_execution> execution;
+    std::vector<action_output> outputs;
+    std::vector<frontend_diagnostic> diagnostics;
+    std::vector<critical_action> critical_path;
+    std::optional<liquid::test_result> test;
+    std::optional<build_summary> summary;
+};
+
+[[nodiscard]] LIQUID_EXPORT result<std::string> event_json(const build_event& event);
+
+class LIQUID_EXPORT build_event_subscription {
+public:
+    build_event_subscription() noexcept;
+    ~build_event_subscription();
+    build_event_subscription(build_event_subscription&&) noexcept;
+    auto operator=(build_event_subscription&&) noexcept -> build_event_subscription&;
+    build_event_subscription(const build_event_subscription&) = delete;
+    auto operator=(const build_event_subscription&) -> build_event_subscription& = delete;
+
+    [[nodiscard]] runtime::task<std::optional<build_event>> next();
+
+private:
+    struct impl;
+    explicit build_event_subscription(std::unique_ptr<impl> implementation) noexcept;
+    std::unique_ptr<impl> impl_;
+    friend class build_handle;
+};
+
+class LIQUID_EXPORT build_handle {
+public:
+    build_handle() noexcept;
+    ~build_handle();
+    build_handle(build_handle&&) noexcept;
+    auto operator=(build_handle&&) noexcept -> build_handle&;
+    build_handle(const build_handle&) = delete;
+    auto operator=(const build_handle&) -> build_handle& = delete;
+
+    [[nodiscard]] result<build_event_subscription> events() const;
+    [[nodiscard]] runtime::task<build_summary> wait();
+
+private:
+    struct impl;
+    explicit build_handle(std::unique_ptr<impl> implementation) noexcept;
+    std::unique_ptr<impl> impl_;
+    friend struct build_detail::event_access;
+};
+
 struct LIQUID_EXPORT build_trace_action {
     result_id result;
     digest action;
@@ -441,6 +545,13 @@ struct LIQUID_EXPORT why_report {
 };
 
 namespace build {
+
+[[nodiscard]] LIQUID_EXPORT result<build_handle> start(repository& source, action_input input);
+[[nodiscard]] LIQUID_EXPORT result<build_handle>
+start(repository& source, action_input input, remote_executor& remote);
+[[nodiscard]] LIQUID_EXPORT result<build_handle> start_wrap(std::filesystem::path working_tree,
+                                                            std::vector<std::string> command,
+                                                            wrap_options options = {});
 
 [[nodiscard]] LIQUID_EXPORT auto choose_execution(scheduling_inputs inputs) -> execution_schedule;
 

@@ -19,6 +19,21 @@
 
 namespace liquid {
 
+enum class frontend_diagnostic_severity : std::uint8_t {
+    note,
+    warning,
+    error,
+    fatal,
+};
+
+struct LIQUID_EXPORT frontend_diagnostic {
+    std::string file;
+    std::uint64_t line{};
+    std::uint64_t column{};
+    frontend_diagnostic_severity severity{frontend_diagnostic_severity::error};
+    std::string message;
+};
+
 enum class frontend_unit_kind : std::uint8_t {
     declaration = 1,
     definition = 2,

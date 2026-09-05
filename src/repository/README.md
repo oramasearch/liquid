@@ -27,6 +27,11 @@ The build adapter uses the repository's device signer for result records and rep
 attestations. It reads persisted cache, verification, and retention policy, synchronizes named ref
 and result leases across reopen, retains the action-index root, and owns per-handle cache counters
 and critical alerts exposed by `repository::cache_stats`.
+`repository::build` starts the same event-producing action path exposed in `liquid/build.hpp`; the
+repository must outlive its build handle because execution continues against its store and signer.
+`register_test`, `tests`, and `run_tests` delegate native target storage, sorted discovery, and
+cached execution to `src/build/tests.cpp`. `open_build` resolves the persistent repository owned by
+an observed working-tree build so CLI test runs use the same target and action state as `wrap`.
 
 For build diagnostics, the same adapter resolves a path's current content to the newest matching
 write operation and signed drip. Content, node, actor, and timestamp must all agree; otherwise the

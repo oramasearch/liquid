@@ -64,6 +64,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Liquid #66 adds content-addressed per-translation-unit symbol records from a query over recorded
 > compile actions, a labelled tree-sitter fallback, graph retrieval, repository access, and
 > `liquid symbols <path>`.
+> Public build handles now stream queued, started, hit, done, failed, critical-path, and finished
+> events through the library and daemon. CMake test registrations become discoverable cached
+> actions, with `liquid build --events` providing JSON Lines and `liquid test` reporting results.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
@@ -194,8 +197,8 @@ and Zetta's.
 - [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, cursor delivery, coalescing, recovery, and telemetry.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
-- [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
-- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, daemon lifecycle, cursor fan-out, endpoint, status, and graph value eviction.
+- [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, public build streams and ordering, JSON projection, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
+- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — the local BM25F and positional-trigram index, atomic publication, daemon updates, public API, CLI, and measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.
@@ -203,6 +206,8 @@ and Zetta's.
 - [`docs/library/reapi.md`](docs/library/reapi.md) — the REAPI client, remote cache tier, CAS/ActionCache server, configuration, CLI, API map, and peer proof.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
+- [`docs/cli/build-events.md`](docs/cli/build-events.md) — the stable build-event JSON-lines schema and ordering.
+- [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
 
 | | |
