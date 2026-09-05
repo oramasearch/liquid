@@ -12,9 +12,10 @@ parses `--target`, prints the probe-start count, and exposes foreign-target erro
 `facts.cpp` implements list, show, and bundle export entirely through public build APIs. The commands
 never read the private action cache directly.
 
-`trace.cpp` also consumes `build_handle` for `build --events` and prints the public stable JSON
-projection one event per line. `test.cpp` opens the wrapped build repository through the public
-repository API, runs an optional test filter, and prints each streamed test result.
+`trace.cpp` also prints the configured public plan for `build --plan`, starts `build [target]`
+through the daemon, and consumes `build_handle` for both repository and `build --events` streams,
+printing the stable JSON projection one event per line. `test.cpp` opens the wrapped build repository
+through the public repository API, runs an optional test filter, and prints each streamed test result.
 
 `anchor.cpp` parses `<path>:<line>@<change> --to <change>`, calls the public text-anchor mapper,
 and prints the target coordinate plus moved, approximate, and deleted state. It does not inspect

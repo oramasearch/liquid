@@ -24,6 +24,7 @@ enum class errc : std::uint16_t {
     busy,
     internal,
     not_remote,
+    not_configured,
 };
 
 struct LIQUID_EXPORT error {

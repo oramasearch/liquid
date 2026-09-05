@@ -77,6 +77,12 @@ enumerates them by name, and executes filtered targets through the ordinary acti
 observed manifest replaces the target's initial input hint after its first run, and test results are
 published on the build event channel.
 
+`plan.cpp` loads the wrapper's recorded action results, reconstructs complete public inputs,
+derives producer edges from outputs and observed manifests, and validates current hit state through
+the disk cache. It also executes selected targets in dependency order on the shared event channel,
+refreshing the repository root and cache decision before each action and materialising successful
+outputs for downstream readers.
+
 `why.cpp` resolves output paths, action digests, and result digests through the persistent lookup
 journal and action index. It classifies differences strictly from action/result records, manifests,
 stored trees and blobs, and repository history. It also owns the completed-wrap statistics

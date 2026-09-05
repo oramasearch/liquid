@@ -12,7 +12,9 @@ Filesystem fixtures allocate their named directories beneath the unique process 
 the parent [`README.md`](../README.md).
 
 `test_events.cpp` covers subscription-point fan-out, terminal failure ordering, frontend-shaped
-diagnostics, and exact JSON-lines schema stability for the public build stream. The Linux wrap
+diagnostics, and exact JSON-lines schema stability for the public build stream and configured
+plan. Public plan cases cover the named unconfigured error, root digest, complete inputs,
+output-derived dependency edges, one-call repository execution, and daemon round trips. The Linux wrap
 scenario edits a second input while a delayed action runs and checks that re-planning reports the
 untouched actions as hits. The mount-backed own-tree measurement edits a function body in
 `src/store/faults.cpp` inside a repository snapshot and prints call-to-start latency, event count,
@@ -76,6 +78,8 @@ CLI case runs `liquid verify --all` and `liquid verify --graph --all`, checks th
 action and query agrees, then replays one action through `liquid replay --json`.
 It also parses every line from a failing `liquid build --events` run and checks that the command
 returns the recorded status.
+The configured-build CLI case parses every `liquid build --plan` line and checks the recorded
+compile and link actions, complete input fields, and dependency arrays.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
 and toolchain-tree leaf. Its query-graph cases make a comment-only translation-unit edit execute
 one compiler while preserving the object and link result, then make a semantic edit execute the

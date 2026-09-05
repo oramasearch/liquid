@@ -16,7 +16,7 @@ The cache key then covers exactly what was read, and a miss can name the input t
 changed.
 
 **Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
-#23, and #193 implement
+#23, #193, and #200 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -40,6 +40,43 @@ local/remote/race selection, remote batching, and loser cancellation. Issue #16 
 network transport and validated remote cache tier. Issue #63 supplies liquid's scheduler and
 TAAP-signed worker fleet. Configure checks additionally populate a shared content-addressed fact
 base and can be answered across projects without starting the probe.
+
+## Public repository plans and builds (#200)
+
+`repository::build_plan(build_target)` exposes the configured build recorded by `liquid wrap`.
+Each `build_plan_action` contains a complete `action_input`, its planned action digest, the
+digests of producer actions it depends on, its currently validated `hit` or `miss` state, and the
+selected result on a hit. The planner derives an edge when a recorded manifest path is produced by
+another configured action. Empty targets select the whole configured build; a nonempty target
+selects the action producing that exact repository-relative output and all of its transitive
+dependencies.
+
+Planning replaces each recorded action's input-tree digest with `repository::root_digest()`,
+recomputes its action digest, then uses the ordinary signed, manifest-validating disk-cache lookup.
+Commands, declared outputs,
+environment, toolchain, platform, timeout, and remote eligibility remain the recorded values. A
+repository without wrapper configuration returns `errc::not_configured` and tells the caller to
+run `liquid wrap <command>` first. An unknown nonempty target returns `errc::not_found`.
+
+`repository::build(build_target)` starts the selected graph on the existing `build_handle` stream.
+Actions run in dependency order. Before each action, the planner refreshes the current root and
+hit state so an upstream output written by this build cannot leave a dependent action with a stale
+decision. A hit is materialised into the repository; a miss uses the ordinary action executor and
+then materialises its declared outputs. When materialisation changes the tree, the build records
+that tree before planning the dependent action, as required by the action executor; materialising
+identical hit outputs does not add a change. The stream reports queue, start, terminal state,
+critical path update, and final summary events for the complete build.
+
+`daemon::build_plan` and `daemon::build(build_target)` use the protocol operations `build_plan` and
+`build_repository`; event consumption remains on `build_next`. The older `build_start` operation
+continues to accept a caller-supplied `action_input`. Daemon start and attach resolve an ordinary
+wrapped working tree to its recorded repository, while direct repository paths remain valid.
+`liquid build --plan [target]` writes one version-1 JSON object per planned action, and `liquid
+build [target]` starts the repository build through the daemon. The plan JSON schema is documented in
+[`../cli/build-events.md`](../cli/build-events.md).
+
+`repository::root_digest()` stores and returns the current working tree record without decoding it,
+while `repository::root()` continues to return decoded entries.
 
 ## Public build handles and events (#193)
 
