@@ -218,7 +218,8 @@ if(LIQUID_BUILD_FRONTENDS)
   add_library(liquid-frontend-clang MODULE modules/frontends/clang/module.cpp)
   target_include_directories(liquid-frontend-clang PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
   target_link_libraries(liquid-frontend-clang PRIVATE liquid_frontend_syntax)
   set_target_properties(liquid-frontend-clang PROPERTIES
     PREFIX ""
@@ -231,7 +232,8 @@ if(LIQUID_BUILD_FRONTENDS)
   add_library(liquid-frontend-clang-static STATIC modules/frontends/clang/module.cpp)
   target_include_directories(liquid-frontend-clang-static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
   target_link_libraries(liquid-frontend-clang-static PRIVATE liquid_frontend_syntax)
   set_target_properties(liquid-frontend-clang-static PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -361,6 +363,7 @@ add_library(libliquid
   src/build/executor.cpp
   src/build/distribution.cpp
   src/build/enumeration.cpp
+  src/build/frontend.cpp
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
@@ -383,6 +386,7 @@ add_library(libliquid
   src/formats/json.cpp
   src/frontend/graph.cpp
   src/frontend/module.cpp
+  src/frontend/symbols.cpp
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
@@ -524,6 +528,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/sbom.cpp
+    src/cli/symbols.cpp
     src/cli/serve.cpp
     src/cli/sync.cpp
     src/cli/serve.cpp

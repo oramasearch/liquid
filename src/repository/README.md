@@ -64,3 +64,6 @@ Sync export pages signed drips, changes, per-directory upstream messages, refs, 
 Import works on repository and directory candidates, verifies TAAP signatures and checked CRDT
 receives, and publishes one checkpoint only after the complete batch passes. An empty repository
 may adopt the incoming repository identity; a non-empty unrelated repository is rejected.
+
+`repository::store_symbols` stores one canonical symbol record and its source-blob association.
+`repository::symbols` resolves and decodes that content-addressed value.

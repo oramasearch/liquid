@@ -15,6 +15,7 @@
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
@@ -330,6 +331,7 @@ public:
     [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
     map_anchors(std::span<const text_anchor> anchors, change_id target);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
+    [[nodiscard]] runtime::task<action_input> action(digest id);
     [[nodiscard]] runtime::task<record_page<repository_attestation>>
     attestations(attestation_filter filter = {});
     [[nodiscard]] runtime::task<record_page<repository_attestation>>
@@ -349,6 +351,8 @@ public:
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
+    [[nodiscard]] runtime::task<digest> store_symbols(symbol_record value);
+    [[nodiscard]] runtime::task<symbol_record> symbols(digest id);
     [[nodiscard]] runtime::task<void> set_policy(policy_config policy);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -12,6 +13,9 @@
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#endif
 #include <thread>
 
 #if !defined(_WIN32)
@@ -1087,198 +1091,292 @@ auto shareable_probe_program(std::string_view program) -> bool {
            program.contains("CMAKE_HAVE_") || program.contains("HAVE_");
 }
 
-runtime::task<digest> store_toolchain(repository& source,
-                                      const std::set<std::string>& executables) {
-    auto value = tree{};
-    auto index = std::uint64_t{};
-    for (const auto& executable : executables) {
-        if (!std::filesystem::is_regular_file(executable))
-            continue;
-        auto blob = co_await repository_detail::build_access::put_file(source, executable);
-        if (!blob)
-            co_return std::unexpected(blob.error());
-        auto status = std::filesystem::status(executable);
-        value.entries.push_back({.name = std::to_string(index++) + "-" + hex(executable),
-                                 .mode = static_cast<std::uint32_t>(status.permissions()) & 0777U,
-                                 .kind = node_kind::blob,
-                                 .id = *blob,
-                                 .ref = *blob});
-    }
-    auto encoded = objects::encode(value);
-    if (!encoded)
-        co_return std::unexpected(encoded.error());
-    co_return co_await repository_detail::build_access::put_record(source, std::move(*encoded));
-}
+runtime::task<digest> store_toolchain(repository& source, const std::set<std::string>& executables);
 
-runtime::task<tree_entry>
-tree_file(repository& source, digest root, const std::filesystem::path& path) {
-    auto current = root;
-    auto components = std::vector<std::string>{};
-    for (const auto& component : path.lexically_normal()) {
-        const auto text = component.string();
-        if (!text.empty() && text != ".") {
-            components.push_back(text);
-        }
-    }
-    if (components.empty() || components.front() == "..") {
-        co_return std::unexpected(
-            wrap_error(errc::invalid_argument, "captured executable path is invalid", path));
-    }
-    for (auto index = std::size_t{}; index != components.size(); ++index) {
-        auto bytes = co_await repository_detail::build_access::get(source, current);
-        auto value = bytes ? objects::decode_tree(*bytes)
-                           : liquid::result<tree>{std::unexpected(bytes.error())};
-        if (!value) {
-            co_return std::unexpected(value.error());
-        }
-        const auto found = std::ranges::find(value->entries, components[index], &tree_entry::name);
-        if (found == value->entries.end()) {
-            co_return std::unexpected(
-                wrap_error(errc::not_found, "captured executable is absent from inputs", path));
-        }
-        if (index + 1 == components.size()) {
-            if (found->kind != node_kind::blob) {
-                co_return std::unexpected(
-                    wrap_error(errc::invalid_argument, "captured executable is not a file", path));
-            }
-            co_return *found;
-        }
-        if (found->kind != node_kind::tree) {
-            co_return std::unexpected(wrap_error(
-                errc::invalid_argument, "captured executable parent is not a directory", path));
-        }
-        current = found->ref;
-    }
-    co_return std::unexpected(
-        wrap_error(errc::internal, "captured executable lookup produced no result", path));
-}
-
-runtime::task<std::pair<std::filesystem::path, tree_entry>>
-runtime_file(repository& source, std::vector<std::filesystem::path> candidates) {
-    for (const auto& path : candidates) {
-        if (!std::filesystem::is_regular_file(path)) {
-            continue;
-        }
-        auto blob = co_await repository_detail::build_access::put_file(source, path);
-        if (!blob) {
-            co_return std::unexpected(blob.error());
-        }
-        const auto status = std::filesystem::status(path);
-        co_return std::pair{
-            path,
-            tree_entry{.name = path.filename().string(),
-                       .mode = static_cast<std::uint32_t>(status.permissions()) & 0777U,
-                       .kind = node_kind::blob,
-                       .id = *blob,
-                       .ref = *blob}};
-    }
-    co_return std::unexpected(wrap_error(errc::not_found, "host runtime file is unavailable"));
-}
-
-runtime::task<digest> store_phase2_tree(repository& source, tree value, algorithm hash_algorithm) {
+runtime::task<digest> store_phase2_tree(repository& source, tree value) {
     std::ranges::sort(value.entries, {}, &tree_entry::name);
     auto bytes = objects::encode(value);
     if (!bytes) {
         co_return std::unexpected(bytes.error());
     }
-    co_return co_await repository_detail::build_access::put_record(
-        source, std::move(*bytes), hash_algorithm);
+    co_return co_await repository_detail::build_access::put_record(source, std::move(*bytes));
 }
 
-runtime::task<std::pair<digest, std::string>> phase2_toolchain(repository& source,
-                                                               digest recorded,
-                                                               digest inputs,
-                                                               std::string_view cwd,
-                                                               std::string_view command) {
-    auto bytes = co_await repository_detail::build_access::get(source, recorded);
-    auto value =
-        bytes ? objects::decode_tree(*bytes) : liquid::result<tree>{std::unexpected(bytes.error())};
-    if (!value) {
-        co_return std::unexpected(value.error());
+auto insert_tree_entry(tree& value, tree_entry entry) -> liquid::result<void> {
+    const auto found = std::ranges::find(value.entries, entry.name, &tree_entry::name);
+    if (found == value.entries.end()) {
+        value.entries.push_back(std::move(entry));
+        return {};
     }
-    const auto program = std::filesystem::path{command}.filename().string();
-    auto executable = std::optional<tree_entry>{};
-    for (const auto& entry : value->entries) {
-        const auto separator = entry.name.find('-');
-        if (entry.kind != node_kind::blob || separator == std::string::npos) {
+    if (found->kind == entry.kind && same_digest(found->ref, entry.ref)) {
+        return {};
+    }
+    return std::unexpected(
+        wrap_error(errc::conflict, "toolchain contains duplicate file names", entry.name));
+}
+
+runtime::task<tree_entry>
+store_toolchain_file(repository& source, const std::filesystem::path& path, std::string name) {
+    auto blob = co_await repository_detail::build_access::put_file(source, path);
+    if (!blob) {
+        co_return std::unexpected(blob.error());
+    }
+    const auto status = std::filesystem::status(path);
+    co_return tree_entry{.name = std::move(name),
+                         .mode = static_cast<std::uint32_t>(status.permissions()) & 0777U,
+                         .kind = node_kind::blob,
+                         .id = *blob,
+                         .ref = *blob};
+}
+
+runtime::task<std::string> tool_output(std::string command) {
+    auto output =
+        co_await runtime::offload([command = std::move(command)]() -> liquid::result<std::string> {
+#if defined(_WIN32)
+            auto pipe = ::_popen(command.c_str(), "r");
+#else
+            auto pipe = ::popen(command.c_str(), "r");
+#endif
+            if (!pipe) {
+                return std::unexpected(wrap_error(errc::io, "cannot start toolchain inspector"));
+            }
+            auto text = std::string{};
+            auto buffer = std::array<char, 4096>{};
+            while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) {
+                text += buffer.data();
+            }
+#if defined(_WIN32)
+            const auto status = ::_pclose(pipe);
+            if (status != 0) {
+#else
+            const auto status = ::pclose(pipe);
+            if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+#endif
+                return std::unexpected(wrap_error(errc::io, "toolchain inspector failed", command));
+            }
+            return text;
+        });
+    if (!output) {
+        co_return std::unexpected(output.error());
+    }
+    co_return std::move(*output);
+}
+
+runtime::task<std::vector<std::filesystem::path>>
+dynamic_closure(std::filesystem::path executable) {
+#if defined(__linux__)
+    auto output = co_await tool_output("ldd -- " + shell_quote(executable.string()));
+#elif defined(__APPLE__)
+    auto output = co_await tool_output("otool -L " + shell_quote(executable.string()));
+#else
+    co_return std::vector<std::filesystem::path>{};
+#endif
+    if (!output) {
+        co_return std::unexpected(output.error());
+    }
+    auto paths = std::set<std::filesystem::path>{};
+    auto lines = std::istringstream{*output};
+    for (auto line = std::string{}; std::getline(lines, line);) {
+#if defined(__linux__)
+        if (line.contains("not a dynamic executable") || line.empty()) {
             continue;
         }
-        auto path = unhex(std::string_view{entry.name}.substr(separator + 1));
-        if (!path || std::filesystem::path{*path}.filename() != program) {
+        const auto marker = line.find("=>");
+        const auto start =
+            marker == std::string::npos ? line.find('/') : line.find('/', marker + 2);
+#elif defined(__APPLE__)
+        const auto start = line.find('/');
+#endif
+        if (start == std::string::npos) {
             continue;
         }
-        if (executable && !same_digest(executable->ref, entry.ref)) {
+        const auto end = line.find_first_of(" \t(", start);
+        const auto path = std::filesystem::path{line.substr(start, end - start)};
+        if (std::filesystem::is_regular_file(path)) {
+            paths.insert(path);
+        }
+    }
+    co_return std::vector<std::filesystem::path>{paths.begin(), paths.end()};
+}
+
+runtime::task<digest> store_directory(repository& source, const std::filesystem::path& directory) {
+    auto value = tree{};
+    auto code = std::error_code{};
+    for (std::filesystem::directory_iterator iterator{directory, code};
+         !code && iterator != std::filesystem::directory_iterator{};
+         iterator.increment(code)) {
+        const auto name = iterator->path().filename().string();
+        if (iterator->is_directory(code)) {
+            auto nested = co_await store_directory(source, iterator->path());
+            if (!nested) {
+                co_return std::unexpected(nested.error());
+            }
+            auto added = insert_tree_entry(value,
+                                           {.name = name,
+                                            .mode = 0755,
+                                            .kind = node_kind::tree,
+                                            .id = *nested,
+                                            .ref = *nested});
+            if (!added) {
+                co_return std::unexpected(added.error());
+            }
+            continue;
+        }
+        if (iterator->is_regular_file(code)) {
+            auto file = co_await store_toolchain_file(source, iterator->path(), name);
+            if (!file) {
+                co_return std::unexpected(file.error());
+            }
+            auto added = insert_tree_entry(value, std::move(*file));
+            if (!added) {
+                co_return std::unexpected(added.error());
+            }
+        }
+    }
+    if (code) {
+        co_return std::unexpected(wrap_error(errc::io, code.message(), directory));
+    }
+    co_return co_await store_phase2_tree(source, std::move(value));
+}
+
+runtime::task<digest> store_toolchain(repository& source,
+                                      const std::set<std::string>& executables) {
+    auto bin = tree{};
+    auto lib = tree{};
+    auto etc = tree{};
+    auto resource_directories = std::map<std::string, digest>{};
+    for (const auto& text : executables) {
+        const auto executable = std::filesystem::path{text};
+        if (!std::filesystem::is_regular_file(executable)) {
+            continue;
+        }
+        auto file =
+            co_await store_toolchain_file(source, executable, executable.filename().string());
+        if (!file) {
+            co_return std::unexpected(file.error());
+        }
+        auto added = insert_tree_entry(bin, std::move(*file));
+        if (!added) {
+            co_return std::unexpected(added.error());
+        }
+        auto closure = co_await dynamic_closure(executable);
+        if (!closure) {
+            co_return std::unexpected(closure.error());
+        }
+        for (const auto& library : *closure) {
+            auto dependency =
+                co_await store_toolchain_file(source, library, library.filename().string());
+            if (!dependency) {
+                co_return std::unexpected(dependency.error());
+            }
+            added = insert_tree_entry(lib, std::move(*dependency));
+            if (!added) {
+                co_return std::unexpected(added.error());
+            }
+        }
+        if (!executable.filename().string().contains("clang")) {
+            continue;
+        }
+        auto resource =
+            co_await tool_output(shell_quote(executable.string()) + " -print-resource-dir");
+        if (!resource) {
+            co_return std::unexpected(resource.error());
+        }
+        resource->erase(resource->find_last_not_of("\r\n") + 1);
+        const auto resource_path = std::filesystem::path{*resource};
+        if (!std::filesystem::is_directory(resource_path)) {
             co_return std::unexpected(wrap_error(
-                errc::unsupported, "toolchain contains ambiguous executable names", program));
+                errc::not_found, "compiler resource directory is unavailable", resource_path));
         }
-        executable = entry;
+        auto captured = co_await store_directory(source, resource_path);
+        if (!captured) {
+            co_return std::unexpected(captured.error());
+        }
+        resource_directories.insert_or_assign(resource_path.filename().string(), *captured);
     }
-    if (!executable) {
-        auto command_path = std::filesystem::path{command};
-        if (command_path.is_absolute() && command_path.string().starts_with(virtual_root)) {
-            command_path = command_path.lexically_relative(virtual_root);
-        } else if (command_path.is_relative()) {
-            command_path = std::filesystem::path{cwd} / command_path;
+#if defined(__linux__)
+    for (const auto* name :
+         {"os-release", "lsb-release", "debian_version", "redhat-release", "alpine-release"}) {
+        const auto path = std::filesystem::path{"/etc"} / name;
+        if (!std::filesystem::is_regular_file(path)) {
+            continue;
         }
-        auto input_executable = co_await tree_file(source, inputs, command_path);
-        if (!input_executable) {
-            co_return std::unexpected(input_executable.error());
+        auto release = co_await store_toolchain_file(source, path, name);
+        if (!release) {
+            co_return std::unexpected(release.error());
         }
-        executable = std::move(*input_executable);
+        auto added = insert_tree_entry(etc, std::move(*release));
+        if (!added) {
+            co_return std::unexpected(added.error());
+        }
     }
-    executable->name = program;
-    auto bin = co_await store_phase2_tree(source, tree{{*executable}}, recorded.alg);
-    if (!bin) {
-        co_return std::unexpected(bin.error());
+#endif
+    if (!resource_directories.empty()) {
+        auto clang = tree{};
+        for (const auto& [name, id] : resource_directories) {
+            clang.entries.push_back(
+                {.name = name, .mode = 0755, .kind = node_kind::tree, .id = id, .ref = id});
+        }
+        auto clang_id = co_await store_phase2_tree(source, std::move(clang));
+        if (!clang_id) {
+            co_return std::unexpected(clang_id.error());
+        }
+        lib.entries.push_back({.name = "clang",
+                               .mode = 0755,
+                               .kind = node_kind::tree,
+                               .id = *clang_id,
+                               .ref = *clang_id});
+    }
+    auto bin_id = co_await store_phase2_tree(source, std::move(bin));
+    if (!bin_id) {
+        co_return std::unexpected(bin_id.error());
+    }
+    auto lib_id = co_await store_phase2_tree(source, std::move(lib));
+    if (!lib_id) {
+        co_return std::unexpected(lib_id.error());
     }
     auto root = tree{};
     root.entries.push_back(
-        {.name = "bin", .mode = 0755, .kind = node_kind::tree, .id = *bin, .ref = *bin});
-#if defined(__linux__)
-    auto loader = co_await runtime_file(source,
-                                        {"/lib64/ld-linux-x86-64.so.2",
-                                         "/lib/ld-linux-aarch64.so.1",
-                                         "/usr/lib/ld-linux-aarch64.so.1"});
-    auto libc = co_await runtime_file(source,
-                                      {"/lib/x86_64-linux-gnu/libc.so.6",
-                                       "/lib/aarch64-linux-gnu/libc.so.6",
-                                       "/usr/lib/x86_64-linux-gnu/libc.so.6",
-                                       "/usr/lib/aarch64-linux-gnu/libc.so.6"});
-    if (!loader || !libc) {
-        co_return std::unexpected(!loader ? loader.error() : libc.error());
-    }
-    auto lib = tree{};
-    auto lib64 = tree{};
-    auto& loader_parent = loader->first.parent_path().filename() == "lib64" ? lib64 : lib;
-    loader_parent.entries.push_back(std::move(loader->second));
-    const auto libc_parent = libc->first.parent_path().filename().string();
-    auto architecture = co_await store_phase2_tree(source, tree{{libc->second}}, recorded.alg);
-    if (!architecture) {
-        co_return std::unexpected(architecture.error());
-    }
-    lib.entries.push_back({.name = libc_parent,
-                           .mode = 0755,
-                           .kind = node_kind::tree,
-                           .id = *architecture,
-                           .ref = *architecture});
-    for (auto* directory : {&lib, &lib64}) {
-        if (directory->entries.empty()) {
-            continue;
+        {.name = "bin", .mode = 0755, .kind = node_kind::tree, .id = *bin_id, .ref = *bin_id});
+    root.entries.push_back(
+        {.name = "lib", .mode = 0755, .kind = node_kind::tree, .id = *lib_id, .ref = *lib_id});
+    if (!etc.entries.empty()) {
+        auto etc_id = co_await store_phase2_tree(source, std::move(etc));
+        if (!etc_id) {
+            co_return std::unexpected(etc_id.error());
         }
-        auto stored = co_await store_phase2_tree(source, std::move(*directory), recorded.alg);
-        if (!stored) {
-            co_return std::unexpected(stored.error());
-        }
-        const auto name = directory == &lib ? "lib" : "lib64";
         root.entries.push_back(
-            {.name = name, .mode = 0755, .kind = node_kind::tree, .id = *stored, .ref = *stored});
+            {.name = "etc", .mode = 0755, .kind = node_kind::tree, .id = *etc_id, .ref = *etc_id});
     }
-#endif
-    auto root_id = co_await store_phase2_tree(source, std::move(root), recorded.alg);
-    if (!root_id) {
-        co_return std::unexpected(root_id.error());
+    co_return co_await store_phase2_tree(source, std::move(root));
+}
+
+runtime::task<std::pair<digest, std::string>> phase2_toolchain_impl(
+    repository& source, digest recorded, digest, std::string_view, std::string_view command) {
+    auto root_bytes = co_await repository_detail::build_access::get(source, recorded);
+    auto root = root_bytes ? objects::decode_tree(*root_bytes)
+                           : liquid::result<tree>{std::unexpected(root_bytes.error())};
+    if (!root) {
+        co_return std::unexpected(root.error());
     }
-    co_return std::pair{*root_id, program};
+    const auto program = std::filesystem::path{command}.filename().string();
+    const auto bin = std::ranges::find(root->entries, "bin", &tree_entry::name);
+    if (bin == root->entries.end() || bin->kind != node_kind::tree) {
+        co_return std::unexpected(wrap_error(
+            errc::unsupported, "recorded toolchain is not a runnable input tree", program));
+    }
+    auto bin_bytes = co_await repository_detail::build_access::get(source, bin->ref);
+    auto entries = bin_bytes ? objects::decode_tree(*bin_bytes)
+                             : liquid::result<tree>{std::unexpected(bin_bytes.error())};
+    if (!entries) {
+        co_return std::unexpected(entries.error());
+    }
+    const auto executable = std::ranges::find(entries->entries, program, &tree_entry::name);
+    if (executable == entries->entries.end() || executable->kind != node_kind::blob) {
+        co_return std::unexpected(
+            wrap_error(errc::not_found, "recorded toolchain has no compiler", program));
+    }
+    co_return std::pair{recorded, program};
 }
 
 auto read_toolchain(const std::filesystem::path& path) -> liquid::result<std::optional<digest>> {
@@ -2068,6 +2166,10 @@ runtime::task<void> publish_observed_run(repository& source,
     if (!toolchain) {
         for (const auto& process : run.processes) {
             state.tools.insert(process.executable);
+            if (!process.command.empty() &&
+                std::filesystem::is_regular_file(process.command.front())) {
+                state.tools.insert(process.command.front());
+            }
         }
         auto stored = co_await store_toolchain(source, state.tools);
         if (!stored) {
@@ -2328,6 +2430,14 @@ objects::sandbox_record wrap_sandbox_definition() {
 liquid::result<std::filesystem::path>
 wrap_cache_directory(const std::filesystem::path& working_tree) {
     return default_cache_directory(working_tree);
+}
+
+runtime::task<std::pair<digest, std::string>> phase2_toolchain(repository& source,
+                                                               digest recorded,
+                                                               digest inputs,
+                                                               std::string_view cwd,
+                                                               std::string_view command) {
+    co_return co_await phase2_toolchain_impl(source, recorded, inputs, cwd, command);
 }
 
 runtime::task<action_result> run_wrapped_action(repository& source,

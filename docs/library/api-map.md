@@ -58,13 +58,13 @@ owning issue in `error::context`.
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
-| `liquid/frontend_abi.h` | #65 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, and `assemble` operations |
-| `liquid/frontend.hpp` | #65 | implemented | checked shared/static frontend loading, language registry, source units, and the unit-keyed query-graph coordinator |
+| `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
+| `liquid/frontend.hpp` | #65, #66 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, and the unit-keyed query-graph coordinator |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed working/ref search; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, remote reads, and content-addressed symbol records; memory, streaming-file, and remote-record writes; content-addressed working/ref search; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -313,6 +313,12 @@ class frontend_module {
       std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
   result<std::vector<std::byte>> assemble(std::span<const std::byte> unit_outputs_cbor,
       std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> symbols(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
+      frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> symbols_from_output(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> action_output,
+      frontend_callbacks = {}) const;
 };
 class frontend_registry {
  public:
@@ -323,7 +329,7 @@ class frontend_registry {
   result<const frontend_module*> find(std::string_view language) const;
 };
 struct frontend_build_request {
-  std::string language, source_path; std::vector<std::byte> source, context_cbor;
+  std::string language, source_path, compile_action; std::vector<std::byte> source, context_cbor;
 };
 struct frontend_unit_output {
   frontend_unit unit; std::vector<std::byte> action, output; bool action_ran;
@@ -341,6 +347,7 @@ class frontend_graph {
       std::filesystem::path working_tree, std::shared_ptr<frontend_module>,
       frontend_action_executor);
   runtime::task<frontend_build_report> build(frontend_build_request);
+  runtime::task<symbol_record> symbols(frontend_build_request);
   result<std::uint64_t> mark_changed(std::string path, durability = durability::low);
   graph_statistics statistics() const;
 };
@@ -352,6 +359,17 @@ registers the action and assembly query kinds, records action read paths through
 and runs the potentially blocking assembly operation through `runtime::offload`. The caller's
 `frontend_action_executor` owns compiler-action scheduling and returns object bytes. All three
 handles are move-only; their public copy operations are deleted.
+
+`symbol_record` is `{ subject, language, origin, occurrences }`; each occurrence carries its stable
+identifier, display name, kind, definition/reference role, source range, and optional container and
+documentation. `encode_symbols` and `decode_symbols` round-trip the canonical stored record.
+`decode_frontend_symbols(subject, bytes)` binds a frontend operation's per-unit output to its blob
+subject. `frontend_module::symbols(language, blob, context, callbacks)` describes a symbol action,
+and `frontend_module::symbols_from_output(language, blob, stdout, callbacks)` decodes its action
+output. `frontend_graph::symbols(request)` is separate from `build(request)` and invokes the
+injected action executor only when the symbol query is demanded.
+`repository::store_symbols(record)` stores and associates a record, while
+`repository::symbols(subject)` returns the associated public value.
 
 ### `liquid/store.hpp`
 
@@ -664,6 +682,7 @@ class repository {
   runtime::task<std::vector<mapped_anchor>> map_anchors(std::span<const text_anchor>,
                                                         change_id target);
   runtime::task<record_page<repository_result>> results(result_filter = {});
+  runtime::task<action_input> action(digest); // action or result record
   runtime::task<record_page<repository_attestation>> attestations(attestation_filter = {});
   runtime::task<record_page<repository_attestation>> attestations(digest subject,
                                                                    record_page_options = {});
@@ -928,12 +947,15 @@ struct replay_report {
 namespace build {
 execution_schedule choose_execution(scheduling_inputs);
 runtime::task<result_id> execute(repository&, action_input);
+runtime::task<std::vector<std::byte>> execute_symbol_action(repository&, action_input,
+                                                             std::vector<std::byte>);
 runtime::task<result_id> record_remote_result(repository&, action_input, action_result);
 runtime::task<result_id> execute(repository&, action_input, remote_executor&);
 runtime::task<std::vector<result_id>> execute_batch(repository&, std::vector<action_input>,
                                                     remote_executor&);
 runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
+result<std::filesystem::path> wrap_cache_directory(const std::filesystem::path&);
 runtime::task<verify_report> verify(repository&, verify_options = {});
 runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
 runtime::task<graph_verify_report> verify_graph(std::filesystem::path,

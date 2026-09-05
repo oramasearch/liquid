@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -48,6 +49,43 @@ struct LIQUID_EXPORT frontend_callbacks {
     std::function<bool()> cancelled;
 };
 
+enum class symbol_origin : std::uint8_t { compiler = 1, syntactic = 2 };
+enum class symbol_role : std::uint8_t { definition = 1, reference = 2 };
+enum class symbol_kind : std::uint8_t {
+    unknown = 0,
+    function = 1,
+    type = 2,
+    variable = 3,
+    field = 4,
+    parameter = 5,
+    namespace_ = 6,
+};
+
+struct LIQUID_EXPORT symbol_occurrence {
+    std::string symbol;
+    std::string name;
+    symbol_kind kind{symbol_kind::unknown};
+    symbol_role role{symbol_role::reference};
+    frontend_source_range range;
+    std::optional<std::string> container;
+    std::optional<std::string> documentation;
+};
+
+struct LIQUID_EXPORT symbol_record {
+    digest subject;
+    std::string language;
+    symbol_origin origin{symbol_origin::syntactic};
+    std::vector<symbol_occurrence> occurrences;
+};
+
+[[nodiscard]] LIQUID_EXPORT auto encode_symbols(const symbol_record& value)
+    -> result<std::vector<std::byte>>;
+[[nodiscard]] LIQUID_EXPORT auto decode_symbols(std::span<const std::byte> value)
+    -> result<symbol_record>;
+[[nodiscard]] LIQUID_EXPORT auto decode_frontend_symbols(digest subject,
+                                                         std::span<const std::byte> value)
+    -> result<symbol_record>;
+
 class LIQUID_EXPORT frontend_module {
 public:
     frontend_module() noexcept;
@@ -75,6 +113,16 @@ public:
     [[nodiscard]] auto assemble(std::span<const std::byte> unit_outputs_cbor,
                                 std::span<const std::byte> context_cbor = {},
                                 frontend_callbacks callbacks = {}) const
+        -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto symbols(std::string_view language,
+                               std::span<const std::byte> blob,
+                               std::span<const std::byte> context_cbor = {},
+                               frontend_callbacks callbacks = {}) const
+        -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto symbols_from_output(std::string_view language,
+                                           std::span<const std::byte> blob,
+                                           std::span<const std::byte> action_output,
+                                           frontend_callbacks callbacks = {}) const
         -> result<std::vector<std::byte>>;
 
 private:
@@ -106,6 +154,7 @@ struct LIQUID_EXPORT frontend_build_request {
     std::string source_path;
     std::vector<std::byte> source;
     std::vector<std::byte> context_cbor;
+    std::string compile_action;
 };
 
 struct LIQUID_EXPORT frontend_unit_output {
@@ -118,6 +167,7 @@ struct LIQUID_EXPORT frontend_unit_output {
 struct LIQUID_EXPORT frontend_build_report {
     std::vector<frontend_unit_output> units;
     std::vector<std::byte> translation_unit_output;
+    symbol_record symbols;
     std::uint64_t actions_run{};
     std::uint64_t assemblies_run{};
 };
@@ -139,6 +189,7 @@ public:
                      std::shared_ptr<frontend_module> module,
                      frontend_action_executor execute) -> runtime::task<frontend_graph>;
     auto build(frontend_build_request request) -> runtime::task<frontend_build_report>;
+    auto symbols(frontend_build_request request) -> runtime::task<symbol_record>;
     auto mark_changed(std::string path, durability tier = durability::low) -> result<std::uint64_t>;
     [[nodiscard]] auto statistics() const -> graph_statistics;
 

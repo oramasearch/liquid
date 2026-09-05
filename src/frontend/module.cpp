@@ -255,7 +255,7 @@ auto frontend_module::linked(const liquid_frontend_module_v1* descriptor)
     if (!descriptor || descriptor->abi_version != LIQUID_FRONTEND_ABI_VERSION ||
         descriptor->struct_size < sizeof(liquid_frontend_module_v1) || !descriptor->name ||
         descriptor->language_count == 0 || !descriptor->languages || !descriptor->units ||
-        !descriptor->compile_unit || !descriptor->assemble) {
+        !descriptor->compile_unit || !descriptor->assemble || !descriptor->symbols) {
         return std::unexpected(frontend_error(
             errc::invalid_argument, "frontend descriptor does not implement ABI v1", "frontend"));
     }
@@ -481,6 +481,90 @@ auto frontend_module::assemble(std::span<const std::byte> unit_outputs_cbor,
     }
     auto bytes = std::move(*copied);
     if (auto canonical = canonical_value(bytes, "frontend translation-unit output"); !canonical) {
+        return std::unexpected(canonical.error());
+    }
+    return bytes;
+}
+
+auto frontend_module::symbols(std::string_view language,
+                              std::span<const std::byte> blob,
+                              std::span<const std::byte> context_cbor,
+                              frontend_callbacks callbacks) const
+    -> result<std::vector<std::byte>> {
+    if (!impl_ || !supports(language)) {
+        return std::unexpected(frontend_error(errc::unsupported,
+                                              "frontend does not support the requested language",
+                                              std::string{language}));
+    }
+    auto valid_context = validate_input(context_cbor, "frontend symbols context");
+    if (!valid_context) {
+        return std::unexpected(valid_context.error());
+    }
+    auto bridge = callback_bridge{};
+    auto abi = abi_callbacks(callbacks, bridge);
+    auto output = liquid_frontend_owned_bytes_v1{};
+    auto abi_error = liquid_frontend_error_v1{};
+    const auto language_text = std::string{language};
+    const auto status = impl_->descriptor->symbols(
+        impl_->descriptor->module_context,
+        language_text.c_str(),
+        {reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size()},
+        {reinterpret_cast<const std::uint8_t*>(context_cbor.data()), context_cbor.size()},
+        &abi,
+        &output,
+        &abi_error);
+    if (status != LIQUID_FRONTEND_STATUS_OK) {
+        return std::unexpected(
+            frontend_error(status_code(status),
+                           abi_error.message ? abi_error.message : "frontend symbols failed",
+                           std::string{name()}));
+    }
+    auto copied = copy_output(output, name());
+    if (!copied) {
+        return std::unexpected(copied.error());
+    }
+    auto bytes = std::move(*copied);
+    if (auto canonical = canonical_value(bytes, "frontend symbols"); !canonical) {
+        return std::unexpected(canonical.error());
+    }
+    return bytes;
+}
+
+auto frontend_module::symbols_from_output(std::string_view language,
+                                          std::span<const std::byte> blob,
+                                          std::span<const std::byte> action_output,
+                                          frontend_callbacks callbacks) const
+    -> result<std::vector<std::byte>> {
+    if (!impl_ || !supports(language) || !impl_->descriptor->symbols_from_output) {
+        return std::unexpected(frontend_error(errc::unsupported,
+                                              "frontend cannot decode symbol action output",
+                                              std::string{language}));
+    }
+    auto bridge = callback_bridge{};
+    auto abi = abi_callbacks(callbacks, bridge);
+    auto output = liquid_frontend_owned_bytes_v1{};
+    auto abi_error = liquid_frontend_error_v1{};
+    const auto language_text = std::string{language};
+    const auto status = impl_->descriptor->symbols_from_output(
+        impl_->descriptor->module_context,
+        language_text.c_str(),
+        {reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size()},
+        {reinterpret_cast<const std::uint8_t*>(action_output.data()), action_output.size()},
+        &abi,
+        &output,
+        &abi_error);
+    if (status != LIQUID_FRONTEND_STATUS_OK) {
+        return std::unexpected(
+            frontend_error(status_code(status),
+                           abi_error.message ? abi_error.message : "symbol action decoding failed",
+                           std::string{name()}));
+    }
+    auto copied = copy_output(output, name());
+    if (!copied) {
+        return std::unexpected(copied.error());
+    }
+    auto bytes = std::move(*copied);
+    if (auto canonical = canonical_value(bytes, "frontend symbols"); !canonical) {
         return std::unexpected(canonical.error());
     }
     return bytes;

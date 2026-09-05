@@ -101,7 +101,7 @@ auto write_bootstrap(const launch_request& request,
            << quote(rooted(request.toolchain_root).string()) << "\n";
     stream << "/usr/bin/mount -o remount,bind,ro " << quote(rooted(request.toolchain_root).string())
            << "\n";
-    for (const auto* alias : {"lib", "lib64"}) {
+    for (const auto* alias : {"etc", "lib", "lib64"}) {
         const auto source = request.toolchain / alias;
         if (!std::filesystem::is_directory(source)) {
             continue;

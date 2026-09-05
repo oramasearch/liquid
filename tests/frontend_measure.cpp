@@ -65,6 +65,7 @@ auto shell_quote(std::string_view value) -> std::string {
 
 struct executor_state {
     std::filesystem::path directory;
+    std::filesystem::path source_root;
     std::uint64_t sequence{};
 };
 
@@ -74,16 +75,21 @@ auto execute_action(std::shared_ptr<executor_state> state, std::vector<std::byte
     if (!decoded) {
         co_return std::unexpected(decoded.error());
     }
+    const auto* kind_value = find(*decoded, "kind");
     const auto* compiler_value = find(*decoded, "compiler");
     const auto* arguments_value = find(*decoded, "arguments");
+    const auto* flags_value = find(*decoded, "flags");
     const auto* source_value = find(*decoded, "source");
+    const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
     const auto* compiler =
         compiler_value ? std::get_if<std::string>(&compiler_value->data) : nullptr;
     const auto* arguments =
         arguments_value ? std::get_if<cbor::value::array>(&arguments_value->data) : nullptr;
+    const auto* flags = flags_value ? std::get_if<cbor::value::array>(&flags_value->data) : nullptr;
     const auto* source =
         source_value ? std::get_if<cbor::value::bytes>(&source_value->data) : nullptr;
-    if (!compiler || !arguments || !source) {
+    const auto symbols_action = kind && *kind == "clang-symbols";
+    if (!source || (symbols_action && !flags) || (!symbols_action && (!compiler || !arguments))) {
         co_return std::unexpected(
             liquid::error{liquid::errc::corrupt, "invalid action", "frontend measure"});
     }
@@ -95,8 +101,16 @@ auto execute_action(std::shared_ptr<executor_state> state, std::vector<std::byte
     source_file.write(reinterpret_cast<const char*>(source->data()),
                       static_cast<std::streamsize>(source->size()));
     source_file.close();
-    auto command = shell_quote(*compiler);
-    for (const auto& item : *arguments) {
+    auto command = shell_quote(compiler ? *compiler : LIQUID_CXX_COMPILER);
+    if (symbols_action) {
+        command += " -std=c++20";
+        command += " -I" + shell_quote((state->source_root / "src/store").string());
+        command += " -I" + shell_quote((state->source_root / "include").string());
+        command +=
+            " -I" + shell_quote((std::filesystem::path{LIQUID_BINARY_ROOT} / "include").string());
+    }
+    const auto& compiler_arguments = flags ? *flags : *arguments;
+    for (const auto& item : compiler_arguments) {
         const auto* argument = std::get_if<std::string>(&item.data);
         if (!argument) {
             co_return std::unexpected(
@@ -104,8 +118,13 @@ auto execute_action(std::shared_ptr<executor_state> state, std::vector<std::byte
         }
         command += " " + shell_quote(*argument);
     }
-    command += " -x c++ -c " + shell_quote(input.string());
-    command += " -o " + shell_quote(output.string());
+    command += " -x c++ ";
+    if (flags) {
+        command += shell_quote(input.string()) + " > " + shell_quote(output.string());
+    } else {
+        command += "-c " + shell_quote(input.string());
+        command += " -o " + shell_quote(output.string());
+    }
     if (std::system(command.c_str()) != 0) {
         co_return std::unexpected(
             liquid::error{liquid::errc::internal, "compiler action failed", command});
@@ -121,6 +140,7 @@ auto execute_action(std::shared_ptr<executor_state> state, std::vector<std::byte
 auto context(const std::filesystem::path& root) -> liquid::result<std::vector<std::byte>> {
     return cbor::encode(map({
         {"compiler", std::string{LIQUID_CXX_COMPILER}},
+        {"compile_action", "measurement"},
         {"arguments",
          cbor::value::array{
              cbor::value{"-std=c++20"},
@@ -141,64 +161,118 @@ int main(int argc, char** argv) {
     const auto root = std::filesystem::path{argv[1]};
     const auto state_directory = std::filesystem::path{argv[2]};
     std::filesystem::remove_all(state_directory);
-    auto module_value = liquid::frontend_module::load(LIQUID_CLANG_FRONTEND);
-    if (!module_value) {
-        std::cerr << module_value.error().message << '\n';
-        return 1;
-    }
-    auto module = std::make_shared<liquid::frontend_module>(std::move(*module_value));
     auto executor = std::make_shared<executor_state>();
     executor->directory = state_directory / "actions";
-    auto graph = liquid::runtime::block_on(
-        liquid::frontend_graph::open(state_directory / "graph",
-                                     root / "src/store",
-                                     module,
-                                     [executor](std::vector<std::byte> action) {
-                                         return execute_action(executor, std::move(action));
-                                     }));
-    if (!graph) {
-        std::cerr << graph.error().message << '\n';
-        return 1;
-    }
-    auto source = read_text(root / "src/store/faults.cpp");
+    executor->source_root = root;
+    const auto open_graph = [&](std::string_view name) -> liquid::result<liquid::frontend_graph> {
+        auto module_value = liquid::frontend_module::load(LIQUID_CLANG_FRONTEND);
+        if (!module_value) {
+            return std::unexpected(module_value.error());
+        }
+        auto module = std::make_shared<liquid::frontend_module>(std::move(*module_value));
+        return liquid::runtime::block_on(
+            liquid::frontend_graph::open(state_directory / std::string{name} / "graph",
+                                         root / "src/store",
+                                         module,
+                                         [executor](std::vector<std::byte> action) {
+                                             return execute_action(executor, std::move(action));
+                                         }));
+    };
+    const auto original = read_text(root / "src/store/faults.cpp");
     auto build_context = context(root);
     if (!build_context) {
         std::cerr << build_context.error().message << '\n';
         return 1;
     }
-    auto first = liquid::runtime::block_on(graph->build({
+    auto disabled = open_graph("disabled");
+    if (!disabled) {
+        std::cerr << disabled.error().message << ": " << disabled.error().context << '\n';
+        return 1;
+    }
+    auto first = liquid::runtime::block_on(disabled->build({
         .language = "c++",
         .source_path = "faults.cpp",
-        .source = bytes(source),
+        .source = bytes(original),
         .context_cbor = *build_context,
     }));
     if (!first) {
         std::cerr << first.error().message << ": " << first.error().context << '\n';
         return 1;
     }
-    const auto marker = source.find("injector->visit(event);");
+    auto edited_source = original;
+    const auto marker = edited_source.find("injector->visit(event);");
     if (marker == std::string::npos) {
         std::cerr << "measurement edit point is missing\n";
         return 1;
     }
-    source.insert(marker + std::string_view{"injector->visit(event);"}.size(),
-                  " /* one-function edit */");
-    const auto started = std::chrono::steady_clock::now();
-    auto edited = liquid::runtime::block_on(graph->build({
+    edited_source.insert(marker + std::string_view{"injector->visit(event);"}.size(),
+                         " /* one-function edit */");
+    const auto disabled_started = std::chrono::steady_clock::now();
+    auto disabled_edited = liquid::runtime::block_on(disabled->build({
         .language = "c++",
         .source_path = "faults.cpp",
-        .source = bytes(source),
+        .source = bytes(edited_source),
         .context_cbor = *build_context,
     }));
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started);
-    if (!edited) {
-        std::cerr << edited.error().message << ": " << edited.error().context << '\n';
+    const auto disabled_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - disabled_started);
+    if (!disabled_edited) {
+        std::cerr << disabled_edited.error().message << ": " << disabled_edited.error().context
+                  << '\n';
         return 1;
     }
-    std::cout << "frontend one-function edit: file=src/store/faults.cpp units="
-              << edited->units.size() << " actions_run=" << edited->actions_run
-              << " assemblies_run=" << edited->assemblies_run << " elapsed_ms=" << elapsed.count()
-              << '\n';
-    return edited->actions_run == 1 && edited->assemblies_run == 1 ? 0 : 1;
+    auto enabled = open_graph("enabled");
+    if (!enabled) {
+        std::cerr << enabled.error().message << ": " << enabled.error().context << '\n';
+        return 1;
+    }
+    first = liquid::runtime::block_on(enabled->build({
+        .language = "c++",
+        .source_path = "faults.cpp",
+        .source = bytes(original),
+        .context_cbor = *build_context,
+    }));
+    if (!first) {
+        std::cerr << first.error().message << ": " << first.error().context << '\n';
+        return 1;
+    }
+    const auto enabled_started = std::chrono::steady_clock::now();
+    auto enabled_edited = liquid::runtime::block_on(enabled->build({
+        .language = "c++",
+        .source_path = "faults.cpp",
+        .source = bytes(edited_source),
+        .context_cbor = *build_context,
+    }));
+    const auto enabled_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - enabled_started);
+    if (!enabled_edited) {
+        std::cerr << enabled_edited.error().message << ": " << enabled_edited.error().context
+                  << '\n';
+        return 1;
+    }
+    const auto symbols_started = std::chrono::steady_clock::now();
+    auto symbols = liquid::runtime::block_on(enabled->symbols({
+        .language = "c++",
+        .source_path = "faults.cpp",
+        .source = bytes(edited_source),
+        .context_cbor = *build_context,
+        .compile_action = "measurement",
+    }));
+    const auto symbols_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - symbols_started);
+    if (!symbols) {
+        std::cerr << symbols.error().message << ": " << symbols.error().context << '\n';
+        return 1;
+    }
+    std::cout << "symbol extraction: file=src/store/faults.cpp units=1 occurrences="
+              << symbols->occurrences.size() << " elapsed_ms=" << symbols_elapsed.count()
+              << " per_unit_ms=" << symbols_elapsed.count() << '\n';
+    std::cout << "frontend one-function edit: symbols=disabled elapsed_ms="
+              << disabled_elapsed.count()
+              << " symbols=enabled elapsed_ms=" << enabled_elapsed.count()
+              << " delta_ms=" << enabled_elapsed.count() - disabled_elapsed.count() << '\n';
+    return disabled_edited->actions_run == 1 && disabled_edited->assemblies_run == 1 &&
+                   enabled_edited->actions_run == 1 && enabled_edited->assemblies_run == 1
+               ? 0
+               : 1;
 }

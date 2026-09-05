@@ -151,6 +151,28 @@ auto set_executable(std::filesystem::path path) -> void {
     executable = std::filesystem::absolute(std::move(path));
 }
 
+auto frontend_module_path(bool compiler) -> std::filesystem::path {
+    const auto filename =
+        std::string{compiler ? "liquid-frontend-clang" : "liquid-frontend-tree-sitter"};
+#ifdef _WIN32
+    const auto extensions = std::array{std::string_view{".dll"}};
+#elif defined(__APPLE__)
+    const auto extensions = std::array{std::string_view{".so"}, std::string_view{".dylib"}};
+#else
+    const auto extensions = std::array{std::string_view{".so"}};
+#endif
+    for (const auto extension : extensions) {
+        const auto build_path = executable.parent_path() / "modules" / "frontends" /
+                                (compiler ? "clang" : "tree-sitter") /
+                                (filename + std::string{extension});
+        if (std::filesystem::exists(build_path)) {
+            return build_path;
+        }
+    }
+    return executable.parent_path().parent_path() / "libexec" / "liquid" / "frontends" /
+           (filename + std::string{extensions.front()});
+}
+
 auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void> {
     auto attached = liquid::runtime::block_on(liquid::daemon::attach(checkout));
     if (attached) {

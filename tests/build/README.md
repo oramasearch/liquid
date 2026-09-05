@@ -22,9 +22,10 @@ query hook.
 
 `test_frontend.cpp` loads the Clang frontend dynamically, registers its descriptor statically,
 checks that its shared object exports only the ABI v1 entry point, and asks the tree-sitter fallback
-for a C definition. Its copied CMake fixture compiles two definition objects with the configured
-compiler. A one-body edit executes one action and assembly, while a changed quoted header executes
-both recorded readers and assembly. `frontend-one-function-measure` is a registered macOS/Linux
+for a C definition. Its copied CMake fixture uses `VALUE` from a quoted header and compiles two
+definition objects with the configured compiler. A one-body edit executes one action and assembly,
+while a changed quoted header executes both recorded readers and assembly.
+`frontend-one-function-measure` is a registered macOS/Linux
 CTest that performs the same count assertion against `src/store/faults.cpp` and prints its elapsed
 milliseconds.
 
@@ -73,6 +74,12 @@ compiler and linker and change the link result.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.
+
+`test_symbols.cpp` verifies the Clang frontend's derived action description, compiler-output
+record decoding, stable cross-file reference identifier, repository-store round trip, and the
+explicitly labelled tree-sitter fallback. The Linux `symbols-cli` fixture records a CMake-fixture
+compile with `liquid wrap`, then verifies compiler symbols for its header; macOS excludes that
+fixture because wrapped action execution requires macFUSE.
 
 The real identical-execution cache test verifies every result's provenance and asserts that a hit
 reuses the original attestation digest.

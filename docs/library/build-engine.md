@@ -74,7 +74,11 @@ local store time; absent bytes and the transfer estimate are explicit schedule f
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
   materialised into the sandbox from the store and addressed by content; the `toolchain`
-  field is that tree's digest. `PATH` inside the sandbox points only at it.
+  field is that tree's digest. `PATH` inside the sandbox points only at it. `wrap` records
+  each executable below `bin/`, its dynamic-library closure below `lib/` (from `ldd` on
+  Linux and `otool -L` on macOS), and Clang's `-print-resource-dir` below `lib/clang/`.
+  Linux captures the distribution-identification files that Clang's driver reads below
+  `etc/`; those paths are mounted from the toolchain rather than read from the worker image.
 - The **manifest** is the observed read set with hashes. It is three things at once
   (features/05): the validation key for the next lookup, the dependency edge set, and the
   provenance record (#14 wraps it in a `slsa_provenance/1` attestation).
@@ -107,8 +111,9 @@ and `TMPDIR` to sandbox-private directories, `LANG=C.UTF-8`, `TZ=UTC`, `SOURCE_D
 from the change's time, nothing inherited). The sandbox definition (the mount layout, the
 environment, the enforcement profile) is itself a record and its digest is in the action, so
 two machines with different sandbox definitions never share a cache entry by accident.
-On Linux, optional `lib` and `lib64` directories from that same toolchain are mounted at their
-conventional absolute paths for dynamic executables; no worker-image runtime file is exposed.
+On Linux, optional `etc`, `lib`, and `lib64` directories from that same toolchain are mounted at
+their conventional absolute paths for dynamic executables and compiler driver configuration; no
+worker-image runtime file is exposed.
 
 `action_input::remote_eligible` defaults off. When enabled on Linux, the read guard observes open
 system calls across the action's process tree and reports the first path outside the input and

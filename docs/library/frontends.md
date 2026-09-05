@@ -9,8 +9,8 @@ does not invalidate its neighbours.
 **Status.** The ABI, loader, registry, graph coordinator, bundled tree-sitter fallback, and bundled
 Clang C++ module are implemented. The CMake fixture compiles two definition objects with the
 configured Clang, changes one body, executes one new action, and assembles the translation unit
-again. Its header change executes both actions because both units read that header. Symbol records
-remain liquid #66.
+again. Its header change executes both actions because both units read that header. Liquid #66 adds
+the `symbols` ABI operation and graph query; its record is documented in [`symbols.md`](symbols.md).
 
 ## ABI v1
 
@@ -24,6 +24,8 @@ module name and one or more language names, then supplies these operations:
 | `units` | language, source blob, context | array of unit maps |
 | `compile_unit` | one unit map, context | executable frontend-action map |
 | `assemble` | array of unit fingerprints and output byte strings, context | translation-unit output map |
+| `symbols` | language, source blob, context | derived symbol-action description |
+| `symbols_from_output` | language, source blob, symbol-action stdout | per-translation-unit symbol output map |
 
 Every operation receives progress and cancellation callbacks. Return values use caller-independent
 owned bytes with an explicit release callback. ABI status values distinguish invalid input,
@@ -49,8 +51,9 @@ the BLAKE3 unit fingerprint from `kind`, `name`, and `source`, excluding the abs
 earlier in the file can therefore move an unchanged function without changing its identity.
 
 `frontend_module` exposes the checked C++ wrapper. `frontend_registry` owns modules and resolves a
-language registration. `frontend_graph` owns the two registered query kinds, accepts a caller's
-action executor, and returns each unit action/output plus the assembled translation-unit value.
+language registration. `frontend_graph` owns the registered action, assembly, and `symbols` query
+kinds, accepts a caller's action executor, and returns each unit action/output, symbol sidecar,
+and assembled translation-unit value.
 The executor remains injected because the daemon and `build::execute` own scheduling, sandboxing,
 toolchain materialisation, and cache policy.
 
@@ -76,6 +79,13 @@ same toolchain compiler with `-r` and returns canonical CBOR containing the relo
 Windows module returns a portable ordered unit-output value; per-definition Clang object assembly
 there remains outside the supported target set.
 
+For `symbols`, the Clang module describes an AST-dump action derived from a recorded compile
+action. The build-engine adapter runs it through the normal sandboxed action executor and passes
+its stdout to `symbols_from_output`, which retains definitions and resolved declaration references
+from the compiler AST. The tree-sitter module emits syntax-only occurrences when no compiler
+frontend is available. `frontend_graph::build` does not demand the symbols query: editors request
+it independently after the compile has completed.
+
 ## Graph behavior
 
 `frontend_graph::build` discovers units and derives all action descriptions. Each definition action
@@ -92,25 +102,29 @@ current action-query keys in unit order.
 
 ## Measurement
 
-The registered `frontend-one-function-measure` CTest runs `liquid-frontend-measure` against liquid's
-own `src/store/faults.cpp`, which has two definitions. It performs an in-memory edit inside
-`visit_fault`, executes the emitted Clang action, reassembles the translation-unit object, asserts
-one action and one assembly, and records the elapsed milliseconds. On an Apple M3 Max macOS host on
-2026-09-04:
+`liquid-frontend-measure` uses liquid's own `src/store/faults.cpp`, which has two definitions. It
+performs an in-memory edit inside `visit_fault`, executes the emitted Clang action, and reassembles
+the translation-unit object. It measures the edit once without a symbol demand and once with a
+subsequent independent symbol demand in the same session. On an Apple M3 Max macOS host on
+2026-09-04, at the lowest available load during concurrent work:
 
 ```text
-frontend one-function edit: file=src/store/faults.cpp units=2 actions_run=1 assemblies_run=1 elapsed_ms=496
+sysctl -n vm.loadavg
+{ 110.96 68.28 57.47 }
+symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=14039 per_unit_ms=14039
+frontend one-function edit: symbols=disabled elapsed_ms=766 symbols=enabled elapsed_ms=713 delta_ms=-53
 ```
 
-Run the measurement test from a configured static build with:
+Run the measurement from a configured static build with:
 
 ```sh
-cmake --build build
-ctest --test-dir build -R frontend-one-function-measure --output-on-failure
+cmake --build build --target liquid-frontend-measure
+build/tests/liquid-frontend-measure . build/frontend-measure-state
 ```
 
-The wall value includes module discovery, one real compiler process, relocatable-object assembly,
-and graph/store publication. It is a local development measurement, not a cross-host benchmark.
+The edit delta is the relevant result: the symbol query does not delay compile or relink. The
+symbol value includes the independent compiler AST action and decoding. These local development
+measurements are context, not cross-host benchmarks.
 
 ## How to verify
 
@@ -118,9 +132,7 @@ The portable frontend tests prove language registration, static registration, tr
 ranges, canonical action generation, per-definition fingerprints, progress/error ownership, and
 the CMake fixture's body/header invalidation behavior. `public-frontend-c-header` compiles the ABI as
 C. The Clang module test loads `$<TARGET_FILE:liquid-frontend-clang>`, which proves the module is a
-separate shared object rather than code folded into libliquid; macOS and Linux also inspect its
-defined external symbols and require the ABI v1 entry point to be the only export. The own-tree
-measurement is part of the default macOS/Linux CTest suite.
+separate shared object rather than code folded into libliquid.
 
 Run the repository's static, shared, and Linux-container proofs from [`../build/ci.md`](../build/ci.md).
 

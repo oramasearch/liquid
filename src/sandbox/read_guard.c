@@ -239,7 +239,9 @@ static int inspect_open(pid_t pid,
     }
     if (path_is_within(resolved, work_root) || path_is_within(resolved, toolchain_root) ||
         path_is_within(resolved, "/lib") || path_is_within(resolved, "/lib64") ||
-        strcmp(resolved, "/etc/ld.so.cache") == 0) {
+        strcmp(resolved, "/etc/ld.so.cache") == 0 || strcmp(resolved, "/etc/os-release") == 0 ||
+        strcmp(resolved, "/etc/lsb-release") == 0 || strcmp(resolved, "/etc/debian_version") == 0 ||
+        strcmp(resolved, "/etc/redhat-release") == 0 || strcmp(resolved, "/etc/alpine-release") == 0) {
         return 0;
     }
     snprintf(refused, refused_size, "%s", resolved);
