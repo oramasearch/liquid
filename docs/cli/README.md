@@ -27,7 +27,7 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
-| `log` | `log [--ops] [--json]` | Show change or signed drip history. | available |
+| `log` | `log [--ops] [--json]` or `log <verify\|consistency\|scan> ...` | Show change or signed drip history, or verify a transparency log. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
@@ -52,7 +52,7 @@ that the table and `liquid --help` name the same commands.
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
-| `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
+| `verify` | `verify <action\|--all\|--changed> [--explain] [--log <log-url>]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
@@ -127,6 +127,13 @@ while planning. The default `--on-stale refuse` returns a conflict when head or 
 `disjoint` accepts only an untouched written/read set, and `force` records a caller that already
 re-planned against `repository::explain_stale`. `log --ops --json` projects `reasoned_from`, cursor,
 paths, and `revalidated` (`disjoint`, `forced`, or null) from the signed body.
+
+`log verify <log-url> <attestation-base64url>` validates exact canonical-TAAP inclusion in a
+signed checkpoint and records it in the current repository. `log consistency <log-url>` advances
+that record only when Lake provides a valid append-only proof. `log scan <log-url> <identity>`
+lists canonical entries naming the identity. A first accepted checkpoint prints
+`bootstrap_warning=true`; operators should record that trust decision. `verify --log <log-url>`
+requires the agreeing action's reproducibility attestation to be included in the same verified log.
 
 `delta create <source> <target>` stores both artifacts, a `zstd-patch` blob, its delta record, and
 a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <delta> <source>

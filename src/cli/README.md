@@ -80,3 +80,8 @@ Wrap output includes its graph backlog and last divergence record.
 
 `symbols.cpp` loads the compiler frontend when installed, falls back to tree-sitter, and presents
 the public symbol record without inspecting private repository storage.
+
+`log.cpp` retains the repository-history form of `log` and adds the transparency verification
+subcommands. It decodes only caller-supplied base64url attestation bytes, opens repository state
+through the public API, and uses the public transparency source and client; persistence remains
+inside libliquid.

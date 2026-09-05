@@ -17,6 +17,7 @@ auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
 auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
+auto transparency_log(int argc, char** argv) -> int;
 auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
 auto tree_move(int argc, char** argv) -> int;
@@ -101,10 +102,10 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::search},
     {"log",
-     "log [--ops] [--json]",
-     "show change or signed drip history",
+     "log [--ops] [--json] | log <verify|consistency|scan> ...",
+     "show change or signed drip history, or verify a transparency log",
      "available",
-     liquid_cli::repo_log},
+     liquid_cli::transparency_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
     {"push",

@@ -10,7 +10,9 @@
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/transparency.hpp"
 
 namespace liquid_cli {
 namespace {
@@ -84,6 +86,37 @@ auto json_number(const auto& value) -> std::string {
     return value ? std::to_string(*value) : "null";
 }
 
+auto verify_log_inclusion(const std::string& url, const liquid::digest& identifier)
+    -> liquid::result<void> {
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
+    if (!repository) {
+        return std::unexpected(repository.error());
+    }
+    liquid::attestation_filter filter;
+    filter.id = identifier;
+    auto records = liquid::runtime::block_on(repository->attestations(std::move(filter)));
+    if (!records) {
+        return std::unexpected(records.error());
+    }
+    if (records->records.size() != 1) {
+        return std::unexpected(liquid::error{
+            liquid::errc::not_found, "verification attestation is absent from repository", {}});
+    }
+    auto encoded = liquid::encode_attestation(records->records.front().value);
+    if (!encoded) {
+        return std::unexpected(encoded.error());
+    }
+    auto source = liquid::transparency::http_log_source{url};
+    auto client = liquid::transparency::log_client{source};
+    auto checked =
+        liquid::runtime::block_on(client.verify_inclusion(*repository, std::move(*encoded)));
+    if (!checked) {
+        return std::unexpected(checked.error());
+    }
+    return {};
+}
+
 void print_replay_json(const liquid::replay_report& report, bool recorded) {
     std::print("{{\"action\":{},\"result\":{},\"recorded_exit\":{},"
                "\"reexecuted_exit\":{},\"agreement\":{},\"recorded\":{},"
@@ -148,6 +181,7 @@ void print_replay_text(const liquid::replay_report& report, bool recorded) {
 
 auto verify(int argc, char** argv) -> int {
     auto options = liquid::verify_options{};
+    auto log_url = std::optional<std::string>{};
     auto selector = false;
     auto graph_mode = false;
     for (auto index = 0; index < argc; ++index) {
@@ -158,6 +192,13 @@ auto verify(int argc, char** argv) -> int {
         }
         if (argument == "--explain") {
             options.explain = true;
+            continue;
+        }
+        if (argument == "--log") {
+            if (++index == argc || log_url) {
+                return usage("verify accepts one --log <log-url>");
+            }
+            log_url = argv[index];
             continue;
         }
         if (selector) {
@@ -183,7 +224,7 @@ auto verify(int argc, char** argv) -> int {
     }
     if (graph_mode) {
         if (options.selection == liquid::verify_selection::action ||
-            options.selection == liquid::verify_selection::changed) {
+            options.selection == liquid::verify_selection::changed || log_url) {
             return usage("verify --graph accepts only --all and --explain");
         }
         auto report = liquid::runtime::block_on(
@@ -250,6 +291,12 @@ auto verify(int argc, char** argv) -> int {
                      liquid::to_string(action.attestation),
                      action.agreement);
         if (action.agreement) {
+            if (log_url) {
+                auto inclusion = verify_log_inclusion(*log_url, action.attestation);
+                if (!inclusion) {
+                    return fail(inclusion.error());
+                }
+            }
             continue;
         }
         divergent = true;
