@@ -329,7 +329,10 @@ build-measure/tests/liquid-repository-open-measure open build-measure/open-1
 ## Implementation notes
 
 `LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
-written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
+written through Corosio to a sibling temporary file and atomically renamed. A current checkpoint
+stores the root as a tree-page digest rather than embedding the recursive working tree in the
+repository document. `LIQUID_JOURNAL` is a fixed-size pointer to a paged checkpoint; signed drip
+bytes are bounded to 64 KiB before another checkpoint is published. Each loaded directory
 is a private CRDT document cached by its `node_id`; saving a checkpoint writes `save_compact()`
 bytes to the store, refreshes its `dirs` entry, and replaces the active instance with
 `load_shallow()` of those same bytes. A checkpoint occurs at `cut` and after the configured drip

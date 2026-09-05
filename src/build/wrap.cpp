@@ -8,6 +8,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -21,6 +22,7 @@
 #include <mach-o/dyld.h>
 #endif
 
+#include "build/budgets.hpp"
 #include "build/cache.hpp"
 #include "build/facts.hpp"
 #include "build/materialise.hpp"
@@ -583,12 +585,135 @@ runtime::task<std::vector<std::byte>> blob_contents(repository& source, digest i
     co_return output;
 }
 
+runtime::task<void> stream_store_object(repository& source,
+                                        digest id,
+                                        std::uint64_t size,
+                                        const std::shared_ptr<std::ofstream>& output,
+                                        const std::filesystem::path& target) {
+    auto offset = std::uint64_t{};
+    while (offset != size) {
+        const auto remaining = size - offset;
+        const auto count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(remaining, build_detail::restored_output_buffer_bytes));
+        auto bytes = std::vector<std::byte>(count);
+        auto read = co_await repository_detail::build_access::read(source, id, offset, bytes);
+        if (!read) {
+            co_return std::unexpected(read.error());
+        }
+        if (*read == 0 || *read > bytes.size()) {
+            co_return std::unexpected(
+                wrap_error(errc::corrupt, "cached output is truncated", target));
+        }
+        bytes.resize(static_cast<std::size_t>(*read));
+        auto written = co_await runtime::offload([output, bytes = std::move(bytes), target] {
+            output->write(reinterpret_cast<const char*>(bytes.data()),
+                          static_cast<std::streamsize>(bytes.size()));
+            if (!*output) {
+                return liquid::result<void>{
+                    std::unexpected(wrap_error(errc::io, "cannot materialise output", target))};
+            }
+            return liquid::result<void>{};
+        });
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        if (!*written) {
+            co_return std::unexpected(written->error());
+        }
+        offset += *read;
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<void> stream_blob_to_file(repository& source,
+                                        digest id,
+                                        const std::filesystem::path& target,
+                                        std::uint32_t mode) {
+    auto raw = co_await repository_detail::build_access::get(source, id);
+    if (!raw) {
+        co_return std::unexpected(raw.error());
+    }
+    auto blob = objects::decode_blob(*raw);
+    if (!blob) {
+        co_return std::unexpected(blob.error());
+    }
+    auto created =
+        co_await runtime::offload([target] -> liquid::result<std::shared_ptr<std::ofstream>> {
+            auto code = std::error_code{};
+            std::filesystem::create_directories(target.parent_path(), code);
+            if (code) {
+                return std::unexpected(wrap_error(errc::io, code.message(), target));
+            }
+            auto output =
+                std::make_shared<std::ofstream>(target, std::ios::binary | std::ios::trunc);
+            if (!*output) {
+                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
+            }
+            return output;
+        });
+    if (!created) {
+        co_return std::unexpected(created.error());
+    }
+    if (!*created) {
+        co_return std::unexpected(created->error());
+    }
+    const auto& output = **created;
+    if (blob->content.alg == algorithm::blake3 || blob->content.alg == algorithm::sha256 ||
+        blob->content.alg == algorithm::blake3_keyed) {
+        auto copied =
+            co_await stream_store_object(source, blob->content, blob->size, output, target);
+        if (!copied) {
+            co_return std::unexpected(copied.error());
+        }
+    } else {
+        for (auto index = std::size_t{}; index != blob->chunks.size(); ++index) {
+            auto copied = co_await stream_store_object(
+                source, blob->chunks[index], blob->chunk_sizes[index], output, target);
+            if (!copied) {
+                co_return std::unexpected(copied.error());
+            }
+        }
+    }
+    auto closed = co_await runtime::offload([output, target, mode] -> liquid::result<void> {
+        output->close();
+        if (!*output) {
+            return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
+        }
+        auto code = std::error_code{};
+        std::filesystem::permissions(target,
+                                     static_cast<std::filesystem::perms>(mode & 0777U),
+                                     std::filesystem::perm_options::replace,
+                                     code);
+        if (code) {
+            return std::unexpected(wrap_error(errc::io, code.message(), target));
+        }
+        return {};
+    });
+    if (!closed) {
+        co_return std::unexpected(closed.error());
+    }
+    if (!*closed) {
+        co_return std::unexpected(closed->error());
+    }
+    co_return liquid::result<void>{};
+}
+
 runtime::task<void> materialise_result(repository& source, const action_result& value) {
     for (const auto& output : value.outputs) {
-        auto contents = co_await blob_contents(source, output.blob);
-        if (!contents)
-            co_return std::unexpected(contents.error());
-        auto written = co_await source.write(output.path, std::move(*contents));
+        auto root = repository_detail::build_access::root_path(source);
+        if (!root) {
+            co_return std::unexpected(root.error());
+        }
+        static auto restored_index = std::atomic_uint64_t{};
+        const auto temporary =
+            *root / ("restored-output-" + std::to_string(restored_index.fetch_add(1)));
+        auto copied = co_await stream_blob_to_file(source, output.blob, temporary, output.mode);
+        if (!copied) {
+            co_return std::unexpected(copied.error());
+        }
+        auto written = co_await source.write_file(output.path, temporary);
+        auto code = std::error_code{};
+        std::filesystem::remove(temporary, code);
         if (!written)
             co_return std::unexpected(written.error());
         auto mode = co_await repository_detail::vfs_access::set_mode(
@@ -603,37 +728,10 @@ runtime::task<void> materialise_result(repository& source,
                                        const action_result& value,
                                        const std::filesystem::path& working_tree) {
     for (const auto& output : value.outputs) {
-        auto contents = co_await blob_contents(source, output.blob);
-        if (!contents)
-            co_return std::unexpected(contents.error());
         const auto target = working_tree / output.path;
-        auto copied = co_await runtime::offload([target,
-                                                 bytes = std::move(*contents),
-                                                 mode = output.mode]() -> liquid::result<void> {
-            auto code = std::error_code{};
-            std::filesystem::create_directories(target.parent_path(), code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            auto stream = std::ofstream{target, std::ios::binary | std::ios::trunc};
-            if (!stream)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            stream.write(reinterpret_cast<const char*>(bytes.data()),
-                         static_cast<std::streamsize>(bytes.size()));
-            stream.close();
-            if (!stream)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            std::filesystem::permissions(target,
-                                         static_cast<std::filesystem::perms>(mode & 0777U),
-                                         std::filesystem::perm_options::replace,
-                                         code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            return {};
-        });
+        auto copied = co_await stream_blob_to_file(source, output.blob, target, output.mode);
         if (!copied)
             co_return std::unexpected(copied.error());
-        if (!*copied)
-            co_return std::unexpected(copied->error());
     }
     co_return liquid::result<void>{};
 }
@@ -642,43 +740,16 @@ runtime::task<void> copy_outputs(repository& source,
                                  const std::filesystem::path& root,
                                  const std::set<std::string>& outputs) {
     for (const auto& path : outputs) {
-        auto contents = co_await source.read(path);
-        if (!contents) {
-            if (contents.error().code == errc::not_found)
-                continue;
-            co_return std::unexpected(contents.error());
-        }
         auto entry = co_await repository_detail::vfs_access::entry(source, path);
-        if (!entry)
+        if (!entry) {
+            if (entry.error().code == errc::not_found)
+                continue;
             co_return std::unexpected(entry.error());
+        }
         auto target = root / path;
-        auto copied = co_await runtime::offload([target,
-                                                 bytes = std::move(*contents),
-                                                 mode = entry->mode]() -> liquid::result<void> {
-            auto code = std::error_code{};
-            std::filesystem::create_directories(target.parent_path(), code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            auto output = std::ofstream{target, std::ios::binary | std::ios::trunc};
-            if (!output)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            output.write(reinterpret_cast<const char*>(bytes.data()),
-                         static_cast<std::streamsize>(bytes.size()));
-            output.close();
-            if (!output)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            std::filesystem::permissions(target,
-                                         static_cast<std::filesystem::perms>(mode & 0777U),
-                                         std::filesystem::perm_options::replace,
-                                         code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            return {};
-        });
+        auto copied = co_await stream_blob_to_file(source, entry->object, target, entry->mode);
         if (!copied)
             co_return std::unexpected(copied.error());
-        if (!*copied)
-            co_return std::unexpected(copied->error());
     }
     co_return liquid::result<void>{};
 }

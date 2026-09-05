@@ -285,9 +285,8 @@ private:
         const auto* newest = static_cast<const producer*>(nullptr);
         for (const auto& candidate : found->second) {
             if (candidate.sequence >= before_sequence ||
-                std::ranges::any_of(visited, [&](const auto& id) {
-                    return same_digest(id, candidate.id);
-                })) {
+                std::ranges::any_of(
+                    visited, [&](const auto& id) { return same_digest(id, candidate.id); })) {
                 continue;
             }
             if (!newest || candidate.sequence > newest->sequence) {
@@ -438,12 +437,8 @@ private:
             if (!action_value) {
                 co_return std::unexpected(action_value.error());
             }
-            auto expanded = co_await visit_action(model,
-                                                  *action_value,
-                                                  producer->value,
-                                                  component,
-                                                  visited,
-                                                  producer->sequence);
+            auto expanded = co_await visit_action(
+                model, *action_value, producer->value, component, visited, producer->sequence);
             if (!expanded) {
                 co_return std::unexpected(expanded.error());
             }
@@ -1284,8 +1279,7 @@ validate_derived_sboms(repository& source, result_id id, const action_result& va
     if (!action) {
         co_return std::unexpected(action.error());
     }
-    auto model =
-        co_await model_for(source, *action, value, value.outputs.front(), id.value);
+    auto model = co_await model_for(source, *action, value, value.outputs.front(), id.value);
     if (!model) {
         co_return std::unexpected(model.error());
     }

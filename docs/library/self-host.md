@@ -68,6 +68,20 @@ The Linux two-run action counts, hit rates, critical path, largest rebuilt outpu
 comparisons are recorded here after the privileged mount-backed proof. macOS builds static and
 shared libliquid normally; a wrapped macOS build requires macFUSE.
 
+## Bounded restoration
+
+The Linux proof container has an 8 GiB memory limit. Cache restoration keeps one output file in
+flight and reads at most 64 KiB from the content store at a time. Repository recovery uses a
+64 KiB journal budget: each journal entry is a fixed-size pointer to a paged checkpoint, and a
+checkpoint is published when accumulated signed drip bytes reach that budget. Tree pages are
+stored one at a time; the checkpoint encoder does not construct a second in-memory copy of the
+repository tree.
+
+`Repository.restores_many_journaled_outputs_with_bounded_peak_rss` writes and restores 1,024
+small outputs, crossing the journal budget repeatedly, and requires peak RSS below 512 MiB on
+both supported desktop platforms. The test keeps the payload small so it measures buffering,
+not capacity.
+
 ## Open questions
 
 - Cross-worker cache transport belongs to the remote-cache phase; this issue proves that the local

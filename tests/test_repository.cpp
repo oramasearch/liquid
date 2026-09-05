@@ -8,6 +8,10 @@
 #include <string>
 #include <string_view>
 
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
+
 #include "encoding/cbor.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
@@ -78,6 +82,24 @@ auto text(const std::vector<std::byte>& value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
+auto read_file(const std::filesystem::path& path) -> std::vector<std::byte>;
+
+auto journal_document(const std::filesystem::path& repository) -> std::vector<std::byte> {
+    auto journal = read_file(repository / "LIQUID_JOURNAL");
+    const auto prefix = std::string_view{"liquid-journal-v2 "};
+    const auto pointer = text(journal);
+    if (!pointer.starts_with(prefix)) {
+        return journal;
+    }
+    auto digest = liquid::parse_digest(pointer.substr(prefix.size()));
+    EXPECT_TRUE(digest) << digest.error().message;
+    auto store = liquid::runtime::block_on(liquid::store::open(repository / ".liquid-store"));
+    EXPECT_TRUE(store) << store.error().message;
+    auto document = liquid::runtime::block_on(store->get(*digest));
+    EXPECT_TRUE(document) << document.error().message;
+    return *document;
+}
+
 auto has_change(const liquid::tree_diff_entry& entry, liquid::tree_diff_kind kind) -> bool {
     return std::ranges::find(entry.changes, kind) != entry.changes.end();
 }
@@ -94,12 +116,51 @@ auto encrypted_options(const std::shared_ptr<liquid::keyring>& keys) -> liquid::
     return options;
 }
 
+auto peak_rss_bytes() -> std::uint64_t {
+#if defined(_WIN32)
+    return 0;
+#else
+    auto usage = rusage{};
+    const auto result = getrusage(RUSAGE_SELF, &usage);
+    EXPECT_EQ(result, 0);
+#if defined(__APPLE__)
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024U;
+#endif
+#endif
+}
+
 auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
     auto keys = std::make_shared<liquid::keyring>();
     EXPECT_TRUE(keys->add("repository", std::make_shared<liquid::passphrase_provider>("secret"))
                     .has_value());
     EXPECT_TRUE(keys->set_default_key_id("repository").has_value());
     return keys;
+}
+
+TEST(Repository, restores_many_journaled_outputs_with_bounded_peak_rss) {
+    constexpr auto output_count = std::size_t{1024};
+    constexpr auto output_size = std::size_t{256};
+    constexpr auto rss_ceiling = std::uint64_t{512 * 1024 * 1024};
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    auto payload = std::vector<std::byte>(output_size, std::byte{0x5a});
+    for (auto index = std::size_t{}; index != output_count; ++index) {
+        auto written = liquid::runtime::block_on(
+            repository.write("outputs/" + std::to_string(index) + ".o", payload));
+        ASSERT_TRUE(written) << written.error().message;
+    }
+    repository = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto restored = liquid::runtime::block_on(
+        reopened->read("outputs/" + std::to_string(output_count - 1) + ".o"));
+    ASSERT_TRUE(restored) << restored.error().message;
+    EXPECT_EQ(*restored, payload);
+    EXPECT_LT(peak_rss_bytes(), rss_ceiling);
 }
 
 TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {
@@ -862,7 +923,7 @@ TEST(Repository, DripAndChangeSignaturesCarryEd25519Tags) {
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("first", content("first"))));
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("second", content("second"))));
 
-    const auto journal = read_file(location.path() / "LIQUID_JOURNAL");
+    const auto journal = journal_document(location.path());
     const auto document = cbor::decode(journal);
     ASSERT_TRUE(document) << document.error().message;
     const auto* drips_value = field(*document, "drips");
@@ -906,7 +967,7 @@ TEST(Repository, RejectsAnUnknownSignatureAlgorithm) {
     auto repository = std::move(*created);
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("first", content("first"))));
 
-    auto journal = cbor::decode(read_file(location.path() / "LIQUID_JOURNAL"));
+    auto journal = cbor::decode(journal_document(location.path()));
     ASSERT_TRUE(journal) << journal.error().message;
     auto* drips_value = mutable_field(*journal, "drips");
     ASSERT_NE(drips_value, nullptr);

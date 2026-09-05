@@ -14,6 +14,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "build/budgets.hpp"
 #include "build/cache.hpp"
 #include "build/policy.hpp"
 #include "build/repository_access.hpp"
@@ -78,7 +79,10 @@ struct repository_document {
     retention_config retention{};
     std::optional<remote_config> remote;
     std::uint64_t pending_drips{};
+    bool root_is_paged{};
 };
+
+constexpr auto journal_pointer_prefix = std::string_view{"liquid-journal-v2 "};
 
 auto failure(errc code, std::string message, std::string context = {}) -> error {
     return {code, std::move(message), std::move(context)};
@@ -329,7 +333,9 @@ auto encode_repository_document(const repository_document& value)
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
-                             {"root", encode_entry(value.root)},
+                             {"root_node", bytes(value.root.node)},
+                             {"root_mode", cbor::value{std::uint64_t{value.root.mode}}},
+                             {"root_ref", digest_value(value.root.object)},
                              {"refs", cbor::value{std::move(refs)}},
                              {"metadata", cbor::value{std::move(metadata)}},
                              {"dirs", cbor::value{std::move(dirs)}},
@@ -348,6 +354,9 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* kind = find(*decoded, "kind");
     const auto* repo = find(*decoded, "repo");
     const auto* root = find(*decoded, "root");
+    const auto* root_node = find(*decoded, "root_node");
+    const auto* root_mode = find(*decoded, "root_mode");
+    const auto* root_ref = find(*decoded, "root_ref");
     const auto* refs = find(*decoded, "refs");
     const auto* metadata = find(*decoded, "metadata");
     const auto* dirs = find(*decoded, "dirs");
@@ -369,17 +378,36 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* saved_drips =
         drip_values ? std::get_if<cbor::value::array>(&drip_values->data) : nullptr;
     const auto* drips = pending ? std::get_if<std::uint64_t>(&pending->data) : nullptr;
+    const auto paged_root = !root && root_node && root_mode && root_ref;
     if (!v || *v != 1 || !title || *title != "repository-document" || !id || id->size() != 16 ||
-        !root || !ref_values || !dir_values || !op_values || !head || !lock_values ||
-        !saved_drips || !drips)
+        (!root && !paged_root) || !ref_values || !dir_values || !op_values || !head ||
+        !lock_values || !saved_drips || !drips)
         return std::unexpected(
             failure(errc::corrupt, "invalid repository document", "LIQUID_REPO"));
-    auto root_entry = decode_entry(*root);
-    if (!root_entry)
-        return std::unexpected(root_entry.error());
     repository_document output{};
     std::ranges::copy(*id, output.repository.begin());
-    output.root = std::move(*root_entry);
+    if (root) {
+        auto root_entry = decode_entry(*root);
+        if (!root_entry) {
+            return std::unexpected(root_entry.error());
+        }
+        output.root = std::move(*root_entry);
+    } else {
+        const auto* node = std::get_if<cbor::value::bytes>(&root_node->data);
+        const auto* mode = std::get_if<std::uint64_t>(&root_mode->data);
+        if (!node || node->size() != output.root.node.size() || !mode || *mode > UINT32_MAX) {
+            return std::unexpected(
+                failure(errc::corrupt, "invalid paged repository root", "LIQUID_REPO"));
+        }
+        auto reference = decode_digest(*root_ref);
+        if (!reference) {
+            return std::unexpected(reference.error());
+        }
+        output.root = {
+            entry_kind::directory, {}, static_cast<std::uint32_t>(*mode), *reference, {}, {}};
+        std::ranges::copy(*node, output.root.node.begin());
+        output.root_is_paged = true;
+    }
     output.pending_drips = *drips;
     for (const auto& item : *ref_values) {
         const auto* name = find(item, "name");
@@ -1434,6 +1462,7 @@ struct repository::impl {
     store& objects;
     repository_document current;
     std::uint64_t checkpoint_interval{64};
+    std::size_t journal_bytes{};
     algorithm hash_algorithm;
     std::uint64_t directory_load_count{};
     std::map<node_id, crdt::directory_document> directory_cache;
@@ -1475,6 +1504,36 @@ struct repository::impl {
     }
     auto journal_marker() const -> std::filesystem::path {
         return root_path / "LIQUID_JOURNAL";
+    }
+    runtime::task<void> restore_paged_tree(working_entry& destination) {
+        auto bytes = co_await objects.get(destination.object);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto tree = objects::decode_tree(*bytes);
+        if (!tree) {
+            co_return std::unexpected(tree.error());
+        }
+        for (const auto& entry : tree->entries) {
+            auto kind = entry_kind::file;
+            if (entry.kind == node_kind::tree) {
+                kind = entry_kind::directory;
+            } else if (entry.kind == node_kind::repo) {
+                kind = entry_kind::nested_repository;
+            } else if (entry.kind != node_kind::blob) {
+                co_return std::unexpected(
+                    failure(errc::corrupt, "invalid repository tree entry", entry.name));
+            }
+            auto child = working_entry{kind, entry.node, entry.mode, entry.ref, {}, entry.nested};
+            if (kind == entry_kind::directory) {
+                auto restored = co_await restore_paged_tree(child);
+                if (!restored) {
+                    co_return std::unexpected(restored.error());
+                }
+            }
+            destination.entries.emplace(entry.name, std::move(child));
+        }
+        co_return result<void>{};
     }
     runtime::task<void> restore_directory_document(node_id id, crdt::directory_document& document) {
         auto* working_directory = directory_with_node(current.root, id);
@@ -1738,6 +1797,7 @@ struct repository::impl {
             working_tree = *snapshot_id;
         }
         current.pending_drips = 0;
+        journal_bytes = 0;
         auto document = co_await persist();
         if (!document) {
             co_return std::unexpected(document.error());
@@ -1751,13 +1811,23 @@ struct repository::impl {
         co_return result<void>{};
     }
     runtime::task<void> checkpoint_or_journal() {
-        if (current.pending_drips >= checkpoint_interval) {
+        if (current.pending_drips >= checkpoint_interval ||
+            journal_bytes >= build_detail::repository_journal_byte_budget) {
             co_return co_await checkpoint();
         }
-        auto encoded = encode_repository_document(current);
-        if (!encoded)
-            co_return std::unexpected(encoded.error());
-        co_return co_await store_detail::write_file(journal_marker(), std::move(*encoded));
+        auto root = co_await snapshot(current.root);
+        if (!root) {
+            co_return std::unexpected(root.error());
+        }
+        auto document = co_await persist();
+        if (!document) {
+            co_return std::unexpected(document.error());
+        }
+        const auto text = std::string{journal_pointer_prefix} + to_string(*document) + "\n";
+        auto encoded =
+            std::vector<std::byte>{reinterpret_cast<const std::byte*>(text.data()),
+                                   reinterpret_cast<const std::byte*>(text.data() + text.size())};
+        co_return co_await store_detail::write_file(journal_marker(), std::move(encoded));
     }
     runtime::task<void>
     append_drip(std::string operation, const node_id& node, std::chrono::sys_seconds at) {
@@ -1780,6 +1850,8 @@ struct repository::impl {
         }
         current.drips.push_back(
             {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        journal_bytes += current.drips.back().body.size();
+        journal_bytes += current.drips.back().signature.size();
         co_return result<void>{};
     }
     runtime::task<void>
@@ -2261,6 +2333,23 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
         auto journal = co_await store_detail::read_file(prepared->state_path / "LIQUID_JOURNAL");
         if (!journal)
             co_return std::unexpected(journal.error());
+        auto journal_text =
+            std::string{reinterpret_cast<const char*>(journal->data()), journal->size()};
+        if (journal_text.starts_with(journal_pointer_prefix)) {
+            journal_text.erase(0, journal_pointer_prefix.size());
+            if (const auto newline = journal_text.find('\n'); newline != std::string::npos) {
+                journal_text.resize(newline);
+            }
+            auto journal_id = parse_digest(journal_text);
+            if (!journal_id) {
+                co_return std::unexpected(journal_id.error());
+            }
+            auto journal_document = co_await prepared->objects->get(*journal_id);
+            if (!journal_document) {
+                co_return std::unexpected(journal_document.error());
+            }
+            journal = std::move(*journal_document);
+        }
         auto replayed = decode_repository_document(*journal);
         if (!replayed)
             co_return std::unexpected(replayed.error());
@@ -2289,6 +2378,12 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
                                           std::move(keys),
                                           options.checkpoint_interval,
                                           hash_algorithm);
+    if (output.impl_->current.root_is_paged) {
+        auto restored = co_await output.impl_->restore_paged_tree(output.impl_->current.root);
+        if (!restored) {
+            co_return std::unexpected(restored.error());
+        }
+    }
     auto checkpointed = co_await output.impl_->checkpoint();
     if (!checkpointed)
         co_return std::unexpected(checkpointed.error());
