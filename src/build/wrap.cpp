@@ -2432,14 +2432,6 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     auto synced = co_await sync_sources(*source, working_tree, *cache_directory, *state);
     if (!synced)
         co_return std::unexpected(synced.error());
-    for (const auto& saved : state->actions) {
-        auto value = co_await load_result(*source, saved.result);
-        if (!value)
-            continue;
-        auto materialised = co_await materialise_result(*source, *value);
-        if (!materialised)
-            co_return std::unexpected(materialised.error());
-    }
     auto cut = co_await source->cut("wrap input snapshot");
     if (!cut)
         co_return std::unexpected(cut.error());
@@ -2511,6 +2503,16 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
             co_return report;
         }
         outer_miss_recorded = true;
+    }
+    for (const auto& saved : state->actions) {
+        auto value = co_await load_result(*source, saved.result);
+        if (!value) {
+            continue;
+        }
+        auto materialised = co_await materialise_result(*source, *value);
+        if (!materialised) {
+            co_return std::unexpected(materialised.error());
+        }
     }
     if (*toolchain) {
         auto prepared = co_await prepare_cache_plan(*source,

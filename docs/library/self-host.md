@@ -92,6 +92,12 @@ file-backed pages are charged to the container memory cgroup. The proof samples 
 `VmRSS`/`VmHWM` every ten seconds with `tools/linux-ci/self-host-memory.sh`; its log is retained
 beside the two-run numbers.
 
+An outer-result cache hit is checked before liquid reconstructs prior per-action outputs in its
+private repository. The outer result already contains every requested output, so reconstructing
+the per-action tree first retained a growing repository and delayed the cache-only completion
+path. On an outer miss, the same per-action reconstruction occurs after the lookup and continues
+to use the bounded streaming writer.
+
 ## Open questions
 
 - Cross-worker cache transport belongs to the remote-cache phase; this issue proves that the local
