@@ -73,6 +73,14 @@ Import works on repository and directory candidates, verifies TAAP signatures an
 receives, and publishes one checkpoint only after the complete batch passes. An empty repository
 may adopt the incoming repository identity; a non-empty unrelated repository is rejected.
 
+Every document mutation records its operation, session, and before/after effects. Operation undo
+and filtered session undo derive inverses from those effects, skip state changed by newer intent,
+and append their results without rewriting source or imported records. Each touched directory uses
+one candidate transaction, and a failed plan, transaction, encoding, or journal publication
+restores all active state. Change version 2 also records document state and directory heads;
+historical document reads validate those heads against full archives without consulting active
+shallow documents.
+
 `repository::store_symbols` stores one canonical symbol record and its source-blob association.
 `repository::symbols` resolves and decodes that content-addressed value.
 

@@ -25,3 +25,6 @@ and collection can traverse every published result, attestation, and trace.
 Blob version 2 appends a whole-content digest and optional remote source/instance to the existing
 chunk arrays. Action version 2 carries the opt-in remote-execution eligibility flag; default-off
 actions and local blobs keep their version 1 canonical bytes.
+
+Change version 2 appends the cut's refs, lock paths, nested-repository pointers, and per-directory
+CRDT heads. Version 1 remains byte-compatible for decoding and signature verification.

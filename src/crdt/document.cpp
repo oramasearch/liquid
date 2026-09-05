@@ -226,6 +226,38 @@ auto document::save_compact() const -> result<std::vector<std::byte>> {
     }
 }
 
+auto document::fork() const -> result<document> {
+    try {
+        auto implementation = std::make_unique<impl>(impl_->value, impl_->actor);
+        implementation->operation_snapshots = impl_->operation_snapshots;
+        return document{std::move(implementation)};
+    } catch (const std::exception& exception) {
+        return std::unexpected(internal(exception.what(), "fork CRDT document"));
+    }
+}
+
+auto document::validate_heads(const head_set& heads) const -> result<void> {
+    try {
+        auto values = std::vector<am::ChangeHash>{};
+        values.reserve(heads.size());
+        for (const auto& head : heads) {
+            values.emplace_back(head);
+        }
+        auto format = impl_->value.get_at(am::root, "format", values);
+        if (!format) {
+            return std::unexpected(
+                automerge_error(format.error(), errc::corrupt, "read CRDT history"));
+        }
+        if (!am::get_scalar<std::uint64_t>(*format)) {
+            return std::unexpected(
+                corrupt("historical document format is missing", "read CRDT history"));
+        }
+        return {};
+    } catch (const std::exception& exception) {
+        return std::unexpected(internal(exception.what(), "read CRDT history"));
+    }
+}
+
 auto document::heads() -> result<head_set> {
     try {
         auto result = public_heads(impl_->value.get_heads());
@@ -462,6 +494,22 @@ auto directory_document::rename_entry(std::string from, std::string to, commit_o
     return {};
 }
 
+auto directory_document::transact(std::vector<operation> operations, commit_options options)
+    -> result<void> {
+    for (const auto& operation : operations) {
+        if (operation.path.empty() || operation.path.contains('/') ||
+            (!operation.to.empty() && operation.to.contains('/'))) {
+            return std::unexpected(
+                error{errc::invalid_argument, "directory entry name is invalid", operation.path});
+        }
+    }
+    auto applied = document_.transact(std::move(operations), std::move(options));
+    if (!applied) {
+        return std::unexpected(applied.error());
+    }
+    return {};
+}
+
 auto directory_document::save() const -> result<std::vector<std::byte>> {
     return document_.save_compact();
 }
@@ -470,6 +518,16 @@ auto directory_document::save_full() const -> result<std::vector<std::byte>> {
 }
 auto directory_document::save_sync() const -> result<std::vector<std::byte>> {
     return document_.save_compact();
+}
+auto directory_document::fork() const -> result<directory_document> {
+    auto value = document_.fork();
+    if (!value) {
+        return std::unexpected(value.error());
+    }
+    return directory_document{std::move(*value)};
+}
+auto directory_document::validate_heads(const head_set& heads) const -> result<void> {
+    return document_.validate_heads(heads);
 }
 auto directory_document::heads() -> result<head_set> {
     return document_.heads();

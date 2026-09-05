@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <print>
 #include <string>
 #include <string_view>
@@ -116,46 +117,74 @@ auto history_operations(int argc, char** argv) -> int {
         std::print("[");
         for (std::size_t index = 0; index < operations->size(); ++index) {
             const auto& operation = (*operations)[index];
-            std::print("{}{{\"id\":{},\"kind\":{},\"from\":{},\"to\":{},\"actor\":{},\"at\":{}}}",
+            std::print("{}{{\"id\":{},\"kind\":{},\"from\":{},\"to\":{},\"actor\":{},"
+                       "\"at\":{},\"session\":{}}}",
                        index == 0 ? "" : ",",
                        json_string(liquid::to_string(operation.id.value)),
                        json_string(operation.kind),
                        json_string(operation.from),
                        json_string(operation.to),
                        json_string(operation.by.taap_id),
-                       operation.at.time_since_epoch().count());
+                       operation.at.time_since_epoch().count(),
+                       json_string(liquid::to_string(operation.session)));
         }
         std::println("]");
     } else {
         for (const auto& operation : *operations) {
-            std::println("{} {} {} {} {} {}",
+            std::println("{} {} {} {} {} {} {}",
                          liquid::to_string(operation.id.value),
                          operation.kind,
                          operation.from,
                          operation.to,
                          operation.by.taap_id,
-                         operation.at.time_since_epoch().count());
+                         operation.at.time_since_epoch().count(),
+                         liquid::to_string(operation.session));
         }
     }
     return 0;
 }
 
 auto history_undo(int argc, char** argv) -> int {
-    if (argc > 1) {
-        return usage("undo accepts at most one operation id");
+    auto operation = std::optional<liquid::op_id>{};
+    auto session = std::optional<liquid::session_id>{};
+    auto options = liquid::undo_options{};
+    for (auto index = 0; index < argc; ++index) {
+        const auto argument = std::string_view{argv[index]};
+        if (argument == "--session" && index + 1 < argc) {
+            auto parsed = liquid::parse_session_id(argv[++index]);
+            if (!parsed) {
+                return fail(parsed.error());
+            }
+            session = *parsed;
+        } else if (argument == "--path" && index + 1 < argc) {
+            options.paths.emplace_back(argv[++index]);
+        } else if (argument == "--drip" && index + 1 < argc) {
+            auto parsed = liquid::parse_digest(argv[++index]);
+            if (!parsed) {
+                return fail(parsed.error());
+            }
+            options.drips.push_back({*parsed});
+        } else if (!argument.starts_with("--") && !operation) {
+            auto parsed = liquid::parse_digest(argument);
+            if (!parsed) {
+                return fail(parsed.error());
+            }
+            operation = liquid::op_id{*parsed};
+        } else {
+            return usage("undo [op-id] | undo --session <id> [--path <path>]... [--drip <id>]...");
+        }
+    }
+    if (session && operation) {
+        return usage("undo cannot combine an operation id with --session");
+    }
+    if (!session && (!options.paths.empty() || !options.drips.empty())) {
+        return usage("--path and --drip require --session");
     }
     auto repository = open_repository();
     if (!repository) {
         return fail(repository.error());
     }
-    auto operation = liquid::op_id{};
-    if (argc == 1) {
-        auto parsed = liquid::parse_digest(argv[0]);
-        if (!parsed) {
-            return fail(parsed.error());
-        }
-        operation = {*parsed};
-    } else {
+    if (!session && !operation) {
         auto operations = liquid::runtime::block_on(repository->operations());
         if (!operations) {
             return fail(operations.error());
@@ -165,11 +194,18 @@ auto history_undo(int argc, char** argv) -> int {
         }
         operation = operations->front().id;
     }
-    auto undone = liquid::runtime::block_on(repository->undo(operation));
+    auto undone = session ? liquid::runtime::block_on(repository->undo_session(*session, options))
+                          : liquid::runtime::block_on(repository->undo(*operation));
     if (!undone) {
         return fail(undone.error());
     }
-    std::println("undone {}", liquid::to_string(operation.value));
+    for (const auto& applied : undone->applied) {
+        std::println("applied {}", liquid::to_string(applied.value));
+    }
+    for (const auto& skipped : undone->skipped) {
+        std::println(
+            "skipped {} {} {}", liquid::to_string(skipped.op.value), skipped.path, skipped.reason);
+    }
     return 0;
 }
 

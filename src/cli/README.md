@@ -61,6 +61,10 @@ ordinary repository drip through the public repository API.
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 
+`history.cpp` implements `log --ops` and its `ops` alias through the public operation-log API.
+Both JSON forms include the operation session. Undo accepts one operation ID or a session with
+repeatable path and drip filters, and renders every applied or skipped report entry.
+
 `workers.cpp` implements the scheduler and worker daemons with flag-over-environment
 configuration. Long-running entry points run on the guarded process-wide runtime while the command
 thread waits for completion, keeping accept and polling loops live between I/O callbacks.

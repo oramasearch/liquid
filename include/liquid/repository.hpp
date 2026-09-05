@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -32,6 +33,15 @@ struct git_access;
 struct drive_access;
 struct sync_access;
 } // namespace repository_detail
+
+struct LIQUID_EXPORT session_id {
+    std::array<std::byte, 16> bytes{};
+
+    auto operator==(const session_id&) const -> bool = default;
+};
+
+[[nodiscard]] LIQUID_EXPORT std::string to_string(const session_id& value);
+[[nodiscard]] LIQUID_EXPORT result<session_id> parse_session_id(std::string_view text);
 
 enum class encryption_mode : std::uint8_t { leaf, file };
 
@@ -105,6 +115,7 @@ struct LIQUID_EXPORT repository_options {
     policy_config policy{};
     retention_config retention{};
     std::optional<remote_config> remote;
+    std::optional<session_id> session;
 };
 
 struct LIQUID_EXPORT log_options {
@@ -272,6 +283,23 @@ struct LIQUID_EXPORT operation_record {
     std::string to;
     actor by;
     std::chrono::sys_seconds at;
+    session_id session;
+};
+
+struct LIQUID_EXPORT undo_skip {
+    op_id op;
+    std::string path;
+    std::string reason;
+};
+
+struct LIQUID_EXPORT undo_report {
+    std::vector<op_id> applied;
+    std::vector<undo_skip> skipped;
+};
+
+struct LIQUID_EXPORT undo_options {
+    std::vector<std::string> paths;
+    std::vector<op_id> drips;
 };
 
 struct LIQUID_EXPORT search_options {
@@ -369,6 +397,7 @@ public:
     [[nodiscard]] result<repository_status> status();
     [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
     [[nodiscard]] runtime::task<snapshot> at(change_id id);
+    [[nodiscard]] runtime::task<document_state> document_at(change_id id);
     [[nodiscard]] runtime::task<tree> tree(digest id);
     [[nodiscard]] runtime::task<std::vector<std::byte>> blob(digest id);
     [[nodiscard]] runtime::task<std::vector<search_hit>> search(std::string query,
@@ -403,7 +432,9 @@ public:
     [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);
     [[nodiscard]] runtime::task<std::vector<conflict>> conflicts();
     [[nodiscard]] runtime::task<std::vector<operation_record>> operations(log_options options = {});
-    [[nodiscard]] runtime::task<void> undo(op_id operation);
+    [[nodiscard]] runtime::task<undo_report> undo(op_id operation);
+    [[nodiscard]] runtime::task<undo_report> undo_session(session_id session,
+                                                          undo_options options = {});
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);

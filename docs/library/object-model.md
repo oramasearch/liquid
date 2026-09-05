@@ -4,8 +4,8 @@
 (immutable, content-addressed), which state lives in the CRDT metadata document (mutable,
 concurrently edited), how the two reference each other, and how repository composition,
 conflicts, undo and locks fall out of that. This is the design for liquid issues #2 (the object
-model) and #3 (the CRDT layer); the implementation follows it literally, and the API is the one
-in [`api-map.md`](api-map.md).
+model), #3 (the CRDT layer), and #41 (operation-log undo); the implementation follows it
+literally, and the API is the one in [`api-map.md`](api-map.md).
 
 **Why.** features/01 fixes the split (bytes in the chunk store, namespace in the CRDT) and
 features/02 fixes the behaviour (changes with identity, moves recorded not inferred, conflicts as
@@ -18,11 +18,12 @@ checked, transactions roll back, commit metadata and incremental saves exist, re
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
 checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, and #195's history/conflict persistence.** The private automerge-cpp wrapper, canonical CBOR
-codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
-working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
-composition, persisted conflict values, path history and restore, operation inversion, advisory locks, and the repository status are
-implemented over either a repository-local store or a caller-owned store shared by multiple
+**Status: implemented for liquid #2, #3, #41, and #195's history/conflict persistence.** The private automerge-cpp
+wrapper, canonical CBOR codec, versioned sync framing and drip journal are implemented. Repository
+creation and opening, working-tree reads and writes, recorded moves and removals, snapshots and
+changes, references, composition, persisted conflict values, path history and restore,
+session-scoped operation inversion, historical document reads, advisory locks, and repository status
+are implemented over either a repository-local store or a caller-owned store shared by multiple
 repositories.
 
 ## The two layers, precisely
@@ -46,8 +47,12 @@ blob/1      { v:1, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…] 
 blob/2      { v:2, kind:"blob", digest, size, chunks:[digest…], chunk_sizes:[uint…],
               remote?:{source,instance} }
 tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo, id:node_id, ref:digest | repo_ref } … ] }   # sorted by name, bytewise
-change      { v, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
-              root:digest(tree), heads:[bytes…], conflicts?:[conflict…], symbols?:digest, sig:bytes }
+change/1    { v:1, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
+              root:digest(tree), conflicts?:[conflict…], symbols?:digest, sig:bytes }
+change/2    { v:2, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
+              root:digest(tree), document:{refs,locks,nested},
+              heads:[{directory:node_id,values:[bytes…]}…], conflicts?:[conflict…],
+              symbols?:digest, sig:bytes }
 repo        { v, kind:"repo", repo_id, name, created:time, root_change:change_ref? }
 attestation { v, kind:"attestation", subject:digest, profile, subject_kind?, attributes?,
               attribute_disclosure_commitments?, detectors:[text...], findings:uint, at:time,
@@ -76,9 +81,11 @@ readable.
   have different domains: the liquid record includes the tree, TAAP author, signature, conflicts,
   and repository parents. Because the parent reference carries a `repo_id`, a change can have
   parents in two different repositories, which is what `combine` needs.
-- **`heads`** are the automerge document heads the change was cut at; they tie the immutable
-  record to the document's history so `at(change_id)` can rebuild the document state too, not
-  only the tree.
+- **`document` and `heads`** in `change/2` capture refs, lock paths, nested-repository pointers,
+  and the heads of every directory document at the cut. They tie the immutable record to the full
+  CRDT archives so `document_at(change_id)` can validate the historical point without consulting
+  or modifying an active shallow document. Version 1 changes remain readable for tree history;
+  they do not have a historical document projection.
 - **`conflicts`** (liquid #40) and **`symbols`** (liquid #47) are the two fields that cannot be
   added later, so they are in the record from the first commit, optional and empty.
 - **`sig`** is the TAAP signature over the record with `sig` absent (liquid #4).
@@ -181,16 +188,41 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `cut(message)` | the explicit change cut: save touched directory documents, write the `tree` snapshot, build and sign the `change` record, update the ref, advance `head`; the working copy continues as a new change. |
 | move | one transaction: delete the old key, put the entry with the **same** `node_id` under the new key. Recorded, never inferred. |
 | cut a change | write the tree snapshot to the store (walk `tree`, emit `tree` records bottom-up), build the `change` record with `parents = heads of the ref`, `heads = document heads`, sign, `store.put`; set the ref. |
-| `at(change_id)` | read the record; the snapshot is its `root` tree from the store. Rebuilding the document at that point uses `heads` and automerge's `get_at`, which is expensive today (upstream issue 9) and is not on the read path. |
+| `at(change_id)` / `document_at(change_id)` | `at` reads the immutable `root` tree. `document_at` loads full-history compact archives, resolves every recorded head through the wrapper's `get_at`, and returns the recorded refs, locks, and nested pointers. Historical reads never touch the active shallow documents. |
 | `log` | walk `parents` from a ref; identity is the digest, so a change transplanted to another branch is recognised as itself. |
 | merge | automerge converges the document; liquid then runs structural merge (Phase 5) or, in Phase 1, a three-way merge on entries by `node_id`: same `node_id` changed on both sides with different `ref` is a **conflict value** appended to the resulting change's `conflicts`, never a broken working tree. |
 | `nest(source, path)` | the entry at `path` becomes `kind: repo` with the source's `repo_id` and pinned change; `nested[path]` mirrors it. The nested repository keeps its own document and its own history; its files are visible because `root()` descends into nested repositories through the store. |
 | `split(path, into)` | new `repo` record and document; the subtree's entries move (same `node_id`s) into it; the original keeps `path` as a `repo` entry. History of the subtree is preserved by construction: the old changes still reference the old trees, and the new repository's `root_change` names the change it was split from. |
 | `combine(other, at)` | one change with parents in both repositories (`change_ref` carries `repo_id`); path collisions become conflict values. |
-| `operations()` / `undo(op_id)` | every operation above appends an `op` record to `ops` (`{ id, kind, from, to, at, by, inverse }`). `operations()` returns them newest first; `undo` applies an inverse as a new operation. Undo never rewrites history. |
+| `operations()` / `undo(op_id)` | every mutation appends an `op` record to `ops` (`{ id, kind, from, to, at, by, session, inverse }`). `operations()` returns them newest first; `undo` applies the selected inverse as a new operation and returns applied and skipped paths. Undo never rewrites history. |
+| `undo_session(session, options)` | reverses the matching session newest first, optionally restricted to paths or drip IDs. Each touched directory is one wrapper transaction; candidates are published only after every transaction succeeds. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
 | `history(path)` | walk snapshots newest first, discover the path's `node_id`, and follow that identity through moves; return values, deletions, actors, timestamps and messages. |
 | `restore(path, change)` | read the historical blob and append an ordinary write drip at the requested path; no ref or earlier change is modified. |
+
+### Operation records and inverses
+
+The operation vocabulary is `write`, `mkdir`, `move`, `remove`, `set_ref`, `record`, `nest`,
+`split`, `combine`, `lock`, `unlock`, `redact`, `merge`, `set_mode`, and `undo`. A cut and the
+explicit `record` APIs use `record`, because their mutation is the reference-head transition.
+`import_drips` records the remote batch as one `merge` operation; its range identifies the batch,
+and imported operation records remain unchanged.
+
+Each operation stores its own before and after values for affected entries, refs, locks, and the
+working head. Its inverse is therefore derived from the operation's recorded before-state, never
+from the newest operation in the document. A non-newest undo changes a value only when the current
+value still equals that operation's recorded after-state. Otherwise `undo_report.skipped` names the
+operation, path, and reason, preserving newer local or remote intent. The successfully applied
+parts are appended as `undo` operations; neither source operations nor imported records are
+rewritten. Redaction records the replacement transition, but purged secret bytes cannot be
+restored and are reported as skipped.
+
+Every open repository handle has a 16-byte session ID. `repository_options::session` supplies it;
+otherwise the handle generates a random value. All mutations authored through that handle carry
+the same ID. Issue #30 will supply an agent delegation's session value. Session undo plans the
+whole selection before opening directory transactions, commits one transaction per touched
+directory, and publishes no candidate if any transaction fails. Path filters select operations
+touching that path or its descendants; drip filters select exact operation IDs.
 
 ## Public tree comparison
 

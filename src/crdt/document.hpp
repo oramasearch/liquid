@@ -58,6 +58,8 @@ public:
     [[nodiscard]] auto actor() const -> actor_id;
     [[nodiscard]] auto save() const -> result<std::vector<std::byte>>;
     [[nodiscard]] auto save_compact() const -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto fork() const -> result<document>;
+    [[nodiscard]] auto validate_heads(const head_set& heads) const -> result<void>;
     [[nodiscard]] auto heads() -> result<head_set>;
     [[nodiscard]] auto transact(std::vector<operation> operations, commit_options options = {})
         -> result<std::vector<operation>>;
@@ -111,9 +113,13 @@ public:
     [[nodiscard]] auto remove_entry(std::string name, commit_options options = {}) -> result<void>;
     [[nodiscard]] auto rename_entry(std::string from, std::string to, commit_options options = {})
         -> result<void>;
+    [[nodiscard]] auto transact(std::vector<operation> operations, commit_options options = {})
+        -> result<void>;
     [[nodiscard]] auto save() const -> result<std::vector<std::byte>>;
     [[nodiscard]] auto save_full() const -> result<std::vector<std::byte>>;
     [[nodiscard]] auto save_sync() const -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto fork() const -> result<directory_document>;
+    [[nodiscard]] auto validate_heads(const head_set& heads) const -> result<void>;
     [[nodiscard]] auto heads() -> result<head_set>;
     [[nodiscard]] auto generate_sync_message(sync_state& state) const
         -> result<std::optional<std::vector<std::byte>>>;
