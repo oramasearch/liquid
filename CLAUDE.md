@@ -364,6 +364,13 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
    same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
    `docs/library/distribution.md`.
+10. **Agent application-data isolation uses template copies with a reflink fast path** (Steve,
+   2026-09-05; liquid-bridge decision 26). Each session owns one branch per declared PostgreSQL
+   database, and its sandbox receives the branch URL rather than the base. Promotion replaces the
+   base only when a logical fingerprint proves it has not changed since branching; liquid does not
+   attempt a data merge. `CREATE DATABASE ... TEMPLATE ...` is the portable baseline. A local,
+   quiescent cluster may use APFS `clonefile` or Linux `FICLONE` plus a second server. Details:
+   `docs/library/data-branching.md`.
 
 **Still open:**
 

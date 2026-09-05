@@ -249,6 +249,7 @@ actors and attestations were already required for other reasons.
   above reduces how much it matters.
 - **Presence at scale** — dozens of agents in one workspace is a UI problem nobody has
   solved.
-- **Data isolation for agents.** Git worktrees do not isolate a database; liquid should
-  extend isolation to data namespaces, in the manner of copy-on-write database
-  branching. Currently unspecified.
+- **Data isolation beyond PostgreSQL.** Git worktrees do not isolate a database. The PostgreSQL
+  session-branch lifecycle and its template-copy baseline plus local reflink fast path are specified
+  in [data branching](../library/data-branching.md); other database engines and external services
+  remain open.
