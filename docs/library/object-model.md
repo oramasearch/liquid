@@ -162,8 +162,10 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
    `*_with_patches` entry points. Every returned `std::expected` is checked before the candidate
    document replaces the active document.
 4. **Persistence uses compact checkpoints**: `save_compact()` output is stored at every cut and
-   every 64 drips, the active directory is reopened with `load_shallow()`, and later journaled
-   drips are replayed on that checkpoint.
+   every 64 drips. A persistence write never replaces an active directory document with a freshly
+   loaded compact checkpoint: that replacement loses the change-hash index required by a later
+   replica sync. A process that opens a repository loads the stored checkpoint before it accepts
+   new mutations.
 5. **Errors remain values across the wrapper**: local operation failures become
    `errc::invalid_argument`; malformed saves, changes, merges, and sync input become
    `errc::corrupt`. A failed external application leaves the active document unchanged.

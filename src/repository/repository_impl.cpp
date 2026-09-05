@@ -1658,16 +1658,11 @@ struct repository::impl {
             auto saved_document = document.save();
             if (!saved_document)
                 co_return std::unexpected(saved_document.error());
-            auto reopened = crdt::directory_document::load(
-                *saved_document, "local", root_path.generic_string());
-            if (!reopened)
-                co_return std::unexpected(reopened.error());
             auto saved_id = co_await repository_detail::store_access::put_plain(
                 objects, std::move(*saved_document));
             if (!saved_id)
                 co_return std::unexpected(saved_id.error());
             current.dirs[node] = *saved_id;
-            document = std::move(*reopened);
         }
         auto encoded = encode_repository_document(current);
         if (!encoded)
