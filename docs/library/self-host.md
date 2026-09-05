@@ -43,7 +43,8 @@ CMake Error: failed to create symbolic link
 actions=430 hits=0 misses=430 processes_started=429 probes_started=0 outer=miss
 ```
 
-The dependency configuration now disables `ZSTD_BUILD_SHARED`. zstd already marks
+The dependency configuration now explicitly disables `ZSTD_BUILD_SHARED` after the mainline
+integration. zstd already marks
 `libzstd_static` as position-independent, so both static and shared libliquid continue to link the
 same private codec without building an unused artifact.
 
