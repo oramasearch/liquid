@@ -1,5 +1,7 @@
 #include "liquid/repository.hpp"
 
+#include "repository/diff.hpp"
+
 #include <algorithm>
 #include <array>
 #include <iterator>
@@ -527,6 +529,12 @@ auto map_hunks(std::span<const text_anchor> anchors,
 }
 
 } // namespace
+
+auto repository_detail::text_hunks(std::span<const std::byte> old_bytes,
+                                   std::span<const std::byte> new_bytes)
+    -> std::optional<std::vector<line_change>> {
+    return line_hunks(old_bytes, new_bytes);
+}
 
 runtime::task<std::vector<tree_diff_entry>>
 repository::diff(change_id old_change, change_id new_change, tree_diff_options options) {

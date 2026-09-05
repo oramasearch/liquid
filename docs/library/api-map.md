@@ -692,11 +692,12 @@ class repository {
   runtime::task<void> redact(std::string path, std::vector<std::byte> replacement,
                              std::optional<change_id> = {});
   runtime::task<std::vector<std::string>> diff_keys(std::string path, change_id a, change_id b);
-  runtime::task<void> write_file(std::string path, std::filesystem::path source);   // streams a large file in; one drip
-  runtime::task<void> write_remote(std::string path, blob);
+  runtime::task<void> write_file(std::string path, std::filesystem::path source,
+                                 write_options = {});   // streams a large file in; one drip
+  runtime::task<void> write_remote(std::string path, blob, write_options = {});
   runtime::task<digest> store_remote_blob(blob);
-  runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
-  runtime::task<void> remove(std::string path);
+  runtime::task<void> move(std::string from, std::string to, write_options = {});
+  runtime::task<void> remove(std::string path, write_options = {});
   runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
   runtime::task<std::vector<ref>> refs();                 // name → change_id
   runtime::task<void> set_ref(std::string name, change_id);
@@ -704,6 +705,8 @@ class repository {
   runtime::task<std::vector<change>> log(log_options = {});
   runtime::task<snapshot> at(change_id);                  // historical tree
   runtime::task<document_state> document_at(change_id);   // historical refs, locks, and nesting
+  runtime::task<std::vector<drip>> drips();
+  runtime::task<stale_base_report> explain_stale(write_base, std::vector<std::string> paths);
   runtime::task<std::vector<tree_diff_entry>> diff(change_id old, change_id next,
                                                     tree_diff_options = {});
   runtime::task<std::vector<tree_diff_entry>> diff(digest old_tree, digest next_tree,
@@ -753,12 +756,25 @@ class repository {
   runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);
   runtime::task<tree> tree(digest);                              // a tree record from the store (historical snapshots)
   runtime::task<std::vector<std::byte>> blob(digest);            // a blob's bytes by digest
-  runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);   // mode-aware
+  runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);
   runtime::task<void> nest_ref(std::string path, repo_ref);      // a nested-repository placeholder without the repository present
 };
 struct change_input { std::vector<change_ref> parents; actor author; std::chrono::sys_seconds at; std::string message;
                       std::map<std::string, std::string> metadata; std::optional<std::string> ref; };
-struct write_options { std::uint32_t mode{0100644}; };
+struct agents_config { bool require_base; std::vector<std::string> actors; };
+struct write_base { change_id change; std::optional<journal_cursor> cursor; };
+struct write_options {
+  enum class stale_action : std::uint8_t { refuse, accept_if_disjoint, force };
+  std::uint32_t mode{0100644};
+  std::optional<write_base> base;
+  std::vector<std::string> depends_on;
+  stale_action on_stale{stale_action::refuse};
+};
+struct stale_path_change { std::string path; std::vector<line_change> hunks; };
+struct stale_base_report {
+  write_base base; change_id head; std::vector<stale_path_change> changed;
+  std::uint64_t since_drips;
+};
 // log_options gains: std::optional<change_id> from; bool first_parent{false};  (full DAG, topological order, by default)
 ```
 
@@ -776,9 +792,11 @@ inputs, and alternatives that preserve or reject the requested result set. Publi
 and the private index format are documented in [search.md](search.md).
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
-`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
+`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`, and `agents`.
 `repository_options` is a plain record with `checkpoint_interval`, caller-owned `store`, local
-`storage`, `encrypt`, `cache`, `verify`, `policy`, and `retention`. `storage` selects the
+`storage`, `encrypt`, `cache`, `verify`, `agents`, `policy`, and `retention`. The persisted
+`agents` record has `require_base` and a list of TAAP actor identifiers; the base requirement
+applies only to listed actors. `storage` selects the
 object-store hash algorithm and key custody when `store` is null. When `store` points to an open
 caller-owned store, that store's configuration is authoritative and the caller keeps it alive for
 the repository's lifetime. Pass the same placement to `create` and `open` so later writes and reads
@@ -1127,8 +1145,11 @@ probe.
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 
 ```cpp
+enum class stale_revalidation : std::uint8_t { disjoint, forced };
 struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
               std::vector<std::byte> signature; std::chrono::sys_seconds at;
+              std::optional<write_base> reasoned_from;
+              std::optional<stale_revalidation> revalidated;
               std::optional<digest> scan_attestation; std::optional<scan_block> block; bool redacted; };
 struct scan_allow_rule { std::string path; std::vector<std::string> detectors; };
 struct scan_configuration { std::vector<scan_allow_rule> allow;
