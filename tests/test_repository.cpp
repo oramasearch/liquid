@@ -102,6 +102,44 @@ auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
     return keys;
 }
 
+auto test_session(std::byte first) -> liquid::session_id {
+    auto output = liquid::session_id{};
+    output.bytes.front() = first;
+    return output;
+}
+
+auto operation_with_kind(liquid::repository& repository, std::string_view kind)
+    -> liquid::result<liquid::operation_record> {
+    auto operations = liquid::runtime::block_on(repository.operations());
+    if (!operations) {
+        return std::unexpected(operations.error());
+    }
+    const auto found = std::ranges::find(*operations, kind, &liquid::operation_record::kind);
+    if (found == operations->end()) {
+        return std::unexpected(
+            liquid::error{liquid::errc::not_found, "operation kind is absent", std::string{kind}});
+    }
+    return *found;
+}
+
+auto exported_items(liquid::repository& repository)
+    -> liquid::result<std::vector<liquid::sync_item>> {
+    auto cursor = liquid::journal_cursor{};
+    auto output = std::vector<liquid::sync_item>{};
+    for (;;) {
+        auto page = std::vector<liquid::sync_item>(32);
+        auto exported = liquid::runtime::block_on(repository.export_drips(cursor, page));
+        if (!exported) {
+            return std::unexpected(exported.error());
+        }
+        output.insert(output.end(), page.begin(), page.begin() + exported->count);
+        cursor = exported->cursor;
+        if (exported->done) {
+            return output;
+        }
+    }
+}
+
 TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {
     temporary_repository location;
     auto opened_store =
@@ -1040,6 +1078,213 @@ TEST(Repository, operations_are_newest_first_with_their_metadata) {
     EXPECT_FALSE(operations->front().by.taap_id.empty());
     EXPECT_GT(operations->front().at.time_since_epoch().count(), 0);
     EXPECT_EQ(operations->back().kind, "write");
+}
+
+TEST(Repository, undo_by_operation_id_reverses_write_record_and_lock) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("drip.txt", content("value"))));
+    const auto write = operation_with_kind(repository, "write");
+    ASSERT_TRUE(write) << write.error().message;
+    const auto write_undo = liquid::runtime::block_on(repository.undo(write->id));
+    ASSERT_TRUE(write_undo) << write_undo.error().message;
+    ASSERT_EQ(write_undo->applied.size(), 1U);
+    EXPECT_FALSE(liquid::runtime::block_on(repository.read("drip.txt")));
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("drip.txt", content("base"))));
+    const auto base = liquid::runtime::block_on(repository.cut("base"));
+    ASSERT_TRUE(base) << base.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("drip.txt", content("reparented"))));
+    const auto rebased = liquid::runtime::block_on(repository.cut("reparent"));
+    ASSERT_TRUE(rebased) << rebased.error().message;
+    const auto record = operation_with_kind(repository, "record");
+    ASSERT_TRUE(record) << record.error().message;
+    const auto record_undo = liquid::runtime::block_on(repository.undo(record->id));
+    ASSERT_TRUE(record_undo) << record_undo.error().message;
+    const auto refs = liquid::runtime::block_on(repository.refs());
+    ASSERT_TRUE(refs) << refs.error().message;
+    const auto main = std::ranges::find(*refs, "main", &liquid::ref::name);
+    ASSERT_NE(main, refs->end());
+    EXPECT_EQ(main->id.value.bytes, base->value.bytes);
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.lock("drip.txt")));
+    const auto lock = operation_with_kind(repository, "lock");
+    ASSERT_TRUE(lock) << lock.error().message;
+    const auto lock_undo = liquid::runtime::block_on(repository.undo(lock->id));
+    ASSERT_TRUE(lock_undo) << lock_undo.error().message;
+    ASSERT_EQ(lock_undo->applied.size(), 1U);
+    EXPECT_TRUE(
+        liquid::runtime::block_on(repository.write("drip.txt", content("after lock undo"))));
+}
+
+TEST(Repository, undo_by_operation_id_reverses_import_merge) {
+    temporary_repository source_location;
+    temporary_repository destination_location;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_location.path()));
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_location.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(destination) << destination.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("remote.txt", content("remote"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("remote")));
+    const auto items = exported_items(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    const auto imported = liquid::runtime::block_on(destination->import_drips(*items));
+    ASSERT_TRUE(imported) << imported.error().message;
+    const auto before_undo = liquid::runtime::block_on(destination->root());
+    ASSERT_TRUE(before_undo) << before_undo.error().message;
+    EXPECT_EQ(before_undo->entries.size(), 1U);
+
+    const auto merge = operation_with_kind(*destination, "merge");
+    ASSERT_TRUE(merge) << merge.error().message;
+    const auto undone = liquid::runtime::block_on(destination->undo(merge->id));
+    ASSERT_TRUE(undone) << undone.error().message;
+    ASSERT_EQ(undone->applied.size(), 1U);
+    const auto after_undo = liquid::runtime::block_on(destination->root());
+    ASSERT_TRUE(after_undo) << after_undo.error().message;
+    EXPECT_TRUE(after_undo->entries.empty());
+}
+
+TEST(Repository, undo_skips_a_path_changed_by_a_newer_operation) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file.txt", content("first"))));
+    const auto first = operation_with_kind(repository, "write");
+    ASSERT_TRUE(first) << first.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file.txt", content("second"))));
+
+    const auto undone = liquid::runtime::block_on(repository.undo(first->id));
+    ASSERT_TRUE(undone) << undone.error().message;
+    EXPECT_TRUE(undone->applied.empty());
+    ASSERT_EQ(undone->skipped.size(), 1U);
+    EXPECT_EQ(undone->skipped.front().path, "file.txt");
+    const auto current = liquid::runtime::block_on(repository.read("file.txt"));
+    ASSERT_TRUE(current) << current.error().message;
+    EXPECT_EQ(text(*current), "second");
+}
+
+TEST(Repository, local_undo_preserves_a_concurrent_remote_write) {
+    temporary_repository source_location;
+    temporary_repository left_location;
+    temporary_repository right_location;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_location.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("base")));
+    auto left = liquid::runtime::block_on(
+        liquid::repository_detail::testing::clone(*source, left_location.path()));
+    auto right = liquid::runtime::block_on(
+        liquid::repository_detail::testing::clone(*source, right_location.path()));
+    ASSERT_TRUE(left) << left.error().message;
+    ASSERT_TRUE(right) << right.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(left->write("a.txt", content("left"))));
+    const auto local_write = operation_with_kind(*left, "write");
+    ASSERT_TRUE(local_write) << local_write.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(right->write("b.txt", content("right"))));
+    auto synchronized =
+        liquid::runtime::block_on(liquid::repository_detail::testing::sync(*left, *right));
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+
+    const auto undone = liquid::runtime::block_on(left->undo(local_write->id));
+    ASSERT_TRUE(undone) << undone.error().message;
+    ASSERT_EQ(undone->applied.size(), 1U);
+    EXPECT_FALSE(liquid::runtime::block_on(left->read("a.txt")));
+    synchronized =
+        liquid::runtime::block_on(liquid::repository_detail::testing::sync(*left, *right));
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+    EXPECT_FALSE(liquid::runtime::block_on(left->read("a.txt")));
+    EXPECT_FALSE(liquid::runtime::block_on(right->read("a.txt")));
+    const auto left_remote = liquid::runtime::block_on(left->read("b.txt"));
+    const auto right_remote = liquid::runtime::block_on(right->read("b.txt"));
+    ASSERT_TRUE(left_remote) << left_remote.error().message;
+    ASSERT_TRUE(right_remote) << right_remote.error().message;
+    EXPECT_EQ(text(*left_remote), "right");
+    EXPECT_EQ(text(*right_remote), "right");
+}
+
+TEST(Repository, session_undo_reverses_all_writes_or_one_file) {
+    temporary_repository location;
+    const auto base_session = test_session(std::byte{1});
+    const auto work_session = test_session(std::byte{2});
+    auto base_options = liquid::repository_options{};
+    base_options.session = base_session;
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create(location.path(), std::move(base_options)));
+    ASSERT_TRUE(created) << created.error().message;
+    for (auto file = 0; file < 5; ++file) {
+        ASSERT_TRUE(liquid::runtime::block_on(created->write(
+            "file-" + std::to_string(file), content("base-" + std::to_string(file)))));
+    }
+    *created = {};
+    auto work_options = liquid::repository_options{};
+    work_options.session = work_session;
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::open(location.path(), work_options));
+    ASSERT_TRUE(repository) << repository.error().message;
+    for (auto write = 0; write < 40; ++write) {
+        const auto file = write % 5;
+        ASSERT_TRUE(liquid::runtime::block_on(repository->write(
+            "file-" + std::to_string(file), content("write-" + std::to_string(write)))));
+    }
+    const auto undone = liquid::runtime::block_on(repository->undo_session(work_session));
+    ASSERT_TRUE(undone) << undone.error().message;
+    EXPECT_EQ(undone->applied.size(), 40U);
+    for (auto file = 0; file < 5; ++file) {
+        const auto value =
+            liquid::runtime::block_on(repository->read("file-" + std::to_string(file)));
+        ASSERT_TRUE(value) << value.error().message;
+        EXPECT_EQ(text(*value), "base-" + std::to_string(file));
+    }
+
+    const auto selective_session = test_session(std::byte{3});
+    auto selective_options = liquid::repository_options{};
+    selective_options.session = selective_session;
+    *repository = {};
+    repository = liquid::runtime::block_on(
+        liquid::repository::open(location.path(), std::move(selective_options)));
+    ASSERT_TRUE(repository) << repository.error().message;
+    for (auto write = 0; write < 40; ++write) {
+        const auto file = write % 5;
+        ASSERT_TRUE(liquid::runtime::block_on(repository->write(
+            "file-" + std::to_string(file), content("selective-" + std::to_string(write)))));
+    }
+    const auto selective = liquid::runtime::block_on(
+        repository->undo_session(selective_session, liquid::undo_options{.paths = {"file-2"}}));
+    ASSERT_TRUE(selective) << selective.error().message;
+    EXPECT_EQ(selective->applied.size(), 8U);
+    const auto restored = liquid::runtime::block_on(repository->read("file-2"));
+    ASSERT_TRUE(restored) << restored.error().message;
+    EXPECT_EQ(text(*restored), "base-2");
+    const auto untouched = liquid::runtime::block_on(repository->read("file-1"));
+    ASSERT_TRUE(untouched) << untouched.error().message;
+    EXPECT_EQ(text(*untouched), "selective-36");
+}
+
+TEST(Repository, document_at_returns_historical_references) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("first"))));
+    const auto first = liquid::runtime::block_on(repository.cut("first"));
+    ASSERT_TRUE(first) << first.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(repository.set_ref("saved", *first)));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("second"))));
+    const auto second = liquid::runtime::block_on(repository.cut("second"));
+    ASSERT_TRUE(second) << second.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(repository.set_ref("saved", *second)));
+
+    const auto historical = liquid::runtime::block_on(repository.document_at(*second));
+    ASSERT_TRUE(historical) << historical.error().message;
+    const auto saved = historical->refs.find("saved");
+    ASSERT_NE(saved, historical->refs.end());
+    EXPECT_EQ(saved->second.value.bytes, first->value.bytes);
 }
 
 TEST(Repository, cross_directory_move_is_recovered_before_cut) {

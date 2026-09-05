@@ -467,6 +467,108 @@ auto decode_repo_ref(const cbor::value& value) -> result<repo_ref> {
     return repo_ref{*decoded_repository, *decoded_id};
 }
 
+auto encode_document_state(const document_state& value) -> cbor::value {
+    auto refs = cbor::value::array{};
+    for (const auto& [name, id] : value.refs) {
+        refs.push_back(map({{"name", cbor::value{name}}, {"id", encode_change_id(id)}}));
+    }
+    auto locks = cbor::value::array{};
+    for (const auto& lock : value.locks) {
+        locks.emplace_back(lock);
+    }
+    auto nested = cbor::value::array{};
+    for (const auto& pointer : value.nested) {
+        nested.push_back(map(
+            {{"path", cbor::value{pointer.path}}, {"ref", encode_repo_ref(pointer.reference)}}));
+    }
+    return map({{"refs", cbor::value{std::move(refs)}},
+                {"locks", cbor::value{std::move(locks)}},
+                {"nested", cbor::value{std::move(nested)}}});
+}
+
+auto decode_document_state(const cbor::value& value) -> result<document_state> {
+    const auto* refs_value = find(value, "refs");
+    const auto* locks_value = find(value, "locks");
+    const auto* nested_value = find(value, "nested");
+    const auto* refs = refs_value ? std::get_if<cbor::value::array>(&refs_value->data) : nullptr;
+    const auto* nested =
+        nested_value ? std::get_if<cbor::value::array>(&nested_value->data) : nullptr;
+    auto locks = decode_text_array(locks_value, "change document locks");
+    if (!refs || !nested || !locks) {
+        return std::unexpected(corrupt("invalid change document state"));
+    }
+    auto output = document_state{};
+    output.locks = std::move(*locks);
+    for (const auto& item : *refs) {
+        const auto* name_value = find(item, "name");
+        const auto* id_value = find(item, "id");
+        const auto* name = name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+        auto id = id_value ? decode_change_id(*id_value)
+                           : result<change_id>{std::unexpected(corrupt("missing document ref"))};
+        if (!name || !id || !output.refs.emplace(*name, *id).second) {
+            return std::unexpected(corrupt("invalid change document ref"));
+        }
+    }
+    for (const auto& item : *nested) {
+        const auto* path_value = find(item, "path");
+        const auto* ref_value = find(item, "ref");
+        const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+        auto reference = ref_value
+                             ? decode_repo_ref(*ref_value)
+                             : result<repo_ref>{std::unexpected(corrupt("missing nested pointer"))};
+        if (!path || !reference) {
+            return std::unexpected(corrupt("invalid nested pointer"));
+        }
+        output.nested.push_back({*path, *reference});
+    }
+    return output;
+}
+
+auto encode_document_heads(std::span<const document_heads> values) -> cbor::value {
+    auto output = cbor::value::array{};
+    for (const auto& directory : values) {
+        auto heads = cbor::value::array{};
+        for (const auto& head : directory.values) {
+            heads.push_back(byte_string(head));
+        }
+        output.push_back(map({{"directory", encode_node_id(directory.directory)},
+                              {"heads", cbor::value{std::move(heads)}}}));
+    }
+    return cbor::value{std::move(output)};
+}
+
+auto decode_document_heads(const cbor::value& value) -> result<std::vector<document_heads>> {
+    const auto* items = std::get_if<cbor::value::array>(&value.data);
+    if (!items) {
+        return std::unexpected(corrupt("invalid change document heads"));
+    }
+    auto output = std::vector<document_heads>{};
+    for (const auto& item : *items) {
+        const auto* directory_value = find(item, "directory");
+        const auto* heads_value = find(item, "heads");
+        const auto* heads =
+            heads_value ? std::get_if<cbor::value::array>(&heads_value->data) : nullptr;
+        auto directory = directory_value
+                             ? decode_node_id(*directory_value)
+                             : result<node_id>{std::unexpected(corrupt("missing head directory"))};
+        if (!directory || !heads) {
+            return std::unexpected(corrupt("invalid change document heads"));
+        }
+        auto decoded = document_heads{.directory = *directory};
+        for (const auto& head_value : *heads) {
+            const auto* head = std::get_if<cbor::value::bytes>(&head_value.data);
+            if (!head || head->size() != std::array<std::byte, 32>{}.size()) {
+                return std::unexpected(corrupt("invalid change document head"));
+            }
+            auto bytes = std::array<std::byte, 32>{};
+            std::ranges::copy(*head, bytes.begin());
+            decoded.values.push_back(bytes);
+        }
+        output.push_back(std::move(decoded));
+    }
+    return output;
+}
+
 auto decode_action_timing(const cbor::value& value) -> result<action_timing> {
     const auto* queued_value = find(value, "queued_ms");
     const auto* sandbox_value = find(value, "sandbox_ms");
@@ -655,6 +757,9 @@ auto encode(const tree& value) -> result<std::vector<std::byte>> {
 
 auto encode_change_body_value(const change& value, bool include_signature)
     -> result<std::vector<std::byte>> {
+    if (value.record_version < 1 || value.record_version > 2) {
+        return std::unexpected(corrupt("unsupported change record version"));
+    }
     auto parents = cbor::value::array{};
     for (const auto& parent : value.parents)
         parents.push_back(encode_change_ref(parent));
@@ -669,7 +774,7 @@ auto encode_change_body_value(const change& value, bool include_signature)
         conflicts.push_back(map({{"path", cbor::value{item.path}}, {"refs", std::move(refs)}}));
     }
     auto fields = cbor::value::map{
-        {"v", cbor::value{std::uint64_t{1}}},
+        {"v", cbor::value{value.record_version}},
         {"kind", "change"},
         {"parents", std::move(parents)},
         {"author", cbor::value{value.author.taap_id}},
@@ -679,6 +784,10 @@ auto encode_change_body_value(const change& value, bool include_signature)
         {"metadata", cbor::value{std::move(metadata)}},
         {"conflicts", std::move(conflicts)},
         {"symbols", value.symbols ? encode_digest(*value.symbols) : cbor::value{cbor::null{}}}};
+    if (value.record_version >= 2) {
+        fields.emplace_back("document", encode_document_state(value.document));
+        fields.emplace_back("heads", encode_document_heads(value.heads));
+    }
     if (include_signature) {
         fields.emplace_back("sig", cbor::value{value.sig});
     }
@@ -1089,7 +1198,7 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
 
 auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> hash_algorithm)
     -> result<change> {
-    auto source = decode(bytes, "change");
+    auto source = decode_versioned(bytes, "change", 2);
     if (!source)
         return std::unexpected(source.error());
     const auto* parents = find(*source, "parents");
@@ -1098,6 +1207,9 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
     const auto* message = find(*source, "message");
     const auto* root = find(*source, "root");
     const auto* metadata = find(*source, "metadata");
+    const auto* version_value = find(*source, "v");
+    const auto* version =
+        version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
     const auto* parent_values = parents ? std::get_if<cbor::value::array>(&parents->data) : nullptr;
     const auto* who = author ? std::get_if<std::string>(&author->data) : nullptr;
     const auto* signed_when = at ? std::get_if<std::int64_t>(&at->data) : nullptr;
@@ -1106,7 +1218,7 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
     if (!parent_values || !who ||
         (!signed_when &&
          (!unsigned_when || *unsigned_when > std::numeric_limits<std::int64_t>::max())) ||
-        !title || !root)
+        !title || !root || !version)
         return std::unexpected(corrupt("invalid change record"));
     auto root_digest = decode_digest(*root);
     if (!root_digest)
@@ -1122,7 +1234,10 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
                   {},
                   {},
                   std::nullopt,
-                  {}};
+                  {},
+                  {},
+                  {},
+                  *version};
     for (const auto& item : *parent_values) {
         auto parent = decode_change_ref(item);
         if (!parent)
@@ -1171,6 +1286,22 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
         output.symbols = *symbol;
     }
     output.sig = *sig;
+    if (*version >= 2) {
+        const auto* document_value = find(*source, "document");
+        const auto* heads_value = find(*source, "heads");
+        auto document =
+            document_value
+                ? decode_document_state(*document_value)
+                : result<document_state>{std::unexpected(corrupt("missing change document"))};
+        auto heads = heads_value ? decode_document_heads(*heads_value)
+                                 : result<std::vector<document_heads>>{
+                                       std::unexpected(corrupt("missing change heads"))};
+        if (!document || !heads) {
+            return std::unexpected(document ? heads.error() : document.error());
+        }
+        output.document = std::move(*document);
+        output.heads = std::move(*heads);
+    }
     if (hash_algorithm) {
         auto digest = digest_of(*hash_algorithm, bytes);
         if (!digest)

@@ -702,7 +702,8 @@ class repository {
   runtime::task<void> set_ref(std::string name, change_id);
   result<repository_status> status();                     // includes bytes still remote in this tree
   runtime::task<std::vector<change>> log(log_options = {});
-  runtime::task<snapshot> at(change_id);                 // time travel
+  runtime::task<snapshot> at(change_id);                  // historical tree
+  runtime::task<document_state> document_at(change_id);   // historical refs, locks, and nesting
   runtime::task<std::vector<tree_diff_entry>> diff(change_id old, change_id next,
                                                     tree_diff_options = {});
   runtime::task<std::vector<tree_diff_entry>> diff(digest old_tree, digest next_tree,
@@ -725,7 +726,8 @@ class repository {
   runtime::task<void> combine(repository other, std::optional<std::string> at);
   runtime::task<std::vector<conflict>> conflicts();      // #40: conflicts are values
   runtime::task<std::vector<operation_record>> operations(log_options = {}); // newest first
-  runtime::task<void> undo(op_id);                       // #41: the operation log
+  runtime::task<undo_report> undo(op_id);
+  runtime::task<undo_report> undo_session(session_id, undo_options = {});
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
   runtime::task<digest> store_attestation(attestation);    // store canonical evidence; no trust implied
@@ -810,16 +812,31 @@ means forever); result rules have a base duration scaled by recorded execution c
 the sorted key-version set used by its blobs. `readability_report` contains those revision rows and
 the three required rotation, revocation, and metadata-disclosure statements.
 
-`operation_record` is `{ op_id id, std::string kind, std::string from, std::string to, actor by,
-std::chrono::sys_seconds at }`. Each operation ID is unique, so it selects one operation for
-`undo`. `operations()` returns the repository document's recorded operations newest first.
+`session_id` is a printable 16-byte identifier. `repository_options::session` fixes it for an
+opened handle; an omitted value generates a random identifier per handle. `operation_record` is
+`{ op_id id, std::string kind, std::string from, std::string to, actor by,
+std::chrono::sys_seconds at, session_id session }`. Each operation ID is unique, so it selects one
+operation for `undo`. `operations()` returns the repository document's recorded operations newest
+first. `to_string(session_id)` and `parse_session_id` use 32 lowercase hexadecimal digits.
+
+`undo_report` has ordered `applied` operation IDs and `skipped` entries of `{ op, path, reason }`.
+An inverse applies only where current state still matches that operation's recorded after-state.
+`undo_session` reverses matching operations newest first and accepts optional path and drip-ID
+filters through `undo_options`; each affected directory is committed as one transaction and no
+candidate document is published when planning or a transaction fails.
+
+`document_state` contains the reference map, lock paths, and `{ path, repo_ref }` nested pointers
+recorded in a version 2 change. `document_at` validates that change's directory heads through
+full-history archives and never reads from or mutates the active shallow documents. Version 1
+change records continue to support `at`, but have no document projection.
 
 `repository::collect` checkpoints the working tree, retains leases for that tree, every current ref
 head, the checkpoint document, and its lazy directory documents, then delegates to
 `store::collect`. Repository callers use this operation instead of collecting the repository's store
 directly.
-Existing repository documents without operation metadata remain readable; their records return an
-empty actor and epoch timestamp.
+Existing repository documents without the added operation metadata remain readable; their records
+return an empty actor, epoch timestamp, and zero session. Their legacy operations cannot be undone
+when no inverse effects were recorded.
 
 Tree diffs match paths by `node_id`, expose independent change kinds plus both blob and mode sides,
 and read UTF-8 blob contents only when `tree_diff_options::text` requests `line_change` hunks.
