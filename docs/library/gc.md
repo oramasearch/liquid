@@ -48,9 +48,13 @@ Each pack gets a bitmap indexed by physical frame position for the epoch. A set 
 bitmap is working state only: it is never consulted by recovery or index reconstruction. Any frame
 at or after the high-water position is implicitly live, including a put that completes while
 marking is in progress; the collector asserts that it never adds such a frame to a tombstone set.
-Marking releases the store mutation lock and yields to the `io_context` between packs. The final
-sweep takes the mutation lock again, includes roots and objects created during marking, and treats
-a lease created during the epoch as after the high-water mark for this sweep.
+Marking releases the store mutation lock and yields to its executor between packs with
+`runtime::yield`. The final
+sweep takes the mutation lock again, reloads the committed tombstone manifest so that tombstones
+added by an eviction or redaction during marking stay dead, includes roots and objects created
+during marking, and treats a lease created during the epoch as after the high-water mark for this
+sweep. The mutation lock is the store's thread-safe asynchronous mutex; see the mutation mutex
+section of [store.md](store.md).
 
 The durable order is:
 

@@ -104,6 +104,7 @@ template <class T> result<T> block_on(task<T>);                // run to complet
 void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared runtime context
 void spawn_serial(task<void>, std::function<void(result<void>)> on_done); // fire-and-forget on a single-runner I/O context
 template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking CPU work on the compute pool; resumes on the caller's executor
+detail::yield_awaiter yield() noexcept;                            // reschedule through the caller's executor; no timer, no stop callback
 }
 ```
 
@@ -119,6 +120,7 @@ capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard
 | `spawn` | long-lived I/O work | the process-wide shared runtime context |
 | `spawn_serial` | ordered long-lived I/O work | the process-wide single-runner event context |
 | `offload` | blocking CPU work | the compute pool; resumes on the caller executor |
+| `yield` | let other work run between steps of a long loop | posts the continuation to the caller executor |
 
 ### `liquid/hash.hpp`
 
