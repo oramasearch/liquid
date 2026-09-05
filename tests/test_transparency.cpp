@@ -255,6 +255,10 @@ TEST(transparency, verifies_lake_conformance_fixture) {
 
 TEST(transparency, refuses_modified_missing_reordered_and_substituted_tiles) {
     auto data = load_fixture();
+    auto modified = fixture_source{data};
+    modified.data_.tiles[0].bytes[16] ^= std::byte{1};
+    EXPECT_FALSE(modified.data_.tiles[0].entries());
+
     auto missing = fixture_source{data};
     missing.missing_tile = true;
     auto missing_client = transparency::log_client{missing};
@@ -276,7 +280,7 @@ TEST(transparency, refuses_modified_missing_reordered_and_substituted_tiles) {
         liquid::runtime::block_on(substituted_client.verify_tiles(substituted.data_.checkpoint)));
 }
 
-TEST(transparency, refuses_unverified_parent_hashes_and_forged_proofs) {
+TEST(transparency, cve_2026_56865_refuses_a_valid_leaf_tile_with_wrong_parent) {
     auto data = load_fixture();
     auto parent = fixture_source{data};
     parent.data_.tiles[1].bytes[17] ^= std::byte{1};
