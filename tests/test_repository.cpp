@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -40,19 +42,55 @@ auto content(std::string value) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(value.data() + value.size())};
 }
 
+auto physical_copies(const std::filesystem::path& packs, const liquid::digest& id) -> std::size_t {
+    auto copies = std::size_t{};
+    for (const auto& entry : std::filesystem::directory_iterator(packs)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".pack") {
+            continue;
+        }
+        auto input = std::ifstream{entry.path(), std::ios::binary};
+        const auto raw = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+        auto offset = std::size_t{16};
+        while (offset + 49 <= raw.size() &&
+               std::string_view{raw.data() + offset, 7} == "LQFRAM\x01") {
+            auto compressed = std::uint32_t{};
+            for (auto byte = 0U; byte != 4; ++byte) {
+                compressed |=
+                    static_cast<std::uint32_t>(static_cast<unsigned char>(raw[offset + 12 + byte]))
+                    << (byte * 8U);
+            }
+            if (compressed > raw.size() - offset - 49) {
+                break;
+            }
+            const auto algorithm = static_cast<unsigned char>(raw[offset + 16]);
+            const auto* digest_bytes = reinterpret_cast<const std::byte*>(raw.data() + offset + 17);
+            if (algorithm == static_cast<unsigned char>(id.alg) &&
+                std::ranges::equal(std::span{digest_bytes, id.bytes.size()}, id.bytes)) {
+                ++copies;
+            }
+            offset += 49 + compressed;
+        }
+    }
+    return copies;
+}
+
 auto text(const std::vector<std::byte>& value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
+auto has_change(const liquid::tree_diff_entry& entry, liquid::tree_diff_kind kind) -> bool {
+    return std::ranges::find(entry.changes, kind) != entry.changes.end();
+}
+
 auto sha256_options() -> liquid::repository_options {
     liquid::repository_options options;
-    options.store.hash_algorithm = liquid::algorithm::sha256;
+    options.storage.hash_algorithm = liquid::algorithm::sha256;
     return options;
 }
 
 auto encrypted_options(const std::shared_ptr<liquid::keyring>& keys) -> liquid::repository_options {
     liquid::repository_options options;
-    options.store.keys = keys;
+    options.storage.keys = keys;
     return options;
 }
 
@@ -62,6 +100,46 @@ auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
                     .has_value());
     EXPECT_TRUE(keys->set_default_key_id("repository").has_value());
     return keys;
+}
+
+TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {
+    temporary_repository location;
+    auto opened_store =
+        liquid::runtime::block_on(liquid::store::open(location.path() / "customer-store"));
+    ASSERT_TRUE(opened_store);
+    auto shared_store = std::move(*opened_store);
+    auto options = liquid::repository_options{};
+    options.store = &shared_store;
+    auto first = liquid::runtime::block_on(liquid::repository::create("first", options));
+    auto second = liquid::runtime::block_on(liquid::repository::create("second", options));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(second);
+
+    auto payload = std::vector<std::byte>(4096, std::byte{0x5a});
+    auto expected = liquid::hash(liquid::algorithm::blake3, payload);
+    ASSERT_TRUE(expected);
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("shared.bin", payload)));
+    ASSERT_TRUE(liquid::runtime::block_on(second->write("shared.bin", payload)));
+    ASSERT_TRUE(liquid::runtime::block_on(first->cut("first")));
+    ASSERT_TRUE(liquid::runtime::block_on(second->cut("second")));
+    EXPECT_EQ(physical_copies(location.path() / "customer-store" / "packs", *expected), 1U);
+
+    auto collected = liquid::runtime::block_on(first->collect());
+    ASSERT_TRUE(collected);
+    auto still_present = liquid::runtime::block_on(second->read("shared.bin"));
+    ASSERT_TRUE(still_present);
+    EXPECT_EQ(*still_present, payload);
+
+    *first = liquid::repository{};
+    *second = liquid::repository{};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open("second", options));
+    ASSERT_TRUE(reopened);
+    auto restored = liquid::runtime::block_on(reopened->read("shared.bin"));
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(*restored, payload);
+    auto store_still_open = liquid::runtime::block_on(shared_store.contains(*expected));
+    ASSERT_TRUE(store_still_open);
+    EXPECT_TRUE(*store_still_open);
 }
 
 void expect_sha256(const liquid::digest& value) {
@@ -361,6 +439,192 @@ TEST(Repository, tree_and_blob_read_historical_records) {
     EXPECT_EQ(text(*contents), "contents");
 }
 
+TEST(Repository, diff_reports_path_changes_and_optional_text_hunks) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("old-name", content("move\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("modified", content("one\ntwo\nthree\nfour\nfive\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("removed", content("remove\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("mode", content("mode\n"))));
+    const auto before = liquid::runtime::block_on(repository.cut("before"));
+    ASSERT_TRUE(before) << before.error().message;
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("old-name", "new-name")));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("modified", content("one\nchanged\nthree\nchanged-again\nfive\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.remove("removed")));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("mode", content("mode\n"), {.mode = 0100755})));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("added", content("add\n"))));
+    const auto after = liquid::runtime::block_on(repository.cut("after"));
+    ASSERT_TRUE(after) << after.error().message;
+
+    const auto changes =
+        liquid::runtime::block_on(repository.diff(*before, *after, {.text = true}));
+    ASSERT_TRUE(changes) << changes.error().message;
+    ASSERT_EQ(changes->size(), 5U);
+
+    const auto moved = std::ranges::find(*changes, "new-name", &liquid::tree_diff_entry::path);
+    ASSERT_NE(moved, changes->end());
+    EXPECT_EQ(moved->old_path, "old-name");
+    EXPECT_TRUE(has_change(*moved, liquid::tree_diff_kind::moved));
+    EXPECT_TRUE(moved->old_blob);
+    EXPECT_TRUE(moved->new_blob);
+
+    const auto modified = std::ranges::find(*changes, "modified", &liquid::tree_diff_entry::path);
+    ASSERT_NE(modified, changes->end());
+    EXPECT_TRUE(has_change(*modified, liquid::tree_diff_kind::modified));
+    ASSERT_TRUE(modified->line_hunks);
+    ASSERT_EQ(modified->line_hunks->size(), 2U);
+    EXPECT_EQ(modified->line_hunks->at(0).old_line, 2U);
+    EXPECT_EQ(modified->line_hunks->at(1).old_line, 4U);
+
+    const auto removed = std::ranges::find(*changes, "removed", &liquid::tree_diff_entry::path);
+    ASSERT_NE(removed, changes->end());
+    EXPECT_TRUE(has_change(*removed, liquid::tree_diff_kind::removed));
+    EXPECT_TRUE(removed->old_blob);
+    EXPECT_FALSE(removed->new_blob);
+    ASSERT_TRUE(removed->line_hunks);
+    ASSERT_EQ(removed->line_hunks->size(), 1U);
+    EXPECT_EQ(removed->line_hunks->front().old_count, 1U);
+
+    const auto added = std::ranges::find(*changes, "added", &liquid::tree_diff_entry::path);
+    ASSERT_NE(added, changes->end());
+    ASSERT_TRUE(added->line_hunks);
+    ASSERT_EQ(added->line_hunks->size(), 1U);
+    EXPECT_EQ(added->line_hunks->front().new_count, 1U);
+
+    const auto mode = std::ranges::find(*changes, "mode", &liquid::tree_diff_entry::path);
+    ASSERT_NE(mode, changes->end());
+    EXPECT_TRUE(has_change(*mode, liquid::tree_diff_kind::mode_changed));
+    EXPECT_FALSE(has_change(*mode, liquid::tree_diff_kind::modified));
+
+    const auto old_snapshot = liquid::runtime::block_on(repository.at(*before));
+    const auto new_snapshot = liquid::runtime::block_on(repository.at(*after));
+    ASSERT_TRUE(old_snapshot);
+    ASSERT_TRUE(new_snapshot);
+    const auto tree_changes =
+        liquid::runtime::block_on(repository.diff(old_snapshot->root, new_snapshot->root));
+    ASSERT_TRUE(tree_changes);
+    EXPECT_EQ(tree_changes->size(), changes->size());
+    EXPECT_TRUE(std::ranges::all_of(
+        *tree_changes, [](const auto& entry) { return !entry.line_hunks.has_value(); }));
+}
+
+TEST(Repository, text_anchors_follow_hunks_and_node_identity_moves) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write(
+        "notes.txt", content("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("removed.txt", content("gone\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("stable.txt", content("same\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("shrink.txt", content("a\nb\nc\n"))));
+    const auto before = liquid::runtime::block_on(repository.cut("before anchors"));
+    ASSERT_TRUE(before) << before.error().message;
+
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("notes.txt", "renamed.txt")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write(
+        "renamed.txt", content("zero\none\ntwo\nthree\nFOUR\nfive\nseven\neight\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.remove("removed.txt")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("shrink.txt", content("b\nc\n"))));
+    const auto after = liquid::runtime::block_on(repository.cut("after anchors"));
+    ASSERT_TRUE(after) << after.error().message;
+
+    const auto anchors = std::to_array<liquid::text_anchor>({
+        {*before, "notes.txt", 7, 2},
+        {*before, "notes.txt", 4, 3},
+        {*before, "notes.txt", 1, 1},
+        {*before, "notes.txt", 6, 4},
+        {*before, "removed.txt", 1, 1},
+        {*before, "stable.txt", 1, 3},
+        {*before, "shrink.txt", 3, 1},
+    });
+    const auto mapped = liquid::runtime::block_on(repository.map_anchors(anchors, *after));
+    ASSERT_TRUE(mapped) << mapped.error().message;
+    ASSERT_EQ(mapped->size(), anchors.size());
+
+    EXPECT_EQ(mapped->at(0).path, "renamed.txt");
+    EXPECT_EQ(mapped->at(0).line, 7U);
+    EXPECT_EQ(mapped->at(0).column, 2U);
+    EXPECT_TRUE(mapped->at(0).moved);
+    EXPECT_FALSE(mapped->at(0).approximate);
+    EXPECT_FALSE(mapped->at(0).deleted);
+
+    EXPECT_EQ(mapped->at(1).path, "renamed.txt");
+    EXPECT_EQ(mapped->at(1).line, 5U);
+    EXPECT_EQ(mapped->at(1).column, 3U);
+    EXPECT_TRUE(mapped->at(1).moved);
+    EXPECT_TRUE(mapped->at(1).approximate);
+    EXPECT_FALSE(mapped->at(1).deleted);
+
+    EXPECT_EQ(mapped->at(2).line, 2U);
+    EXPECT_TRUE(mapped->at(2).moved);
+    EXPECT_FALSE(mapped->at(2).approximate);
+    EXPECT_FALSE(mapped->at(2).deleted);
+
+    EXPECT_EQ(mapped->at(3).path, "renamed.txt");
+    EXPECT_EQ(mapped->at(3).line, 7U);
+    EXPECT_EQ(mapped->at(3).column, 1U);
+    EXPECT_TRUE(mapped->at(3).moved);
+    EXPECT_FALSE(mapped->at(3).approximate);
+    EXPECT_TRUE(mapped->at(3).deleted);
+
+    EXPECT_EQ(mapped->at(4).path, "removed.txt");
+    EXPECT_TRUE(mapped->at(4).deleted);
+
+    EXPECT_EQ(mapped->at(5).path, "stable.txt");
+    EXPECT_EQ(mapped->at(5).line, 1U);
+    EXPECT_EQ(mapped->at(5).column, 3U);
+    EXPECT_FALSE(mapped->at(5).moved);
+    EXPECT_FALSE(mapped->at(5).approximate);
+    EXPECT_FALSE(mapped->at(5).deleted);
+
+    EXPECT_EQ(mapped->at(6).path, "shrink.txt");
+    EXPECT_EQ(mapped->at(6).line, 2U);
+    EXPECT_TRUE(mapped->at(6).moved);
+    EXPECT_FALSE(mapped->at(6).approximate);
+    EXPECT_FALSE(mapped->at(6).deleted);
+
+    const auto single = liquid::runtime::block_on(repository.map_anchor(
+        {.change = *before, .path = "notes.txt", .line = 8, .column = 1}, *after));
+    ASSERT_TRUE(single) << single.error().message;
+    EXPECT_EQ(single->path, "renamed.txt");
+    EXPECT_EQ(single->line, 8U);
+    EXPECT_TRUE(single->moved);
+    EXPECT_FALSE(single->approximate);
+    EXPECT_FALSE(single->deleted);
+}
+
+TEST(Repository, diff_surfaces_recorded_conflict_values) {
+    temporary_repository left_location;
+    temporary_repository right_location;
+    auto left = liquid::runtime::block_on(liquid::repository::create(left_location.path()));
+    auto right = liquid::runtime::block_on(liquid::repository::create(right_location.path()));
+    ASSERT_TRUE(left);
+    ASSERT_TRUE(right);
+    ASSERT_TRUE(liquid::runtime::block_on(left->write("same", content("left"))));
+    const auto before = liquid::runtime::block_on(left->cut("before"));
+    ASSERT_TRUE(before);
+    ASSERT_TRUE(liquid::runtime::block_on(right->write("same", content("right"))));
+    ASSERT_TRUE(liquid::runtime::block_on(right->cut("right")));
+    ASSERT_TRUE(liquid::runtime::block_on(left->combine(std::move(*right), "same")));
+    const auto conflicted = liquid::runtime::block_on(left->cut("conflicted"));
+    ASSERT_TRUE(conflicted);
+
+    const auto changes = liquid::runtime::block_on(left->diff(*before, *conflicted));
+    ASSERT_TRUE(changes) << changes.error().message;
+    const auto same = std::ranges::find(*changes, "same", &liquid::tree_diff_entry::path);
+    ASSERT_NE(same, changes->end());
+    EXPECT_TRUE(has_change(*same, liquid::tree_diff_kind::conflicted));
+    EXPECT_TRUE(same->old_conflicts.empty());
+    EXPECT_EQ(same->new_conflicts.size(), 2U);
+}
+
 TEST(Repository, write_modes_and_nested_references_are_preserved) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
@@ -514,7 +778,7 @@ TEST(Repository, Sha256StoreRoundTripsRecords) {
     expect_sha256(snapshot->root.entries.front().ref);
 
     auto store = liquid::runtime::block_on(
-        liquid::store::open(location.path() / ".liquid-store", options.store));
+        liquid::store::open(location.path() / ".liquid-store", options.storage));
     ASSERT_TRUE(store) << store.error().message;
     const auto encoded_blob =
         liquid::runtime::block_on(store->get(snapshot->root.entries.front().ref));
@@ -880,6 +1144,31 @@ TEST(Repository, WriteFileMatchesWriteBlobAndRecordsOneDrip) {
     const auto read = liquid::runtime::block_on(file_repository.read("input.bin"));
     ASSERT_TRUE(read) << read.error().message;
     EXPECT_EQ(*read, bytes);
+}
+
+TEST(Repository, RemoteConfigurationPersistsAcrossOpen) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.remote = liquid::remote_config{.endpoint = "https://cache.example.test:443",
+                                           .instance_name = "liquid",
+                                           .tls = {.enabled = true,
+                                                   .verify_peer = true,
+                                                   .certificate_authority = "ca.pem",
+                                                   .client_certificate = "client.pem",
+                                                   .client_key = "client-key.pem"},
+                                           .headers = {{"authorization", "Bearer test-token"}},
+                                           .deadline = std::chrono::milliseconds{2500},
+                                           .batch_blob_limit = 1024,
+                                           .publish = true};
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created) << created.error().message;
+    ASSERT_TRUE(created->remote_configuration());
+    EXPECT_EQ(*created->remote_configuration(), *options.remote);
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    ASSERT_TRUE(reopened->remote_configuration());
+    EXPECT_EQ(*reopened->remote_configuration(), *options.remote);
 }
 
 } // namespace

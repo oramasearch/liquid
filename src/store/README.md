@@ -26,8 +26,27 @@ Each trace retains its named results, including results from wraps that did not 
 Collector explanations carry object-level reasons and count live policy roots by rule name.
 `subject_index.cpp` maps an attestation's signed subject digest to its canonical attestation record
 digest. The map updates when records are stored and rebuilds from attestation objects when the store
-opens; build-input policy still loads and verifies every indexed record before counting it.
+opens; build-input policy still loads and verifies every indexed record before counting it. The
+private object-kind listing used by repository record pages returns canonical object IDs without
+exposing store internals in the public API.
+
+Repository internals can query the opened store's root and configuration without exposing either
+through the public store API. This places per-repository checkpoint and journal entry points under
+`repositories/` and creates repository-identified lease owners while all immutable objects remain
+in the common packs and index.
 
 Remote blob registrations are persisted separately in `packs/remotes.meta`. The store reports
 whole-content availability as absent, remote, or local and fetches only missing logical chunks
 through the configured source before verifying and writing them through the ordinary pack path.
+Once a chunk is local, reads load that verified chunk directly; this also handles one-chunk blobs
+whose content and chunk digests are identical without resolving the remote registration again.
+Verified sync insertion selects the transmitted digest algorithm after checking the bytes, while
+ordinary local insertion continues to use the store configuration.
+
+REAPI negotiation may require SHA-256 objects in a repository whose ordinary identity is BLAKE3.
+The repository and REAPI adapters can insert verified raw objects under an explicit supported
+algorithm; the object map and pack path retain both identities without changing the store default.
+
+Delta records are detected as their own kind and retain source, target, and patch-blob digests.
+`delta/1` attestations retain their delta record, and the subject index provides the signed target
+catalog. Delta fetch uses ordinary registered remote blobs for a missing patch or target.

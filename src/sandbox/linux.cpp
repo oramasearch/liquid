@@ -292,6 +292,7 @@ auto launch(const launch_request& request) -> result<launch_result> {
     ::close(stderr_descriptor);
     if (spawned != 0)
         return std::unexpected(error{errc::io, std::strerror(spawned), "posix_spawn unshare"});
+    auto stop_callback = std::stop_callback{request.stop, [pid] { ::kill(-pid, SIGKILL); }};
     const auto deadline = request.timeout
                               ? std::optional{std::chrono::steady_clock::now() + *request.timeout}
                               : std::nullopt;
@@ -299,13 +300,14 @@ auto launch(const launch_request& request) -> result<launch_result> {
     for (;;) {
         const auto waited = ::waitpid(pid, &status, WNOHANG);
         if (waited == pid)
-            return launch_result{exit_code(status), false, read_violation(request)};
+            return launch_result{
+                exit_code(status), false, read_violation(request), request.stop.stop_requested()};
         if (waited < 0)
             return std::unexpected(error{errc::io, std::strerror(errno), "waitpid"});
         if (deadline && std::chrono::steady_clock::now() >= *deadline) {
             ::kill(-pid, SIGKILL);
             ::waitpid(pid, &status, 0);
-            return launch_result{128 + SIGKILL, true, read_violation(request)};
+            return launch_result{128 + SIGKILL, true, read_violation(request), false};
         }
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
     }

@@ -300,6 +300,94 @@ TEST(BuildSbom, derives_spdx_and_cyclonedx_from_the_same_graph) {
     EXPECT_NE(field(*cyclonedx_json, "dependencies"), nullptr);
 }
 
+TEST(BuildSbom, repository_pages_results_attestations_traces_and_sboms) {
+    stored_build fixture;
+
+    auto results = liquid::runtime::block_on(fixture.repository.results(
+        {.id = fixture.result, .output = "build/app", .content = fixture.output}));
+    ASSERT_TRUE(results) << results.error().message;
+    ASSERT_TRUE(results->done);
+    ASSERT_EQ(results->records.size(), 1U);
+    EXPECT_EQ(liquid::to_string(results->records.front().id.value),
+              liquid::to_string(fixture.result.value));
+
+    auto first_attestation =
+        liquid::runtime::block_on(fixture.repository.attestations(fixture.output, {.limit = 1}));
+    ASSERT_TRUE(first_attestation) << first_attestation.error().message;
+    ASSERT_EQ(first_attestation->records.size(), 1U);
+    ASSERT_TRUE(first_attestation->next);
+    EXPECT_FALSE(first_attestation->done);
+    EXPECT_EQ(first_attestation->records.front().value.profile, "sbom/1");
+
+    auto second_attestation = liquid::runtime::block_on(
+        fixture.repository.attestations({.subject = fixture.output,
+                                         .profile = "sbom/1",
+                                         .page = {.cursor = first_attestation->next, .limit = 1}}));
+    ASSERT_TRUE(second_attestation) << second_attestation.error().message;
+    ASSERT_EQ(second_attestation->records.size(), 1U);
+    EXPECT_TRUE(second_attestation->done);
+    EXPECT_NE(liquid::to_string(first_attestation->records.front().id),
+              liquid::to_string(second_attestation->records.front().id));
+
+    auto sboms = liquid::runtime::block_on(fixture.repository.sboms(fixture.result, {.limit = 1}));
+    ASSERT_TRUE(sboms) << sboms.error().message;
+    ASSERT_EQ(sboms->records.size(), 1U);
+    ASSERT_TRUE(sboms->next);
+    EXPECT_TRUE(sboms->records.front().verified);
+    auto remaining_sboms = liquid::runtime::block_on(
+        fixture.repository.sboms(fixture.result, {.cursor = sboms->next, .limit = 1}));
+    ASSERT_TRUE(remaining_sboms) << remaining_sboms.error().message;
+    ASSERT_EQ(remaining_sboms->records.size(), 1U);
+    EXPECT_TRUE(remaining_sboms->done);
+
+    auto result_without_sboms = results->records.front().value;
+    result_without_sboms.sboms.clear();
+    auto encoded_result = liquid::objects::encode(result_without_sboms);
+    ASSERT_TRUE(encoded_result) << encoded_result.error().message;
+    auto stored_result =
+        liquid::runtime::block_on(liquid::repository_detail::build_access::put_record(
+            fixture.repository, std::move(*encoded_result)));
+    ASSERT_TRUE(stored_result) << stored_result.error().message;
+    auto empty_sboms =
+        liquid::runtime::block_on(fixture.repository.sboms(liquid::result_id{*stored_result}));
+    ASSERT_TRUE(empty_sboms) << empty_sboms.error().message;
+    EXPECT_TRUE(empty_sboms->records.empty());
+    EXPECT_TRUE(empty_sboms->done);
+
+    auto first_result_page =
+        liquid::runtime::block_on(fixture.repository.results({.page = {.limit = 1}}));
+    ASSERT_TRUE(first_result_page) << first_result_page.error().message;
+    ASSERT_EQ(first_result_page->records.size(), 1U);
+    ASSERT_TRUE(first_result_page->next);
+    EXPECT_FALSE(first_result_page->done);
+    auto second_result_page = liquid::runtime::block_on(
+        fixture.repository.results({.page = {.cursor = first_result_page->next, .limit = 1}}));
+    ASSERT_TRUE(second_result_page) << second_result_page.error().message;
+    ASSERT_EQ(second_result_page->records.size(), 1U);
+    EXPECT_TRUE(second_result_page->done);
+    EXPECT_NE(liquid::to_string(first_result_page->records.front().id.value),
+              liquid::to_string(second_result_page->records.front().id.value));
+
+    auto trace = liquid::build_trace{.wall_time = std::chrono::milliseconds{12}};
+    auto encoded_trace = liquid::objects::encode(trace);
+    ASSERT_TRUE(encoded_trace) << encoded_trace.error().message;
+    auto trace_id = liquid::runtime::block_on(liquid::repository_detail::build_access::put_record(
+        fixture.repository, std::move(*encoded_trace)));
+    ASSERT_TRUE(trace_id) << trace_id.error().message;
+    auto cache = liquid::build_detail::disk_cache{fixture.repository};
+    ASSERT_TRUE(liquid::runtime::block_on(cache.open()));
+    ASSERT_TRUE(liquid::runtime::block_on(cache.record_trace(*trace_id)));
+    auto traces = liquid::runtime::block_on(fixture.repository.traces({.limit = 1}));
+    ASSERT_TRUE(traces) << traces.error().message;
+    ASSERT_EQ(traces->records.size(), 1U);
+    EXPECT_EQ(liquid::to_string(traces->records.front().id), liquid::to_string(*trace_id));
+
+    auto invalid_page = liquid::runtime::block_on(fixture.repository.results(
+        {.page = {.cursor = liquid::record_cursor{"not-a-record"}, .limit = 1}}));
+    ASSERT_FALSE(invalid_page);
+    EXPECT_EQ(invalid_page.error().code, liquid::errc::invalid_argument);
+}
+
 TEST(BuildSbom, finalizes_many_actions_reads_and_outputs_within_a_fixed_bound) {
     constexpr auto producer_count = std::size_t{24};
     constexpr auto read_count = std::size_t{96};

@@ -1,6 +1,7 @@
 #include "liquid/build.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,7 @@
 #include "build/why.hpp"
 #include "build/wrap.hpp"
 #include "formats/json.hpp"
+#include "liquid/graph.hpp"
 #include "objects/records.hpp"
 #include "sandbox/sandbox.hpp"
 #include "vfs/backend.hpp"
@@ -85,11 +87,30 @@ struct wrap_state {
 };
 
 struct cache_plan {
+    struct condition {
+        std::string path;
+        std::uint64_t size{};
+        std::uint64_t fingerprint{};
+    };
+
     std::vector<saved_action> next_actions;
     std::set<std::uint64_t> missed_actions;
     std::set<std::uint64_t> reasoned_actions;
     std::map<std::uint64_t, int> processes;
+    std::map<std::uint64_t, std::vector<condition>> conditions;
     std::vector<build_detail::lookup_record> lookups;
+};
+
+struct wrap_query_request {
+    action_input input;
+    digest sandbox;
+    std::vector<observed_input> manifest;
+};
+
+struct wrap_query_state {
+    repository* source{};
+    build_detail::disk_cache* cache{};
+    std::map<std::string, wrap_query_request> requests;
 };
 
 struct observed_run {
@@ -103,6 +124,7 @@ struct observed_run {
 };
 
 auto host_platform() -> platform;
+runtime::task<action_result> load_result(repository& source, digest id);
 
 auto wrap_error(errc code, std::string message, const std::filesystem::path& context = {})
     -> error {
@@ -123,6 +145,185 @@ auto hex(std::string_view input) -> std::string {
         output.push_back(digits[value & 0x0fU]);
     }
     return output;
+}
+
+auto file_condition(const std::filesystem::path& root, std::string path)
+    -> liquid::result<cache_plan::condition> {
+    auto input = std::ifstream{root / path, std::ios::binary};
+    if (!input) {
+        return std::unexpected(
+            wrap_error(errc::not_found, "conditional action input is missing", root / path));
+    }
+    auto fingerprint = std::uint64_t{1469598103934665603ULL};
+    auto size = std::uint64_t{};
+    auto buffer = std::array<char, 64 * 1024>{};
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        for (auto index = std::streamsize{}; index < count; ++index) {
+            fingerprint ^= static_cast<unsigned char>(buffer[static_cast<std::size_t>(index)]);
+            fingerprint *= 1099511628211ULL;
+        }
+        size += static_cast<std::uint64_t>(count);
+    }
+    if (!input.eof()) {
+        return std::unexpected(
+            wrap_error(errc::io, "conditional action input cannot be read", root / path));
+    }
+    return cache_plan::condition{std::move(path), size, fingerprint};
+}
+
+auto graph_bytes(std::string_view value) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>(value.size());
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        output[index] = static_cast<std::byte>(value[index]);
+    }
+    return output;
+}
+
+auto graph_text(std::span<const std::byte> value) -> std::string {
+    return {reinterpret_cast<const char*>(value.data()), value.size()};
+}
+
+runtime::task<std::vector<std::byte>> wrap_action_result_query(query_context& context,
+                                                               std::vector<std::byte> arguments,
+                                                               wrap_query_state* state) {
+    const auto candidate_text = graph_text(arguments);
+    const auto request = state->requests.find(candidate_text);
+    if (request == state->requests.end()) {
+        co_return std::unexpected(wrap_error(errc::not_found, "wrap action query has no request"));
+    }
+    auto cache_entry = co_await context.read(
+        graph_input_key{graph_input_kind::environment, "action-result/" + candidate_text});
+    if (!cache_entry) {
+        co_return std::unexpected(cache_entry.error());
+    }
+    for (const auto& input : request->second.manifest) {
+        auto read =
+            co_await context.read(graph_input_key{graph_input_kind::working_tree_blob, input.path});
+        if (!read) {
+            co_return std::unexpected(read.error());
+        }
+    }
+    auto lookup = co_await state->cache->lookup(request->second.input, request->second.sandbox);
+    if (!lookup) {
+        co_return std::unexpected(lookup.error());
+    }
+    if (!lookup->hit) {
+        co_return std::vector<std::byte>{};
+    }
+    co_return graph_bytes(to_string(lookup->hit->value));
+}
+
+runtime::task<build_detail::cache_lookup> demand_wrap_action(graph& queries,
+                                                             wrap_query_state& state,
+                                                             const action_input& input,
+                                                             digest sandbox,
+                                                             const action_result& previous) {
+    auto candidate = state.cache->candidate_key(input, sandbox);
+    if (!candidate) {
+        co_return std::unexpected(candidate.error());
+    }
+    const auto candidate_text = to_string(*candidate);
+    state.requests.insert_or_assign(candidate_text,
+                                    wrap_query_request{input, sandbox, previous.manifest});
+    auto cache_entry = co_await queries.set_input(
+        {graph_input_kind::environment, "action-result/" + candidate_text},
+        graph_bytes(to_string(previous.action)),
+        durability::high);
+    if (!cache_entry) {
+        co_return std::unexpected(cache_entry.error());
+    }
+    auto demanded = co_await queries.demand({"action_result", graph_bytes(candidate_text)});
+    if (!demanded) {
+        co_return std::unexpected(demanded.error());
+    }
+    auto output = build_detail::cache_lookup{};
+    if (demanded->bytes.empty()) {
+        co_return output;
+    }
+    auto id = parse_digest(graph_text(demanded->bytes));
+    if (!id) {
+        co_return std::unexpected(id.error());
+    }
+    auto value = co_await load_result(*state.source, *id);
+    if (!value) {
+        auto changed =
+            queries.mark_changed(query_key{"action_result", graph_bytes(candidate_text)});
+        if (!changed) {
+            co_return std::unexpected(changed.error());
+        }
+        auto refreshed = co_await queries.demand({"action_result", graph_bytes(candidate_text)});
+        if (!refreshed) {
+            co_return std::unexpected(refreshed.error());
+        }
+        if (refreshed->bytes.empty()) {
+            co_return output;
+        }
+        id = parse_digest(graph_text(refreshed->bytes));
+        if (!id) {
+            co_return std::unexpected(id.error());
+        }
+        value = co_await load_result(*state.source, *id);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+    }
+    auto avoided = co_await build_detail::output_bytes(*state.source, *value);
+    if (!avoided) {
+        co_return std::unexpected(avoided.error());
+    }
+    output.hit = result_id{*id};
+    output.bytes_avoided = *avoided;
+    output.bytes_served = *avoided;
+    co_return output;
+}
+
+runtime::task<void> prime_wrap_actions(graph& queries,
+                                       wrap_query_state& state,
+                                       const wrap_state& saved,
+                                       digest sandbox) {
+    for (const auto& action : saved.actions) {
+        auto previous = co_await load_result(*state.source, action.result);
+        if (!previous) {
+            co_return std::unexpected(previous.error());
+        }
+        auto action_bytes =
+            co_await repository_detail::build_access::get(*state.source, previous->action);
+        if (!action_bytes) {
+            co_return std::unexpected(action_bytes.error());
+        }
+        auto decoded = objects::decode_action(*action_bytes);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        auto demanded =
+            co_await demand_wrap_action(queries, state, decoded->input, sandbox, *previous);
+        if (!demanded) {
+            co_return std::unexpected(demanded.error());
+        }
+    }
+    if (saved.outer_result) {
+        auto previous = co_await load_result(*state.source, *saved.outer_result);
+        if (!previous) {
+            co_return std::unexpected(previous.error());
+        }
+        auto action_bytes =
+            co_await repository_detail::build_access::get(*state.source, previous->action);
+        if (!action_bytes) {
+            co_return std::unexpected(action_bytes.error());
+        }
+        auto decoded = objects::decode_action(*action_bytes);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        auto demanded =
+            co_await demand_wrap_action(queries, state, decoded->input, sandbox, *previous);
+        if (!demanded) {
+            co_return std::unexpected(demanded.error());
+        }
+    }
+    co_return liquid::result<void>{};
 }
 
 auto unhex(std::string_view input) -> liquid::result<std::string> {
@@ -781,6 +982,8 @@ runtime::task<saved_action> publish_action(repository& source,
                                                                                   hash_finished)},
         .worker = input.platform.os + "/" + input.platform.arch,
         .observed_at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())};
+    value.schedule = execution_schedule{.decision = execution_decision::local,
+                                        .reason = "wrap has no remote executor configured"};
     value.started_at = started_at;
     value.finished_at = finished_at;
     auto stored_result = co_await build_detail::store_result_with_provenance(source, value);
@@ -1025,8 +1228,13 @@ void add_timing(wrap_report& report,
     for (const auto& output : value.outputs) {
         outputs.push_back(output.path);
     }
-    report.trace_actions.push_back(
-        {result, value.action, std::move(outputs), value.timing, status, start_offset});
+    report.trace_actions.push_back({result,
+                                    value.action,
+                                    std::move(outputs),
+                                    value.timing,
+                                    status,
+                                    start_offset,
+                                    value.schedule});
 }
 
 runtime::task<std::optional<result_id>>
@@ -1094,8 +1302,8 @@ runtime::task<void> complete_report(const std::filesystem::path& cache_directory
         std::chrono::steady_clock::now() - started);
     report.cache.hits = report.hits;
     report.cache.misses = report.misses;
-    report.cache.disk.hits = report.hits;
-    report.cache.disk.misses = report.misses;
+    report.cache.disk.hits = report.hits - report.cache.remote.hits;
+    report.cache.disk.misses = report.misses + report.cache.remote.hits;
     report.cache.disk.bytes_transferred = report.cache.bytes_served;
     auto traced = co_await build_detail::record_trace(source, cache, report);
     if (!traced) {
@@ -1104,15 +1312,113 @@ runtime::task<void> complete_report(const std::filesystem::path& cache_directory
     co_return build_detail::update_cache_stats(cache_directory, report);
 }
 
+runtime::task<void> collect_manifest(repository& source,
+                                     digest root,
+                                     std::string prefix,
+                                     std::vector<observed_input>& output) {
+    auto bytes = co_await repository_detail::build_access::get(source, root);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto value = objects::decode_tree(*bytes);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    for (const auto& entry : value->entries) {
+        const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
+        if (entry.kind == node_kind::tree) {
+            auto nested = co_await collect_manifest(source, entry.ref, path, output);
+            if (!nested) {
+                co_return std::unexpected(nested.error());
+            }
+        } else if (entry.kind == node_kind::blob) {
+            output.push_back({.path = path, .content = entry.ref});
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<std::optional<result_id>> import_remote_result(repository& source,
+                                                             build_detail::disk_cache& cache,
+                                                             remote& backend,
+                                                             const action_input& input,
+                                                             digest sandbox,
+                                                             bool eligible,
+                                                             wrap_report& report) {
+    report.cache.remote.available = true;
+    if (!eligible) {
+        co_return std::optional<result_id>{};
+    }
+    auto value = co_await backend.get_action_result(source, input, sandbox);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    if (!*value) {
+        ++report.cache.remote.misses;
+        co_return std::optional<result_id>{};
+    }
+    auto action_bytes = objects::encode(objects::action_record{input, sandbox});
+    if (!action_bytes) {
+        co_return std::unexpected(action_bytes.error());
+    }
+    auto action =
+        co_await repository_detail::build_access::put_record(source, std::move(*action_bytes));
+    if (!action) {
+        co_return std::unexpected(action.error());
+    }
+    (*value)->action = *action;
+    if ((*value)->manifest.empty()) {
+        auto collected = co_await collect_manifest(source, input.inputs, {}, (*value)->manifest);
+        if (!collected) {
+            co_return std::unexpected(collected.error());
+        }
+    }
+    (*value)->provenance.reset();
+    (*value)->sboms.clear();
+    (*value)->sig.clear();
+    auto stored = co_await build_detail::store_result_with_provenance(source, **value);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    auto candidate = cache.candidate_key(input, sandbox);
+    if (!candidate) {
+        co_return std::unexpected(candidate.error());
+    }
+    auto published = co_await cache.publish(*candidate, *stored, **value);
+    if (!published) {
+        co_return std::unexpected(published.error());
+    }
+    auto validated = co_await cache.lookup(input, sandbox);
+    if (!validated) {
+        co_return std::unexpected(validated.error());
+    }
+    if (!validated->hit || !same_digest(validated->hit->value, stored->value)) {
+        ++report.cache.remote.misses;
+        co_return std::optional<result_id>{};
+    }
+    auto transferred = co_await build_detail::output_bytes(source, **value);
+    if (!transferred) {
+        co_return std::unexpected(transferred.error());
+    }
+    ++report.cache.remote.hits;
+    report.cache.remote.bytes_transferred += *transferred;
+    report.cache.remote.bytes_avoided += *transferred;
+    co_return std::optional<result_id>{*stored};
+}
+
 runtime::task<cache_plan> prepare_cache_plan(repository& source,
                                              build_detail::disk_cache& cache,
+                                             graph& queries,
+                                             wrap_query_state& query_state,
                                              const wrap_state& state,
                                              const std::vector<std::string>& command,
                                              const std::map<std::string, std::string>& environment,
                                              digest input_tree,
                                              digest toolchain,
                                              digest sandbox,
+                                             const std::filesystem::path& working_tree,
                                              const wrap_options& options,
+                                             remote* backend,
                                              wrap_report& report) {
     auto output = cache_plan{};
     if (!options.cache || state.action_command != command)
@@ -1133,10 +1439,36 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
             std::ranges::any_of(old_result->manifest, [&](const auto& observed) {
                 return invalidated_outputs.contains(observed.path);
             });
-        if (!reads_invalidated_output) {
-            auto lookup = co_await cache.lookup(input, sandbox);
-            if (!lookup)
-                co_return std::unexpected(lookup.error());
+        auto lookup =
+            co_await demand_wrap_action(queries, query_state, input, sandbox, *old_result);
+        if (!lookup) {
+            co_return std::unexpected(lookup.error());
+        }
+        if (lookup->hit) {
+            if (reads_invalidated_output) {
+                auto conditions = std::vector<cache_plan::condition>{};
+                for (const auto& observed : old_result->manifest) {
+                    if (!invalidated_outputs.contains(observed.path)) {
+                        continue;
+                    }
+                    auto condition = co_await runtime::offload([working_tree, observed]() {
+                        return file_condition(working_tree, observed.path);
+                    });
+                    if (!condition) {
+                        co_return std::unexpected(condition.error());
+                    }
+                    if (!*condition) {
+                        conditions.clear();
+                        break;
+                    }
+                    conditions.push_back(std::move(**condition));
+                }
+                if (!conditions.empty()) {
+                    output.conditions.emplace(saved.key, std::move(conditions));
+                } else {
+                    lookup->hit.reset();
+                }
+            }
             if (lookup->hit) {
                 output.processes.insert_or_assign(saved.key, 0);
                 output.next_actions.push_back({saved.key, lookup->hit->value});
@@ -1153,6 +1485,32 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
                         co_return std::unexpected(materialised.error());
                 }
                 continue;
+            }
+        }
+        if (!reads_invalidated_output) {
+            if (backend) {
+                auto imported = co_await import_remote_result(
+                    source, cache, *backend, input, sandbox, !old_result->manifest.empty(), report);
+                if (!imported) {
+                    co_return std::unexpected(imported.error());
+                }
+                if (*imported) {
+                    output.processes.insert_or_assign(saved.key, 0);
+                    output.next_actions.push_back({saved.key, (*imported)->value});
+                    ++report.hits;
+                    output.lookups.push_back(
+                        {cache_status::hit, **imported, result_id{saved.result}});
+                    auto value = co_await load_result(source, (*imported)->value);
+                    if (!value) {
+                        co_return std::unexpected(value.error());
+                    }
+                    add_timing(report, **imported, *value, cache_status::hit);
+                    auto materialised = co_await materialise_result(source, *value);
+                    if (!materialised) {
+                        co_return std::unexpected(materialised.error());
+                    }
+                    continue;
+                }
             }
             auto cause = co_await build_detail::classify_miss(
                 source, input, sandbox, result_id{saved.result});
@@ -1179,6 +1537,8 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
 
 runtime::task<bool> serve_outer_action(repository& source,
                                        build_detail::disk_cache& cache,
+                                       graph& queries,
+                                       wrap_query_state& query_state,
                                        wrap_state& state,
                                        const std::filesystem::path& state_path,
                                        const std::filesystem::path& working_tree,
@@ -1186,13 +1546,59 @@ runtime::task<bool> serve_outer_action(repository& source,
                                        const action_input& input,
                                        digest sandbox,
                                        const wrap_options& options,
+                                       remote* backend,
                                        wrap_report& report) {
     if (!options.cache)
         co_return false;
-    auto lookup = co_await cache.lookup(input, sandbox);
-    if (!lookup)
-        co_return std::unexpected(lookup.error());
-    if (!lookup->hit) {
+    auto lookup = build_detail::cache_lookup{};
+    if (state.outer_result) {
+        auto previous = co_await load_result(source, *state.outer_result);
+        if (previous) {
+            auto demanded =
+                co_await demand_wrap_action(queries, query_state, input, sandbox, *previous);
+            if (!demanded) {
+                co_return std::unexpected(demanded.error());
+            }
+            lookup = std::move(*demanded);
+        } else {
+            auto direct = co_await cache.lookup(input, sandbox);
+            if (!direct) {
+                co_return std::unexpected(direct.error());
+            }
+            lookup = std::move(*direct);
+        }
+    } else {
+        auto direct = co_await cache.lookup(input, sandbox);
+        if (!direct) {
+            co_return std::unexpected(direct.error());
+        }
+        lookup = std::move(*direct);
+    }
+    if (!lookup.hit) {
+        if (backend) {
+            auto previous = state.outer_result
+                                ? std::optional<result_id>{result_id{*state.outer_result}}
+                                : std::nullopt;
+            auto eligible = false;
+            if (previous) {
+                auto previous_value = co_await load_result(source, previous->value);
+                eligible = previous_value && !previous_value->manifest.empty();
+            }
+            auto imported = co_await import_remote_result(
+                source, cache, *backend, input, sandbox, eligible, report);
+            if (!imported) {
+                co_return std::unexpected(imported.error());
+            }
+            if (*imported) {
+                auto direct = co_await cache.lookup(input, sandbox);
+                if (!direct) {
+                    co_return std::unexpected(direct.error());
+                }
+                lookup = std::move(*direct);
+            }
+        }
+    }
+    if (!lookup.hit) {
         ++report.misses;
         auto previous = state.outer_result
                             ? std::optional<result_id>{result_id{*state.outer_result}}
@@ -1204,7 +1610,7 @@ runtime::task<bool> serve_outer_action(repository& source,
         add_miss(report, std::move(*cause));
         co_return false;
     }
-    auto value = co_await load_result(source, lookup->hit->value);
+    auto value = co_await load_result(source, lookup.hit->value);
     if (!value)
         co_return std::unexpected(value.error());
     auto materialised = co_await materialise_result(source, *value, working_tree);
@@ -1216,11 +1622,11 @@ runtime::task<bool> serve_outer_action(repository& source,
     report.outer = cache_status::hit;
     report.actions = (state.action_command == command ? state.actions.size() : std::size_t{}) + 1;
     report.hits = report.actions;
-    report.cache.bytes_served += lookup->bytes_served;
-    report.cache.disk.bytes_avoided += lookup->bytes_avoided;
+    report.cache.bytes_served += lookup.bytes_served;
+    report.cache.disk.bytes_avoided += lookup.bytes_avoided;
     auto recorded = cache.record_lookup(
         cache_status::hit,
-        *lookup->hit,
+        *lookup.hit,
         state.outer_result ? std::optional<result_id>{result_id{*state.outer_result}}
                            : std::nullopt);
     if (!recorded) {
@@ -1245,7 +1651,7 @@ runtime::task<bool> serve_outer_action(repository& source,
         }
     }
     if (report.trace_actions.empty()) {
-        add_timing(report, *lookup->hit, *value, cache_status::hit);
+        add_timing(report, *lookup.hit, *value, cache_status::hit);
     }
     auto saved = write_state(state_path, state);
     if (!saved)
@@ -1260,6 +1666,7 @@ execute_observed_run(repository& source,
                      const std::vector<std::string>& command,
                      const std::set<std::string>& known_outputs,
                      const std::map<std::uint64_t, int>& plan,
+                     const std::map<std::uint64_t, std::vector<cache_plan::condition>>& conditions,
                      const std::map<std::string, std::string>& action_environment,
                      digest input_tree,
                      const wrap_options& options) {
@@ -1279,8 +1686,17 @@ execute_observed_run(repository& source,
     {
         auto trace_output = std::ofstream{trace, std::ios::trunc};
         auto plan_output = std::ofstream{plan_path, std::ios::trunc};
-        for (const auto& [key, status] : plan)
-            plan_output << std::hex << key << '\t' << std::dec << status << '\n';
+        for (const auto& [key, status] : plan) {
+            plan_output << "H\t" << std::hex << key << '\t' << std::dec << status << '\n';
+            const auto found = conditions.find(key);
+            if (found == conditions.end()) {
+                continue;
+            }
+            for (const auto& condition : found->second) {
+                plan_output << "C\t" << std::hex << key << '\t' << condition.fingerprint << '\t'
+                            << std::dec << condition.size << '\t' << hex(condition.path) << '\n';
+            }
+        }
         if (!trace_output || !plan_output)
             co_return std::unexpected(wrap_error(errc::io, "cannot prepare wrap hook files", run));
     }
@@ -1402,6 +1818,7 @@ runtime::task<void> publish_observed_run(repository& source,
                                          cache_plan& plan,
                                          observed_run& run,
                                          const wrap_options& options,
+                                         remote* backend,
                                          bool fact_answers_used,
                                          bool outer_miss_recorded,
                                          wrap_report& report) {
@@ -1482,14 +1899,28 @@ runtime::task<void> publish_observed_run(repository& source,
                 }
             }
         }
-        if (process.pid == driver_pid || plan.processes.contains(process.key) ||
+        const auto found = writes.find(process.pid);
+        const auto conditional_miss = plan.conditions.contains(process.key) &&
+                                      found != writes.end() && !found->second.empty();
+        if (process.pid == driver_pid ||
+            (plan.processes.contains(process.key) && !conditional_miss) ||
             !state.tools.contains(process.executable) ||
             has_writing_descendant(process, run.processes, writes)) {
             continue;
         }
-        const auto found = writes.find(process.pid);
         if (found == writes.end() || found->second.empty())
             continue;
+        if (conditional_miss) {
+            if (report.hits != 0) {
+                --report.hits;
+            }
+            plan.next_actions.erase(
+                std::remove_if(plan.next_actions.begin(),
+                               plan.next_actions.end(),
+                               [&](const saved_action& item) { return item.key == process.key; }),
+                plan.next_actions.end());
+            plan.missed_actions.insert(process.key);
+        }
         auto previous = co_await previous_for_outputs(source, previous_actions, found->second);
         if (!previous) {
             static_cast<void>(remove_run(run.directory));
@@ -1575,6 +2006,19 @@ runtime::task<void> publish_observed_run(repository& source,
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(outer_value.error());
     }
+    if (backend && backend->config().publish) {
+        auto outer_action = co_await load_action(source, outer_value->action);
+        if (!outer_action) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(outer_action.error());
+        }
+        auto uploaded = co_await backend->update_action_result(
+            source, outer_action->input, outer_action->sandbox, *outer_value);
+        if (!uploaded) {
+            static_cast<void>(remove_run(run.directory));
+            co_return std::unexpected(uploaded.error());
+        }
+    }
     auto outer_bytes = co_await build_detail::output_bytes(source, *outer_value);
     if (!outer_bytes) {
         static_cast<void>(remove_run(run.directory));
@@ -1599,6 +2043,22 @@ runtime::task<void> publish_observed_run(repository& source,
         }
         add_miss(report, std::move(*cause));
     }
+    auto previous_order = std::map<std::uint64_t, std::size_t>{};
+    for (std::size_t index = 0; index < previous_actions.size(); ++index) {
+        previous_order.emplace(previous_actions[index].key, index);
+    }
+    std::ranges::stable_sort(
+        plan.next_actions, [&](const saved_action& left, const saved_action& right) {
+            const auto left_order = previous_order.find(left.key);
+            const auto right_order = previous_order.find(right.key);
+            const auto left_index = left_order == previous_order.end()
+                                        ? std::numeric_limits<std::size_t>::max()
+                                        : left_order->second;
+            const auto right_index = right_order == previous_order.end()
+                                         ? std::numeric_limits<std::size_t>::max()
+                                         : right_order->second;
+            return left_index < right_index;
+        });
     state.actions = std::move(plan.next_actions);
     state.outer_result = outer_saved->result;
     state.action_command = command;
@@ -1845,14 +2305,39 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     auto source =
         std::filesystem::exists(repository_path / "LIQUID_REPO")
             ? co_await repository::open(repository_path)
-            : co_await repository::create(
-                  repository_path, repository_options{.cache = cache_config{.publish = true}});
+            : co_await repository::create(repository_path,
+                                          repository_options{.cache = cache_config{.publish = true},
+                                                             .remote = options.remote});
     if (!source)
         co_return std::unexpected(source.error());
+    auto remote_configuration = options.remote ? options.remote : source->remote_configuration();
+    auto backend = std::optional<remote>{};
+    if (remote_configuration) {
+        auto connected = co_await remote::connect(*remote_configuration);
+        if (!connected) {
+            co_return std::unexpected(connected.error());
+        }
+        backend = std::move(*connected);
+    }
     auto cache = build_detail::disk_cache{*source};
     auto opened = co_await cache.open();
     if (!opened)
         co_return std::unexpected(opened.error());
+    auto query_state = wrap_query_state{&*source, &cache, {}};
+    auto query_kinds = query_registry{};
+    auto query_registered = query_kinds.add(
+        {.name = "action_result",
+         .compute = [&query_state](query_context& context, std::vector<std::byte> arguments) {
+             return wrap_action_result_query(context, std::move(arguments), &query_state);
+         }});
+    if (!query_registered) {
+        co_return std::unexpected(query_registered.error());
+    }
+    auto queries = co_await graph::open(
+        *cache_directory / "query-graph", std::move(query_kinds), {.working_tree = working_tree});
+    if (!queries) {
+        co_return std::unexpected(queries.error());
+    }
     auto synced = co_await sync_sources(*source, working_tree, *cache_directory, *state);
     if (!synced)
         co_return std::unexpected(synced.error());
@@ -1906,25 +2391,11 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!policy->allowed)
         co_return std::unexpected(build_detail::policy_refusal(*policy));
     auto plan = cache_plan{};
-    if (*toolchain) {
-        auto prepared = co_await prepare_cache_plan(*source,
-                                                    cache,
-                                                    *state,
-                                                    command,
-                                                    action_environment,
-                                                    input_tree,
-                                                    **toolchain,
-                                                    *sandbox,
-                                                    options,
-                                                    report);
-        if (!prepared)
-            co_return std::unexpected(prepared.error());
-        plan = std::move(*prepared);
-    }
-
     if (options.cache && *toolchain) {
         auto served = co_await serve_outer_action(*source,
                                                   cache,
+                                                  *queries,
+                                                  query_state,
                                                   *state,
                                                   state_path,
                                                   working_tree,
@@ -1932,6 +2403,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                   outer_input,
                                                   *sandbox,
                                                   options,
+                                                  backend ? &*backend : nullptr,
                                                   report);
         if (!served)
             co_return std::unexpected(served.error());
@@ -1949,6 +2421,25 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
         }
         outer_miss_recorded = true;
     }
+    if (*toolchain) {
+        auto prepared = co_await prepare_cache_plan(*source,
+                                                    cache,
+                                                    *queries,
+                                                    query_state,
+                                                    *state,
+                                                    command,
+                                                    action_environment,
+                                                    input_tree,
+                                                    **toolchain,
+                                                    *sandbox,
+                                                    working_tree,
+                                                    options,
+                                                    backend ? &*backend : nullptr,
+                                                    report);
+        if (!prepared)
+            co_return std::unexpected(prepared.error());
+        plan = std::move(*prepared);
+    }
 
     auto run = co_await execute_observed_run(*source,
                                              *cache_directory,
@@ -1956,6 +2447,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                              command,
                                              state->outputs,
                                              plan.processes,
+                                             plan.conditions,
                                              action_environment,
                                              input_tree,
                                              options);
@@ -1985,11 +2477,16 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    plan,
                                                    *run,
                                                    options,
+                                                   backend ? &*backend : nullptr,
                                                    !fact_variables.empty(),
                                                    outer_miss_recorded,
                                                    report);
     if (!published)
         co_return std::unexpected(published.error());
+    auto primed = co_await prime_wrap_actions(*queries, query_state, *state, *sandbox);
+    if (!primed) {
+        co_return std::unexpected(primed.error());
+    }
     auto recorded = build_detail::record_configuration_facts(working_tree, *facts_key, facts);
     if (!recorded)
         co_return std::unexpected(recorded.error());

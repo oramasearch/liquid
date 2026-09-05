@@ -28,6 +28,7 @@ the public encoder.
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
 | `sbom/1` | artifact | `format:text`, `document:text`, `derived:boolean`, `inferred:boolean`, `components:text_list*` | `supplier:text*` | none |
+| `delta/1` | artifact | `source:text`, `target:text`, `algorithm:text`, `delta:text` | none | none |
 | `model_provenance/1` | model | `training_dataset:text*`, `training_code:text*` | `base_model:text*` | none |
 | `abi_compatibility/1` | library | `compatible_with:text`, `compatibility:text` | `notes:text` | none |
 | `scan_result/1` | drip | fixed record fields `detectors:text_list`, `findings:unsigned_integer`, `allowances:text_list` | none | maximum attestation age: 24 hours |
@@ -50,6 +51,10 @@ in [provenance.md](provenance.md).
 `sbom/1` names the canonical SBOM record by digest and makes the graph-derived versus
 binary-inferred distinction an explicit signed claim. Its record chain and SPDX/CycloneDX mappings
 are in [sbom.md](sbom.md).
+`delta/1` uses the target digest as its artifact subject. Its attributes name the source and target
+digests, algorithm id, and delta-record digest. Fetch verifies the signature and exact catalog to
+record mapping before loading the patch; [distribution.md](distribution.md#delta-encoding-for-delivery-64)
+defines the record and final target verification.
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's

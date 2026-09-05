@@ -142,6 +142,22 @@ auto document::create(const repo_id& repository,
     }
 }
 
+auto document::create_sync_receiver(std::string_view taap_id, std::string_view device_id)
+    -> result<document> {
+    try {
+        auto actor = derive_actor_id(taap_id, device_id);
+        if (!actor) {
+            return std::unexpected(actor.error());
+        }
+        auto value = am::Document{1u};
+        value.set_actor_id(am::ActorId{*actor});
+        value.set_read_locking(false);
+        return document{std::make_unique<impl>(std::move(value), *actor)};
+    } catch (const std::exception& exception) {
+        return std::unexpected(internal(exception.what(), "create CRDT sync receiver"));
+    }
+}
+
 auto document::load(std::span<const std::byte> bytes,
                     std::string_view taap_id,
                     std::string_view device_id) -> result<document> {
@@ -354,12 +370,31 @@ auto directory_document::create(const repo_id& repository,
     return directory_document{std::move(*value)};
 }
 
+auto directory_document::create_sync_receiver(std::string_view taap_id, std::string_view device_id)
+    -> result<directory_document> {
+    auto value = document::create_sync_receiver(taap_id, device_id);
+    if (!value) {
+        return std::unexpected(value.error());
+    }
+    return directory_document{std::move(*value)};
+}
+
 auto directory_document::load(std::span<const std::byte> bytes,
                               std::string_view taap_id,
                               std::string_view device_id) -> result<directory_document> {
     auto value = document::load_shallow(bytes, taap_id, device_id);
     if (!value)
         return std::unexpected(value.error());
+    return directory_document{std::move(*value)};
+}
+
+auto directory_document::load_sync(std::span<const std::byte> bytes,
+                                   std::string_view taap_id,
+                                   std::string_view device_id) -> result<directory_document> {
+    auto value = document::load(bytes, taap_id, device_id);
+    if (!value) {
+        return std::unexpected(value.error());
+    }
     return directory_document{std::move(*value)};
 }
 
@@ -437,6 +472,9 @@ auto directory_document::rename_entry(std::string from, std::string to, commit_o
 }
 
 auto directory_document::save() const -> result<std::vector<std::byte>> {
+    return document_.save_compact();
+}
+auto directory_document::save_sync() const -> result<std::vector<std::byte>> {
     return document_.save_compact();
 }
 auto directory_document::heads() -> result<head_set> {

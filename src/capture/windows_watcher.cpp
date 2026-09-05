@@ -37,9 +37,17 @@ public:
             return std::unexpected(
                 error{errc::unavailable, "cannot open workspace watcher", workspace_.string()});
         running_ = std::make_shared<std::atomic_bool>(true);
+        stopped_ = std::make_shared<std::atomic_bool>(false);
         callback_ = std::move(callback);
-        runtime::spawn(read_loop(running_, handle_, workspace_, callback_), [](result<void>) {});
+        runtime::spawn(read_loop(running_, handle_, workspace_, callback_),
+                       [stopped = stopped_](result<void>) {
+                           stopped->store(true, std::memory_order_release);
+                       });
         return {};
+    }
+
+    [[nodiscard]] auto stopped() const noexcept -> bool override {
+        return stopped_->load(std::memory_order_acquire);
     }
 
     void stop() noexcept override {
@@ -115,6 +123,7 @@ private:
     watch_callback callback_;
     HANDLE handle_{INVALID_HANDLE_VALUE};
     std::shared_ptr<std::atomic_bool> running_;
+    std::shared_ptr<std::atomic_bool> stopped_{std::make_shared<std::atomic_bool>(true)};
 };
 
 } // namespace

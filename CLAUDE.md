@@ -14,7 +14,8 @@ and runtime in one program. See [`README.md`](README.md).
 Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
-error and digest APIs plus liquid #1's local chunk store, liquid #4's TAAP/1 actor identities,
+error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
+store, liquid #4's TAAP/1 actor identities,
 liquid #111's identity-key rotation and chain verification, and signed drips and changes, liquid #7's
 trust-domain encrypted objects, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
@@ -41,17 +42,45 @@ and retention explanations. Liquid #61 adds signed `sbom/1` attestations with gr
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
 remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
 materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
-refusal for remote-eligible actions. Liquid #59 configures liquid's FetchContent dependencies
-outside the sandbox, builds liquid under `liquid wrap`, requires a fully cached second run, and
-compares the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI
-transport and scheduling policy remain later Phase 3 work. The repository object model,
-internal CRDT metadata document, canonical CBOR codec, and drip journal are implemented. Directory
+refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
+blob interfaces, source and toolchain transfer from the store, recorded local/remote/race cost
+decisions, short-action batching, and race-loser cancellation; private HTTP/2 and gRPC framing are
+implemented. Liquid #16 adds the REAPI client, validated remote cache tier, repository configuration,
+and `liquid serve reapi` CAS and ActionCache; production workers remain a later issue. Liquid #156
+adds the dependency-free protobuf codec, REAPI v2.3 message set, native tree/action/result
+conversions, and BLAKE3/SHA-256 capability selection. Liquid #19 adds explicit local replay of recorded actions and results, byte-level
+comparison, and optional verification recording; remote inputs hydrate through the registered
+transport-neutral blob source. Liquid #20 adds the persisted demand-driven query graph, canonical
+query and input fingerprints, red-green validation, early cutoff, durability-filtered invalidation,
+cooperative cancellation, recorded-input retrieval, and `action_result` nodes for direct and
+wrapped builds. Liquid #65 adds the versioned frontend C ABI, dynamic and static module
+registration, tree-sitter C/C++ unit discovery, Clang C++ definition actions, relocatable-object
+assembly, and unit-keyed graph invalidation. Liquid #64 adds signed zstd delta delivery with
+verified local and registered-remote blob fetch plus chunk fallback. Liquid #21 adds the
+macOS/Linux per-checkout daemon, start-on-first-use CLI attachment, capture ownership, ordered
+cursor fan-out, status reporting, idle shutdown, graph persistence, and bounded resident graph
+values; Windows reports unsupported until Corosio supplies named-pipe transport. Liquid #59
+configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
+`liquid wrap`, requires a fully cached second run, and compares the wrapped static library and CLI
+byte for byte with the CMake bootstrap. The REAPI transport and scheduling policy remain later
+Phase 3 work. The repository
+object model, internal CRDT metadata document, canonical CBOR codec, and drip journal are
+implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
-patch-based remote observation. Full materialisation works on every platform; lazy VFS mounts use
+patch-based remote observation. Repositories can use a caller-owned shared store with independent
+checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,
+missing-object sessions, the HTTP/1.1 lake client, and CLI push/pull. Liquid #165 adds the public
+repository sync server, per-change authorization, and the `serve sync` HTTP adapter. Full materialisation works on
+every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
 and GoogleTest are used. Phase 1 (the store) is built inside libliquid. Optional developer
 benchmarks live under `bench/` and are excluded unless their build option is enabled.
+
+Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
+enumeration used by CLI record views.
+Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
+approximate, or deleted positions across changes.
 
 ### Vocabulary — use these words exactly
 
@@ -307,6 +336,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    in `docs/library/chunk-index-benchmark.md` (liquid #45) is the bar: at 10M entries, at least
    RocksDB-tuned's insert and point-lookup rates and no more than its footprint. Design in
    `docs/library/store.md` (liquid #1).
+9. **Transport is liquid's own: HTTP/2 with gRPC framing and a protobuf codec on Corosio** (Steve,
+   2026-09-05; bridge decision 9). No `grpc++`, no `protobuf`, no code generator. REAPI v2 is spoken
+   through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
+   same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
+   `docs/library/distribution.md`.
 
 **Still open:**
 

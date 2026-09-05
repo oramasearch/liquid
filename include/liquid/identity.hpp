@@ -73,6 +73,12 @@ struct LIQUID_EXPORT verified_identity {
     bool has_compromised_history{};
 };
 
+[[nodiscard]] LIQUID_EXPORT result<std::vector<std::byte>>
+encode_identity_document(const identity_document& document);
+[[nodiscard]] LIQUID_EXPORT result<identity_document>
+decode_identity_document(std::span<const std::byte> encoded);
+[[nodiscard]] LIQUID_EXPORT result<signature> decode_signature(std::span<const std::byte> encoded);
+
 class LIQUID_EXPORT signer {
 public:
     signer() noexcept;

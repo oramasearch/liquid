@@ -1,0 +1,6 @@
+genrule(
+    name = "copy",
+    srcs = ["input.txt"],
+    outs = ["output.txt"],
+    cmd = "cp $(location input.txt) $@",
+)

@@ -1,5 +1,6 @@
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <format>
 #include <print>
 #include <string>
@@ -9,6 +10,8 @@
 
 namespace liquid_cli {
 
+auto set_executable(std::filesystem::path path) -> void;
+
 auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
@@ -16,6 +19,7 @@ auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
 auto tree_move(int argc, char** argv) -> int;
 auto tree_remove(int argc, char** argv) -> int;
+auto anchor(int argc, char** argv) -> int;
 auto compose_nest(int argc, char** argv) -> int;
 auto compose_split(int argc, char** argv) -> int;
 auto compose_combine(int argc, char** argv) -> int;
@@ -33,6 +37,7 @@ auto garbage_collect(int argc, char** argv) -> int;
 auto retain(int argc, char** argv) -> int;
 auto attestation(int argc, char** argv) -> int;
 auto verify(int argc, char** argv) -> int;
+auto replay(int argc, char** argv) -> int;
 auto provenance(int argc, char** argv) -> int;
 auto policy(int argc, char** argv) -> int;
 auto sbom(int argc, char** argv) -> int;
@@ -44,6 +49,11 @@ auto git_export(int argc, char** argv) -> int;
 auto build(int argc, char** argv) -> int;
 auto why_slow(int argc, char** argv) -> int;
 auto facts(int argc, char** argv) -> int;
+auto delta(int argc, char** argv) -> int;
+auto sync_push(int argc, char** argv) -> int;
+auto sync_pull(int argc, char** argv) -> int;
+auto serve(int argc, char** argv) -> int;
+auto daemon_command(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -67,11 +77,36 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"daemon",
+     "daemon [--shutdown]",
+     "start or stop the checkout daemon",
+     "available on macOS and Linux",
+     liquid_cli::daemon_command},
     {"log", "log [--json]", "show change history", "available", liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
+    {"push",
+     "push <url>",
+     "push repository changes and objects",
+     "available",
+     liquid_cli::sync_push},
+    {"pull",
+     "pull <url>",
+     "pull repository changes and objects",
+     "available",
+     liquid_cli::sync_pull},
+    {"serve",
+     "serve sync <path> [--listen <address>] [--port <port>]",
+     "serve a repository over the sync protocol",
+     "available",
+     liquid_cli::serve},
     {"move", "move <from> <to>", "record a path move", "available", liquid_cli::tree_move},
     {"rm", "rm <path>", "record a path removal", "available", liquid_cli::tree_remove},
+    {"anchor",
+     "anchor <path>:<line>@<change> --to <change>",
+     "map a text position between changes",
+     "available",
+     liquid_cli::anchor},
     {"nest",
      "nest <repository> <path>",
      "nest another repository",
@@ -139,11 +174,21 @@ constexpr auto commands = std::to_array<command>({
      "show or verify an attestation",
      "available",
      liquid_cli::attestation},
+    {"delta",
+     "delta <create|apply|fetch> ...",
+     "create, apply, or fetch an artifact delta",
+     "available",
+     liquid_cli::delta},
     {"verify",
      "verify <action|--all|--changed> [--explain]",
      "re-execute and compare cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::verify},
+    {"replay",
+     "replay <action|result> [--json] [--record]",
+     "reproduce and compare a recorded action",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::replay},
     {"provenance",
      "provenance [--dsse] <result|path>",
      "print and verify build provenance",
@@ -160,13 +205,15 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::sbom},
     {"wrap",
-     "wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> "
+     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>] [remote options] "
+     "[--no-cache] [--no-verify] [--explain] <command> "
      "[args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build --profile <command> [args...] | build trace [--chrome]",
+     "build --profile [--remote <endpoint>] [remote options] <command> [args...] | build trace "
+     "[--chrome]",
      "profile a build or export its trace",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::build},
@@ -190,6 +237,11 @@ constexpr auto commands = std::to_array<command>({
      "inspect or export configure facts",
      "available",
      liquid_cli::facts},
+    {"serve",
+     "serve reapi --listen <address> [--instance <name>]",
+     "serve the repository CAS and action cache over REAPI",
+     "available",
+     liquid_cli::serve},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},
@@ -218,6 +270,7 @@ auto usage_error(std::string_view message) -> int {
 } // namespace
 
 int main(int argc, char** argv) {
+    liquid_cli::set_executable(argv[0]);
     if (argc < 2) {
         print_usage();
         return 2;

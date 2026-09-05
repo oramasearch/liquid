@@ -53,6 +53,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(LIQUID_BUILD_CLI   "Build the liquid command-line binary" ON)
 option(LIQUID_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 option(LIQUID_BUILD_BENCH "Build optional benchmarks" OFF)
+option(LIQUID_BUILD_FRONTENDS "Build bundled frontend modules" ON)
 option(LIQUID_SELF_HOST   "Configure a network-free liquid wrap build step" OFF)
 option(BUILD_SHARED_LIBS  "Build libliquid as a shared library" OFF)
 if(LIQUID_SELF_HOST)
@@ -70,15 +71,41 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 include(FetchContent)
 find_package(ZLIB REQUIRED)
 
-set(BOOST_CAPY_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-set(BOOST_CAPY_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BOOST_CAPY_BUILD_BENCH    OFF CACHE BOOL "" FORCE)
-add_subdirectory(modules/capy EXCLUDE_FROM_ALL)
+if(NOT TARGET Boost::capy)
+  set(BOOST_CAPY_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+  set(BOOST_CAPY_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BOOST_CAPY_BUILD_BENCH    OFF CACHE BOOL "" FORCE)
+  add_subdirectory(modules/capy EXCLUDE_FROM_ALL)
+endif()
 
-set(BOOST_COROSIO_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-set(BOOST_COROSIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BOOST_COROSIO_BUILD_PERF     OFF CACHE BOOL "" FORCE)
-add_subdirectory(modules/corosio EXCLUDE_FROM_ALL)
+if(APPLE)
+  list(APPEND CMAKE_PREFIX_PATH /opt/homebrew/opt/openssl@3)
+endif()
+find_package(OpenSSL REQUIRED)
+if(NOT TARGET Boost::corosio)
+  set(BOOST_COROSIO_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+  set(BOOST_COROSIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BOOST_COROSIO_BUILD_PERF     OFF CACHE BOOL "" FORCE)
+  add_subdirectory(modules/corosio EXCLUDE_FROM_ALL)
+endif()
+
+# Boost.HTTP expects its Boost component targets to exist before it is added.
+# Match lake's data-plane dependency set and pin so both sides compile the same
+# protocol implementation.
+set(BOOST_INCLUDE_LIBRARIES
+  json url assert config core mp11 system throw_exception type_traits winapi)
+set(BOOST_ENABLE_CMAKE ON)
+FetchContent_Declare(boost_core_libs
+  URL https://github.com/boostorg/boost/releases/download/boost-1.91.0-1/boost-1.91.0-1-cmake.tar.xz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(boost_core_libs)
+set(BOOST_HTTP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BOOST_HTTP_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(modules/http EXCLUDE_FROM_ALL)
+set_target_properties(boost_http PROPERTIES
+  INTERFACE_INCLUDE_DIRECTORIES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/modules/http/include>;$<INSTALL_INTERFACE:include>")
 
 set(LIQUID_FUSE_TARGET "")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -133,13 +160,98 @@ set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
 set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(zstd_source
   GIT_REPOSITORY https://github.com/facebook/zstd.git
   GIT_TAG        v1.5.7
   GIT_SHALLOW    TRUE
   SOURCE_SUBDIR  build/cmake)
 FetchContent_MakeAvailable(zstd_source)
+
+if(LIQUID_BUILD_FRONTENDS)
+  FetchContent_Declare(tree_sitter_source
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
+    GIT_TAG        v0.25.9
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  liquid-no-upstream-cmake)
+  FetchContent_Declare(tree_sitter_c_source
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
+    GIT_TAG        v0.24.1
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  liquid-no-upstream-cmake)
+  FetchContent_Declare(tree_sitter_cpp_source
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
+    GIT_TAG        v0.23.4
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  liquid-no-upstream-cmake)
+  FetchContent_MakeAvailable(tree_sitter_source tree_sitter_c_source tree_sitter_cpp_source)
+
+  add_library(liquid_frontend_syntax STATIC
+    modules/frontends/common/cbor.cpp
+    modules/frontends/common/syntax.cpp
+    ${tree_sitter_source_SOURCE_DIR}/lib/src/lib.c
+    ${tree_sitter_c_source_SOURCE_DIR}/src/parser.c
+    ${tree_sitter_cpp_source_SOURCE_DIR}/src/parser.c
+    ${tree_sitter_cpp_source_SOURCE_DIR}/src/scanner.c)
+  target_include_directories(liquid_frontend_syntax PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${tree_sitter_source_SOURCE_DIR}/lib/include
+    ${tree_sitter_source_SOURCE_DIR}/lib/src
+    ${tree_sitter_c_source_SOURCE_DIR}/src
+    ${tree_sitter_cpp_source_SOURCE_DIR}/src)
+  target_compile_features(liquid_frontend_syntax PRIVATE c_std_11 cxx_std_26)
+  target_compile_definitions(liquid_frontend_syntax PRIVATE TREE_SITTER_HIDE_SYMBOLS)
+  set_target_properties(liquid_frontend_syntax PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+  add_library(liquid-frontend-tree-sitter MODULE modules/frontends/tree_sitter/module.cpp)
+  target_include_directories(liquid-frontend-tree-sitter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+  target_link_libraries(liquid-frontend-tree-sitter PRIVATE liquid_frontend_syntax)
+  set_target_properties(liquid-frontend-tree-sitter PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "liquid-frontend-tree-sitter"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/tree-sitter"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/tree-sitter"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+  add_library(liquid-frontend-clang MODULE modules/frontends/clang/module.cpp)
+  target_include_directories(liquid-frontend-clang PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+  target_link_libraries(liquid-frontend-clang PRIVATE liquid_frontend_syntax)
+  set_target_properties(liquid-frontend-clang PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "liquid-frontend-clang"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/clang"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/modules/frontends/clang"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+
+  add_library(liquid-frontend-clang-static STATIC modules/frontends/clang/module.cpp)
+  target_include_directories(liquid-frontend-clang-static PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+  target_link_libraries(liquid-frontend-clang-static PRIVATE liquid_frontend_syntax)
+  set_target_properties(liquid-frontend-clang-static PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+  if(APPLE)
+    target_link_options(liquid-frontend-tree-sitter PRIVATE
+      "LINKER:-exported_symbol,_liquid_frontend_get_module_v1")
+    target_link_options(liquid-frontend-clang PRIVATE
+      "LINKER:-exported_symbol,_liquid_frontend_get_module_v1")
+  elseif(UNIX)
+    target_link_options(liquid-frontend-tree-sitter PRIVATE
+      "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends/exports.map")
+    target_link_options(liquid-frontend-clang PRIVATE
+      "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends/exports.map")
+  endif()
+endif()
 
 add_library(liquid_blake3_objects OBJECT
   ${blake3_source_SOURCE_DIR}/c/blake3.c
@@ -204,7 +316,14 @@ set(AUTOMERGE_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(AUTOMERGE_CPP_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(AUTOMERGE_CPP_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(AUTOMERGE_CPP_BUILD_FUZZ OFF CACHE BOOL "" FORCE)
-add_subdirectory(modules/automerge-cpp EXCLUDE_FROM_ALL)
+block()
+  # automerge-cpp always configures its bundled JSON checkout. Keep that header-only target private
+  # when the consumer already owns the canonical target that automerge-cpp links.
+  if(TARGET nlohmann_json::nlohmann_json)
+    set(NLOHMANN_JSON_TARGET_NAME liquid_vendored_nlohmann_json)
+  endif()
+  add_subdirectory(modules/automerge-cpp EXCLUDE_FROM_ALL)
+endblock()
 set(BUILD_SHARED_LIBS ${LIQUID_SAVED_BUILD_SHARED_LIBS})
 set_target_properties(automerge-cpp PROPERTIES
   CXX_VISIBILITY_PRESET hidden
@@ -232,6 +351,8 @@ add_library(libliquid
   src/attestation/registry.cpp
   src/build/cache.cpp
   src/build/executor.cpp
+  src/build/distribution.cpp
+  src/build/enumeration.cpp
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
@@ -244,13 +365,23 @@ add_library(libliquid
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
+  src/daemon.cpp
+  src/daemon/fanout.cpp
   src/drip.cpp
+  src/delta.cpp
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
   src/formats/json.cpp
+  src/frontend/graph.cpp
+  src/frontend/module.cpp
+  src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
+  src/http2/frame.cpp
+  src/http2/grpc.cpp
+  src/http2/hpack.cpp
+  src/http2/connection.cpp
   src/git/export.cpp
   src/git/import.cpp
   src/git/object_store.cpp
@@ -260,6 +391,13 @@ add_library(libliquid
   src/crypto/crypto.cpp
   src/object.cpp
   src/objects/records.cpp
+  src/protobuf/wire.cpp
+  src/reapi/conversion.cpp
+  src/reapi/client.cpp
+  src/reapi/messages.cpp
+  src/reapi/remote_client.cpp
+  src/reapi/server.cpp
+  src/repository/diff.cpp
   src/repository/merge.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
@@ -278,6 +416,10 @@ add_library(libliquid
   src/store/references.cpp
   src/store/store_impl.cpp
   src/store/subject_index.cpp
+  src/sync/codec.cpp
+  src/sync/endpoint.cpp
+  src/sync/server.cpp
+  src/sync/session.cpp
   src/version.cpp
   src/vfs.cpp
   src/vfs/fuse_fs.cpp
@@ -312,6 +454,7 @@ target_include_directories(libliquid PUBLIC
           ${monocypher_source_SOURCE_DIR}/src/optional)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_compile_definitions(libliquid PRIVATE
+  LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
   LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
 add_dependencies(libliquid liquid-wrap-hook)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -322,8 +465,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
-  PRIVATE Boost::corosio libzstd_static ZLIB::ZLIB
-          $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
+  PRIVATE Boost::corosio Boost::corosio_openssl Boost::http libzstd_static ZLIB::ZLIB
+          ${CMAKE_DL_LIBS} $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
 if(LIQUID_FUSE_TARGET)
   target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
   target_link_libraries(libliquid PRIVATE ${LIQUID_FUSE_TARGET})
@@ -351,9 +494,12 @@ endif()
 if(LIQUID_BUILD_CLI)
   add_executable(liquid-cli
     src/main.cpp
+    src/cli/anchor.cpp
     src/cli/attestation.cpp
     src/cli/capture.cpp
+    src/cli/daemon.cpp
     src/cli/compose.cpp
+    src/cli/delta.cpp
     src/cli/gc.cpp
     src/cli/facts.cpp
     src/cli/git.cpp
@@ -363,6 +509,9 @@ if(LIQUID_BUILD_CLI)
     src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/sbom.cpp
+    src/cli/serve.cpp
+    src/cli/sync.cpp
+    src/cli/serve.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
@@ -372,7 +521,8 @@ if(LIQUID_BUILD_CLI)
     src/cli/why.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
-  target_link_libraries(liquid-cli PRIVATE liquid::liquid)
+  target_link_libraries(liquid-cli PRIVATE
+    liquid::liquid Boost::corosio Boost::http)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -391,6 +541,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   install(TARGETS liquid-read-guard
     RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)
 endif()
+if(LIQUID_BUILD_FRONTENDS)
+  install(TARGETS liquid-frontend-tree-sitter liquid-frontend-clang
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid/frontends
+    RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid/frontends)
+endif()
 install(TARGETS boost_capy EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -399,10 +554,33 @@ install(TARGETS boost_corosio EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS boost_corosio_openssl boost_http EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS
+  boost_align boost_assert boost_compat boost_config boost_container
+  boost_container_hash boost_core boost_describe boost_endian boost_json
+  boost_intrusive boost_move boost_mp11 boost_optional boost_predef boost_system
+  boost_throw_exception boost_type_traits boost_url boost_variant2 boost_winapi
+  EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ ${CMAKE_CURRENT_BINARY_DIR}/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY modules/capy/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY modules/http/include/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+foreach(LIQUID_BOOST_LIBRARY
+    align assert compat config container container_hash core describe endian json
+    intrusive move mp11 optional predef static_assert system throw_exception type_traits url
+    variant2 winapi)
+  install(DIRECTORY
+    ${boost_core_libs_SOURCE_DIR}/libs/${LIQUID_BOOST_LIBRARY}/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endforeach()
 if(LIQUID_BUILD_CLI)
   install(TARGETS liquid-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

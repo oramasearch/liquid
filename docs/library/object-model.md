@@ -22,7 +22,8 @@ checkpoints can be loaded shallowly.
 codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
 working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
 composition, conflict values, operation inversion, advisory locks, and the repository status are
-implemented over the local store.
+implemented over either a repository-local store or a caller-owned store shared by multiple
+repositories.
 
 ## The two layers, precisely
 
@@ -55,7 +56,16 @@ action      { v, kind:"action", inputs:digest(tree), command:[text...], cwd, env
               platform, toolchain:digest(tree), sandbox:digest, timeout_s?, remote_eligible? }
 result      { v, kind:"result", action:digest, outputs, manifest, producer, provenance?, sboms?, sig }
 sbom        { v, kind:"sbom", format:text, document:bytes }
+query-graph { v:1, kind:"query-graph", nodes:[digest(query-node)…] }
+query-node  { v:1, kind:"query-node", key, fingerprint, durability,
+              dependencies:[{key,fingerprint}…], value:digest }
 ```
+
+The query graph uses its own store directory and atomic text `ROOT`. Query keys and dependency
+keys are canonical CBOR; dependencies retain read order. Query values are separate store objects,
+so opening the graph loads root and node metadata while value bytes remain shallow until demand.
+Only a completed query replaces `ROOT`; interrupted computations leave the previous complete graph
+readable.
 
 - **`node_id`** is 16 random bytes minted when a path is created. It is stored in the tree entry
   and in the document entry, and it is what survives a move: a move deletes the old key and puts
@@ -85,6 +95,21 @@ sbom        { v, kind:"sbom", format:text, document:bytes }
 
 Trees and blobs are values: two repositories with the same content share every record and every
 chunk, because the store is one.
+
+## Repository placement
+
+`repository_options::store` may point to an open caller-owned `store`. In that form, the path
+argument to `repository::create` and `repository::open` is an opaque repository identifier rather
+than a checkout path. libliquid hashes that identifier into
+`<store>/repositories/<identifier-hash>/`, where it keeps that repository's `LIQUID_REPO` and
+`LIQUID_JOURNAL` entry points. Repository checkpoints and directory documents remain ordinary
+content-addressed objects in the shared store. The caller must keep the store alive until every
+repository opened on it has been destroyed.
+
+When `repository_options::store` is null, the path retains its original meaning and libliquid
+opens `<path>/.liquid-store`. `repository_options::storage` configures that owned store. A split
+from a shared-store repository creates the destination identifier in the same store, so both
+repositories continue sharing immutable objects and chunks.
 
 Local writes retain `blob/1` identity. A remote output uses `blob/2`: `digest` identifies the
 complete byte stream while the parallel chunk arrays define independently verifiable range
@@ -162,6 +187,62 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `combine(other, at)` | one change with parents in both repositories (`change_ref` carries `repo_id`); path collisions become conflict values. |
 | `operations()` / `undo(op_id)` | every operation above appends an `op` record to `ops` (`{ id, kind, from, to, at, by, inverse }`). `operations()` returns them newest first; `undo` applies an inverse as a new operation. Undo never rewrites history. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
+
+## Public tree comparison
+
+Issue #166 adds `repository::diff` overloads for two changes, two tree-record digests, or two
+already loaded `tree` values. The result is sorted by repository-relative path. Each
+`tree_diff_entry` carries a vector of independent `tree_diff_kind` values, so one path can be both
+moved and modified or both mode-changed and conflicted. `path` is the destination path when the
+entry exists on the new side; a move also carries `old_path`.
+
+Entries match by `node_id`, not by name. A delete and recreate at the same path is therefore one
+removed entry and one added entry, while a rename of the same node is a move. Directory record
+digests change whenever a descendant changes, but that does not report a modification for every
+ancestor directory. Blob entries carry `old_blob` and `new_blob` when those sides exist. Modes are
+also present per side, including on pure mode changes.
+
+Change comparison attaches the exact before and after conflict-reference vectors stored in the
+two change records. A conflict-only change produces its own `conflicted` entry even when the tree
+record did not change. Tree comparison has no change record and therefore no conflict values.
+
+Text work is opt-in through `tree_diff_options::text`. Without it, diff reads tree records but does
+not materialise blob contents. With it, added, removed, and modified blobs are checked as UTF-8 and
+receive `line_hunks`, using the existing `line_change` shape from build diagnostics. Binary values
+leave `line_hunks` disengaged. The line algorithm returns separate hunks for separated edits; for inputs
+whose line matrix would exceed 4,000,000 cells it returns the exact common-prefix/common-suffix
+envelope as one bounded-memory hunk. The value type can gain Phase 4's syntax-aware `structural`
+field without changing these path, identity, conflict, or text fields.
+
+## Anchors
+
+Issue #174 adds text positions that follow a file from one change to another without changing the
+object model or introducing a text CRDT. A `text_anchor` stores a source `change_id`, path, line,
+and column. Lines and columns are one-based. `repository::map_anchor` returns the corresponding
+`mapped_anchor` at a target change; `map_anchors` accepts many anchors from the same source change
+and preserves their input order.
+
+Mapping is a projection over the line hunks from one `repository::diff` call with text enabled:
+
+- An anchor before the first hunk or between hunks keeps its column and accumulates the line-count
+  changes from earlier hunks. Insertions or removals above it therefore shift the line without
+  reading the file again.
+- An anchor inside a replacement selects the same relative line in the replacement, clamped to
+  its last line, retains its column, and sets `approximate` because line hunks do not contain a
+  character-level correspondence.
+- An anchor inside a hunk with no replacement lines sets `deleted`, reports the target insertion
+  line with column one, and cannot be treated as an exact position. Removing the complete file
+  also sets `deleted`; its source path and coordinates remain available for diagnostics.
+- A rename or move follows the tree entry's `node_id`, changes the returned path, and sets `moved`.
+  `moved` also reports a changed line number; `approximate` is independent, so a same-number
+  replacement can be approximate without being moved.
+- A content-changing entry whose blobs are not UTF-8 text returns `errc::unsupported`. A batch
+  containing different source changes or a zero line/column returns `errc::invalid_argument`.
+
+The batch groups anchors by source path, scans the diff entries once, sorts only the anchors for
+each matched path, and advances through that path's hunks once. Its mapping cost is proportional to
+the produced diff and anchors, not the file length or one full diff per anchor. The diff algorithm
+remains responsible for materialising changed text and producing hunks.
 
 ## Document boundary
 

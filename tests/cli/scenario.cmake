@@ -55,6 +55,18 @@ run_liquid(move_output move_error move_result "${workspace}" move first.txt move
 require_success(move_result move_output move_error)
 run_liquid(moved_cut_output moved_cut_error moved_cut_result "${workspace}" cut moved)
 require_success(moved_cut_result moved_cut_output moved_cut_error)
+string(REGEX MATCH "change=([^\n]+)" imported_change "${cut_output}")
+set(imported_change "${CMAKE_MATCH_1}")
+string(REGEX MATCH "change=([^\n]+)" moved_change "${moved_cut_output}")
+set(moved_change "${CMAKE_MATCH_1}")
+run_liquid(anchor_output anchor_error anchor_result "${workspace}"
+  anchor "first.txt:1@${imported_change}" --to "${moved_change}")
+require_success(anchor_result anchor_output anchor_error)
+string(REGEX MATCH "^moved.txt:1:1@[^ ]+ moved=true approximate=false deleted=false"
+  moved_anchor "${anchor_output}")
+if(NOT moved_anchor)
+  message(FATAL_ERROR "anchor did not follow the moved node: ${anchor_output}")
+endif()
 
 run_liquid(other_init_output other_init_error other_init_result "${other}" init .)
 require_success(other_init_result other_init_output other_init_error)
@@ -138,4 +150,4 @@ string(REGEX MATCH "\"name\":\"main\"" collected_main "${collected_refs_output}"
 if(NOT collected_main)
   message(FATAL_ERROR "collection lost main reference: ${collected_refs_output}")
 endif()
-message(STATUS "scenario output:\n${init_output}${status_output}${cut_output}${move_output}${moved_cut_output}${nest_output}${split_output}${combine_output}${combined_cut_output}${final_move_output}${log_output}${ops_output}${undo_output}${lock_output}${locked_error}${pause_output}${resume_output}${gc_output}${moved_output}${combined_output}${collected_log_output}${collected_refs_output}")
+message(STATUS "scenario output:\n${init_output}${status_output}${cut_output}${move_output}${moved_cut_output}${anchor_output}${nest_output}${split_output}${combine_output}${combined_cut_output}${final_move_output}${log_output}${ops_output}${undo_output}${lock_output}${locked_error}${pause_output}${resume_output}${gc_output}${moved_output}${combined_output}${collected_log_output}${collected_refs_output}")

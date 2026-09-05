@@ -5,8 +5,12 @@
 > [`features/06-distributed-execution.md`](../features/06-distributed-execution.md),
 > [`features/05-caching.md`](../features/05-caching.md) (the remote tier),
 > [`features/09-artifact-service.md`](../features/09-artifact-service.md) (deltas). This page is the
-> design the Phase 3 issues implement. The build-without-bytes slice described below is now
-> implemented; transport and scheduling remain later work.
+> design the Phase 3 issues implement. The build-without-bytes, replay, and delta slices are
+> implemented. Issue #18 adds cost-model scheduling, batching, and racing through the shared
+> transport-neutral remote interfaces. The protobuf messages and native record mapping are
+> implemented in [`reapi-codec.md`](reapi-codec.md). Issue #16 connects them to the HTTP/2 client,
+> remote cache tier, and liquid CAS/ActionCache server as documented in [`reapi.md`](reapi.md).
+> Production workers remain separate work.
 
 Phase 2 built the local action path: records for actions and results
 ([`build-engine.md`](build-engine.md)), observation by the mount, the signed disk cache, `liquid
@@ -57,7 +61,8 @@ action that consumes them runs on the backend with the inputs already in its CAS
 
 Materialisation (`materialise`) of a tree containing remote blobs fetches them then; `liquid
 status` shows how many bytes of the current tree are still remote. A chunk stops contributing as
-soon as its verified bytes enter the local store.
+soon as its verified bytes enter the local store. Subsequent reads use those verified chunk bytes
+directly, including a one-chunk blob whose content digest is also its chunk digest.
 
 **Hermeticity at the read.** `action_input::remote_eligible` defaults to false until the cost model
 in #18 sets it. On Linux, an eligible action runs under the sandbox read guard. The guard inspects
@@ -78,18 +83,79 @@ containing the first output without a client read. In the privileged Linux sandb
 
 ## The toolchain is an input; racing by cost (#18)
 
-The toolchain tree is materialised on a remote worker from the CAS like any other input; there is
-no image to bake. For stock backends this is only a size question (a toolchain is hundreds of
-megabytes once, then a cache hit); for liquid's own workers (#63) the CAS is co-located so it is a
-local hydration.
+Issue #18 adds `remote_executor` beside #17's remote blob contract in `liquid/remote.hpp`:
 
-Scheduling races local against remote when the cost model is uncertain. The inputs of the model
-are all recorded already: the action's own history (`result.timing` across previous runs, the
-size class it fell into), the bytes the remote side lacks (`FindMissingBlobs` before dispatch),
-queue depth reported by the backend, and cache locality. The model's output is a decision
-(`local`, `remote`, `race`) and its inputs are recorded on the result so `liquid why` explains the
-choice. Tiny actions never leave the machine; very short work is batched into one remote action
-when the backend supports it.
+```cpp
+struct remote_blob_location {
+  std::string source;
+  std::string instance;
+};
+class remote_blob_source {
+  runtime::task<std::vector<digest>> find_missing(std::string instance, std::vector<digest>);
+  runtime::task<std::uint64_t> read_range(std::string instance, digest, std::uint64_t,
+                                          std::span<std::byte> into);
+  runtime::task<void> write(std::string instance, digest, std::vector<std::byte> contents);
+};
+class remote_executor {
+  remote_blob_source& blobs();
+  std::string instance() const;
+  std::uint64_t queue_depth() const;
+  bool supports_batch() const;
+  runtime::task<action_result> execute(action_input);
+  runtime::task<std::vector<action_result>> execute_batch(std::vector<action_input>);
+};
+```
+
+The client walks both `action_input.inputs` and `action_input.toolchain`, including tree records,
+blob records, and chunks. One `find_missing` call determines the absent objects, and only those
+objects are written. The test executor uses a second liquid store as the remote CAS, reconstructs
+the source and toolchain into a new directory for every execution, and invokes the tool from that
+reconstructed toolchain. No worker image supplies the compiler or test tool. A remote result's
+output, stdout, and stderr blob graphs are read back through `read_range` before the signed result
+is published locally. Issues #16 and #63 implement network and production-worker versions of these
+interfaces without changing the scheduler.
+
+### Cost model
+
+The model is deterministic and every input is preserved in `action_result::schedule`:
+
+- Up to eight earlier results for the candidate supply their five-phase total timings. Their median
+  is the local estimate and classifies the action as tiny (at most 25 ms), short (at most 250 ms),
+  medium, or long (at least 2,000 ms). No history means a local measurement; no remote object query
+  is made.
+- Before medium, long, or batched-short dispatch, `find_missing` measures total input bytes, absent
+  bytes, and cache locality in permille. The executor reports queue depth and batch support.
+- The remote estimate is `20 ms dispatch + 50 ms * queue depth + absent bytes / 100 MiB/s +
+  0.75 * median recorded total`.
+- Tiny actions always stay local. Short actions stay local unless at least four short actions can be
+  sent through one `execute_batch` call. That batch shares one missing-object query and upload.
+- With at least three samples, an action is uncertain when the range is greater than half the
+  median. Uncertain medium or long work races unless the queue depth exceeds eight, or a queried
+  remote is below 250 permille locality while missing more than 64 MiB. Stable work uses the lower
+  estimate.
+
+The mixed calibration workload in `BuildDistribution.mixed_workload_selects_local_remote_and_race`
+feeds `action_timing` records in the same form produced by the wrap fixtures into the model:
+
+| Work | Recorded totals (ms) | Missing / locality | Queue | Batch | Local estimate | Remote estimate | Decision |
+|---|---:|---:|---:|---:|---:|---:|---|
+| tiny | 12, 14, 13 | 0 B / 1,000 | 0 | 1 | 13 ms | 29 ms | local |
+| short | 80, 100, 90 | 0 B / 1,000 | 0 | 8 | 90 ms | 87 ms | remote batch |
+| long | 3,200, 3,400, 3,600 | 8 MiB / 875 | 1 | 1 | 3,400 ms | 2,700 ms | remote |
+| uncertain | 400, 900, 2,400 | 4 MiB / 750 | 0 | 1 | 900 ms | 735 ms | race |
+
+`local`, `remote`, and `race`, the timing history, size class, input and missing bytes, query flag,
+queue depth, locality, batch capability and size, both estimates, and the reason are stored in
+version-3 result records. `liquid why`, `liquid build trace`, `liquid why-slow`, and Chrome trace
+events expose those recorded fields.
+
+For a race, missing objects are staged first and local and remote execution then start together.
+When either branch produces a result, it is the only value passed to the signing and
+cache-publication path.
+Capy cancellation reaches the losing task; a losing local sandbox kills its process group, and a
+losing remote task receives its stop token. The test double delays the remote side, observes that
+cancellation, and proves the action index gains exactly one published row whose output equals an
+ordinary local execution.
 
 ## Replay (#19)
 
@@ -98,6 +164,22 @@ environment and sandbox definition, fetching whatever is remote, and compares ou
 byte with the recorded result. It is the same machinery as `liquid verify` with a different
 purpose: verify samples for divergence; replay reproduces a specific failure on demand, including
 a cached hit ("replay a hit to check it").
+
+**Implemented.** The target may be a result record directly or an action in the local action index;
+an action selects its newest recorded result. A nonzero recorded exit is data, not a replay error:
+the command succeeds when the local run has the same exit, stdout, stderr, and declared output
+bytes. A difference exits nonzero and identifies the first unequal byte and the recorded and local
+values. `--json` emits the same report for tooling.
+
+Replay uses the repository's registered `remote_blob_source` for any recorded remote input or
+expected output. The source receives the recorded `remote_blob_location` source and instance;
+the store requests ranges and verifies every fetched chunk before local storage. The interface
+exposes `find_missing`, range reads, and writes without choosing the Phase 3 transport; the REAPI
+client can implement it after #16. Tests use its on-disk double backed by a second liquid store.
+
+Replay does not publish the local result, create a reproducibility attestation, emit a critical
+alert, or change the divergent flag. `--record` is the explicit exception: it records the same
+signed `reproducibility/1` sample and durable quarantine decision as `liquid verify`.
 
 ## The transport decision (#16)
 
@@ -124,8 +206,11 @@ liquid owning its transport, which #63 (liquid's own scheduler and workers) need
 conformance proof is a real backend: the tests run NativeLink and BuildBarn in Docker and drive
 the Phase 2 fixture builds against them.
 
-This decision is Steve's; it is recorded in the bridge's `docs/decisions.md` when made, and #16
-and #63 do not start before it. #17, #18, #19 and #64 do not depend on it: they are built against
+**Decided (Steve, 2026-09-05; bridge decision 9): option 2.** The transport is built as two issues
+in parallel, #155 (HTTP/2 client and server with gRPC framing on Corosio) and #156 (protobuf wire
+codec and the REAPI v2 message set with the record conversions); #16 integrates them into the
+remote tier and the `remote_executor`, and proves conformance against NativeLink and BuildBarn in
+Docker; #63 follows. #17, #18, #19 and #64 do not depend on it: they are built against
 the local executor and the store, with the remote location abstracted behind one interface
 (`remote_blob_source`: `find_missing`, `read_range`, `write`) that the REAPI client implements
 later.
@@ -143,11 +228,61 @@ results are signed by the worker's TAAP identity. Deployment is the operator's (
 
 Content-defined chunking is the baseline for everything; deltas are an optimisation for
 generate-once, apply-many cases: published releases and OTA-style updates. A delta is an artifact
-like any other: it is content-addressed, attested (`delta/1` names source, target and algorithm),
-and a client that has the source fetches the delta and falls back to chunks when none exists.
-`zstd --patch-from` is the generic algorithm; executable-aware deltas (section-aware, relocation-
-aware) are reserved for binaries and land behind the same interface. Measured savings go into this
-page when the issue lands; they are the reason the feature exists.
+like any other: it is content-addressed and attested. `liquid/delta.hpp` exposes the synchronous
+codec plus coroutine-native store operations:
+
+```cpp
+result<std::vector<std::byte>> make_delta(delta_algorithm, source, target);
+result<std::vector<std::byte>> apply_delta(const delta_record&, source, patch);
+runtime::task<delta_creation> create_delta(store&, source_path, target_path, algorithm);
+runtime::task<void> apply_delta(store&, record_digest, source_path, destination_path);
+runtime::task<delta_fetch_result>
+fetch_delta(store&, target_digest, source_path, destination_path);
+```
+
+The version-1 `delta_record` is a fixed binary record containing the source digest, target digest,
+algorithm id, and digest of the patch blob. Source, target, patch, record, and `delta/1`
+attestation are ordinary store objects. The attestation uses the target as its artifact subject and
+signs `source`, `target`, `algorithm`, and `delta` (the record digest). The store's subject index is
+the local delta catalog. Its reference registry traverses the attestation to the delta record and
+the record to source, target, and patch, so a leased attestation retains the whole delivery graph.
+
+`zstd-patch` is algorithm 1. It uses zstd reference-prefix compression at level 19 with long-distance
+matching. Apply first verifies the supplied source and patch-blob digests, reconstructs the bytes,
+and verifies the target digest before writing a destination. A decompression success is not
+sufficient. This final hash is also mandatory on the fetch path.
+
+Fetch queries the local target-subject catalog. Its patch or fallback target can be a blob registered
+with the store's configured `remote_blob_source`; the store then range-hydrates and verifies its
+ordinary content-defined chunks through #17's transport-neutral interface. The on-disk source in
+the test suite supplies those remote blobs. Missing or invalid delta data does not silently become
+a trusted target: invalid signatures, catalog/record disagreement, decompression errors, source
+mismatches, patch mismatches, and target mismatches fail.
+
+### Executable-aware algorithm reservation
+
+Algorithm 2 is reserved as `executable-sections` behind the same create/apply interface. It is not
+emitted yet. The one-round experiment split the Mach-O fixture below into its 15 named sections plus
+six gaps, made an independent zstd reference patch for each matching old/new region, and counted a
+16-byte envelope plus 24 bytes and the region name per entry. That candidate was 477,119 bytes,
+15,164 bytes (3.28%) larger than the 461,955-byte generic patch. It therefore failed the required
+measurement. A future ELF/Mach-O implementation must beat 461,955 bytes on this fixture and retain
+the same source and final-target verification before algorithm 2 may be emitted.
+
+### Recorded savings
+
+Measured on 2026-09-04 on arm64 macOS with Clang 22.1.8, zstd 1.5.7, and Release builds. The first
+binary and compilation database were captured from `origin/main`; the second came from the
+consecutive build containing #64. `compile_commands.json` is the large text artifact generated by
+those builds.
+
+| Artifact | Source bytes | Target bytes | Delta bytes | Bytes avoided | Saving |
+|---|---:|---:|---:|---:|---:|
+| `liquid` binary | 7,330,840 | 7,463,480 | 461,955 | 7,001,525 | 93.81% |
+| `compile_commands.json` | 461,690 | 457,005 | 3,686 | 453,319 | 99.19% |
+
+The numbers measure bytes needed for the patch blob versus fetching the complete target. The signed
+attestation and 108-byte delta record are catalog metadata, excluded from the patch comparison.
 
 ## What Phase 3 does not do
 
@@ -160,7 +295,32 @@ Each issue adds its proof beside the Phase 2 ones (`build-engine.md`, "How to ve
 exit is the Phase 2 wrap fixtures built against a stock backend in Docker with the same hit rate
 as local, and the non-hermetic fixture refused at the read.
 
+Issue #16's `tools/reapi-peers/run-reapi-interop.sh build-linux` uses pinned NativeLink 1.6.6 and
+BuildBarn bb-storage containers. The Make wrap fixture records a 100% local second-run baseline;
+after removing only the disk action index, both peer ActionCache implementations produce 100% on
+the second run as well:
+
+| Backend | Local second run | Remote second run | CAS and ActionCache round trip |
+|---|---:|---:|---|
+| NativeLink 1.6.6 | 100% | 100% | pass |
+| BuildBarn `20260609T094425Z-10acc76` | 100% | 100% | pass |
+
+The privileged Linux read-guard case refuses `/etc/hostname` before remote dispatch. For the server
+direction, stock Bazel 7.4.1 writes a genrule's CAS objects and ActionResult to `liquid serve reapi`;
+a clean second output base reports `1 remote cache hit`. The upstream `remote-apis` repository does
+not provide a server conformance runner and BuildBarn does not publish a black-box conformance
+binary, so this stock Bazel cache read/write case is the applicable upstream-client compatibility
+case. Client and server details, configuration, and the exact API map are in
+[`reapi.md`](reapi.md).
+
+Issue #19's privileged Linux cases replay a deterministic recorded failure, replay an indexed
+cache hit by action digest, detect an altered recorded output at byte zero, and hydrate a missing
+input through #17's on-disk source double. The wrap case invokes `liquid replay --json` against a
+recorded action. macOS static and shared builds compile the API and CLI while mount-backed cases
+skip when macFUSE is unavailable.
+
 ## How to change
 
-Keep this page synchronized with each Phase 3 implementation. A change to remote record identity,
-hydration, or eligibility must update the corresponding section and its verification evidence.
+This page tracks design and implementation status together. A Phase 3 issue that finds the design
+wrong changes this page in the same commit as the code and says why in the commit body, as the Phase
+2 issues did for `build-engine.md`.

@@ -9,7 +9,6 @@
 #include <set>
 #include <sstream>
 
-#include "build/cache.hpp"
 #include "build/policy.hpp"
 #include "build/repository_access.hpp"
 #include "build/why.hpp"
@@ -328,6 +327,22 @@ auto load_stats(const std::filesystem::path& path) -> result<cache_report> {
             output.bytes_rebuilt = value;
         } else if (key == "bytes_avoided") {
             output.disk.bytes_avoided = value;
+        } else if (key == "disk.hits") {
+            output.disk.hits = value;
+        } else if (key == "disk.misses") {
+            output.disk.misses = value;
+        } else if (key == "disk.bytes_transferred") {
+            output.disk.bytes_transferred = value;
+        } else if (key == "remote.available") {
+            output.remote.available = value != 0;
+        } else if (key == "remote.hits") {
+            output.remote.hits = value;
+        } else if (key == "remote.misses") {
+            output.remote.misses = value;
+        } else if (key == "remote.bytes_transferred") {
+            output.remote.bytes_transferred = value;
+        } else if (key == "remote.bytes_avoided") {
+            output.remote.bytes_avoided = value;
         } else if (key.starts_with("reason.")) {
             auto index = unsigned{};
             const auto text = std::string_view{key}.substr(7);
@@ -342,9 +357,12 @@ auto load_stats(const std::filesystem::path& path) -> result<cache_report> {
     if (!input.eof()) {
         return std::unexpected(why_error(errc::corrupt, "invalid cache statistics", path));
     }
-    output.disk.hits = output.hits;
-    output.disk.misses = output.misses;
-    output.disk.bytes_transferred = output.bytes_served;
+    if (output.disk.hits == 0 && output.disk.misses == 0 && output.remote.hits == 0 &&
+        output.remote.misses == 0) {
+        output.disk.hits = output.hits;
+        output.disk.misses = output.misses;
+        output.disk.bytes_transferred = output.bytes_served;
+    }
     return output;
 }
 
@@ -360,6 +378,14 @@ auto save_stats(const std::filesystem::path& path, const cache_report& value) ->
     output << "bytes_served " << value.bytes_served << '\n';
     output << "bytes_avoided " << value.disk.bytes_avoided << '\n';
     output << "bytes_rebuilt " << value.bytes_rebuilt << '\n';
+    output << "disk.hits " << value.disk.hits << '\n';
+    output << "disk.misses " << value.disk.misses << '\n';
+    output << "disk.bytes_transferred " << value.disk.bytes_transferred << '\n';
+    output << "remote.available " << value.remote.available << '\n';
+    output << "remote.hits " << value.remote.hits << '\n';
+    output << "remote.misses " << value.remote.misses << '\n';
+    output << "remote.bytes_transferred " << value.remote.bytes_transferred << '\n';
+    output << "remote.bytes_avoided " << value.remote.bytes_avoided << '\n';
     for (const auto& [reason, count] : value.misses_by_reason) {
         output << "reason." << static_cast<unsigned>(reason) << ' ' << count << '\n';
     }
@@ -398,7 +424,7 @@ auto result_matches(repository& source,
         value->outputs, [&](const action_output& output) { return output.path == target; });
 }
 
-auto quarantine_detail(const objects::action_index_entry& entry) -> std::string {
+auto quarantine_detail(const repository_result& entry) -> std::string {
     auto detail = std::string{"the action index quarantines this divergent result"};
     if (entry.verification) {
         detail += "; verification attestation: ";
@@ -631,12 +657,21 @@ auto update_cache_stats(const std::filesystem::path& cache_directory, const wrap
     current->bytes_served += report.cache.bytes_served;
     current->bytes_rebuilt += report.cache.bytes_rebuilt;
     current->disk.bytes_avoided += report.cache.disk.bytes_avoided;
+    const auto has_tier_counts = report.cache.disk.hits != 0 || report.cache.disk.misses != 0 ||
+                                 report.cache.remote.hits != 0 || report.cache.remote.misses != 0;
+    current->disk.hits += has_tier_counts ? report.cache.disk.hits : report.hits;
+    current->disk.misses += has_tier_counts ? report.cache.disk.misses : report.misses;
+    current->disk.bytes_transferred += report.cache.disk.bytes_transferred != 0
+                                           ? report.cache.disk.bytes_transferred
+                                           : report.cache.bytes_served;
+    current->remote.available = current->remote.available || report.cache.remote.available;
+    current->remote.hits += report.cache.remote.hits;
+    current->remote.misses += report.cache.remote.misses;
+    current->remote.bytes_transferred += report.cache.remote.bytes_transferred;
+    current->remote.bytes_avoided += report.cache.remote.bytes_avoided;
     for (const auto& [reason, count] : report.cache.misses_by_reason) {
         current->misses_by_reason[reason] += count;
     }
-    current->disk.hits = current->hits;
-    current->disk.misses = current->misses;
-    current->disk.bytes_transferred = current->bytes_served;
     return save_stats(path, *current);
 }
 
@@ -658,6 +693,11 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
         co_return std::unexpected(cache_directory.error());
     }
     auto report = why_report{.target = target};
+    auto statistics = build_detail::load_stats(*cache_directory / "stats");
+    if (!statistics) {
+        co_return std::unexpected(statistics.error());
+    }
+    report.cache = std::move(*statistics);
     const auto repository_path = *cache_directory / "repository";
     if (!std::filesystem::exists(repository_path / "LIQUID_REPO")) {
         report.cause = {.reason = cache_miss_reason::never_built,
@@ -702,34 +742,36 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
         }
     }
     if (!selected) {
-        auto cache = build_detail::disk_cache{*source};
-        auto cache_opened = co_await cache.open();
-        if (!cache_opened) {
-            co_return std::unexpected(cache_opened.error());
-        }
-        auto index = build_detail::action_index{action_directory};
-        auto opened = co_await index.open();
-        if (!opened) {
-            co_return std::unexpected(opened.error());
-        }
-        auto entries = index.entries();
-        std::ranges::sort(entries, std::greater{}, &objects::action_index_entry::sequence);
         auto current = std::optional<result_id>{};
-        for (const auto& entry : entries) {
-            auto lookup = build_detail::lookup_record{cache_status::miss, result_id{entry.result}};
-            auto matches = co_await build_detail::result_matches(*source, lookup, target, parsed);
-            if (!matches || !*matches) {
-                continue;
+        auto filter = result_filter{.page = {.limit = 1'000}};
+        auto complete = false;
+        while (!complete && (!selected || !selected->previous)) {
+            auto records = co_await source->results(filter);
+            if (!records) {
+                co_return std::unexpected(records.error());
             }
-            if (!current) {
-                current = result_id{entry.result};
-                selected = lookup;
-                continue;
+            for (const auto& entry : records->records) {
+                if (entry.sequence == 0) {
+                    continue;
+                }
+                auto lookup = build_detail::lookup_record{cache_status::miss, entry.id};
+                auto matches =
+                    co_await build_detail::result_matches(*source, lookup, target, parsed);
+                if (!matches || !*matches) {
+                    continue;
+                }
+                if (!current) {
+                    current = entry.id;
+                    selected = lookup;
+                    continue;
+                }
+                if (!build_detail::same_digest(current->value, entry.id.value)) {
+                    selected->previous = entry.id;
+                    break;
+                }
             }
-            if (!build_detail::same_digest(current->value, entry.result)) {
-                selected->previous = result_id{entry.result};
-                break;
-            }
+            complete = records->done;
+            filter.page.cursor = records->next;
         }
     }
     if (!selected) {
@@ -740,29 +782,23 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
     report.lookup = selected->status;
     report.result = selected->result;
     report.previous_result = selected->previous;
-    auto cache = build_detail::disk_cache{*source};
-    auto cache_opened = co_await cache.open();
-    if (!cache_opened) {
-        co_return std::unexpected(cache_opened.error());
+    auto quarantined = std::optional<repository_result>{};
+    auto indexed_result = co_await source->results({.id = selected->result});
+    if (!indexed_result) {
+        co_return std::unexpected(indexed_result.error());
     }
-    const auto quarantined = [&]() -> const objects::action_index_entry* {
-        const auto matches = [&](const result_id& id) {
-            return std::ranges::find_if(cache.entries(), [&](const auto& entry) {
-                return build_detail::same_digest(entry.result, id.value) && entry.divergent;
-            });
-        };
-        const auto result = matches(selected->result);
-        if (result != cache.entries().end()) {
-            return &*result;
+    if (!indexed_result->records.empty() && indexed_result->records.front().divergent) {
+        quarantined = indexed_result->records.front();
+    }
+    if (!quarantined && selected->previous) {
+        auto indexed_previous = co_await source->results({.id = *selected->previous});
+        if (!indexed_previous) {
+            co_return std::unexpected(indexed_previous.error());
         }
-        if (selected->previous) {
-            const auto previous = matches(*selected->previous);
-            if (previous != cache.entries().end()) {
-                return &*previous;
-            }
+        if (!indexed_previous->records.empty() && indexed_previous->records.front().divergent) {
+            quarantined = indexed_previous->records.front();
         }
-        return nullptr;
-    }();
+    }
     auto value = co_await build_detail::load_result(*source, selected->result.value);
     if (!value) {
         report.cause = {.reason = cache_miss_reason::unknown,
@@ -770,6 +806,7 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
         co_return report;
     }
     report.action = value->action;
+    report.schedule = value->schedule;
     if (selected->previous) {
         auto previous = co_await build_detail::load_result(*source, selected->previous->value);
         if (previous) {

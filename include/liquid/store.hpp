@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/export.hpp"
@@ -117,6 +118,7 @@ public:
     [[nodiscard]] runtime::task<bool> contains(digest id);
     [[nodiscard]] runtime::task<blob_availability> has(digest id);
     [[nodiscard]] runtime::task<void> register_remote(blob value);
+    [[nodiscard]] std::vector<digest> attestations(digest subject) const;
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<lease> lease_root(digest id, std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
@@ -124,17 +126,23 @@ public:
 private:
     friend class repository;
 
+    [[nodiscard]] result<std::filesystem::path> root_path() const;
+    [[nodiscard]] result<store_options> configuration() const;
+    [[nodiscard]] runtime::task<lease>
+    lease_root(digest id, std::chrono::seconds ttl, std::string owner);
+    [[nodiscard]] runtime::task<digest> put_verified(digest id, std::vector<std::byte> input);
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
+    [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
+                                                  algorithm hash_algorithm);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
                                                       std::string key_id);
     void begin_object_batch();
     void abort_object_batch();
     [[nodiscard]] runtime::task<void> commit_object_batch();
-    [[nodiscard]] std::vector<digest> attestations(digest subject) const;
-
     friend struct repository_detail::store_access;
     struct impl;
     std::unique_ptr<impl> impl_;

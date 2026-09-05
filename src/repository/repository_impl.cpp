@@ -2,6 +2,7 @@
 #include "liquid/store.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <functional>
 #include <limits>
@@ -26,6 +27,7 @@
 #include "repository/git_access.hpp"
 #include "repository/merge.hpp"
 #include "repository/store_access.hpp"
+#include "repository/sync_access.hpp"
 #include "repository/testing.hpp"
 #include "store/leases.hpp"
 #include "store/pack.hpp"
@@ -54,6 +56,7 @@ struct stored_operation {
     std::chrono::sys_seconds at;
 };
 struct persisted_drip {
+    actor author;
     std::vector<std::byte> body;
     std::vector<std::byte> signature;
 };
@@ -73,6 +76,7 @@ struct repository_document {
     std::uint32_t verification_rate{20};
     policy_config policy;
     retention_config retention{};
+    std::optional<remote_config> remote;
     std::uint64_t pending_drips{};
 };
 
@@ -214,7 +218,9 @@ auto encode_repository_document(const repository_document& value)
     auto head = value.head ? digest_value(value.head->value) : cbor::value{cbor::null{}};
     auto drips = cbor::value::array{};
     for (const auto& drip : value.drips) {
-        drips.push_back(map({{"body", bytes(drip.body)}, {"sig", bytes(drip.signature)}}));
+        drips.push_back(map({{"author", actor_value(drip.author)},
+                             {"body", bytes(drip.body)},
+                             {"sig", bytes(drip.signature)}}));
     }
     auto encryption_paths = cbor::value::array{};
     for (const auto& rule : value.encryption_rules) {
@@ -285,6 +291,32 @@ auto encode_repository_document(const repository_document& value)
             },
             configured);
     }
+    auto remote = cbor::value{cbor::null{}};
+    if (value.remote) {
+        auto headers = cbor::value::array{};
+        for (const auto& [name, header_value] : value.remote->headers) {
+            headers.push_back(
+                map({{"name", cbor::value{name}}, {"value", cbor::value{header_value}}}));
+        }
+        auto tls = cbor::value::map{{"enabled", cbor::value{value.remote->tls.enabled}},
+                                    {"verify_peer", cbor::value{value.remote->tls.verify_peer}}};
+        const auto add_path = [&](std::string name,
+                                  const std::optional<std::filesystem::path>& path) {
+            tls.emplace_back(std::move(name),
+                             path ? cbor::value{path->string()} : cbor::value{cbor::null{}});
+        };
+        add_path("certificate_authority", value.remote->tls.certificate_authority);
+        add_path("client_certificate", value.remote->tls.client_certificate);
+        add_path("client_key", value.remote->tls.client_key);
+        remote = map({{"endpoint", cbor::value{value.remote->endpoint}},
+                      {"instance_name", cbor::value{value.remote->instance_name}},
+                      {"tls", cbor::value{std::move(tls)}},
+                      {"headers", cbor::value{std::move(headers)}},
+                      {"deadline_ms",
+                       cbor::value{static_cast<std::uint64_t>(value.remote->deadline.count())}},
+                      {"batch_blob_limit", cbor::value{value.remote->batch_blob_limit}},
+                      {"publish", cbor::value{value.remote->publish}}});
+    }
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
@@ -292,7 +324,8 @@ auto encode_repository_document(const repository_document& value)
              {"policy",
               map({{"approved_builders", cbor::value{std::move(approved_builders)}},
                    {"rules", cbor::value{std::move(policy_rules)}}})},
-             {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})}});
+             {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})},
+             {"remote", std::move(remote)}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
                              {"repo", bytes(value.repository)},
@@ -512,6 +545,89 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
             }
             output.verification_rate = static_cast<std::uint32_t>(*value);
         }
+        if (const auto* remote = find(*config, "remote");
+            remote && !std::holds_alternative<cbor::null>(remote->data)) {
+            const auto* endpoint_value = find(*remote, "endpoint");
+            const auto* instance_value = find(*remote, "instance_name");
+            const auto* tls_value = find(*remote, "tls");
+            const auto* headers_value = find(*remote, "headers");
+            const auto* deadline_value = find(*remote, "deadline_ms");
+            const auto* limit_value = find(*remote, "batch_blob_limit");
+            const auto* publish_value = find(*remote, "publish");
+            const auto* endpoint =
+                endpoint_value ? std::get_if<std::string>(&endpoint_value->data) : nullptr;
+            const auto* instance =
+                instance_value ? std::get_if<std::string>(&instance_value->data) : nullptr;
+            const auto* headers =
+                headers_value ? std::get_if<cbor::value::array>(&headers_value->data) : nullptr;
+            const auto* deadline =
+                deadline_value ? std::get_if<std::uint64_t>(&deadline_value->data) : nullptr;
+            const auto* limit =
+                limit_value ? std::get_if<std::uint64_t>(&limit_value->data) : nullptr;
+            const auto* publish = publish_value ? std::get_if<bool>(&publish_value->data) : nullptr;
+            if (!endpoint || endpoint->empty() || !instance || !tls_value || !headers ||
+                !deadline || *deadline == 0 ||
+                *deadline > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+                !limit || *limit == 0 || !publish) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid remote config", "repository document"));
+            }
+            auto configured = remote_config{.endpoint = *endpoint,
+                                            .instance_name = *instance,
+                                            .deadline = std::chrono::milliseconds{*deadline},
+                                            .batch_blob_limit = *limit,
+                                            .publish = *publish};
+            const auto* tls_enabled_value = find(*tls_value, "enabled");
+            const auto* verify_peer_value = find(*tls_value, "verify_peer");
+            const auto* tls_enabled =
+                tls_enabled_value ? std::get_if<bool>(&tls_enabled_value->data) : nullptr;
+            const auto* verify_peer =
+                verify_peer_value ? std::get_if<bool>(&verify_peer_value->data) : nullptr;
+            if (!tls_enabled || !verify_peer) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid remote TLS config", "repository document"));
+            }
+            configured.tls.enabled = *tls_enabled;
+            configured.tls.verify_peer = *verify_peer;
+            const auto read_path =
+                [&](std::string_view name) -> result<std::optional<std::filesystem::path>> {
+                const auto* field = find(*tls_value, name);
+                if (!field || std::holds_alternative<cbor::null>(field->data)) {
+                    return std::optional<std::filesystem::path>{};
+                }
+                const auto* text = std::get_if<std::string>(&field->data);
+                if (!text || text->empty()) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid remote TLS path", "repository document"));
+                }
+                return std::filesystem::path{*text};
+            };
+            auto authority = read_path("certificate_authority");
+            auto certificate = read_path("client_certificate");
+            auto key = read_path("client_key");
+            if (!authority || !certificate || !key) {
+                return std::unexpected(!authority     ? authority.error()
+                                       : !certificate ? certificate.error()
+                                                      : key.error());
+            }
+            configured.tls.certificate_authority = std::move(*authority);
+            configured.tls.client_certificate = std::move(*certificate);
+            configured.tls.client_key = std::move(*key);
+            for (const auto& header : *headers) {
+                const auto* name_value = find(header, "name");
+                const auto* value_value = find(header, "value");
+                const auto* name =
+                    name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+                const auto* value =
+                    value_value ? std::get_if<std::string>(&value_value->data) : nullptr;
+                if (!name || name->empty() || !value) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid remote header", "repository document"));
+                }
+                configured.headers.insert_or_assign(*name, *value);
+            }
+            output.remote = std::move(configured);
+        }
         if (const auto* policy = find(*config, "policy")) {
             const auto* approved = find(*policy, "approved_builders");
             const auto* rules = find(*policy, "rules");
@@ -671,6 +787,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         }
     }
     for (const auto& item : *saved_drips) {
+        const auto* author = find(item, "author");
         const auto* body = find(item, "body");
         const auto* signature = find(item, "sig");
         const auto* body_bytes = body ? std::get_if<cbor::value::bytes>(&body->data) : nullptr;
@@ -680,7 +797,11 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
             return std::unexpected(
                 failure(errc::corrupt, "invalid drip record", "repository document"));
         }
-        output.drips.push_back({*body_bytes, *signature_bytes});
+        auto decoded_author = author ? decode_actor(*author) : result<actor>{actor{}};
+        if (!decoded_author) {
+            return std::unexpected(decoded_author.error());
+        }
+        output.drips.push_back({std::move(*decoded_author), *body_bytes, *signature_bytes});
     }
     return output;
 }
@@ -771,6 +892,351 @@ auto directory_with_node(working_entry& root, const node_id& node) -> working_en
         }
     }
     return nullptr;
+}
+
+struct sync_cursor_position {
+    std::size_t drips{};
+    std::size_t items{};
+};
+
+auto parse_sync_cursor(std::string_view token) -> result<sync_cursor_position> {
+    if (token.empty()) {
+        return sync_cursor_position{};
+    }
+    const auto separator = token.find(':');
+    const auto drip_text = token.substr(0, separator);
+    const auto item_text =
+        separator == std::string_view::npos ? std::string_view{} : token.substr(separator + 1);
+    auto output = sync_cursor_position{};
+    const auto drip_result =
+        std::from_chars(drip_text.data(), drip_text.data() + drip_text.size(), output.drips);
+    if (drip_result.ec != std::errc{} || drip_result.ptr != drip_text.data() + drip_text.size()) {
+        return std::unexpected(
+            failure(errc::invalid_argument, "invalid sync cursor", std::string{token}));
+    }
+    if (!item_text.empty()) {
+        const auto item_result =
+            std::from_chars(item_text.data(), item_text.data() + item_text.size(), output.items);
+        if (item_result.ec != std::errc{} ||
+            item_result.ptr != item_text.data() + item_text.size()) {
+            return std::unexpected(
+                failure(errc::invalid_argument, "invalid sync cursor", std::string{token}));
+        }
+    }
+    return output;
+}
+
+auto sync_item_failure(std::size_t item, error source) -> error {
+    source.context = "item=" + std::to_string(item) +
+                     (source.context.empty() ? std::string{} : ": " + source.context);
+    return source;
+}
+
+auto same_digest(const digest& left, const digest& right) -> bool {
+    return left.alg == right.alg && left.bytes == right.bytes;
+}
+
+void append_working_roots(const working_entry& entry, std::vector<digest>& output) {
+    if (entry.kind == entry_kind::file || entry.kind == entry_kind::nested_repository) {
+        output.push_back(entry.object);
+    }
+    for (const auto& [name, child] : entry.entries) {
+        static_cast<void>(name);
+        append_working_roots(child, output);
+    }
+}
+
+auto apply_synced_directory(repository_document& document,
+                            const node_id& node,
+                            const crdt::directory_document& synced) -> result<void> {
+    auto* destination = directory_with_node(document.root, node);
+    if (!destination || destination->kind != entry_kind::directory) {
+        return std::unexpected(
+            failure(errc::corrupt, "sync names an unknown directory", "repository sync"));
+    }
+    auto entries = synced.entries();
+    if (!entries) {
+        return std::unexpected(entries.error());
+    }
+    auto replacement = std::map<std::string, working_entry>{};
+    for (const auto& incoming : *entries) {
+        auto reference = parse_digest(incoming.value.ref);
+        if (!reference) {
+            return std::unexpected(reference.error());
+        }
+        auto current = destination->entries.find(incoming.name);
+        auto value = working_entry{};
+        if (current != destination->entries.end() && current->second.node == incoming.value.id) {
+            value = std::move(current->second);
+        } else {
+            const auto moved = std::ranges::find_if(destination->entries, [&](const auto& item) {
+                return item.second.node == incoming.value.id;
+            });
+            if (moved != destination->entries.end()) {
+                value = std::move(moved->second);
+            }
+        }
+        if (incoming.value.kind == "blob") {
+            value.kind = entry_kind::file;
+        } else if (incoming.value.kind == "tree") {
+            value.kind = entry_kind::directory;
+        } else if (incoming.value.kind == "repo") {
+            value.kind = entry_kind::nested_repository;
+        } else {
+            return std::unexpected(
+                failure(errc::corrupt, "sync contains an unknown entry kind", incoming.name));
+        }
+        value.node = incoming.value.id;
+        value.mode = incoming.value.mode;
+        value.object = *reference;
+        replacement.emplace(incoming.name, std::move(value));
+    }
+    destination->entries = std::move(replacement);
+    return {};
+}
+
+auto export_directory_messages(const crdt::directory_document& document,
+                               const crdt::repo_id& repository,
+                               std::string context) -> result<std::vector<std::vector<std::byte>>> {
+    auto saved = document.save_sync();
+    if (!saved) {
+        return std::unexpected(saved.error());
+    }
+    auto source = crdt::directory_document::load_sync(*saved, "sync-source", context);
+    constexpr auto digits = std::string_view{"0123456789abcdef"};
+    auto peer_device = std::string{"repository-sync-receiver-"};
+    for (const auto octet : repository) {
+        const auto value = std::to_integer<unsigned char>(octet);
+        peer_device.push_back(digits[value >> 4]);
+        peer_device.push_back(digits[value & 0x0f]);
+    }
+    auto peer = crdt::directory_document::create_sync_receiver("sync-peer", peer_device);
+    if (!source || !peer) {
+        return std::unexpected(source ? peer.error() : source.error());
+    }
+    auto source_state = crdt::sync_state{};
+    auto peer_state = crdt::sync_state{};
+    auto output = std::vector<std::vector<std::byte>>{};
+    auto opening = peer->generate_sync_message(peer_state);
+    if (!opening) {
+        return std::unexpected(opening.error());
+    }
+    if (*opening) {
+        auto received = source->receive_sync_message(source_state, **opening);
+        if (!received) {
+            return std::unexpected(received.error());
+        }
+    }
+    for (auto round = 0; round < 20; ++round) {
+        auto progress = false;
+        auto outgoing = source->generate_sync_message(source_state);
+        if (!outgoing) {
+            return std::unexpected(outgoing.error());
+        }
+        if (*outgoing) {
+            output.push_back(**outgoing);
+            auto received = peer->receive_sync_message(peer_state, **outgoing);
+            if (!received) {
+                return std::unexpected(received.error());
+            }
+            progress = true;
+        }
+        auto reply = peer->generate_sync_message(peer_state);
+        if (!reply) {
+            return std::unexpected(reply.error());
+        }
+        if (*reply) {
+            auto received = source->receive_sync_message(source_state, **reply);
+            if (!received) {
+                return std::unexpected(received.error());
+            }
+            progress = true;
+        }
+        if (!progress) {
+            return output;
+        }
+    }
+    return std::unexpected(
+        failure(errc::corrupt, "directory export did not quiesce", "repository sync"));
+}
+
+auto import_synced_drip(repository_document& candidate,
+                        std::vector<persisted_drip>& imported_drips,
+                        const sync_item& item) -> result<void> {
+    auto body = cbor::decode(item.body);
+    const auto* author_value = body ? find(*body, "author") : nullptr;
+    const auto* author = author_value ? std::get_if<std::string>(&author_value->data) : nullptr;
+    if (!body || !author || *author != item.author.taap_id) {
+        return std::unexpected(failure(errc::corrupt, "drip author does not match its body"));
+    }
+    auto signature = identity_detail::parse_signature(item.signature);
+    if (!signature) {
+        return std::unexpected(signature.error());
+    }
+    auto valid = verify(item.author, "drip", item.body, *signature);
+    if (!valid || !*valid) {
+        return std::unexpected(valid ? failure(errc::unauthorized, "unsigned drip")
+                                     : valid.error());
+    }
+    const auto duplicate = std::ranges::any_of(candidate.drips, [&](const auto& value) {
+        return value.body == item.body && value.signature == item.signature;
+    });
+    if (!duplicate) {
+        imported_drips.push_back({item.author, item.body, item.signature});
+    }
+    return {};
+}
+
+runtime::task<void>
+import_synced_change(store& objects, algorithm hash_algorithm, const sync_item& item) {
+    auto value = objects::decode_change(item.body, hash_algorithm);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    auto body = objects::encode_change_body(*value);
+    auto signature = identity_detail::parse_signature(value->sig);
+    if (!body || !signature) {
+        co_return std::unexpected(body ? signature.error() : body.error());
+    }
+    if (value->author.taap_id != item.author.taap_id) {
+        co_return std::unexpected(failure(errc::corrupt, "change author does not match its frame"));
+    }
+    auto valid = verify(item.author, "change", *body, *signature);
+    if (!valid || !*valid) {
+        co_return std::unexpected(valid ? failure(errc::unauthorized, "unsigned change")
+                                        : valid.error());
+    }
+    auto stored = co_await repository_detail::store_access::put_plain(objects, item.body);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    if (!same_digest(*stored, item.reference.value)) {
+        co_return std::unexpected(failure(errc::corrupt, "change digest does not match its frame"));
+    }
+    co_return result<void>{};
+}
+
+auto import_synced_directory(const node_id& repository,
+                             std::map<node_id, crdt::directory_document>& candidate_documents,
+                             std::map<node_id, std::unique_ptr<crdt::sync_state>>& directory_states,
+                             const sync_item& item) -> result<void> {
+    if (item.repository != repository) {
+        return std::unexpected(failure(errc::conflict, "directory repository identity differs"));
+    }
+    auto found = candidate_documents.find(item.directory);
+    if (found == candidate_documents.end()) {
+        auto created =
+            crdt::directory_document::create_sync_receiver("sync-peer", "repository-sync-receiver");
+        if (!created) {
+            return std::unexpected(created.error());
+        }
+        found = candidate_documents.emplace(item.directory, std::move(*created)).first;
+    }
+    auto state = directory_states.find(item.directory);
+    if (state == directory_states.end()) {
+        state =
+            directory_states.emplace(item.directory, std::make_unique<crdt::sync_state>()).first;
+    }
+    auto received = found->second.receive_sync_message(*state->second, item.body);
+    if (!received) {
+        return std::unexpected(received.error());
+    }
+    auto acknowledgement = found->second.generate_sync_message(*state->second);
+    if (!acknowledgement) {
+        return std::unexpected(acknowledgement.error());
+    }
+    return {};
+}
+
+struct sync_import_state {
+    repository_document& candidate;
+    store& objects;
+    algorithm hash_algorithm;
+    std::map<node_id, crdt::directory_document>& candidate_documents;
+    std::map<node_id, std::unique_ptr<crdt::sync_state>>& directory_states;
+    std::vector<persisted_drip>& imported_drips;
+    std::vector<std::pair<std::string, change_id>>& imported_refs;
+};
+
+runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& item) {
+    switch (item.kind) {
+    case sync_item_kind::drip:
+        co_return import_synced_drip(state.candidate, state.imported_drips, item);
+    case sync_item_kind::change:
+        co_return co_await import_synced_change(state.objects, state.hash_algorithm, item);
+    case sync_item_kind::directory:
+        co_return import_synced_directory(
+            state.candidate.repository, state.candidate_documents, state.directory_states, item);
+    case sync_item_kind::reference:
+        if (item.name.empty()) {
+            co_return std::unexpected(failure(errc::invalid_argument, "reference name is empty"));
+        }
+        state.imported_refs.emplace_back(item.name, item.reference);
+        co_return result<void>{};
+    }
+    co_return std::unexpected(failure(errc::corrupt, "unknown sync item kind"));
+}
+
+auto apply_synced_directories(
+    repository_document& candidate,
+    const std::map<node_id, crdt::directory_document>& candidate_documents) -> result<void> {
+    if (auto root = candidate_documents.find(candidate.root.node);
+        root != candidate_documents.end()) {
+        auto applied = apply_synced_directory(candidate, root->first, root->second);
+        if (!applied) {
+            return std::unexpected(applied.error());
+        }
+    }
+    auto pending = std::set<node_id>{};
+    for (const auto& [node, document] : candidate_documents) {
+        static_cast<void>(document);
+        if (node != candidate.root.node) {
+            pending.insert(node);
+        }
+    }
+    for (;;) {
+        auto progress = false;
+        for (auto current = pending.begin(); current != pending.end();) {
+            if (!directory_with_node(candidate.root, *current)) {
+                ++current;
+                continue;
+            }
+            auto applied = apply_synced_directory(
+                candidate, *current, candidate_documents.find(*current)->second);
+            if (!applied) {
+                return std::unexpected(applied.error());
+            }
+            current = pending.erase(current);
+            progress = true;
+        }
+        if (pending.empty() || !progress) {
+            break;
+        }
+    }
+    if (!pending.empty()) {
+        return std::unexpected(
+            failure(errc::corrupt, "sync contains unreachable directory documents"));
+    }
+    return {};
+}
+
+runtime::task<void>
+apply_synced_refs(store& objects,
+                  repository_document& candidate,
+                  const std::vector<std::pair<std::string, change_id>>& imported_refs) {
+    for (const auto& [name, id] : imported_refs) {
+        auto present = co_await objects.contains(id.value);
+        if (!present || !*present) {
+            co_return std::unexpected(
+                present ? failure(errc::corrupt, "reference change is absent", name)
+                        : present.error());
+        }
+        candidate.refs[name] = id;
+        if (name == "main") {
+            candidate.head = id;
+        }
+    }
+    co_return result<void>{};
 }
 auto same_path_or_descendant(std::string_view path, std::string_view root) -> bool {
     return path == root ||
@@ -901,6 +1367,58 @@ auto string_bytes(std::string_view input) -> std::vector<std::byte> {
     return {reinterpret_cast<const std::byte*>(input.data()),
             reinterpret_cast<const std::byte*>(input.data() + input.size())};
 }
+
+auto identifier_path(store& objects, const std::filesystem::path& identifier)
+    -> result<std::filesystem::path> {
+    const auto text = identifier.generic_string();
+    if (text.empty()) {
+        return std::unexpected(
+            failure(errc::invalid_argument, "repository identifier is empty", "repository"));
+    }
+    auto id = hash(algorithm::blake3, string_bytes(text));
+    if (!id) {
+        return std::unexpected(id.error());
+    }
+    auto root = repository_detail::store_access::root_path(objects);
+    if (!root) {
+        return std::unexpected(root.error());
+    }
+    const auto encoded = to_string(*id);
+    const auto separator = encoded.find(':');
+    return *root / "repositories" / encoded.substr(separator + 1);
+}
+
+struct prepared_repository_store {
+    std::filesystem::path state_path;
+    std::unique_ptr<store> owned;
+    store* objects{};
+    store_options configuration;
+};
+
+auto prepare_repository_store(std::filesystem::path path, repository_options& options)
+    -> runtime::task<prepared_repository_store> {
+    if (options.store) {
+        auto configuration = repository_detail::store_access::configuration(*options.store);
+        if (!configuration) {
+            co_return std::unexpected(configuration.error());
+        }
+        auto state_path = identifier_path(*options.store, path);
+        if (!state_path) {
+            co_return std::unexpected(state_path.error());
+        }
+        co_return prepared_repository_store{
+            std::move(*state_path), nullptr, options.store, std::move(*configuration)};
+    }
+    auto configuration = options.storage;
+    auto opened = co_await store::open(path / ".liquid-store", std::move(options.storage));
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    auto owned = std::make_unique<store>(std::move(*opened));
+    auto* objects = owned.get();
+    co_return prepared_repository_store{
+        std::move(path), std::move(owned), objects, std::move(configuration)};
+}
 } // namespace
 
 struct repository::impl {
@@ -912,7 +1430,8 @@ struct repository::impl {
     static constexpr auto lease_ttl = std::chrono::days{30};
 
     std::filesystem::path root_path;
-    store objects;
+    std::unique_ptr<store> owned_objects;
+    store& objects;
     repository_document current;
     std::uint64_t checkpoint_interval{64};
     algorithm hash_algorithm;
@@ -927,16 +1446,30 @@ struct repository::impl {
     cache_report cache_statistics;
     std::map<std::string, std::pair<cache_status, std::optional<cache_miss>>> cache_lookups;
     impl(std::filesystem::path path,
-         store value,
+         std::unique_ptr<store> owned,
+         store& value,
          repository_document document,
          signer key,
          std::shared_ptr<keyring> encryption_keys,
          std::uint64_t interval,
          algorithm algorithm_value)
-        : root_path(std::move(path)), objects(std::move(value)), current(std::move(document)),
-          checkpoint_interval(std::max(std::uint64_t{1}, interval)),
+        : root_path(std::move(path)), owned_objects(std::move(owned)), objects(value),
+          current(std::move(document)), checkpoint_interval(std::max(std::uint64_t{1}, interval)),
           hash_algorithm(algorithm_value), signing_key(std::move(key)),
           keys(std::move(encryption_keys)) {}
+    auto lease_owner(std::string_view kind) const -> std::string {
+        constexpr auto digits = std::string_view{"0123456789abcdef"};
+        auto output = std::string{"repository:"};
+        output.reserve(output.size() + current.repository.size() * 2 + kind.size() + 1);
+        for (const auto value : current.repository) {
+            const auto byte = std::to_integer<unsigned char>(value);
+            output.push_back(digits[byte >> 4U]);
+            output.push_back(digits[byte & 0x0fU]);
+        }
+        output.push_back('\n');
+        output.append(kind);
+        return output;
+    }
     auto marker() const -> std::filesystem::path {
         return root_path / "LIQUID_REPO";
     }
@@ -1061,7 +1594,8 @@ struct repository::impl {
         if (retained && retained->id.alg == id.alg && retained->id.bytes == id.bytes) {
             co_return co_await retained->value.renew(lease_ttl);
         }
-        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        auto replacement = co_await repository_detail::store_access::lease_root(
+            objects, id, lease_ttl, lease_owner("checkpoint"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -1076,13 +1610,19 @@ struct repository::impl {
     }
     runtime::task<void> sync_retention_roots(std::string owner_prefix,
                                              std::vector<repository_detail::retention_root> roots) {
-        const auto directory = root_path / ".liquid-store" / "leases";
+        auto store_root = repository_detail::store_access::root_path(objects);
+        if (!store_root) {
+            co_return std::unexpected(store_root.error());
+        }
+        const auto directory = *store_root / "leases";
+        const auto scoped_prefix = lease_owner(owner_prefix);
         auto existing = co_await store_detail::load_leases(directory);
         if (!existing) {
             co_return std::unexpected(existing.error());
         }
         auto retained_ids = std::set<std::string>{};
-        for (const auto& desired : roots) {
+        for (auto& desired : roots) {
+            desired.owner = lease_owner(desired.owner);
             const auto expiry = desired.expiry.value_or(std::chrono::sys_seconds::max());
             const auto matching = std::ranges::find_if(*existing, [&](const auto& record) {
                 return record.owner == desired.owner && record.root.alg == desired.root.alg &&
@@ -1099,7 +1639,7 @@ struct repository::impl {
             }
         }
         for (const auto& record : *existing) {
-            if (!record.owner.starts_with(owner_prefix) || retained_ids.contains(record.id)) {
+            if (!record.owner.starts_with(scoped_prefix) || retained_ids.contains(record.id)) {
                 continue;
             }
             auto state = std::make_shared<store_detail::lease_state>();
@@ -1118,7 +1658,8 @@ struct repository::impl {
             existing->second.id.bytes == id.bytes) {
             co_return co_await existing->second.value.renew(lease_ttl);
         }
-        auto replacement = co_await objects.lease_root(id, lease_ttl);
+        auto replacement = co_await repository_detail::store_access::lease_root(
+            objects, id, lease_ttl, lease_owner("directory"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -1237,7 +1778,8 @@ struct repository::impl {
         if (!encoded_signature) {
             co_return std::unexpected(encoded_signature.error());
         }
-        current.drips.push_back({std::move(*body), std::move(*encoded_signature)});
+        current.drips.push_back(
+            {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
         co_return result<void>{};
     }
     runtime::task<void>
@@ -1261,7 +1803,8 @@ struct repository::impl {
         if (!encoded_signature) {
             co_return std::unexpected(encoded_signature.error());
         }
-        current.drips.push_back({std::move(*body), std::move(*encoded_signature)});
+        current.drips.push_back(
+            {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
         co_return result<void>{};
     }
     void record_operation(op_id id,
@@ -1651,18 +2194,19 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_retention) {
         co_return std::unexpected(valid_retention.error());
     }
+    auto prepared = co_await prepare_repository_store(std::move(path), options);
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
     auto code = std::error_code{};
-    std::filesystem::create_directories(path, code);
+    std::filesystem::create_directories(prepared->state_path, code);
     if (code)
-        co_return std::unexpected(failure(errc::io, code.message(), path.string()));
-    if (std::filesystem::exists(path / "LIQUID_REPO"))
-        co_return std::unexpected(
-            failure(errc::already_exists, "repository already exists", path.string()));
-    const auto hash_algorithm = options.store.hash_algorithm;
-    auto keys = options.store.keys;
-    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
-    if (!objects)
-        co_return std::unexpected(objects.error());
+        co_return std::unexpected(failure(errc::io, code.message(), prepared->state_path.string()));
+    if (std::filesystem::exists(prepared->state_path / "LIQUID_REPO"))
+        co_return std::unexpected(failure(
+            errc::already_exists, "repository already exists", prepared->state_path.string()));
+    const auto hash_algorithm = prepared->configuration.hash_algorithm;
+    auto keys = prepared->configuration.keys;
     repository_document document{};
     document.repository = random_id();
     document.root.node = random_id();
@@ -1672,12 +2216,15 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.verification_rate = options.verify.rate;
     document.policy = std::move(options.policy);
     document.retention = std::move(options.retention);
+    document.remote = std::move(options.remote);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
     repository output;
-    output.impl_ = std::make_unique<impl>(std::move(path),
-                                          std::move(*objects),
+    auto* objects = prepared->objects;
+    output.impl_ = std::make_unique<impl>(std::move(prepared->state_path),
+                                          std::move(prepared->owned),
+                                          *objects,
                                           std::move(document),
                                           std::move(*signing_key),
                                           std::move(keys),
@@ -1689,7 +2236,11 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     co_return output;
 }
 runtime::task<repository> repository::open(std::filesystem::path path, repository_options options) {
-    auto marker = co_await store_detail::read_file(path / "LIQUID_REPO");
+    auto prepared = co_await prepare_repository_store(std::move(path), options);
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
+    auto marker = co_await store_detail::read_file(prepared->state_path / "LIQUID_REPO");
     if (!marker)
         co_return std::unexpected(marker.error());
     auto text = std::string{reinterpret_cast<const char*>(marker->data()), marker->size()};
@@ -1698,19 +2249,16 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     auto document_id = parse_digest(text);
     if (!document_id)
         co_return std::unexpected(document_id.error());
-    const auto hash_algorithm = options.store.hash_algorithm;
-    auto keys = options.store.keys;
-    auto objects = co_await store::open(path / ".liquid-store", std::move(options.store));
-    if (!objects)
-        co_return std::unexpected(objects.error());
-    auto saved = co_await objects->get(*document_id);
+    const auto hash_algorithm = prepared->configuration.hash_algorithm;
+    auto keys = prepared->configuration.keys;
+    auto saved = co_await prepared->objects->get(*document_id);
     if (!saved)
         co_return std::unexpected(saved.error());
     auto document = decode_repository_document(*saved);
     if (!document)
         co_return std::unexpected(document.error());
-    if (std::filesystem::exists(path / "LIQUID_JOURNAL")) {
-        auto journal = co_await store_detail::read_file(path / "LIQUID_JOURNAL");
+    if (std::filesystem::exists(prepared->state_path / "LIQUID_JOURNAL")) {
+        auto journal = co_await store_detail::read_file(prepared->state_path / "LIQUID_JOURNAL");
         if (!journal)
             co_return std::unexpected(journal.error());
         auto replayed = decode_repository_document(*journal);
@@ -1732,8 +2280,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
     repository output;
-    output.impl_ = std::make_unique<impl>(std::move(path),
-                                          std::move(*objects),
+    auto* objects = prepared->objects;
+    output.impl_ = std::make_unique<impl>(std::move(prepared->state_path),
+                                          std::move(prepared->owned),
+                                          *objects,
                                           std::move(*document),
                                           std::move(*signing_key),
                                           std::move(keys),
@@ -1743,6 +2293,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!checkpointed)
         co_return std::unexpected(checkpointed.error());
     co_return output;
+}
+
+std::optional<remote_config> repository::remote_configuration() const {
+    return impl_ ? impl_->current.remote : std::nullopt;
 }
 runtime::task<::liquid::tree> repository::root() {
     if (!impl_)
@@ -2634,6 +3188,11 @@ runtime::task<std::vector<std::byte>> repository::blob(digest id) {
     }
     co_return output;
 }
+runtime::task<std::vector<digest>> repository::record_ids(std::string kind) {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    co_return impl_->objects.object_ids(kind);
+}
 runtime::task<readability_report> repository::readability(std::optional<change_id> revision) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -2765,7 +3324,11 @@ runtime::task<repository> repository::split(std::string path, std::filesystem::p
         co_return std::unexpected(failure(errc::not_found, "subtree does not exist", path));
     repository_options options;
     options.checkpoint_interval = impl_->checkpoint_interval;
-    options.store.hash_algorithm = impl_->hash_algorithm;
+    if (!impl_->owned_objects) {
+        options.store = &impl_->objects;
+    } else {
+        options.storage.hash_algorithm = impl_->hash_algorithm;
+    }
     auto destination = co_await create(std::move(into), std::move(options));
     if (!destination)
         co_return std::unexpected(destination.error());
@@ -3020,6 +3583,240 @@ runtime::task<cache_report> repository::cache_stats() {
     co_return impl_->cache_statistics;
 }
 
+runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
+                                                    std::span<sync_item> output) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (output.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "sync export span must not be empty"));
+    }
+    auto position = parse_sync_cursor(cursor.token);
+    if (!position) {
+        co_return std::unexpected(position.error());
+    }
+    if (position->drips > impl_->current.drips.size()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "sync cursor is beyond the journal", cursor.token));
+    }
+
+    auto items = std::vector<sync_item>{};
+    for (std::size_t index = position->drips; index < impl_->current.drips.size(); ++index) {
+        const auto& current = impl_->current.drips[index];
+        const auto author =
+            current.author.taap_id.empty() ? impl_->signing_key.identity() : current.author;
+        items.push_back({.kind = sync_item_kind::drip,
+                         .author = author,
+                         .body = current.body,
+                         .signature = current.signature});
+    }
+
+    auto changes = std::deque<digest>{};
+    for (const auto& [name, id] : impl_->current.refs) {
+        static_cast<void>(name);
+        changes.push_back(id.value);
+    }
+    auto visited_changes = std::set<std::string>{};
+    auto object_roots = std::vector<digest>{};
+    while (!changes.empty()) {
+        const auto id = changes.front();
+        changes.pop_front();
+        if (!visited_changes.insert(to_string(id)).second) {
+            continue;
+        }
+        auto encoded = co_await impl_->objects.get(id);
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        auto value = objects::decode_change(*encoded, impl_->hash_algorithm);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        auto author = impl_->signing_key.identity();
+        if (author.taap_id != value->author.taap_id) {
+            const auto found = std::ranges::find_if(impl_->current.drips, [&](const auto& drip) {
+                return drip.author.taap_id == value->author.taap_id;
+            });
+            if (found == impl_->current.drips.end()) {
+                co_return std::unexpected(
+                    failure(errc::corrupt, "change author identity is unavailable", to_string(id)));
+            }
+            author = found->author;
+        }
+        items.push_back({.kind = sync_item_kind::change,
+                         .author = std::move(author),
+                         .reference = change_id{id},
+                         .body = std::move(*encoded),
+                         .signature = value->sig});
+        object_roots.push_back(id);
+        for (const auto& parent : value->parents) {
+            changes.push_back(parent.id.value);
+        }
+    }
+
+    auto directories = std::set<node_id>{};
+    for (const auto& [node, id] : impl_->current.dirs) {
+        static_cast<void>(id);
+        directories.insert(node);
+    }
+    for (const auto& [node, document] : impl_->directory_cache) {
+        static_cast<void>(document);
+        directories.insert(node);
+    }
+    for (const auto& node : directories) {
+        auto document = co_await impl_->directory(node);
+        if (!document) {
+            co_return std::unexpected(document.error());
+        }
+        crdt::repo_id repository{};
+        std::ranges::copy(impl_->current.repository, repository.begin());
+        auto messages =
+            export_directory_messages(**document, repository, impl_->root_path.generic_string());
+        if (!messages) {
+            co_return std::unexpected(messages.error());
+        }
+        for (auto& message : *messages) {
+            items.push_back({.kind = sync_item_kind::directory,
+                             .repository = impl_->current.repository,
+                             .directory = node,
+                             .root = node == impl_->current.root.node,
+                             .body = std::move(message)});
+        }
+    }
+    for (const auto& [name, id] : impl_->current.refs) {
+        items.push_back({.kind = sync_item_kind::reference, .name = name, .reference = id});
+    }
+    append_working_roots(impl_->current.root, object_roots);
+    for (const auto& [node, id] : impl_->current.dirs) {
+        static_cast<void>(node);
+        object_roots.push_back(id);
+    }
+    std::ranges::sort(object_roots, {}, [](const digest& id) { return to_string(id); });
+    object_roots.erase(std::unique(object_roots.begin(), object_roots.end(), same_digest),
+                       object_roots.end());
+
+    if (position->items > items.size()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "sync cursor item offset is invalid", cursor.token));
+    }
+    const auto available = items.size() - position->items;
+    const auto count = std::min(output.size(), available);
+    for (std::size_t index = 0; index < count; ++index) {
+        output[index] = std::move(items[position->items + index]);
+    }
+    const auto done = position->items + count == items.size();
+    auto next = journal_cursor{};
+    if (done) {
+        next.token = std::to_string(impl_->current.drips.size());
+    } else {
+        next.token =
+            std::to_string(position->drips) + ":" + std::to_string(position->items + count);
+    }
+    co_return sync_export{std::move(next), count, done, std::move(object_roots)};
+}
+
+runtime::task<sync_import_report> repository::import_drips(std::span<const sync_item> input) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto candidate_bytes = encode_repository_document(impl_->current);
+    if (!candidate_bytes) {
+        co_return std::unexpected(candidate_bytes.error());
+    }
+    auto candidate = decode_repository_document(*candidate_bytes);
+    if (!candidate) {
+        co_return std::unexpected(candidate.error());
+    }
+
+    const auto root_item = std::ranges::find_if(input, [](const sync_item& item) {
+        return item.kind == sync_item_kind::directory && item.root;
+    });
+    auto identity_adopted = false;
+    if (root_item != input.end() && root_item->directory != candidate->root.node) {
+        const auto empty =
+            candidate->refs.empty() && candidate->drips.empty() && candidate->root.entries.empty();
+        if (!empty) {
+            co_return std::unexpected(
+                failure(errc::conflict, "cannot replace the identity of a non-empty repository"));
+        }
+        candidate->repository = root_item->repository;
+        candidate->root.node = root_item->directory;
+        candidate->dirs.clear();
+        identity_adopted = true;
+    }
+
+    auto candidate_documents = std::map<node_id, crdt::directory_document>{};
+    for (const auto& [node, id] :
+         identity_adopted ? decltype(impl_->current.dirs){} : impl_->current.dirs) {
+        static_cast<void>(id);
+        auto current = co_await impl_->directory(node);
+        if (!current) {
+            co_return std::unexpected(current.error());
+        }
+        auto saved = (*current)->save();
+        if (!saved) {
+            co_return std::unexpected(saved.error());
+        }
+        auto copied =
+            crdt::directory_document::load_sync(*saved, "local", impl_->root_path.generic_string());
+        if (!copied) {
+            co_return std::unexpected(copied.error());
+        }
+        candidate_documents.emplace(node, std::move(*copied));
+    }
+
+    auto directory_states = std::map<node_id, std::unique_ptr<crdt::sync_state>>{};
+    auto imported_drips = std::vector<persisted_drip>{};
+    auto imported_refs = std::vector<std::pair<std::string, change_id>>{};
+    repository_detail::store_access::begin_object_batch(impl_->objects);
+    auto abort = [&] { repository_detail::store_access::abort_object_batch(impl_->objects); };
+    auto import_state = sync_import_state{*candidate,
+                                          impl_->objects,
+                                          impl_->hash_algorithm,
+                                          candidate_documents,
+                                          directory_states,
+                                          imported_drips,
+                                          imported_refs};
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        auto imported = co_await import_sync_item(import_state, input[index]);
+        if (!imported) {
+            abort();
+            co_return std::unexpected(sync_item_failure(index, imported.error()));
+        }
+    }
+
+    auto directories_applied = apply_synced_directories(*candidate, candidate_documents);
+    if (!directories_applied) {
+        abort();
+        co_return std::unexpected(directories_applied.error());
+    }
+    auto refs_applied = co_await apply_synced_refs(impl_->objects, *candidate, imported_refs);
+    if (!refs_applied) {
+        abort();
+        co_return std::unexpected(refs_applied.error());
+    }
+    candidate->drips.insert(candidate->drips.end(), imported_drips.begin(), imported_drips.end());
+    candidate->pending_drips += imported_drips.size();
+    auto committed = co_await repository_detail::store_access::commit_object_batch(impl_->objects);
+    if (!committed) {
+        abort();
+        co_return std::unexpected(committed.error());
+    }
+
+    auto previous = std::move(impl_->current);
+    auto previous_documents = std::move(impl_->directory_cache);
+    impl_->current = std::move(*candidate);
+    impl_->directory_cache = std::move(candidate_documents);
+    auto checkpointed = co_await impl_->checkpoint();
+    if (!checkpointed) {
+        impl_->current = std::move(previous);
+        impl_->directory_cache = std::move(previous_documents);
+        co_return std::unexpected(checkpointed.error());
+    }
+    co_return sync_import_report{input.size()};
+}
+
 runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry(repository& source,
                                                                                  std::string path) {
     if (!source.impl_)
@@ -3056,6 +3853,107 @@ runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry
         output.remote = std::move(record->remote);
     }
     co_return output;
+}
+
+namespace {
+
+runtime::task<std::optional<tree_entry>>
+snapshot_entry(store& objects, digest root, std::string_view path) {
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    for (auto index = std::size_t{}; index < parts->size(); ++index) {
+        const auto& part = (*parts)[index];
+        auto encoded = co_await objects.get(root);
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        auto tree = objects::decode_tree(*encoded);
+        if (!tree) {
+            co_return std::unexpected(tree.error());
+        }
+        const auto found = std::ranges::find(tree->entries, part, &tree_entry::name);
+        if (found == tree->entries.end()) {
+            co_return std::optional<tree_entry>{};
+        }
+        if (index + 1 == parts->size()) {
+            co_return *found;
+        }
+        if (found->kind != node_kind::tree && found->kind != node_kind::repo) {
+            co_return std::optional<tree_entry>{};
+        }
+        root = found->ref;
+    }
+    co_return std::optional<tree_entry>{};
+}
+
+runtime::task<repository_detail::vfs_entry> snapshot_vfs_entry(store& objects,
+                                                               const tree_entry& entry) {
+    auto output = repository_detail::vfs_entry{.name = entry.name,
+                                               .kind = entry.kind,
+                                               .mode = entry.mode,
+                                               .node = entry.node,
+                                               .object = entry.ref};
+    if (entry.kind != node_kind::blob) {
+        co_return output;
+    }
+    auto encoded = co_await objects.get(entry.ref);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto record = objects::decode_blob(*encoded);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    output.size = record->size;
+    output.chunks = std::move(record->chunks);
+    output.chunk_sizes = std::move(record->chunk_sizes);
+    output.content = record->content;
+    output.remote = std::move(record->remote);
+    co_return output;
+}
+
+runtime::task<tree> snapshot_tree(store& objects, digest root, std::string path) {
+    if (!path.empty()) {
+        auto entry = co_await snapshot_entry(objects, root, path);
+        if (!entry) {
+            co_return std::unexpected(entry.error());
+        }
+        if (!*entry) {
+            co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
+        }
+        if ((*entry)->kind != node_kind::tree && (*entry)->kind != node_kind::repo) {
+            co_return std::unexpected(
+                failure(errc::invalid_argument, "path is not a directory", path));
+        }
+        root = (*entry)->ref;
+    }
+    auto encoded = co_await objects.get(root);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return objects::decode_tree(*encoded);
+}
+
+} // namespace
+
+runtime::task<repository_detail::vfs_entry>
+repository_detail::vfs_access::entry(repository& source, digest root, std::string path) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (path.empty()) {
+        co_return vfs_entry{.kind = node_kind::tree, .mode = 0040755, .object = root};
+    }
+    auto found = co_await snapshot_entry(source.impl_->objects, root, path);
+    if (!found) {
+        co_return std::unexpected(found.error());
+    }
+    if (!*found) {
+        co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
+    }
+    co_return co_await snapshot_vfs_entry(source.impl_->objects, **found);
 }
 
 runtime::task<std::vector<repository_detail::vfs_entry>>
@@ -3095,6 +3993,27 @@ repository_detail::vfs_access::children(repository& source, std::string path) {
             value.remote = std::move(record->remote);
         }
         output.push_back(std::move(value));
+    }
+    co_return output;
+}
+
+runtime::task<std::vector<repository_detail::vfs_entry>>
+repository_detail::vfs_access::children(repository& source, digest root, std::string path) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto directory = co_await snapshot_tree(source.impl_->objects, root, path);
+    if (!directory) {
+        co_return std::unexpected(directory.error());
+    }
+    auto output = std::vector<vfs_entry>{};
+    output.reserve(directory->entries.size());
+    for (const auto& entry : directory->entries) {
+        auto value = co_await snapshot_vfs_entry(source.impl_->objects, entry);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        output.push_back(std::move(*value));
     }
     co_return output;
 }
@@ -3206,6 +4125,16 @@ runtime::task<digest> repository_detail::build_access::put_record(repository& so
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return co_await repository_detail::store_access::put_plain(source.impl_->objects,
                                                                   std::move(bytes));
+}
+
+runtime::task<digest> repository_detail::build_access::put_record(repository& source,
+                                                                  std::vector<std::byte> bytes,
+                                                                  algorithm hash_algorithm) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return co_await repository_detail::store_access::put_plain(
+        source.impl_->objects, std::move(bytes), hash_algorithm);
 }
 
 runtime::task<digest> repository_detail::build_access::put_file(repository& source,
@@ -3514,7 +4443,7 @@ runtime::task<repository> repository_detail::testing::clone(const repository& so
         co_return std::unexpected(failure(errc::io, code.message(), destination.string()));
     repository_options options;
     options.checkpoint_interval = source.impl_->checkpoint_interval;
-    options.store.hash_algorithm = source.impl_->hash_algorithm;
+    options.storage.hash_algorithm = source.impl_->hash_algorithm;
     co_return co_await repository::open(std::move(destination), std::move(options));
 }
 
@@ -3602,12 +4531,13 @@ auto repository_detail::testing::verify_history(repository& value) -> result<std
         return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
     auto verified = std::uint64_t{};
-    const auto author = value.impl_->signing_key.identity();
     for (const auto& drip : value.impl_->current.drips) {
         auto signature = identity_detail::parse_signature(drip.signature);
         if (!signature) {
             return std::unexpected(signature.error());
         }
+        const auto author =
+            drip.author.taap_id.empty() ? value.impl_->signing_key.identity() : drip.author;
         auto valid = verify(author, "drip", drip.body, *signature);
         if (!valid || !*valid) {
             return std::unexpected(valid ? failure(errc::unauthorized, "unsigned drip")
@@ -3632,9 +4562,17 @@ auto repository_detail::testing::verify_history(repository& value) -> result<std
         if (!signature) {
             return std::unexpected(signature.error());
         }
-        if (change->author.taap_id != author.taap_id) {
-            return std::unexpected(
-                failure(errc::unauthorized, "change author identity is unavailable"));
+        auto author = value.impl_->signing_key.identity();
+        if (author.taap_id != change->author.taap_id) {
+            const auto found =
+                std::ranges::find_if(value.impl_->current.drips, [&](const auto& drip) {
+                    return drip.author.taap_id == change->author.taap_id;
+                });
+            if (found == value.impl_->current.drips.end()) {
+                return std::unexpected(
+                    failure(errc::corrupt, "change author identity is unavailable"));
+            }
+            author = found->author;
         }
         auto valid = verify(author, "change", *body, *signature);
         if (!valid || !*valid) {
@@ -3644,6 +4582,10 @@ auto repository_detail::testing::verify_history(repository& value) -> result<std
         ++verified;
     }
     return verified;
+}
+
+auto repository_detail::sync_access::objects(repository& source) -> store& {
+    return source.impl_->objects;
 }
 
 void repository_detail::testing::reset_directory_loads(repository& value) {

@@ -1,0 +1,6 @@
+{
+    global:
+        liquid_frontend_get_module_v1;
+    local:
+        *;
+};

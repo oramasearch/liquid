@@ -12,9 +12,9 @@
 #include <unistd.h>
 #endif
 
-#include "formats/json.hpp"
 #include "build/cache.hpp"
 #include "build/repository_access.hpp"
+#include "formats/json.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -102,7 +102,9 @@ auto run_wrap(const std::filesystem::path& project,
               const std::filesystem::path& cache,
               std::vector<std::string> command,
               bool explain = false,
-              std::uint32_t jobs = 0) -> liquid::result<liquid::wrap_report> {
+              std::uint32_t jobs = 0,
+              std::optional<liquid::remote_config> remote = {})
+    -> liquid::result<liquid::wrap_report> {
     return liquid::runtime::block_on(
         liquid::build::wrap(project,
                             std::move(command),
@@ -111,7 +113,8 @@ auto run_wrap(const std::filesystem::path& project,
                                                  .explain = explain,
                                                  .verify = false,
                                                  .cache_directory = cache,
-                                                 .fact_directory = cache.parent_path() / "facts"}));
+                                                 .fact_directory = cache.parent_path() / "facts",
+                                                 .remote = std::move(remote)}));
 }
 
 auto shell_quote(std::string_view value) -> std::string {
@@ -257,6 +260,80 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(statistics->misses, configured->misses + first->misses + second->misses);
     EXPECT_GT(statistics->disk.bytes_avoided, 0U);
 
+    auto left_before =
+        liquid::runtime::block_on(cache.find_output("build/CMakeFiles/wrapped.dir/left.c.o"));
+    ASSERT_TRUE(left_before);
+    ASSERT_TRUE(*left_before);
+    auto left_before_bytes = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(*repository, (**left_before).value));
+    ASSERT_TRUE(left_before_bytes);
+    auto left_before_result = liquid::objects::decode_result(*left_before_bytes);
+    ASSERT_TRUE(left_before_result);
+    const auto left_before_output = std::ranges::find(left_before_result->outputs,
+                                                      "build/CMakeFiles/wrapped.dir/left.c.o",
+                                                      &liquid::action_output::path);
+    ASSERT_NE(left_before_output, left_before_result->outputs.end());
+    const auto left_object_before = left_before_output->blob;
+    const auto link_before = (**producing).value;
+
+    auto source = std::ofstream{fixture.project() / "left.c", std::ios::app};
+    source << "\n// fingerprint-preserving edit\n";
+    source.close();
+    auto comment =
+        run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, true, 3);
+    ASSERT_TRUE(comment) << comment.error().message << ": " << comment.error().context;
+    EXPECT_EQ(comment->processes_started, 1U);
+
+    auto comment_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(comment_repository);
+    auto comment_cache = liquid::build_detail::disk_cache{*comment_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(comment_cache.open()));
+    auto left_after = liquid::runtime::block_on(
+        comment_cache.find_output("build/CMakeFiles/wrapped.dir/left.c.o"));
+    auto link_after = liquid::runtime::block_on(comment_cache.find_output("build/wrapped"));
+    ASSERT_TRUE(left_after);
+    ASSERT_TRUE(*left_after);
+    ASSERT_TRUE(link_after);
+    ASSERT_TRUE(*link_after);
+    auto left_after_bytes = liquid::runtime::block_on(
+        liquid::repository_detail::build_access::get(*comment_repository, (**left_after).value));
+    ASSERT_TRUE(left_after_bytes);
+    auto left_after_result = liquid::objects::decode_result(*left_after_bytes);
+    ASSERT_TRUE(left_after_result);
+    const auto left_after_output = std::ranges::find(left_after_result->outputs,
+                                                     "build/CMakeFiles/wrapped.dir/left.c.o",
+                                                     &liquid::action_output::path);
+    ASSERT_NE(left_after_output, left_after_result->outputs.end());
+    EXPECT_EQ(liquid::to_string(left_after_output->blob), liquid::to_string(left_object_before));
+    EXPECT_EQ(liquid::to_string((**link_after).value), liquid::to_string(link_before));
+
+    auto left_source = std::ifstream{fixture.project() / "left.c", std::ios::binary};
+    auto left_text =
+        std::string{std::istreambuf_iterator<char>{left_source}, std::istreambuf_iterator<char>{}};
+    const auto return_value = left_text.find("return WRAPPED_VALUE;");
+    ASSERT_NE(return_value, std::string::npos);
+    left_text.replace(return_value,
+                      std::string_view{"return WRAPPED_VALUE;"}.size(),
+                      "return WRAPPED_VALUE + 1;");
+    auto changed_source = std::ofstream{fixture.project() / "left.c", std::ios::trunc};
+    changed_source << left_text;
+    changed_source.close();
+    auto semantic =
+        run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, true, 3);
+    ASSERT_TRUE(semantic) << semantic.error().message << ": " << semantic.error().context;
+    EXPECT_EQ(semantic->processes_started, 2U);
+
+    auto semantic_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(semantic_repository);
+    auto semantic_cache = liquid::build_detail::disk_cache{*semantic_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(semantic_cache.open()));
+    auto semantic_link = liquid::runtime::block_on(semantic_cache.find_output("build/wrapped"));
+    ASSERT_TRUE(semantic_link);
+    ASSERT_TRUE(*semantic_link);
+    EXPECT_NE(liquid::to_string((**semantic_link).value), liquid::to_string(link_before));
+
     auto header = std::ofstream{fixture.project() / "include/value.h", std::ios::app};
     header << "\n#define WRAPPED_SECOND_VALUE 1\n";
     header.close();
@@ -313,6 +390,42 @@ TEST(BuildWrap, recursive_make_is_split_into_actions) {
     EXPECT_EQ(made_again->outer, liquid::cache_status::hit);
 }
 
+TEST(BuildWrap, reapi_action_cache_matches_the_local_second_run_hit_rate) {
+    const auto* endpoint = std::getenv("LIQUID_REAPI_ENDPOINT");
+    if (!endpoint) {
+        GTEST_SKIP() << "LIQUID_REAPI_ENDPOINT is not configured";
+    }
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("make") || !available("clang")) {
+        GTEST_SKIP() << "make or clang is absent";
+    }
+    wrap_directory fixture{"make"};
+    auto remote = liquid::remote_config{.endpoint = endpoint, .publish = true};
+    auto first = run_wrap(fixture.project(), fixture.cache(), {"make"}, false, 3, remote);
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    ASSERT_EQ(first->exit, 0);
+    ASSERT_GT(first->misses, 0U);
+
+    const auto actions = fixture.cache() / "repository/.liquid-store/actions";
+    auto code = std::error_code{};
+    EXPECT_TRUE(std::filesystem::remove(actions / "INDEX", code));
+    ASSERT_FALSE(code) << code.message();
+    EXPECT_TRUE(std::filesystem::remove(actions / "ROOT", code));
+    ASSERT_FALSE(code) << code.message();
+
+    remote.publish = false;
+    auto second = run_wrap(fixture.project(), fixture.cache(), {"make"}, false, 3, remote);
+    ASSERT_TRUE(second) << second.error().message << ": " << second.error().context;
+    EXPECT_EQ(second->exit, 0);
+    EXPECT_EQ(second->outer, liquid::cache_status::hit);
+    EXPECT_EQ(second->hits, second->actions);
+    EXPECT_EQ(second->misses, 0U);
+    EXPECT_EQ(second->cache.remote.hits, 1U);
+    EXPECT_EQ(second->cache.remote.misses, 0U);
+}
+
 TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0) {
         GTEST_SKIP() << "FUSE is unavailable";
@@ -362,6 +475,8 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
         std::ranges::any_of(explanation->critical_path.back().outputs,
                             [](const auto& output) { return output == "trace-final.txt"; }));
     for (const auto& action : trace->actions) {
+        ASSERT_TRUE(action.schedule);
+        EXPECT_EQ(action.schedule->decision, liquid::execution_decision::local);
         const auto phases = action.timing.queued + action.timing.sandbox + action.timing.exec +
                             action.timing.hash + action.timing.store;
         const auto found = std::ranges::find_if(explanation->critical_path, [&](const auto& item) {
@@ -379,6 +494,21 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
     }
     auto chrome = liquid::build::chrome_trace(*trace);
     ASSERT_TRUE(chrome) << chrome.error().message;
+    for (const auto field : {"execution_decision",
+                             "history_ms",
+                             "size_class",
+                             "input_bytes",
+                             "remote_state_queried",
+                             "remote_missing_bytes",
+                             "remote_queue_depth",
+                             "remote_cache_locality_permille",
+                             "batch_supported",
+                             "batch_size",
+                             "local_estimate_ms",
+                             "remote_estimate_ms",
+                             "decision_reason"}) {
+        EXPECT_NE(chrome->find(field), std::string::npos) << field;
+    }
     auto json = liquid::formats::json::parse(*chrome);
     ASSERT_TRUE(json) << json.error().message;
     const auto* object = std::get_if<liquid::formats::json::value::object>(&json->data);
@@ -399,6 +529,20 @@ TEST(BuildWrap, trace_records_longest_dependent_chain_and_exports_chrome_json) {
     ASSERT_EQ(status, 0) << text;
     EXPECT_NE(text.find("output=trace-middle.txt"), std::string::npos) << text;
     EXPECT_NE(text.find("output=trace-final.txt"), std::string::npos) << text;
+    EXPECT_NE(text.find("decision=local"), std::string::npos) << text;
+    EXPECT_NE(text.find("history_ms="), std::string::npos) << text;
+
+    const auto why_output = fixture.project().parent_path() / "why-schedule-output";
+    const auto why_command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                             shell_quote(LIQUID_CLI) + " why trace-final.txt --json >" +
+                             shell_quote(why_output.string()) + " 2>&1";
+    const auto why_status = std::system(why_command.c_str());
+    auto why_input = std::ifstream{why_output};
+    const auto why_text =
+        std::string{std::istreambuf_iterator<char>{why_input}, std::istreambuf_iterator<char>{}};
+    ASSERT_EQ(why_status, 0) << why_text;
+    EXPECT_NE(why_text.find("\"schedule\":{\"decision\":\"local\""), std::string::npos) << why_text;
+    EXPECT_NE(why_text.find("\"remote_missing_bytes\":0"), std::string::npos) << why_text;
 #endif
 }
 
@@ -432,7 +576,7 @@ TEST(BuildWrap, why_reports_current_policy_refusal_for_a_recorded_target) {
 
 #if defined(LIQUID_CLI)
 
-TEST(BuildWrap, verify_all_reexecutes_every_wrapped_action) {
+TEST(BuildWrap, verify_and_replay_reexecute_wrapped_actions) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0)
         GTEST_SKIP() << "FUSE is unavailable";
     if (!available("make") || !available("clang"))
@@ -459,6 +603,19 @@ TEST(BuildWrap, verify_all_reexecutes_every_wrapped_action) {
                         " verified=" + std::to_string(made->actions) + " divergent=false"),
               std::string::npos)
         << text;
+    ASSERT_FALSE(made->trace_actions.empty());
+    const auto replay_output = fixture.project().parent_path() / "replay-output";
+    const auto replay_command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                                shell_quote(LIQUID_CLI) + " replay " +
+                                liquid::to_string(made->trace_actions.front().action) +
+                                " --json >" + shell_quote(replay_output.string()) + " 2>&1";
+    const auto replay_status = std::system(replay_command.c_str());
+    auto replay_input = std::ifstream{replay_output};
+    const auto replay_text =
+        std::string{std::istreambuf_iterator<char>{replay_input}, std::istreambuf_iterator<char>{}};
+    ASSERT_EQ(replay_status, 0) << replay_text;
+    EXPECT_NE(replay_text.find("\"agreement\":true"), std::string::npos) << replay_text;
+    EXPECT_NE(replay_text.find("\"recorded\":false"), std::string::npos) << replay_text;
 }
 
 #endif

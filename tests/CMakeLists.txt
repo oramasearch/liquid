@@ -1,10 +1,26 @@
+set(LIQUID_HTTP2_TEST_SOURCES
+  ${PROJECT_SOURCE_DIR}/src/http2/connection.cpp
+  ${PROJECT_SOURCE_DIR}/src/http2/frame.cpp
+  ${PROJECT_SOURCE_DIR}/src/http2/grpc.cpp
+  ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
+
 add_executable(liquid-tests
+  ../src/daemon/fanout.cpp
   test_drip.cpp
+  test_delta.cpp
+  test_daemon.cpp
   test_error.cpp
   test_hash.cpp
+  http2/test_codecs.cpp
   test_identity.cpp
   test_object.cpp
   test_remote.cpp
+  reapi/test_wire.cpp
+  reapi/test_messages.cpp
+  reapi/test_conversion.cpp
+  ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/conversion.cpp
   test_repository.cpp
   test_runtime.cpp
   test_store.cpp
@@ -24,31 +40,69 @@ add_executable(liquid-tests
   vfs/test_mount.cpp
   build/test_executor.cpp
   build/test_remote_outputs.cpp
+  build/test_distribution.cpp
   build/test_policy.cpp
   build/test_facts.cpp
+  build/test_graph.cpp
   build/test_provenance.cpp
   build/test_why.cpp
   build/test_sbom.cpp
   build/test_wrap.cpp
+  ${LIQUID_HTTP2_TEST_SOURCES}
 )
-target_link_libraries(liquid-tests PRIVATE liquid::liquid liquid_monocypher GTest::gtest_main)
+if(UNIX)
+  target_sources(liquid-tests PRIVATE test_sync.cpp)
+endif()
+target_link_libraries(liquid-tests PRIVATE
+  liquid::liquid
+  liquid_monocypher
+  GTest::gtest_main
+  Boost::corosio
+  Boost::corosio_openssl)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
+  ${PROJECT_SOURCE_DIR}/modules/corosio/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
+
+add_executable(liquid-http2-test-server
+  http2/test_server.cpp
+  ${LIQUID_HTTP2_TEST_SOURCES})
+target_link_libraries(liquid-http2-test-server PRIVATE
+  liquid::liquid
+  Boost::corosio
+  Boost::corosio_openssl)
+target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 add_executable(liquid-build-fixture build/fixture.c)
 if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
+if(UNIX)
+  add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
+  target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
+  add_dependencies(liquid-tests liquid-graph-crash-fixture)
+endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
-  LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
+  LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
+  LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+if(LIQUID_BUILD_FRONTENDS)
+  add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
+    LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
+    LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
+    LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}")
+  target_link_libraries(liquid-tests PRIVATE liquid-frontend-clang-static)
+endif()
 if(UNIX)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_GRAPH_CRASH_FIXTURE="$<TARGET_FILE:liquid-graph-crash-fixture>")
   add_executable(liquid-wrap-sleep-tool build/sleep_copy.c)
   add_dependencies(liquid-tests liquid-wrap-sleep-tool)
   target_compile_definitions(liquid-tests PRIVATE
@@ -92,6 +146,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-delta
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_DELTA_ROOT=${CMAKE_CURRENT_BINARY_DIR}/delta-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/delta.cmake)
   add_test(NAME cli-why-json
     COMMAND ${CMAKE_COMMAND} -E env
       LIQUID_WRAP_CACHE=${CMAKE_CURRENT_BINARY_DIR}/why-cli-cache
@@ -108,6 +167,14 @@ if(LIQUID_BUILD_CLI)
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI_SOURCE=${PROJECT_SOURCE_DIR}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/public-includes.cmake)
+  add_executable(liquid-identity-codec-fixture cli/identity_codec.cpp)
+  target_link_libraries(liquid-identity-codec-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-identity-codec
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
+      -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
   add_test(NAME cli-sbom-spdx
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --spdx)
   set_tests_properties(cli-sbom-spdx PROPERTIES
@@ -128,6 +195,20 @@ gtest_discover_tests(liquid-vfs-queue-tests)
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
+
+add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
+target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
+
+if(LIQUID_BUILD_FRONTENDS)
+  add_executable(liquid-frontend-measure EXCLUDE_FROM_ALL frontend_measure.cpp)
+  target_link_libraries(liquid-frontend-measure PRIVATE liquid::liquid)
+  target_include_directories(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(liquid-frontend-measure PRIVATE
+    LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
+    LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
+    LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>")
+  add_dependencies(liquid-frontend-measure liquid-frontend-clang)
+endif()
 
 add_executable(liquid-store-large-tests test_store_large.cpp)
 target_include_directories(liquid-store-large-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -186,10 +267,14 @@ gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 add_executable(liquid-header-tests
   headers/attestation.cpp
   headers/build.cpp
+  headers/daemon.cpp
   headers/drip.cpp
+  headers/delta.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/frontend.cpp
   headers/git.cpp
+  headers/graph.cpp
   headers/hash.cpp
   headers/identity.cpp
   headers/liquid.cpp
@@ -199,10 +284,15 @@ add_executable(liquid-header-tests
   headers/repository.cpp
   headers/runtime.cpp
   headers/store.cpp
+  headers/sync.cpp
   headers/version.cpp
   headers/vfs.cpp)
 target_link_libraries(liquid-header-tests PRIVATE liquid::liquid)
 add_test(NAME public-headers-isolated COMMAND liquid-header-tests)
+
+add_executable(liquid-frontend-c-header headers/frontend_abi.c)
+target_include_directories(liquid-frontend-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-frontend-c-header COMMAND liquid-frontend-c-header)
 
 add_executable(liquid-cbor-tests encoding/test_cbor.cpp)
 target_sources(liquid-cbor-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
@@ -288,3 +378,15 @@ endif()
 add_executable(liquid-repository-scenario repository/scenario.cpp)
 target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)
+
+add_test(NAME consumer-project-build
+  COMMAND ${CMAKE_COMMAND}
+    -DLIQUID_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+    -DLIQUID_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/consumer
+    -DLIQUID_CONSUMER_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/consumer-project
+    -DLIQUID_CONSUMER_GENERATOR=${CMAKE_GENERATOR}
+    -DLIQUID_CONSUMER_C_COMPILER=${CMAKE_C_COMPILER}
+    -DLIQUID_CONSUMER_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+    -DLIQUID_CONSUMER_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    -DLIQUID_CONSUMER_SHARED=${BUILD_SHARED_LIBS}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/consumer/run.cmake)

@@ -26,6 +26,8 @@ share chunks without a file-per-object bottleneck.
 <root>/leases/lease-<id>-<generation>.lease
 <root>/gc/MANIFEST       committed epoch and per-pack tombstone bitmaps
 <root>/keys/<key-id>.wrapped   encrypted trust-domain data key
+<root>/repositories/<id-hash>/LIQUID_REPO     shared-store repository checkpoint entry point
+<root>/repositories/<id-hash>/LIQUID_JOURNAL  shared-store repository journal entry point
 <root>/tmp/
 ```
 
@@ -35,6 +37,16 @@ an eight-byte frame magic, raw and compressed lengths (`u32` each), an algorithm
 digest, and an individually zstd-compressed payload. A sealed pack ends with a sorted chunk table
 and a footer containing the table location and checksum. The table carries the algorithm tag, so it
 remains the source for rebuilding index run sets.
+
+Ordinary writes use the store's configured hash algorithm. Verified sync receipt instead preserves
+the algorithm tag carried by each frame after recomputing that exact digest, so a BLAKE3 and a
+SHA-256 object can coexist in either configured store without changing remote identity.
+
+The `repositories/` directory appears only when a caller supplies one open store to
+`repository::create` or `repository::open`; it is not part of a repository-local store's checkout
+layout. Repository documents, directory checkpoints, trees, blobs, and chunks are still stored
+through the ordinary content-addressed packs, so identical content has one physical frame across
+all repositories in the store.
 
 The current pack has no table or footer. Its frames are represented in memory and in the index
 memtable. When a pack reaches `store_options::pack_size` (or 64 MiB when it is zero), it is sealed:
@@ -126,6 +138,20 @@ remaining bounded. `repository::write_file` imports through `put_file`, derives 
 record from that stored ordered chunk list, and records one drip. The in-memory repository write
 uses the same stored list, so both paths produce the same blob record. Raw blob chunks remain
 readable under encryption through their parent object's trust-domain key.
+
+## Delta records and remote fetch
+
+`delta_record` is a 108-byte versioned record: eight-byte `LQDLTA` version magic, source digest,
+target digest, one-byte algorithm id, and patch-blob digest. The reference registry classifies it as
+`delta` and traverses all three digests. A `delta/1` attestation traverses to its record. The public
+`store::attestations(subject)` view exposes the rebuilt subject index used by delta discovery and
+attestation policy without exposing pack or index types.
+
+The on-disk `remote_blob_source` test double from #17 supplies registered patch and target blobs.
+Its range reads retain the store's per-chunk and whole-object verification. `fetch_delta` uses a
+verified catalog match when available; otherwise it reads the target through ordinary local or
+registered remote chunk metadata. Content-defined chunks remain the baseline delivery mechanism,
+and the reconstructed destination is always checked against the requested target digest.
 
 The default suite exercises this path with a deterministic sparse 256 MiB file. The labelled
 `large-40g` test uses a 40 GiB file and a 40-byte file through the same `write_file` call. It

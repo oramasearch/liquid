@@ -27,6 +27,90 @@ auto same_digest(const digest& left, const digest& right) -> bool {
     return left.alg == right.alg && left.bytes == right.bytes;
 }
 
+runtime::task<void> hydrate_blob(repository& source, digest id, std::set<std::string>& seen) {
+    if (!seen.insert(to_string(id)).second) {
+        co_return liquid::result<void>{};
+    }
+    auto bytes = co_await repository_detail::build_access::get(source, id);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto value = objects::decode_blob(*bytes);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    if (value->content.alg == algorithm::blake3 || value->content.alg == algorithm::sha256 ||
+        value->content.alg == algorithm::blake3_keyed) {
+        auto contents = co_await repository_detail::build_access::get(source, value->content);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        co_return liquid::result<void>{};
+    }
+    for (const auto& chunk : value->chunks) {
+        auto contents = co_await repository_detail::build_access::get(source, chunk);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<void> hydrate_tree(repository& source, digest id, std::set<std::string>& seen) {
+    if (!seen.insert(to_string(id)).second) {
+        co_return liquid::result<void>{};
+    }
+    auto bytes = co_await repository_detail::build_access::get(source, id);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto value = objects::decode_tree(*bytes);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    for (const auto& entry : value->entries) {
+        auto hydrated = liquid::result<void>{};
+        if (entry.kind == node_kind::blob) {
+            hydrated = co_await hydrate_blob(source, entry.ref, seen);
+        } else if (entry.kind == node_kind::tree || entry.kind == node_kind::repo) {
+            hydrated = co_await hydrate_tree(source, entry.ref, seen);
+        }
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<void> hydrate_replay_graph(repository& source,
+                                         const action_result& recorded,
+                                         const objects::action_record& action) {
+    auto seen = std::set<std::string>{};
+    auto inputs = co_await hydrate_tree(source, action.input.inputs, seen);
+    if (!inputs) {
+        co_return std::unexpected(inputs.error());
+    }
+    auto toolchain = co_await hydrate_tree(source, action.input.toolchain, seen);
+    if (!toolchain) {
+        co_return std::unexpected(toolchain.error());
+    }
+    for (const auto& output : recorded.outputs) {
+        auto hydrated = co_await hydrate_blob(source, output.blob, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    auto stdout_output = co_await hydrate_blob(source, recorded.stdout_output, seen);
+    if (!stdout_output) {
+        co_return std::unexpected(stdout_output.error());
+    }
+    auto stderr_output = co_await hydrate_blob(source, recorded.stderr_output, seen);
+    if (!stderr_output) {
+        co_return std::unexpected(stderr_output.error());
+    }
+    co_return liquid::result<void>{};
+}
+
 runtime::task<std::vector<std::byte>> read_blob(repository& source, const blob& value) {
     if (value.size > std::numeric_limits<std::size_t>::max()) {
         co_return std::unexpected(
@@ -108,10 +192,18 @@ runtime::task<void> add_digest_difference(repository& source,
     }
     auto difference = reproducibility_difference{
         .output = std::move(output), .cached = cached, .reexecuted = replayed};
-    if (explain) {
+    if (cached && replayed) {
         auto explained = co_await add_byte_difference(source, difference);
         if (!explained) {
             co_return std::unexpected(explained.error());
+        }
+        if (!difference.byte_offset) {
+            co_return liquid::result<void>{};
+        }
+        if (!explain) {
+            difference.byte_offset = {};
+            difference.cached_byte = {};
+            difference.reexecuted_byte = {};
         }
     }
     differences.push_back(std::move(difference));
@@ -189,12 +281,9 @@ auto selected(const objects::action_index_entry& entry,
     return false;
 }
 
-runtime::task<verified_action> verify_one(repository& source,
-                                          build_detail::disk_cache& cache,
-                                          const objects::action_index_entry& entry,
-                                          const action_result& cached,
-                                          bool explain) {
-    auto action_bytes = co_await repository_detail::build_access::get(source, cached.action);
+runtime::task<replay_report>
+reexecute_one(repository& source, digest result, const action_result& recorded, bool explain) {
+    auto action_bytes = co_await repository_detail::build_access::get(source, recorded.action);
     if (!action_bytes) {
         co_return std::unexpected(action_bytes.error());
     }
@@ -206,30 +295,43 @@ runtime::task<verified_action> verify_one(repository& source,
     if (!sandbox_bytes) {
         co_return std::unexpected(sandbox_bytes.error());
     }
+    auto hydrated = co_await hydrate_replay_graph(source, recorded, *action);
+    if (!hydrated) {
+        co_return std::unexpected(hydrated.error());
+    }
     auto expected_wrap_sandbox = objects::encode(wrap_sandbox_definition());
     if (!expected_wrap_sandbox) {
         co_return std::unexpected(expected_wrap_sandbox.error());
     }
     auto replayed = liquid::result<action_result>{};
     if (*sandbox_bytes == *expected_wrap_sandbox) {
-        replayed = co_await run_wrapped_action(source, *action, cached, cached.observed_at);
+        replayed = co_await run_wrapped_action(source, *action, recorded, recorded.observed_at);
     } else {
         replayed = co_await run_action(
-            source, action->input, cached.action, action->sandbox, cached.observed_at);
+            source, action->input, recorded.action, action->sandbox, recorded.observed_at);
     }
     if (!replayed) {
         co_return std::unexpected(replayed.error());
     }
-    auto differences = co_await compare(source, cached, *replayed, explain);
+    auto differences = co_await compare(source, recorded, *replayed, explain);
     if (!differences) {
         co_return std::unexpected(differences.error());
     }
-    const auto agreement = differences->empty();
+    co_return replay_report{.action = recorded.action,
+                            .result = result,
+                            .recorded_exit = recorded.exit,
+                            .reexecuted_exit = replayed->exit,
+                            .agreement = differences->empty(),
+                            .differences = std::move(*differences)};
+}
+
+auto difference_descriptions(const replay_report& replayed) -> std::vector<std::string> {
     auto differing_outputs = std::vector<std::string>{};
-    for (const auto& difference : *differences) {
+    for (const auto& difference : replayed.differences) {
         if (difference.output == "exit-status") {
-            differing_outputs.push_back("exit-status cached=" + std::to_string(cached.exit) +
-                                        " reexecuted=" + std::to_string(replayed->exit));
+            differing_outputs.push_back(
+                "exit-status cached=" + std::to_string(replayed.recorded_exit) +
+                " reexecuted=" + std::to_string(replayed.reexecuted_exit));
             continue;
         }
         differing_outputs.push_back(
@@ -237,18 +339,26 @@ runtime::task<verified_action> verify_one(repository& source,
             (difference.cached ? to_string(*difference.cached) : "missing") + " reexecuted=" +
             (difference.reexecuted ? to_string(*difference.reexecuted) : "missing"));
     }
+    return differing_outputs;
+}
+
+runtime::task<void> record_reexecution(repository& source,
+                                       build_detail::disk_cache& cache,
+                                       replay_report& replayed,
+                                       digest sandbox) {
     auto signer = repository_detail::build_access::signer(source);
     if (!signer) {
         co_return std::unexpected(signer.error());
     }
     auto attestation = liquid::attestation{
-        .subject = entry.result,
+        .subject = replayed.result,
         .profile = "reproducibility/1",
         .at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()),
         .subject_kind = attestation_subject_kind::artifact,
         .attributes = {{"verified_by", signer->taap_id},
-                       {"sandbox", to_string(action->sandbox)},
-                       {"agreement", agreement}}};
+                       {"sandbox", to_string(sandbox)},
+                       {"agreement", replayed.agreement}}};
+    auto differing_outputs = difference_descriptions(replayed);
     if (!differing_outputs.empty()) {
         attestation.attributes.push_back({"differing_outputs", differing_outputs});
     }
@@ -266,16 +376,93 @@ runtime::task<verified_action> verify_one(repository& source,
     if (!attestation_id) {
         co_return std::unexpected(attestation_id.error());
     }
-    auto recorded = co_await cache.record_verification(entry.result, *attestation_id, !agreement);
+    auto recorded =
+        co_await cache.record_verification(replayed.result, *attestation_id, !replayed.agreement);
     if (!recorded) {
         co_return std::unexpected(recorded.error());
     }
-    if (!agreement) {
+    replayed.attestation = *attestation_id;
+    if (!replayed.agreement) {
         repository_detail::build_access::record_critical_alert(
-            source, {cached.action, entry.result, *differences});
+            source, {replayed.action, replayed.result, replayed.differences});
     }
-    co_return verified_action{
-        cached.action, entry.result, *attestation_id, agreement, std::move(*differences)};
+    co_return liquid::result<void>{};
+}
+
+runtime::task<verified_action> verify_one(repository& source,
+                                          build_detail::disk_cache& cache,
+                                          const objects::action_index_entry& entry,
+                                          const action_result& recorded,
+                                          bool explain) {
+    auto action_bytes = co_await repository_detail::build_access::get(source, recorded.action);
+    if (!action_bytes) {
+        co_return std::unexpected(action_bytes.error());
+    }
+    auto action = objects::decode_action(*action_bytes);
+    if (!action) {
+        co_return std::unexpected(action.error());
+    }
+    auto replayed = co_await reexecute_one(source, entry.result, recorded, explain);
+    if (!replayed) {
+        co_return std::unexpected(replayed.error());
+    }
+    auto recorded_reexecution =
+        co_await record_reexecution(source, cache, *replayed, action->sandbox);
+    if (!recorded_reexecution) {
+        co_return std::unexpected(recorded_reexecution.error());
+    }
+    co_return verified_action{replayed->action,
+                              replayed->result,
+                              *replayed->attestation,
+                              replayed->agreement,
+                              std::move(replayed->differences)};
+}
+
+struct replay_target {
+    digest result;
+    action_result value;
+};
+
+runtime::task<replay_target>
+resolve_replay_target(repository& source, build_detail::disk_cache& cache, digest target) {
+    auto target_bytes = co_await repository_detail::build_access::get(source, target);
+    if (!target_bytes) {
+        co_return std::unexpected(target_bytes.error());
+    }
+    auto recorded = objects::decode_result(*target_bytes);
+    if (recorded) {
+        co_return replay_target{target, std::move(*recorded)};
+    }
+    auto action = objects::decode_action(*target_bytes);
+    if (!action) {
+        co_return std::unexpected(verification_error(
+            errc::invalid_argument, "replay target is not an action or result", to_string(target)));
+    }
+    auto selected_result = std::optional<replay_target>{};
+    auto selected_sequence = std::uint64_t{};
+    for (const auto& entry : cache.entries()) {
+        if (selected_result && entry.sequence <= selected_sequence) {
+            continue;
+        }
+        auto result_bytes = co_await repository_detail::build_access::get(source, entry.result);
+        if (!result_bytes) {
+            if (result_bytes.error().code == errc::not_found) {
+                continue;
+            }
+            co_return std::unexpected(result_bytes.error());
+        }
+        auto value = objects::decode_result(*result_bytes);
+        if (!value || !same_digest(value->action, target)) {
+            continue;
+        }
+        selected_sequence = entry.sequence;
+        selected_result = replay_target{entry.result, std::move(*value)};
+    }
+    if (!selected_result) {
+        co_return std::unexpected(verification_error(
+            errc::not_found, "action is not present in the cache", to_string(target)));
+    }
+    co_return std::move(*selected_result);
 }
 
 } // namespace
@@ -342,6 +529,61 @@ runtime::task<verify_report> verify(std::filesystem::path working_tree, verify_o
         co_return std::unexpected(source.error());
     }
     co_return co_await verify(*source, std::move(options));
+}
+
+runtime::task<replay_report> replay(repository& source, digest target, replay_options options) {
+    auto cache = build_detail::disk_cache{source};
+    auto opened = co_await cache.open();
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    auto recorded = co_await resolve_replay_target(source, cache, target);
+    if (!recorded) {
+        co_return std::unexpected(recorded.error());
+    }
+    auto replayed = co_await reexecute_one(source, recorded->result, recorded->value, true);
+    if (!replayed) {
+        co_return std::unexpected(replayed.error());
+    }
+    if (!options.record) {
+        co_return replayed;
+    }
+    auto action_bytes = co_await repository_detail::build_access::get(source, replayed->action);
+    if (!action_bytes) {
+        co_return std::unexpected(action_bytes.error());
+    }
+    auto action = objects::decode_action(*action_bytes);
+    if (!action) {
+        co_return std::unexpected(action.error());
+    }
+    auto recorded_reexecution =
+        co_await record_reexecution(source, cache, *replayed, action->sandbox);
+    if (!recorded_reexecution) {
+        co_return std::unexpected(recorded_reexecution.error());
+    }
+    co_return replayed;
+}
+
+runtime::task<replay_report>
+replay(std::filesystem::path working_tree, digest target, replay_options options) {
+    auto code = std::error_code{};
+    working_tree = std::filesystem::canonical(working_tree, code);
+    if (code || !std::filesystem::is_directory(working_tree)) {
+        co_return std::unexpected(verification_error(errc::invalid_argument,
+                                                     "replay working tree is not a directory",
+                                                     working_tree.string()));
+    }
+    auto cache_directory = options.cache_directory
+                               ? liquid::result<std::filesystem::path>{*options.cache_directory}
+                               : wrap_cache_directory(working_tree);
+    if (!cache_directory) {
+        co_return std::unexpected(cache_directory.error());
+    }
+    auto source = co_await repository::open(*cache_directory / "repository");
+    if (!source) {
+        co_return std::unexpected(source.error());
+    }
+    co_return co_await replay(*source, target, std::move(options));
 }
 
 } // namespace liquid::build

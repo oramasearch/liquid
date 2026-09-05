@@ -12,6 +12,7 @@
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
+#include "liquid/remote.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -56,6 +57,30 @@ struct LIQUID_EXPORT action_timing {
     std::chrono::milliseconds exec{};
     std::chrono::milliseconds hash{};
     std::chrono::milliseconds store{};
+};
+
+enum class action_size_class : std::uint8_t { unknown, tiny, short_action, medium, long_action };
+
+enum class execution_decision : std::uint8_t { local, remote, race };
+
+struct LIQUID_EXPORT scheduling_inputs {
+    std::vector<action_timing> history;
+    action_size_class size_class{action_size_class::unknown};
+    std::uint64_t input_bytes{};
+    bool remote_state_queried{};
+    std::uint64_t remote_missing_bytes{};
+    std::uint64_t remote_queue_depth{};
+    std::uint32_t remote_cache_locality_permille{};
+    bool batch_supported{};
+    std::uint64_t batch_size{1};
+};
+
+struct LIQUID_EXPORT execution_schedule {
+    execution_decision decision{execution_decision::local};
+    scheduling_inputs inputs;
+    std::chrono::milliseconds local_estimate{};
+    std::chrono::milliseconds remote_estimate{};
+    std::string reason;
 };
 
 enum class cache_status : std::uint8_t { miss, hit, divergent };
@@ -209,8 +234,9 @@ struct LIQUID_EXPORT action_result {
     std::optional<std::chrono::sys_seconds> started_at;
     std::optional<std::chrono::sys_seconds> finished_at;
     std::optional<digest> provenance;
-    std::uint64_t record_version{2};
+    std::uint64_t record_version{3};
     std::vector<digest> sboms;
+    std::optional<execution_schedule> schedule;
 };
 
 struct LIQUID_EXPORT provenance_report {
@@ -262,6 +288,7 @@ struct LIQUID_EXPORT wrap_options {
     std::optional<std::string> target;
     std::optional<std::filesystem::path> cache_directory;
     std::optional<std::filesystem::path> fact_directory;
+    std::optional<remote_config> remote;
 };
 
 struct LIQUID_EXPORT critical_action {
@@ -271,6 +298,7 @@ struct LIQUID_EXPORT critical_action {
     action_timing timing;
     cache_status cache{cache_status::miss};
     std::vector<std::string> outputs;
+    std::optional<execution_schedule> schedule;
 };
 
 struct LIQUID_EXPORT build_trace_action {
@@ -280,6 +308,7 @@ struct LIQUID_EXPORT build_trace_action {
     action_timing timing;
     cache_status cache{cache_status::miss};
     std::chrono::milliseconds start_offset{};
+    std::optional<execution_schedule> schedule;
 };
 
 struct LIQUID_EXPORT build_trace_edge {
@@ -369,6 +398,21 @@ struct LIQUID_EXPORT verify_report {
     std::vector<verified_action> actions;
 };
 
+struct LIQUID_EXPORT replay_options {
+    bool record{};
+    std::optional<std::filesystem::path> cache_directory;
+};
+
+struct LIQUID_EXPORT replay_report {
+    digest action;
+    digest result;
+    int recorded_exit{};
+    int reexecuted_exit{};
+    bool agreement{};
+    std::vector<reproducibility_difference> differences;
+    std::optional<digest> attestation;
+};
+
 struct LIQUID_EXPORT why_report {
     std::string target;
     cache_status lookup{cache_status::miss};
@@ -377,14 +421,22 @@ struct LIQUID_EXPORT why_report {
     std::optional<digest> action;
     std::optional<digest> previous_action;
     cache_miss cause;
+    std::optional<execution_schedule> schedule;
+    cache_report cache;
 };
 
 namespace build {
+
+[[nodiscard]] LIQUID_EXPORT auto choose_execution(scheduling_inputs inputs) -> execution_schedule;
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
                                                              action_input input);
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
 record_remote_result(repository& source, action_input input, action_result value);
+[[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
+execute(repository& source, action_input input, remote_executor& remote);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<result_id>>
+execute_batch(repository& source, std::vector<action_input> inputs, remote_executor& remote);
 [[nodiscard]] LIQUID_EXPORT runtime::task<action_result> result(repository& source, result_id id);
 [[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report> verify_provenance(repository& source,
                                                                                result_id id);
@@ -409,6 +461,10 @@ generate_sbom(repository& source, std::string output_path, sbom_format format);
                                                                 verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(std::filesystem::path working_tree,
                                                                 verify_options options = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>
+replay(repository& source, digest target, replay_options options = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>
+replay(std::filesystem::path working_tree, digest target, replay_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<why_report>
 why(std::filesystem::path working_tree,
     std::string target,

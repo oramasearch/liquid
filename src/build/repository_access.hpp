@@ -20,6 +20,9 @@ struct LIQUID_EXPORT build_access {
         -> runtime::task<std::vector<std::byte>>;
     [[nodiscard]] static auto put_record(repository& source, std::vector<std::byte> bytes)
         -> runtime::task<digest>;
+    [[nodiscard]] static auto put_record(repository& source,
+                                         std::vector<std::byte> bytes,
+                                         algorithm hash_algorithm) -> runtime::task<digest>;
     [[nodiscard]] static auto put_file(repository& source, std::filesystem::path path)
         -> runtime::task<digest>;
     [[nodiscard]] static auto

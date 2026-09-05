@@ -6,10 +6,14 @@
 #include <thread>
 #include <utility>
 
+#include "liquid/daemon.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid_cli {
+
+[[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
+
 namespace {
 
 volatile std::sig_atomic_t interrupted = 0;
@@ -40,31 +44,27 @@ auto print_status(const liquid::capture_status& status) -> void {
     std::println("capture_cursor={}", status.last_cursor.token);
 }
 
-auto close(liquid::capture& capture) -> int {
-    auto closed = liquid::runtime::block_on(capture.close());
-    if (!closed) {
-        return fail(closed.error());
-    }
-    return 0;
-}
-
 auto toggle_capture(bool pause) -> int {
-    auto opened = liquid::runtime::block_on(liquid::capture::open(std::filesystem::current_path()));
-    if (!opened) {
-        return fail(opened.error());
+    auto ready = ensure_daemon(std::filesystem::current_path());
+    if (!ready) {
+        return fail(ready.error());
     }
-    auto capture = std::move(*opened);
-    auto changed = pause ? liquid::runtime::block_on(capture.pause())
-                         : liquid::runtime::block_on(capture.resume());
+    auto attached =
+        liquid::runtime::block_on(liquid::daemon::attach(std::filesystem::current_path()));
+    if (!attached) {
+        return fail(attached.error());
+    }
+    auto changed = pause ? liquid::runtime::block_on(attached->pause_capture())
+                         : liquid::runtime::block_on(attached->resume_capture());
     if (!changed) {
         return fail(changed.error());
     }
-    auto status = capture.status();
-    if (!status) {
-        return fail(status.error());
+    auto daemon_status = liquid::runtime::block_on(attached->status());
+    if (!daemon_status) {
+        return fail(daemon_status.error());
     }
-    print_status(*status);
-    return close(capture);
+    print_status(daemon_status->capture);
+    return 0;
 }
 
 auto handle_interrupt(int) -> void {
@@ -91,27 +91,36 @@ auto capture_watch(int argc, char** argv) -> int {
     if (argc != 0) {
         return usage("watch accepts no arguments");
     }
-    auto opened = liquid::runtime::block_on(liquid::capture::open(std::filesystem::current_path()));
-    if (!opened) {
-        return fail(opened.error());
+    auto ready = ensure_daemon(std::filesystem::current_path());
+    if (!ready) {
+        return fail(ready.error());
     }
-    auto capture = std::move(*opened);
-    auto subscribed = capture.subscribe([](const liquid::drip& drip) {
-        for (const auto& operation : drip.ops) {
-            std::println("drip={} path={}", liquid::to_string(drip.id.value), operation.path);
-        }
-    });
-    if (!subscribed) {
-        return fail(subscribed.error());
+    auto attached =
+        liquid::runtime::block_on(liquid::daemon::attach(std::filesystem::current_path()));
+    if (!attached) {
+        return fail(attached.error());
     }
     interrupted = 0;
     auto previous = std::signal(SIGINT, handle_interrupt);
     std::println("watching {}", std::filesystem::current_path().string());
+    auto last = std::string{};
     while (interrupted == 0) {
+        auto status = liquid::runtime::block_on(attached->status());
+        if (!status) {
+            std::signal(SIGINT, previous);
+            return fail(status.error());
+        }
+        const auto current = status->last_drip ? liquid::to_string(status->last_drip->value) : "";
+        if (!current.empty() && current != last) {
+            for (const auto& path : status->invalidated_paths) {
+                std::println("drip={} path={}", current, path);
+            }
+            last = current;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds{50});
     }
     std::signal(SIGINT, previous);
-    return close(capture);
+    return 0;
 }
 
 } // namespace liquid_cli

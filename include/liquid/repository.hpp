@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -17,6 +18,7 @@
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "liquid/sync.hpp"
 
 namespace liquid {
 
@@ -25,6 +27,7 @@ struct build_access;
 struct testing;
 struct vfs_access;
 struct git_access;
+struct sync_access;
 } // namespace repository_detail
 
 enum class encryption_mode : std::uint8_t { leaf, file };
@@ -91,12 +94,14 @@ struct LIQUID_EXPORT retention_explanation {
 
 struct LIQUID_EXPORT repository_options {
     std::uint64_t checkpoint_interval{64};
-    store_options store{};
+    ::liquid::store* store{};
+    store_options storage{};
     encryption_config encrypt{};
     cache_config cache{};
     verify_config verify{};
     policy_config policy{};
     retention_config retention{};
+    std::optional<remote_config> remote;
 };
 
 struct LIQUID_EXPORT log_options {
@@ -134,6 +139,95 @@ struct LIQUID_EXPORT repository_status {
 struct LIQUID_EXPORT snapshot {
     change_id id;
     tree root;
+};
+
+enum class tree_diff_kind : std::uint8_t {
+    added,
+    removed,
+    modified,
+    moved,
+    mode_changed,
+    conflicted,
+};
+
+struct LIQUID_EXPORT tree_diff_options {
+    bool text{};
+};
+
+struct LIQUID_EXPORT tree_diff_entry {
+    std::string path;
+    std::optional<std::string> old_path;
+    node_id node{};
+    node_kind kind{node_kind::blob};
+    std::vector<tree_diff_kind> changes;
+    std::optional<std::uint32_t> old_mode;
+    std::optional<std::uint32_t> new_mode;
+    std::optional<digest> old_blob;
+    std::optional<digest> new_blob;
+    std::optional<std::vector<line_change>> line_hunks;
+    std::vector<digest> old_conflicts;
+    std::vector<digest> new_conflicts;
+};
+
+struct LIQUID_EXPORT text_anchor {
+    change_id change;
+    std::string path;
+    std::uint64_t line{};
+    std::uint64_t column{};
+};
+
+struct LIQUID_EXPORT mapped_anchor {
+    change_id change;
+    std::string path;
+    std::uint64_t line{};
+    std::uint64_t column{};
+    bool moved{};
+    bool approximate{};
+    bool deleted{};
+};
+
+struct LIQUID_EXPORT record_cursor {
+    std::string token;
+};
+
+struct LIQUID_EXPORT record_page_options {
+    std::optional<record_cursor> cursor;
+    std::uint64_t limit{100};
+};
+
+template <class Record> struct record_page {
+    std::vector<Record> records;
+    std::optional<record_cursor> next;
+    bool done{};
+};
+
+struct LIQUID_EXPORT repository_result {
+    result_id id;
+    action_result value;
+    std::uint64_t sequence{};
+    bool divergent{};
+    std::optional<digest> verification;
+};
+
+struct LIQUID_EXPORT result_filter {
+    std::optional<result_id> id;
+    std::optional<digest> action;
+    std::optional<std::string> output;
+    std::optional<digest> content;
+    record_page_options page;
+};
+
+struct LIQUID_EXPORT repository_attestation {
+    digest id;
+    attestation value;
+};
+
+struct LIQUID_EXPORT attestation_filter {
+    std::optional<digest> id;
+    std::optional<digest> subject;
+    std::optional<std::string> profile;
+    std::optional<std::string> issuer;
+    record_page_options page;
 };
 
 struct LIQUID_EXPORT key_readability {
@@ -211,6 +305,23 @@ public:
     [[nodiscard]] runtime::task<snapshot> at(change_id id);
     [[nodiscard]] runtime::task<tree> tree(digest id);
     [[nodiscard]] runtime::task<std::vector<std::byte>> blob(digest id);
+    [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>
+    diff(change_id old_change, change_id new_change, tree_diff_options options = {});
+    [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>
+    diff(digest old_tree, digest new_tree, tree_diff_options options = {});
+    [[nodiscard]] runtime::task<std::vector<tree_diff_entry>>
+    diff(liquid::tree old_tree, liquid::tree new_tree, tree_diff_options options = {});
+    [[nodiscard]] runtime::task<mapped_anchor> map_anchor(text_anchor anchor, change_id target);
+    [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
+    map_anchors(std::span<const text_anchor> anchors, change_id target);
+    [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
+    [[nodiscard]] runtime::task<record_page<repository_attestation>>
+    attestations(attestation_filter filter = {});
+    [[nodiscard]] runtime::task<record_page<repository_attestation>>
+    attestations(digest subject, record_page_options page = {});
+    [[nodiscard]] runtime::task<record_page<build_trace>> traces(record_page_options page = {});
+    [[nodiscard]] runtime::task<record_page<sbom_report>> sboms(result_id result,
+                                                                record_page_options page = {});
     [[nodiscard]] runtime::task<readability_report>
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
@@ -227,8 +338,13 @@ public:
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);
     [[nodiscard]] runtime::task<cache_report> cache_stats();
+    [[nodiscard]] runtime::task<sync_export> export_drips(journal_cursor cursor,
+                                                          std::span<sync_item> output);
+    [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
+    [[nodiscard]] std::optional<remote_config> remote_configuration() const;
 
 private:
+    [[nodiscard]] runtime::task<std::vector<digest>> record_ids(std::string kind);
     [[nodiscard]] runtime::task<void>
     redact_impl(std::string path, std::vector<std::byte> replacement, digest target);
 
@@ -236,6 +352,7 @@ private:
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     friend struct repository_detail::git_access;
+    friend struct repository_detail::sync_access;
     struct impl;
     std::unique_ptr<impl> impl_;
 };

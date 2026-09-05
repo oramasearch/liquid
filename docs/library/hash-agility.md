@@ -17,7 +17,7 @@ BLAKE3 remains the default. Set `store_options::hash_algorithm` to `sha256` to
 write SHA-256 object and chunk identifiers. The store keeps a separate index
 memtable and immutable run set for each algorithm, allowing the two forms to
 resolve side by side. Reopening a repository with the same
-`repository_options::store` preserves its selected write algorithm; the option
+`repository_options::storage` preserves its selected write algorithm; the option
 also reserves the repository boundary for future key custody configuration.
 Change IDs reconstructed by `log` use that algorithm and can be passed directly
 to `at`. Repository directory creation uses it for both the placeholder object
@@ -27,6 +27,10 @@ An application can rehash bytes from a BLAKE3 object, index the SHA-256 form by
 writing those bytes through a SHA-256-configured store, and retain both object
 identifiers. The two references resolve independently to the same bytes. This
 does not rewrite existing references.
+
+Sync pack receipt verifies bytes with the transmitted algorithm and preserves that identifier in
+the receiving store. The receiving store's configured algorithm continues to control later local
+writes; it does not rewrite a verified remote identifier.
 
 The CRDT actor identifier is a fixed BLAKE3 derivation of the TAAP identifier and
 device identifier. It is not a store digest or object reference, so selecting a

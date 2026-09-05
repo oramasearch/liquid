@@ -18,7 +18,6 @@
 #include <string_view>
 #include <utility>
 
-#include "build/cache.hpp"
 #include "build/repository_access.hpp"
 #include "build/sbom.hpp"
 #include "build/wrap.hpp"
@@ -154,7 +153,7 @@ auto component_id(std::size_t index) -> std::string {
 }
 
 auto component_key(const sbom_component& component) -> std::string {
-    auto output = component.kind + "\n" + component.name + "\n";
+    auto output = component.name + "\n" + component.kind + "\n";
     if (component.content) {
         output += to_string(*component.content);
     }
@@ -190,7 +189,7 @@ void add_relationship(sbom_model& model, std::string from, std::string to, std::
 
 class graph_builder {
 public:
-    graph_builder(repository& source, std::vector<objects::action_index_entry> entries)
+    graph_builder(repository& source, std::vector<repository_result> entries)
         : source_(source), entries_(std::move(entries)) {}
 
     auto build(const objects::action_record& action,
@@ -215,9 +214,9 @@ public:
         if (current_result) {
             visited.push_back(*current_result);
             const auto current = std::ranges::find_if(entries_, [&](const auto& entry) {
-                return same_digest(entry.result, *current_result);
+                return same_digest(entry.id.value, *current_result);
             });
-            if (current != entries_.end()) {
+            if (current != entries_.end() && current->sequence != 0) {
                 before_sequence = current->sequence;
             }
         }
@@ -237,31 +236,14 @@ private:
     struct producer {
         digest id;
         std::uint64_t sequence;
+        action_result value;
         action_output output;
     };
 
-    auto load_result(digest id) -> runtime::task<const action_result*> {
-        const auto key = to_string(id);
-        if (const auto found = results_.find(key); found != results_.end()) {
-            co_return &found->second;
-        }
-        auto bytes = co_await repository_detail::build_access::get(source_, id);
-        if (!bytes) {
-            co_return std::unexpected(bytes.error());
-        }
-        auto decoded = objects::decode_result(*bytes);
-        if (!decoded) {
-            co_return std::unexpected(decoded.error());
-        }
-        const auto [stored, inserted] = results_.emplace(key, std::move(*decoded));
-        static_cast<void>(inserted);
-        co_return &stored->second;
-    }
-
-    auto load_action(digest id) -> runtime::task<const objects::action_record*> {
+    auto load_action(digest id) -> runtime::task<objects::action_record> {
         const auto key = to_string(id);
         if (const auto found = actions_.find(key); found != actions_.end()) {
-            co_return &found->second;
+            co_return found->second;
         }
         auto bytes = co_await repository_detail::build_access::get(source_, id);
         if (!bytes) {
@@ -273,7 +255,7 @@ private:
         }
         const auto [stored, inserted] = actions_.emplace(key, std::move(*decoded));
         static_cast<void>(inserted);
-        co_return &stored->second;
+        co_return stored->second;
     }
 
     auto index_producers() -> runtime::task<void> {
@@ -281,19 +263,12 @@ private:
             co_return result<void>{};
         }
         for (const auto& entry : entries_) {
-            if (entry.divergent) {
+            if (entry.sequence == 0 || entry.divergent) {
                 continue;
             }
-            auto value = co_await load_result(entry.result);
-            if (!value) {
-                if (value.error().code == errc::not_found) {
-                    continue;
-                }
-                co_return std::unexpected(value.error());
-            }
-            for (const auto& output : (*value)->outputs) {
+            for (const auto& output : entry.value.outputs) {
                 producers_[to_string(output.blob)].push_back(
-                    producer{entry.result, entry.sequence, output});
+                    producer{entry.id.value, entry.sequence, entry.value, output});
             }
         }
         producers_indexed_ = true;
@@ -307,21 +282,19 @@ private:
         if (found == producers_.end()) {
             return std::nullopt;
         }
-        const producer* newest = nullptr;
+        const auto* newest = static_cast<const producer*>(nullptr);
         for (const auto& candidate : found->second) {
             if (candidate.sequence >= before_sequence ||
-                std::ranges::any_of(
-                    visited, [&](const auto& id) { return same_digest(id, candidate.id); })) {
+                std::ranges::any_of(visited, [&](const auto& id) {
+                    return same_digest(id, candidate.id);
+                })) {
                 continue;
             }
             if (!newest || candidate.sequence > newest->sequence) {
                 newest = &candidate;
             }
         }
-        if (newest) {
-            return *newest;
-        }
-        return std::nullopt;
+        return newest ? std::optional<producer>{*newest} : std::nullopt;
     }
 
     auto collect_toolchain(sbom_model& model,
@@ -461,16 +434,16 @@ private:
                                                   .inferred = false});
             add_relationship(model, artifact, component, "generated_from");
             visited.push_back(producer->id);
-            auto producer_value = co_await load_result(producer->id);
-            if (!producer_value) {
-                co_return std::unexpected(producer_value.error());
-            }
-            auto action_value = co_await load_action((*producer_value)->action);
+            auto action_value = co_await load_action(producer->value.action);
             if (!action_value) {
                 co_return std::unexpected(action_value.error());
             }
-            auto expanded = co_await visit_action(
-                model, **action_value, **producer_value, component, visited, producer->sequence);
+            auto expanded = co_await visit_action(model,
+                                                  *action_value,
+                                                  producer->value,
+                                                  component,
+                                                  visited,
+                                                  producer->sequence);
             if (!expanded) {
                 co_return std::unexpected(expanded.error());
             }
@@ -479,10 +452,9 @@ private:
     }
 
     repository& source_;
-    std::vector<objects::action_index_entry> entries_;
+    std::vector<repository_result> entries_;
     bool producers_indexed_{};
     std::map<std::string, std::vector<producer>> producers_;
-    std::map<std::string, action_result> results_;
     std::map<std::string, objects::action_record> actions_;
     std::map<std::string, std::vector<std::string>> tool_components_;
     std::map<std::string, std::vector<std::string>> repository_components_;
@@ -1146,114 +1118,20 @@ auto model_for(repository& source,
                const action_result& value,
                const action_output& target,
                std::optional<digest> current_result) -> runtime::task<sbom_model> {
-    auto cache = build_detail::disk_cache{source};
-    auto opened = co_await cache.open();
-    if (!opened) {
-        co_return std::unexpected(opened.error());
+    auto entries = std::vector<repository_result>{};
+    auto filter = result_filter{.page = {.limit = 1'000}};
+    auto complete = false;
+    while (!complete) {
+        auto page = co_await source.results(filter);
+        if (!page) {
+            co_return std::unexpected(page.error());
+        }
+        entries.insert(entries.end(), page->records.begin(), page->records.end());
+        complete = page->done;
+        filter.page.cursor = page->next;
     }
-    auto builder = graph_builder{source, cache.entries()};
+    auto builder = graph_builder{source, std::move(entries)};
     co_return co_await builder.build(action, value, target, current_result);
-}
-
-auto report_for_model(repository& source,
-                      const sbom_model& expected,
-                      const action_output& target,
-                      std::string_view output_path,
-                      sbom_format format,
-                      const std::vector<digest>& statement_ids) -> runtime::task<sbom_report> {
-    auto expected_record = encode_record(expected, format);
-    if (!expected_record) {
-        co_return std::unexpected(expected_record.error());
-    }
-    for (const auto statement_id : statement_ids) {
-        auto statement_bytes = co_await repository_detail::build_access::get(source, statement_id);
-        if (!statement_bytes) {
-            co_return std::unexpected(statement_bytes.error());
-        }
-        auto statement = objects::decode_attestation(*statement_bytes);
-        if (!statement || statement->profile != "sbom/1" ||
-            !same_digest(statement->subject, target.blob)) {
-            continue;
-        }
-        const auto* statement_format = text_attribute(*statement, "format");
-        const auto* statement_output = text_attribute(*statement, "output");
-        if (!statement_format || *statement_format != format_name(format) || !statement_output ||
-            *statement_output != output_path) {
-            continue;
-        }
-        auto report = sbom_report{.subject = target.blob,
-                                  .attestation = statement_id,
-                                  .statement = *statement,
-                                  .derived = true,
-                                  .inferred = false,
-                                  .components = expected.components,
-                                  .relationships = expected.relationships};
-        auto verified = verify_attestation(*statement);
-        if (!verified) {
-            co_return std::unexpected(verified.error());
-        }
-        if (!verified->verified) {
-            report.reason = verified->reason;
-            co_return report;
-        }
-        const auto* document = text_attribute(*statement, "document");
-        const auto* derived = bool_attribute(*statement, "derived");
-        const auto* inferred = bool_attribute(*statement, "inferred");
-        const auto* components = list_attribute(*statement, "components");
-        auto record_id = document ? parse_digest(*document)
-                                  : liquid::result<digest>{std::unexpected(error{
-                                        errc::corrupt, "SBOM attestation has no record", {}})};
-        if (!record_id || !derived || !*derived || !inferred || *inferred || !components ||
-            *components != component_claims(expected)) {
-            report.reason = "SBOM attestation does not match the build graph";
-            co_return report;
-        }
-        report.record = *record_id;
-        auto record_bytes = co_await repository_detail::build_access::get(source, *record_id);
-        if (!record_bytes) {
-            co_return std::unexpected(record_bytes.error());
-        }
-        if (*record_bytes != expected_record->second) {
-            report.reason = "SBOM record does not match the build graph";
-            co_return report;
-        }
-        auto record = objects::decode_sbom(*record_bytes);
-        if (!record) {
-            co_return std::unexpected(record.error());
-        }
-        auto document_output =
-            render_attached(expected, format, *record, *record_id, statement_id, *statement);
-        if (!document_output) {
-            co_return std::unexpected(document_output.error());
-        }
-        report.document = std::move(*document_output);
-        report.verified = true;
-        co_return report;
-    }
-    co_return std::unexpected(error{errc::not_found,
-                                    "result has no SBOM for this artifact and format",
-                                    std::string{output_path}});
-}
-
-auto index_sbom_statements(repository& source, const std::vector<digest>& statement_ids)
-    -> runtime::task<std::optional<std::map<std::string, digest>>> {
-    auto output = std::map<std::string, digest>{};
-    for (const auto id : statement_ids) {
-        auto bytes = co_await repository_detail::build_access::get(source, id);
-        if (!bytes) {
-            co_return std::nullopt;
-        }
-        auto statement = objects::decode_attestation(*bytes);
-        if (!statement || statement->profile != "sbom/1") {
-            co_return std::nullopt;
-        }
-        const auto* format = text_attribute(*statement, "format");
-        const auto* path = text_attribute(*statement, "output");
-        if (!format || !path || !output.emplace(*path + "\n" + *format, id).second) {
-            co_return std::nullopt;
-        }
-    }
-    co_return output;
 }
 
 auto load_action(repository& source, digest id) -> runtime::task<objects::action_record> {
@@ -1262,14 +1140,6 @@ auto load_action(repository& source, digest id) -> runtime::task<objects::action
         co_return std::unexpected(bytes.error());
     }
     co_return objects::decode_action(*bytes);
-}
-
-auto load_result(repository& source, result_id id) -> runtime::task<action_result> {
-    auto bytes = co_await repository_detail::build_access::get(source, id.value);
-    if (!bytes) {
-        co_return std::unexpected(bytes.error());
-    }
-    co_return objects::decode_result(*bytes);
 }
 
 auto sign_locally(attestation& statement) -> runtime::task<void> {
@@ -1344,13 +1214,7 @@ runtime::task<void> store_derived_sboms(repository& source,
     if (value.outputs.empty()) {
         co_return result<void>{};
     }
-    auto cache = build_detail::disk_cache{source};
-    auto opened = co_await cache.open();
-    if (!opened) {
-        co_return std::unexpected(opened.error());
-    }
-    auto builder = graph_builder{source, cache.entries()};
-    auto model = co_await builder.build(action, value, value.outputs.front(), std::nullopt);
+    auto model = co_await model_for(source, action, value, value.outputs.front(), std::nullopt);
     if (!model) {
         co_return std::unexpected(model.error());
     }
@@ -1387,6 +1251,27 @@ runtime::task<void> store_derived_sboms(repository& source,
     co_return result<void>{};
 }
 
+auto index_sbom_statements(repository& source, const std::vector<digest>& statement_ids)
+    -> runtime::task<std::optional<std::map<std::string, digest>>> {
+    auto output = std::map<std::string, digest>{};
+    for (const auto id : statement_ids) {
+        auto records = co_await source.attestations({.id = id});
+        if (!records || records->records.empty()) {
+            co_return std::nullopt;
+        }
+        const auto& statement = records->records.front().value;
+        if (statement.profile != "sbom/1") {
+            co_return std::nullopt;
+        }
+        const auto* format = text_attribute(statement, "format");
+        const auto* path = text_attribute(statement, "output");
+        if (!format || !path || !output.emplace(*path + "\n" + *format, id).second) {
+            co_return std::nullopt;
+        }
+    }
+    co_return output;
+}
+
 runtime::task<bool>
 validate_derived_sboms(repository& source, result_id id, const action_result& value) {
     if (value.sboms.size() != value.outputs.size() * 2) {
@@ -1399,13 +1284,8 @@ validate_derived_sboms(repository& source, result_id id, const action_result& va
     if (!action) {
         co_return std::unexpected(action.error());
     }
-    auto cache = build_detail::disk_cache{source};
-    auto opened = co_await cache.open();
-    if (!opened) {
-        co_return std::unexpected(opened.error());
-    }
-    auto builder = graph_builder{source, cache.entries()};
-    auto model = co_await builder.build(*action, value, value.outputs.front(), id.value);
+    auto model =
+        co_await model_for(source, *action, value, value.outputs.front(), id.value);
     if (!model) {
         co_return std::unexpected(model.error());
     }
@@ -1421,9 +1301,8 @@ validate_derived_sboms(repository& source, result_id id, const action_result& va
             if (found == (*statements)->end()) {
                 co_return false;
             }
-            auto report = co_await report_for_model(
-                source, *model, output, output.path, format, {found->second});
-            if (!report || !report->verified) {
+            auto report = co_await build::generate_sbom(source, id, output.path, format);
+            if (!report || !report->verified || !same_digest(report->attestation, found->second)) {
                 co_return false;
             }
         }
@@ -1459,8 +1338,80 @@ generate_sbom(repository& source, result_id id, std::string output_path, sbom_fo
     if (!expected) {
         co_return std::unexpected(expected.error());
     }
-    co_return co_await report_for_model(
-        source, *expected, *target, output_path, format, provenance->value.sboms);
+    auto expected_record = encode_record(*expected, format);
+    if (!expected_record) {
+        co_return std::unexpected(expected_record.error());
+    }
+    for (const auto statement_id : provenance->value.sboms) {
+        auto statements = co_await source.attestations({.id = statement_id});
+        if (!statements) {
+            co_return std::unexpected(statements.error());
+        }
+        if (statements->records.empty()) {
+            co_return std::unexpected(
+                error{errc::not_found, "SBOM attestation is not stored", to_string(statement_id)});
+        }
+        const auto& statement = statements->records.front().value;
+        if (statement.profile != "sbom/1" || !same_digest(statement.subject, target->blob)) {
+            continue;
+        }
+        const auto* statement_format = text_attribute(statement, "format");
+        const auto* statement_output = text_attribute(statement, "output");
+        if (!statement_format || *statement_format != format_name(format) || !statement_output ||
+            *statement_output != output_path) {
+            continue;
+        }
+        auto report = sbom_report{.subject = target->blob,
+                                  .attestation = statement_id,
+                                  .statement = statement,
+                                  .derived = true,
+                                  .inferred = false,
+                                  .components = expected->components,
+                                  .relationships = expected->relationships};
+        auto verified = verify_attestation(statement);
+        if (!verified) {
+            co_return std::unexpected(verified.error());
+        }
+        if (!verified->verified) {
+            report.reason = verified->reason;
+            co_return report;
+        }
+        const auto* document = text_attribute(statement, "document");
+        const auto* derived = bool_attribute(statement, "derived");
+        const auto* inferred = bool_attribute(statement, "inferred");
+        const auto* components = list_attribute(statement, "components");
+        auto record_id = document ? parse_digest(*document)
+                                  : liquid::result<digest>{std::unexpected(error{
+                                        errc::corrupt, "SBOM attestation has no record", {}})};
+        if (!record_id || !derived || !*derived || !inferred || *inferred || !components ||
+            *components != component_claims(*expected)) {
+            report.reason = "SBOM attestation does not match the build graph";
+            co_return report;
+        }
+        report.record = *record_id;
+        auto record_bytes = co_await repository_detail::build_access::get(source, *record_id);
+        if (!record_bytes) {
+            co_return std::unexpected(record_bytes.error());
+        }
+        if (*record_bytes != expected_record->second) {
+            report.reason = "SBOM record does not match the build graph";
+            co_return report;
+        }
+        auto record = objects::decode_sbom(*record_bytes);
+        if (!record) {
+            co_return std::unexpected(record.error());
+        }
+        auto document_output =
+            render_attached(*expected, format, *record, *record_id, statement_id, statement);
+        if (!document_output) {
+            co_return std::unexpected(document_output.error());
+        }
+        report.document = std::move(*document_output);
+        report.verified = true;
+        co_return report;
+    }
+    co_return std::unexpected(
+        error{errc::not_found, "result has no SBOM for this artifact and format", output_path});
 }
 
 runtime::task<sbom_report>
@@ -1472,20 +1423,29 @@ generate_sbom(repository& source, std::string output_path, sbom_format format) {
     } else if (!entry && entry.error().code != errc::not_found) {
         co_return std::unexpected(entry.error());
     }
-    auto cache = build_detail::disk_cache{source};
-    auto opened = co_await cache.open();
-    if (!opened) {
-        co_return std::unexpected(opened.error());
+    auto results =
+        co_await source.results({.output = output_path, .content = content, .page = {.limit = 1}});
+    if (!results) {
+        co_return std::unexpected(results.error());
     }
-    auto found = co_await cache.find_output(output_path, content);
-    if (!found) {
-        co_return std::unexpected(found.error());
-    }
-    if (!*found) {
+    if (results->records.empty() || results->records.front().sequence == 0) {
         co_return std::unexpected(
             error{errc::not_found, "no build result produces this path", output_path});
     }
-    co_return co_await generate_sbom(source, **found, std::move(output_path), format);
+    auto reports = co_await source.sboms(results->records.front().id);
+    if (!reports) {
+        co_return std::unexpected(reports.error());
+    }
+    for (auto& report : reports->records) {
+        const auto* report_format = text_attribute(report.statement, "format");
+        const auto* report_output = text_attribute(report.statement, "output");
+        if (report_format && *report_format == format_name(format) && report_output &&
+            *report_output == output_path) {
+            co_return std::move(report);
+        }
+    }
+    co_return std::unexpected(
+        error{errc::not_found, "result has no SBOM for this artifact and format", output_path});
 }
 
 runtime::task<sbom_report> generate_wrapped_sbom(std::filesystem::path working_tree,

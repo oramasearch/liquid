@@ -15,10 +15,10 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, and #61 implement
+**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, and #18 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
-cost-aware retention, and graph-derived SBOMs:
+cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
 canonical action,
 sandbox, and result records; a fixed environment; toolchain materialisation; an observed FUSE
 mount; declared-output collection; and Linux namespace execution. The read manifest is assembled
@@ -32,8 +32,10 @@ processes, publishes the inner and outer actions, and serves valid results throu
 exec hook. Verification re-executes sampled cached actions, emits signed attestations, and
 quarantines divergent results. Each result references verified, device-signed `slsa_provenance/1`
 and `sbom/1` attestations derived from its action and manifest. Before execution, repository policy
-can require verified registered-profile attestations for source and toolchain blobs. Memory caching
-and remote caching and execution remain their own issues. Configure checks additionally populate a
+can require verified registered-profile attestations for source and toolchain blobs. Issue #18 adds
+a remote executor alongside #17's remote blob interface, input and toolchain transfer, cost-based
+local/remote/race selection, remote batching, and loser cancellation. Issue #16 supplies the REAPI
+network transport and validated remote cache tier. Production workers remain separate. Configure checks additionally populate a
 shared content-addressed fact base and can be answered across projects without starting the probe.
 
 ## Records in the store
@@ -51,17 +53,21 @@ result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, 
           timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
           started_at: time, finished_at: time, provenance: digest(attestation),
           sboms: [ digest(attestation) … ],
+          schedule: { decision, history, size_class, input_bytes, remote_state_queried,
+                      remote_missing_bytes, remote_queue_depth, remote_cache_locality_permille,
+                      batch_supported, batch_size, local_estimate_ms, remote_estimate_ms, reason },
           producer: actor, sig: TAAP-signature }
 build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outputs, cache,
-              start_ms, timing } … ], edges: [ { dependency, dependent } … ],
+              start_ms, timing, schedule } … ], edges: [ { dependency, dependent } … ],
               cache: { hits, misses, bytes_served, bytes_rebuilt, bytes_avoided } }
 ```
 
-New result records use version 2. Its phase durations are non-overlapping and their sum is the
+New result records use version 3. Its phase durations are non-overlapping and their sum is the
 recorded action duration: queue wait, sandbox preparation, tool execution, result analysis and
-hashing, then local-store writes. The decoder continues to accept version-1 results and maps their
-`upload_ms` value to the version-2 store phase. Remote transfer is not folded into local store time;
-Phase 3 will add its own transfer measurement.
+hashing, then local-store writes. Version 3 adds the immutable scheduling decision and every cost
+model input; it does not change the five timing phases. The decoder continues to accept versions 1
+and 2 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded into
+local store time; absent bytes and the transfer estimate are explicit schedule fields.
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
   materialised into the sandbox from the store and addressed by content; the `toolchain`
@@ -128,6 +134,12 @@ immutable producer-signed result bytes.
 `src/build/why.cpp` turns recorded comparisons into the public `why_report` and persists the
 completed-wrap counters used by `liquid cache stats`.
 
+Issue #16 places REAPI ActionCache behind disk. A remote response is imported under the same
+candidate, signed and attested locally, and then sent through `disk_cache::lookup`; it cannot skip
+candidate, manifest, signature, provenance, SBOM, or referenced-object validation. Publication is
+read-only by default. The completed report and `why_report` retain separate disk and remote hit,
+miss, transferred-byte, and avoided-byte counters.
+
 ### Diagnostics and lookup history
 
 The local disk cache appends one compact `LOOKUPS` row after a completed action lookup. A row holds
@@ -161,8 +173,8 @@ digest of its canonical body. If the correspondence cannot be established, attri
 rather than inferred.
 
 The adjacent `stats` file is a recoverable projection of completed wrap reports. It totals actions,
-miss reasons, bytes avoided by disk hits, and bytes rebuilt from output blob sizes. Memory and
-remote tier fields are explicitly unavailable. Every wrap also stores a `build_trace` record. An
+miss reasons, bytes avoided by disk and remote hits, bytes transferred per implemented tier, and
+bytes rebuilt from output blob sizes. Memory remains explicitly unavailable. Every wrap also stores a `build_trace` record. An
 edge exists when one recorded action reads a path produced by another action in that wrap. Longest
 path analysis sums the five recorded phases along those edges, and `why_slow` selects the narrowest
 action that produced the requested output so the driver's aggregate outer action does not hide the
@@ -171,6 +183,50 @@ tool chain.
 Divergence is not inferred from two different output lists. `liquid why` uses only the authoritative
 divergence flag stored in the action-index entry by `liquid verify`; it reports the linked verification
 attestation digest when present.
+
+### Public record enumeration
+
+Issue #166 exposes the records needed by forge and artifact pages through the repository handle:
+`results(result_filter)`, `attestations(attestation_filter)`, the subject convenience overload of
+`attestations`, `traces`, and `sboms(result_id)`. Each is a `runtime::task` returning a
+`record_page<T>`. A page holds `records`, an opaque `next` cursor when more values remain, and a
+`done` flag. The default limit is 100; limits from 1 through 1,000 are accepted. A cursor belongs to
+the exact filtered set that produced it, and an absent cursor in that set is an
+`errc::invalid_argument` rather than an accidental restart from the beginning.
+
+`repository_result` pairs the existing `action_result` with its `result_id` and, when indexed, its
+monotonic sequence, authoritative divergence flag, and verification-attestation digest. Results
+include stored unindexed records as well as cache candidates. Indexed rows retain sequence order;
+unindexed rows use `observed_at` and their digest for deterministic order. Filters select an exact
+result or action, an output path, an output content digest, or the intersection of those fields.
+
+`repository_attestation` pairs the existing typed `attestation` with its stored digest. Filters
+select record digest, subject, profile, and issuer identity; subject lookup uses the store's subject
+index. Traces are newest retained first and remain the existing `build_trace` type, whose `id` is
+filled from the record digest. `sboms(result_id)` returns the existing verified `sbom_report` values
+linked by that result in output order, SPDX then CycloneDX when present for each output. A result
+without linked SBOM records returns an empty, complete page.
+
+The `log`, `why`, `provenance`, `sbom`, and `build trace` CLI paths now consume these public
+repository operations. Their ordering, filtering, verification, and visible records are therefore
+the same contract available to a library consumer; the commands do not maintain a second record
+walk.
+
+### Remote scheduling record
+
+`build::execute(repository&, action_input, remote_executor&)` reuses the ordinary policy, action,
+candidate, result-signing, and cache-publication path. It reads candidate history from the disk
+index, asks the executor for queue depth, and consults its `remote_blob_source` only when the first
+classification permits remote work. Both the source tree and toolchain tree are walked and uploaded
+by digest. A received remote result is hydrated into the local store before it is signed and
+published. `build::execute_batch` groups four or more short misses into one executor call and one
+combined missing-object upload.
+
+The chosen `execution_schedule` is part of the producer-signed result body and is copied into the
+retained trace. A race has one publication point after `when_any`; cancellation stops the other
+task, and the local Linux launcher kills the sandbox process group when its stop token fires. See
+[`distribution.md`](distribution.md#the-toolchain-is-an-input-racing-by-cost-18) for the exact
+model, calibration numbers, and interface boundary.
 
 ### Build-input policy
 
@@ -199,6 +255,7 @@ Tiers (features/05) share one store and one key:
 
 | Tier | Where | Phase |
 |---|---|---|
+| Query graph | persisted `action_result` nodes for direct execution and every wrapped tool action | Phase 4 (#20) |
 | Memory | the daemon's map of candidate keys to results | Phase 4 (#21) |
 | Disk | `result` and `action` records and output blobs in the local store; the index under `actions/` is a small run set like the chunk index | Phase 2 (#11) |
 | Remote | lake, REAPI's ActionCache and CAS | Phase 3 (#16; design: [`distribution.md`](distribution.md)), Phase 6 |
@@ -284,8 +341,19 @@ marks every index row for that result permanently divergent, and appends a criti
 and outputs and exits non-zero; `--explain` reports the first differing byte because Phase 2 has no
 structured output codecs.
 
-Local replay is the Phase 2 trust check. Re-execution on a different worker remains Phase 3 work;
-it uses the same comparison and attestation records.
+Local replay is the Phase 2 trust check. Verification through a networked production worker remains
+Phase 3 work; it uses the same comparison and attestation records. Issue #18's local second-store
+worker proves the executor and toolchain-transfer boundary without adding a transport.
+
+Issue #19 exposes that re-execution path as `liquid replay <action|result>`. Verification and replay
+share action reconstruction, sandbox selection, execution, and comparison. Verification always
+records a signed sample and quarantine outcome. Replay leaves both untouched unless `--record` is
+present. Replay always resolves byte details, including for stdout and stderr, and treats matching
+nonzero exit status as agreement. Before execution it recursively hydrates missing input,
+toolchain, sandbox, recorded stream, and output objects through `remote_blob_source`, validating
+each digest as it enters the local store. The read-only observed mount resolves paths from the
+recorded input-tree digest rather than the repository's live working tree and supplies declared
+output placeholders when a recorded output parent did not exist yet.
 
 ## `liquid wrap`: an existing build becomes actions
 
@@ -371,14 +439,18 @@ CMake compiler probe, the sandbox-only exec hook exits before the compiler entry
 returns `errc::unsupported` naming the target. It never falls back to running a foreign probe on
 the host.
 
-## What Phase 2 does not do
+## What remains beyond Phase 2
 
-No query graph beyond actions (Phase 4 turns queries and actions into one engine), no remote
-tier (Phase 3), no daemon (Phase 4), no per-definition granularity (Phase 4). Actions are the
-coarse end of the spectrum features/04 describes; the fine end arrives when the graph does.
+The demand-driven graph now makes action results and ordinary queries one engine in Phase 4 #20;
+its contract and proof are in [`incremental-engine.md`](incremental-engine.md). Issue #65 adds
+unit-keyed definition actions and translation-unit assembly through replaceable frontend modules;
+the ABI and proof are in [`frontends.md`](frontends.md). There is no production worker (Phase 3) or
+daemon. Actions remain the coarse end of the spectrum features/04 describes; frontend queries add
+the fine end.
 
-Remote transfer timing remains Phase 3 work. Continuous daemon profiles remain Phase 4 work. The
-stored local trace and its Chrome trace-event projection do not invent either measurement.
+Measured remote transfer timing remains Phase 3 work; #18 records absent bytes and its deterministic
+transfer estimate. Continuous daemon profiles remain Phase 4 work. The stored trace and its Chrome
+trace-event projection expose recorded scheduling fields but do not invent measurements.
 
 ## How to verify
 
@@ -391,6 +463,13 @@ stored local trace and its Chrome trace-event projection do not invent either me
   served after reopening the repository.
 - A rate of one verifies every action, and `liquid verify --all` verifies every action in a wrapped
   recursive-Make fixture.
+- `liquid replay` reproduces a recorded nonzero exit with identical stdout, stderr, and output,
+  replays an indexed hit by action digest, reports the first changed output byte, and fetches a
+  missing input chunk through the on-disk remote double. Its default leaves verification and
+  quarantine state unchanged; `--record` writes the verification sample.
+- A second-store executor reconstructs source and toolchain trees in a new directory and matches a
+  local result; mixed timing histories select local, remote, and race, short work uses one batch
+  call, and a race cancels its loser while publishing one result.
 - Every executed action carries a verified SLSA provenance attestation, and an identical cached
   execution reuses the same attestation digest.
 - `why` names a changed header with both digests, its UTF-8 line hunk, and its repository drip.

@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <boost/capy/ex/async_mutex.hpp>
@@ -40,6 +41,8 @@ public:
     [[nodiscard]] runtime::task<void> get_to_file(digest id, std::filesystem::path destination);
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
+                                                  algorithm hash_algorithm);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
                                                       std::string key_id);
     void begin_object_batch();
@@ -53,11 +56,16 @@ public:
     [[nodiscard]] runtime::task<void> register_remote(blob value);
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] std::vector<digest> attestations(digest subject) const;
+    [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
     [[nodiscard]] runtime::task<std::optional<object_key_version>> key_version(digest id);
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>> lease_root(digest id,
                                                                          std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options);
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
+    [[nodiscard]] const std::filesystem::path& root_path() const noexcept;
+    [[nodiscard]] const store_options& configuration() const noexcept;
+    [[nodiscard]] runtime::task<std::shared_ptr<lease_state>>
+    lease_root(digest id, std::chrono::seconds ttl, std::string owner);
 
 private:
     explicit store_backend(std::filesystem::path root, store_options options);
@@ -88,7 +96,8 @@ private:
     read_remote(const blob& value, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<void> add_object(stored_object object);
     [[nodiscard]] runtime::task<digest> put_selected(std::vector<std::byte> input,
-                                                     std::optional<std::string> key_id);
+                                                     std::optional<std::string> key_id,
+                                                     algorithm hash_algorithm);
 
     friend class collector;
     friend class compactor;

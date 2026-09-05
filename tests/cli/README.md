@@ -10,9 +10,17 @@ includes anything outside the public `liquid/` header tree. The `cli-why-json` a
 `cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
 cache.
 The scenario also pins `remote_bytes` in the status JSON contract.
+It maps an anchor from the imported change through a later rename and checks the returned path and
+flags.
 
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.
 
 The SBOM command tests exercise SPDX and CycloneDX output for the wrapped CMake fixture and
 check each format's identifying field.
+`delta.cmake` drives create, apply, and catalog fetch through the executable and compares target,
+applied, and fetched file digests.
+
+`cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
+then passes the stored initial and successor documents to a fixture that uses only the public
+identity encode, decode, and verification APIs.

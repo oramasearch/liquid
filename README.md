@@ -17,21 +17,25 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, and structured JSON/`.env` encryption are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
-> as a thin client of it; liquify and lake link the same library. The public error and digest APIs
-> are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers. The public waiting operations are lazy
+> as a thin client of it; liquify and lake link the same library. The public error, digest, identity
+> document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
+> BLAKE3 identifiers. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
 > versioned data-key rotation and revocation, repository readability reports,
-> leased roots, epoch garbage collection, and pack compaction. Capture subscriptions, default-blocking
+> leased roots, epoch garbage collection, and pack compaction. Multiple repositories can use one
+> caller-owned store with repository-scoped checkpoints, journals, and retention leases. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
-> structured `slsa_provenance/1`, signed `sbom/1`, and repository redaction are implemented; hosted
-> remote operations remain `unsupported` until their owning issues land. VFS full materialisation works on every platform;
+> structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
+> push and pull, signed metadata exchange, missing-object negotiation, the public sync server, and
+> the HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, composition, conflict values, undo, advisory
-> locks, status, and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
+> locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
+> and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
 > Directory CRDT checkpoints are compact and shallow-loaded, remote changes are observed through
 > patches, and every automerge apply, merge, and sync-receive failure is checked.
@@ -42,6 +46,16 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and `find_package(liquid)` works from an install. `liquid import git` preserves reachable local Git
 > history and its identity mapping; `liquid export git` writes a standalone Git repository and reports
 > compatibility losses.
+
+> **Phase 4 now includes the persisted demand-driven query graph and per-definition C++ builds.** Registered coroutine query
+> kinds use canonical keys and values, record input and nested-query dependencies in read order,
+> validate red-green on demand, cut off unchanged fingerprints, propagate durability, cancel
+> cooperatively, and expose recorded inputs and values for clean comparison. Direct build execution
+> and every wrapped tool action are `action_result` graph nodes. A versioned C frontend ABI loads
+> replaceable shared or static language modules outside libliquid. The bundled tree-sitter fallback
+> discovers C and C++ units, while the Clang C++ module emits definition actions and assembles their
+> outputs into a relocatable translation-unit object. A function-body edit therefore executes only
+> that definition's new action; recorded header reads invalidate the definitions that use them.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
@@ -61,13 +75,21 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
 > misses with digest, argv, environment,
-> toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk hit
-> rates and output bytes avoided versus rebuilt. Memory and remote cache tiers remain separate work;
+> toolchain, sandbox, line-range, and drip details; `wrap --explain` and `cache stats` report disk and
+> remote hit rates and output bytes avoided versus rebuilt. The action-result memory cache tier remains separate work;
 > macOS needs macFUSE and Windows returns its documented unsupported result.
 > Each result records non-overlapping queued, sandbox, exec, hash, and store phases. Every wrap
 > retains a dependency trace, prints wall and critical-path time plus achieved parallelism and phase
-> totals, and supports `liquid build trace --chrome` and `liquid why-slow <target>`. Remote transfer
-> timing remains Phase 3 work.
+> totals, and supports `liquid build trace --chrome` and `liquid why-slow <target>`. Issue #18 adds
+> a transport-independent remote executor alongside #17's remote blob interface, ships source and
+> toolchain trees from the store, and chooses local, remote, or racing execution from recorded timing, absent bytes,
+> queue depth, and cache locality. Four or more short actions share one supported remote batch; a
+> race cancels its loser and publishes only its winner. Results, `liquid why`, retained traces, and
+> Chrome events preserve the decision and every model input. The dependency-free protobuf codec,
+> REAPI v2.3 messages, and native tree/action/result conversions are implemented. The Corosio
+> REAPI client provides CAS, ByteStream, ActionCache, and Execution RPCs; `wrap` and `build --profile`
+> use its validated remote cache tier, and `liquid serve reapi` exposes liquid's CAS and ActionCache.
+> Production workers and measured transfer timing remain Phase 3 work.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -76,7 +98,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > refuses to execute an uncached probe for a foreign target.
 > Typed retention rules keep matching refs and cost-weighted results through computed reachability;
 > a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
-> names the responsible rule and lease. Memory and remote cache tiers remain separate work; macOS needs
+> names the responsible rule and lease. The action-result memory cache tier remains separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
 
 > **Build: liquid builds liquid.** Linux CI configures FetchContent dependencies outside the
@@ -89,8 +111,34 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > VFS hydration, and materialisation fetch verified logical chunks only on demand, while `liquid
 > status` reports current-tree bytes that remain remote. Actions carry an opt-in remote-eligibility
 > flag, default off; on Linux, eligible actions refuse and name reads outside their input and
-> toolchain trees before dispatch. The REAPI transport and cost-based scheduling remain separate
-> Phase 3 work.
+> toolchain trees before dispatch. Cost-based scheduling, the REAPI record codec, the Corosio client,
+> and the validated read-only remote cache tier are implemented. NativeLink and BuildBarn match the
+> local 100% second-run fixture hit rate, and stock Bazel reads and writes `liquid serve reapi`.
+
+> **Phase 3 now includes explicit local replay.** `liquid replay <action|result>` reconstructs a
+> recorded action from its input tree, toolchain, environment, and sandbox, then compares exit
+> status, stdout, stderr, and declared outputs byte for byte. Matching recorded failures are
+> successful reproductions, and differences report the first unequal byte. Replay does not publish
+> its local result or change quarantine state unless `--record` requests an ordinary verification
+> sample. Registered remote inputs and expected outputs hydrate through their recorded
+> `remote_blob_location` and the repository's configured `remote_blob_source`; tests cover both its
+> on-disk double and the REAPI client.
+
+> **Phase 3 delta delivery is implemented.** `liquid delta create` stores a zstd reference patch,
+> content-addressed delta record, and signed `delta/1` attestation. Apply and fetch verify source,
+> patch-blob, and final target digests. Fetch finds the local signed target catalog and uses the
+> store's registered remote blobs when the patch or target remains remote, otherwise falling back
+> to content-defined chunks. The executable-aware algorithm id is reserved because its measured
+> Mach-O candidate was larger than the generic patch.
+
+> **Phase 4 daemon lifecycle and fan-out are implemented on macOS and Linux.** The CLI starts one
+> locked process per checkout on first daemon-backed use and attaches over framed canonical CBOR.
+> The daemon owns capture, maps each drip to the changed graph inputs, processes build, search,
+> collaborator, and lake hooks in order with durable per-target cursors, reports lag through
+> `liquid status`, exits when idle, and persists its graph on shutdown. Resident graph values use a
+> byte ceiling and least-recently-demanded eviction while keys and fingerprints remain. Windows
+> returns a documented unsupported result until Corosio provides named-pipe transport. The daemon
+> uses issue #20's public graph interface for persistence, invalidation, and resident-value bounds.
 
 ## Where this sits
 
@@ -117,6 +165,8 @@ and Zetta's.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
+- [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
+- [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 - [`docs/library/gc.md`](docs/library/gc.md) — leased roots, retention rules, cost-aware result eviction, epoch marking, reference extraction, and crash-safe sweep ordering.
@@ -130,7 +180,10 @@ and Zetta's.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
-- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, read-time hermeticity, and the remaining Phase 3 design.
+- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented daemon lifecycle, cursor fan-out, endpoint, status, and graph value eviction.
+- [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
+- [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.
+- [`docs/library/reapi.md`](docs/library/reapi.md) — the REAPI client, remote cache tier, CAS/ActionCache server, configuration, CLI, API map, and peer proof.
 - [`docs/library/self-host.md`](docs/library/self-host.md) — how liquid configures with CMake, builds itself under `liquid wrap`, and compares bootstrap outputs.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
@@ -236,10 +289,7 @@ liquid wrap --target aarch64-unknown-linux-gnu ./configure
 
 The second command reuses valid compile and link results before their tools start. Linux requires
 libfuse3; macOS requires macFUSE. See [`docs/cli/README.md`](docs/cli/README.md) for options and
-platform availability. Build-tree binaries locate the private exec-time hook relative to the
-binary, so an absolute checkout path is not embedded in libliquid or the CLI. Configure the
-separate wrapped tree with `-DLIQUID_SELF_HOST=ON`; dependency fetching remains in configuration,
-while its build step cannot regenerate CMake inside the network-denied sandbox.
+platform availability.
 
 `LIQUID_BUILD_BENCH=ON` adds the optional `bench/chunk-index/chunk-index-bench` target and
 fetches its RocksDB and LMDB dependencies. It defaults to OFF, so the default configure does not
@@ -269,6 +319,11 @@ target_link_libraries(app PRIVATE liquid::liquid)
 find_package(liquid CONFIG REQUIRED)
 target_link_libraries(app PRIVATE liquid::liquid)
 ```
+
+Submodule consumers may define `Boost::capy` and `Boost::corosio` first; liquid reuses those targets
+instead of adding its vendored checkouts again. The exact tested revisions and minimum-pin rule are
+documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite builds a
+separate lake-shaped consumer project with Capy, Corosio, and nlohmann/json already present.
 
 ## Implementation
 
