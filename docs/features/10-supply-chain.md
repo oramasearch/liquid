@@ -67,6 +67,12 @@ key correctly, so do not require them to.
 Signed: changes, artifacts, cache entries, images, attestations and deployments —
 by one signing layer, not five.
 
+Image admission is implemented by `liquid serve admission`. Every Pod image is checked by digest
+against the same TAAP registry and verifier, accepted issuer/profile policy, and optional
+transparency verdict. The exact fail-closed flow and the `image_provenance/1` record are documented
+in [`../library/admission.md`](../library/admission.md). Image projection and automatic emission
+remain #28; complete transparency inclusion verification remains #83.
+
 ## Repository-level defence
 
 Signing artifacts is not enough. TUF-style **role separation** (root, targets,

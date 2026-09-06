@@ -36,6 +36,7 @@ add_executable(liquid-tests
   test_transparency.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
+  admission/test_review.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp
   scan/test_redaction.cpp
@@ -77,7 +78,7 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp)
 endif()
 if(UNIX)
-  target_sources(liquid-tests PRIVATE test_sync.cpp)
+  target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid
@@ -145,6 +146,12 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+if(UNIX)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"
+    LIQUID_ADMISSION_TLS_CERT="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
+    LIQUID_ADMISSION_TLS_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem")
+endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
@@ -421,6 +428,7 @@ gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 
 add_executable(liquid-header-tests
   headers/abi.cpp
+  headers/admission.cpp
   headers/attestation.cpp
   headers/build.cpp
   headers/daemon.cpp

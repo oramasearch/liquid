@@ -109,6 +109,12 @@ store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17
 and GoogleTest are used. Phase 1 (the store) is built inside libliquid. Optional developer
 benchmarks live under `bench/` and are excluded unless their build option is enabled.
 
+Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and the fail-closed
+`liquid serve admission` Kubernetes webhook. Its TLS admission and independent control listeners
+share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
+metrics, REST, OpenAPI, and MCP are implemented. Log mode refuses until #83 supplies complete
+transparency inclusion verification.
+
 Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
 enumeration used by CLI record views.
 Liquid #66 adds content-addressed compiler and syntactic-fallback symbol records derived from

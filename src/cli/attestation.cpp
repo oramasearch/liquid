@@ -1,6 +1,8 @@
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <print>
+#include <string>
 #include <string_view>
 
 #include "liquid/attestation.hpp"
@@ -51,9 +53,55 @@ auto read_attestation(const liquid::digest& id) -> liquid::result<liquid::attest
 } // namespace
 
 auto attestation(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "image") {
+        if (argc < 4) {
+            return usage(
+                "attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]");
+        }
+        auto image = std::string{argv[1]};
+        auto tree = std::optional<liquid::digest>{};
+        auto result = std::optional<liquid::digest>{};
+        auto destination = std::filesystem::path{};
+        for (auto index = 2; index < argc; ++index) {
+            const auto argument = std::string_view{argv[index]};
+            if (argument == "--tree" && ++index < argc) {
+                auto parsed = liquid::parse_digest(argv[index]);
+                if (!parsed) {
+                    return fail(parsed.error());
+                }
+                tree = *parsed;
+            } else if (argument == "--result" && ++index < argc) {
+                auto parsed = liquid::parse_digest(argv[index]);
+                if (!parsed) {
+                    return fail(parsed.error());
+                }
+                result = *parsed;
+            } else if (argument == "--store" && ++index < argc) {
+                destination = argv[index];
+            } else {
+                return usage("attest image received an unknown or incomplete option");
+            }
+        }
+        if (!tree) {
+            return usage("attest image requires --tree <digest>");
+        }
+        if (destination.empty()) {
+            destination = std::filesystem::current_path() / ".liquid-store";
+            if (!std::filesystem::exists(destination)) {
+                return usage("attest image must run from a liquid repository or use --store");
+            }
+        }
+        auto stored = liquid::runtime::block_on(
+            liquid::attest_image(std::move(image), *tree, result, std::move(destination)));
+        if (!stored) {
+            return fail(stored.error());
+        }
+        std::println("attestation={}", liquid::to_string(*stored));
+        return 0;
+    }
     if (argc != 2 ||
         (std::string_view{argv[0]} != "show" && std::string_view{argv[0]} != "verify")) {
-        return usage("attest requires show|verify and an attestation digest");
+        return usage("attest requires show|verify and a digest, or image and its provenance");
     }
     auto id = liquid::parse_digest(argv[1]);
     if (!id) {
