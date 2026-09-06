@@ -9,6 +9,18 @@ documented envelope error; bearer isolation; HTTPS with the committed certificat
 mapping; polling review events; and the built CLI's pinned JSON. `support/forge_double` provides the
 installable in-memory server used by those cases and downstream liquify tests.
 
+Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
+identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
+`transparency/` records how the initial and renewed RFC 4998 fixtures were generated through lake's
+production timestamp service and contains the timestamp, trust, tampering, and renewal cases.
+OpenSSL generates ephemeral RSA and P-384 signatures only in the test process so the private
+verification engine is checked against an independent implementation for PKCS#1 v1.5, RSA-PSS,
+ECDSA, SHA-256, and SHA-384; no OpenSSL call enters the verification path.
+The main test binary compiles the private signature translation unit directly so this coverage also
+runs when libliquid's internal symbols are hidden by a shared build.
+The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
+URL or explicit TSA anchor file is absent.
+
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
 Linux, reports a clear error when the temporary root is not writable, and removes the directory at
