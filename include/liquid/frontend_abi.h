@@ -62,6 +62,17 @@ typedef struct liquid_frontend_language_v1 {
     size_t extension_count;
 } liquid_frontend_language_v1;
 
+typedef enum liquid_frontend_tier_mechanism_v1 {
+    LIQUID_FRONTEND_TIER_FRONTEND = 1,
+    LIQUID_FRONTEND_TIER_GRAMMAR = 2
+} liquid_frontend_tier_mechanism_v1;
+
+typedef struct liquid_frontend_language_metadata_v1 {
+    const char* language;
+    uint32_t tier_mechanism;
+    const char* grammar_digest;
+} liquid_frontend_language_metadata_v1;
+
 typedef int (*liquid_frontend_units_v1)(void* module_context,
                                         const char* language,
                                         liquid_frontend_bytes_v1 blob,
@@ -100,6 +111,14 @@ typedef int (*liquid_frontend_symbols_from_output_v1)(void* module_context,
                                                       liquid_frontend_owned_bytes_v1* symbols_cbor,
                                                       liquid_frontend_error_v1* error);
 
+typedef int (*liquid_frontend_syntax_v1)(void* module_context,
+                                         const char* language,
+                                         liquid_frontend_bytes_v1 blob,
+                                         liquid_frontend_bytes_v1 context_cbor,
+                                         const liquid_frontend_callbacks_v1* callbacks,
+                                         liquid_frontend_owned_bytes_v1* syntax_cbor,
+                                         liquid_frontend_error_v1* error);
+
 typedef void (*liquid_frontend_destroy_v1)(void* module_context);
 
 typedef struct liquid_frontend_module_v1 {
@@ -115,9 +134,60 @@ typedef struct liquid_frontend_module_v1 {
     liquid_frontend_symbols_v1 symbols;
     liquid_frontend_symbols_from_output_v1 symbols_from_output;
     liquid_frontend_destroy_v1 destroy;
+    const liquid_frontend_language_metadata_v1* language_metadata;
+    size_t language_metadata_count;
+    liquid_frontend_syntax_v1 syntax;
 } liquid_frontend_module_v1;
 
 typedef const liquid_frontend_module_v1* (*liquid_frontend_entrypoint_v1)(void);
+
+#define LIQUIFY_PLUGIN_ABI_VERSION 1u
+#define LIQUIFY_PLUGIN_ENTRYPOINT_V1 "liquify_plugin_get_v1"
+
+#if defined(_WIN32)
+#define LIQUIFY_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define LIQUIFY_PLUGIN_EXPORT __attribute__((visibility("default")))
+#endif
+
+typedef int (*liquify_plugin_operation_v1)(void* plugin_context,
+                                           liquid_frontend_bytes_v1 arguments_cbor,
+                                           const liquid_frontend_callbacks_v1* callbacks,
+                                           liquid_frontend_owned_bytes_v1* result_cbor,
+                                           liquid_frontend_error_v1* error);
+
+typedef struct liquify_plugin_query_v1 {
+    const char* name;
+    liquify_plugin_operation_v1 invoke;
+} liquify_plugin_query_v1;
+
+typedef struct liquify_plugin_command_v1 {
+    const char* name;
+    const char* default_binding;
+    liquid_frontend_bytes_v1 argument_schema_cbor;
+    liquify_plugin_operation_v1 invoke;
+} liquify_plugin_command_v1;
+
+typedef struct liquify_plugin_panel_v1 {
+    const char* name;
+    liquify_plugin_operation_v1 view_model;
+} liquify_plugin_panel_v1;
+
+typedef struct liquify_plugin_v1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    const char* name;
+    const liquify_plugin_query_v1* queries;
+    size_t query_count;
+    const liquify_plugin_command_v1* commands;
+    size_t command_count;
+    const liquify_plugin_panel_v1* panels;
+    size_t panel_count;
+    void* plugin_context;
+    liquid_frontend_destroy_v1 destroy;
+} liquify_plugin_v1;
+
+typedef const liquify_plugin_v1* (*liquify_plugin_entrypoint_v1)(void);
 
 #ifdef __cplusplus
 }

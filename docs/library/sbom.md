@@ -39,6 +39,15 @@ intermediate outputs, `depends_on` its toolchain components, and the root target
 complete reached component set. Duplicate components and relationships are removed without losing
 distinct paths that happen to have the same content digest.
 
+Graph construction indexes every earlier result output by content digest once, then resolves all
+observed reads against that index. Reached result and action records, toolchain trees, and input
+trees are retained for the duration of the graph build. A multi-output result builds this graph
+once and changes only the root output name and digest before encoding each output's two records.
+Cache publication and lookup validate the same batch with one graph build. This keeps finalization
+proportional to indexed actions plus observed reads plus emitted records instead of multiplying a
+full index and tree walk by every read and output. Validation also indexes the result's attestations
+by output and format once rather than searching the complete list for each output.
+
 ## Records and signatures
 
 Result creation stores both formats before signing the result:
@@ -107,16 +116,18 @@ component properties and the shared model retain their exact liquid meaning.
 ## Foreign-binary inference
 
 `build::infer_sbom` hashes the supplied file and performs local inspection without a
-package database or network call. It detects ELF, Mach-O, and PE headers; reads their section names;
-reads Mach-O and PE symbol tables and useful ELF symbol strings; extracts printable embedded
+package database or network call. The ELF, Mach-O, and PE parsing now comes from the private
+readers documented in [abi.md](abi.md), while the inference evidence remains unchanged. It reads
+section names, Mach-O and PE symbol tables, and useful ELF symbol strings; extracts printable embedded
 version strings; and checks a built-in signature table for OpenSSL, zlib, glibc, libstdc++, musl,
 and libc++.
 
 The target binary is always an inferred component. A recognized library adds another inferred
 component and a `contains` relationship. Section, symbol, and version-string observations are
 included as analysis evidence in an SPDX document comment or CycloneDX metadata properties.
-Absence of a recognized signature is not evidence that a library is absent. This path is a small
-composition analysis, not the Phase 5 binary-introspection codec work.
+Absence of a recognized signature is not evidence that a library is absent. This path remains a
+small composition analysis; it does not present the linked-binary ABI descriptor as dependency
+evidence.
 
 Foreign SBOMs use the local device identity and the same `sbom/1` profile, but set
 `derived=false` and `inferred=true`. The base document is hashed as a canonical `sbom` record in
@@ -157,8 +168,10 @@ printing an unverified document.
 The portable `BuildSbom` tests construct a graph containing two manifest inputs, two toolchain
 leaves, a nested repository, and one output. They verify both required JSON structures, every
 digest, the repository id and pin, the profile flags, signature verification, and that both writers
-use the same component and relationship model. A system-binary test verifies that the document is
-never derived and every component is inferred.
+use the same component and relationship model. A bounded finalization case publishes 24 producer
+actions, then records 96 reads and 24 outputs and requires result creation plus cache validation to
+finish within twenty seconds. A system-binary test verifies that the document is never derived and
+every component is inferred.
 
 The privileged Linux wrap test generates an SBOM for the unchanged CMake fixture and compares every
 manifest digest and toolchain-tree leaf with the component model. CLI tests invoke both format

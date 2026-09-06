@@ -1,6 +1,12 @@
 # Sandbox implementation
 
 Platform launchers enforce the fixed action environment and isolate network and filesystem access.
+Ordinary build and wrap requests deny network access. PostgreSQL data lifecycle requests and wraps
+whose fixed environment contains a repository-resolved session branch use the same launcher with
+an explicit network capability; callers cannot enable it through an ordinary `action_input`.
+The profile does not add executable-specific permissions: data actions invoke their recorded
+installed PostgreSQL clients through the pre-existing installed-tool roots, while an ordinary
+action remains unable to execute an arbitrary external binary.
 The wrap launcher installs `wrap_hook.c` only in the child sandbox: Linux bind-mounts it and injects
 `LD_PRELOAD`; macOS permits its path in the generated profile and injects
 `DYLD_INSERT_LIBRARIES`. The hook records process identity, parent, executable, normalized working
@@ -12,6 +18,9 @@ The hook also records monotonic entry and exit values used for each wrapped acti
 phase and Chrome trace offset. A validated hit records its exit value before terminating early.
 Verification launches the recorded working directory in a newly materialised input snapshot and
 captures stdout and stderr separately for digest comparison.
+The fixed action environment includes the recorded source epoch as `SOURCE_DATE_EPOCH` and
+`ZERO_AR_DATE=1`; wrap uses epoch zero. Sandbox record version 2 also carries the output-normaliser
+rules, so changing a collection rule changes the sandbox digest used by cache identity.
 Local action launch also carries the coroutine stop token. A cancelled local/remote race kills the
 Linux sandbox process group, waits for it, unmounts its input view, and removes the run directory;
 only the scheduler's winner can reach result publication.

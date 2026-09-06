@@ -10,6 +10,7 @@
 #include <system_error>
 
 #include "build/repository_access.hpp"
+#include "build/sbom.hpp"
 #include "build/why.hpp"
 #include "identity/taap.hpp"
 #include "store/pack.hpp"
@@ -251,15 +252,68 @@ auto cache_pack_bytes(const std::filesystem::path& directory) -> result<std::uin
 
 auto sboms_are_valid(repository& source, result_id id, const action_result& value)
     -> runtime::task<bool> {
-    if (value.sboms.size() != value.outputs.size() * 2) {
-        co_return false;
+    co_return co_await build_detail::validate_derived_sboms(source, id, value);
+}
+
+auto abi_verdict_name(abi_verdict value) -> std::string_view {
+    switch (value) {
+    case abi_verdict::compatible:
+        return "compatible";
+    case abi_verdict::compatible_additions:
+        return "compatible_additions";
+    case abi_verdict::incompatible:
+        return "incompatible";
     }
-    for (const auto& output : value.outputs) {
-        for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
-            auto report = co_await build::generate_sbom(source, id, output.path, format);
-            if (!report || !report->verified) {
-                co_return false;
-            }
+    return "incompatible";
+}
+
+auto attestation_text(const attestation& value, std::string_view name) -> const std::string* {
+    const auto found = std::ranges::find(value.attributes, name, &attestation_attribute::name);
+    return found == value.attributes.end() ? nullptr : std::get_if<std::string>(&found->value);
+}
+
+auto abis_are_valid(repository& source, const action_result& value) -> runtime::task<bool> {
+    for (const auto& id : value.abis) {
+        auto bytes = co_await repository_detail::build_access::get(source, id);
+        if (!bytes) {
+            co_return false;
+        }
+        auto descriptor = objects::decode_abi(*bytes);
+        if (!descriptor || !std::ranges::any_of(value.outputs, [&](const auto& output) {
+                return same_digest(output.blob, descriptor->subject);
+            })) {
+            co_return false;
+        }
+    }
+    for (const auto& id : value.abi_compatibility) {
+        auto bytes = co_await repository_detail::build_access::get(source, id);
+        if (!bytes) {
+            co_return false;
+        }
+        auto statement = objects::decode_attestation(*bytes);
+        if (!statement || statement->profile != "abi_compatibility/1" ||
+            !std::ranges::any_of(value.outputs, [&](const auto& output) {
+                return same_digest(output.blob, statement->subject);
+            })) {
+            co_return false;
+        }
+        auto verified = verify_attestation(*statement);
+        const auto* previous_text = attestation_text(*statement, "compatible_with");
+        const auto* compatibility = attestation_text(*statement, "compatibility");
+        auto previous =
+            previous_text
+                ? parse_digest(*previous_text)
+                : result<digest>{std::unexpected(error{
+                      errc::corrupt, "ABI compatibility predecessor is missing", to_string(id)})};
+        if (!verified || !verified->verified || !compatibility || !previous) {
+            co_return false;
+        }
+        auto old_descriptor = co_await source.abi(*previous);
+        auto new_descriptor = co_await source.abi(statement->subject);
+        if (!old_descriptor || !new_descriptor ||
+            *compatibility !=
+                abi_verdict_name(diff_abi(*old_descriptor, *new_descriptor).verdict)) {
+            co_return false;
         }
     }
     co_return true;
@@ -518,6 +572,7 @@ result<digest> disk_cache::candidate_key(const action_input& input, digest sandb
     candidate.inputs = digest{input.inputs.alg, {}};
     candidate.outputs.clear();
     candidate.timeout.reset();
+    candidate.dependency_inputs.clear();
     auto encoded = objects::encode(objects::action_record{std::move(candidate), sandbox});
     if (!encoded) {
         return std::unexpected(encoded.error());
@@ -574,6 +629,10 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         if (!sboms || !*sboms) {
             continue;
         }
+        auto abis = co_await abis_are_valid(source_, *value);
+        if (!abis || !*abis) {
+            continue;
+        }
         auto action_bytes = co_await repository_detail::build_access::get(source_, value->action);
         if (!action_bytes) {
             continue;
@@ -592,6 +651,9 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         references.insert(references.end(), value->sboms.begin(), value->sboms.end());
         for (const auto& action_output : value->outputs) {
             references.push_back(action_output.blob);
+        }
+        if (value->output_tree) {
+            references.push_back(*value->output_tree);
         }
         for (const auto& reference : references) {
             auto present = co_await repository_detail::build_access::contains(source_, reference);
@@ -701,6 +763,14 @@ disk_cache::publish(digest candidate, result_id id, const action_result& value) 
     if (!*sboms) {
         co_return std::unexpected(
             error{errc::unauthorized, "cache result SBOM is invalid", to_string(id.value)});
+    }
+    auto abis = co_await abis_are_valid(source_, value);
+    if (!abis) {
+        co_return std::unexpected(abis.error());
+    }
+    if (!*abis) {
+        co_return std::unexpected(
+            error{errc::unauthorized, "cache result ABI is invalid", to_string(id.value)});
     }
     auto inserted = index_.insert(candidate, id.value);
     if (!inserted) {

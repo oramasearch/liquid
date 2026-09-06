@@ -20,14 +20,25 @@ replay uses the repository's registered
 `remote_blob_source` to hydrate recorded remote inputs and expected outputs; it records
 attestations, alerts, and quarantine only when requested.
 `provenance.cpp` derives the SLSA predicate from each action/result pair,
-signs and stores its TAAP attestation, binds it to the signed result, verifies that graph, and writes
-native or DSSE/in-toto JSON.
+stores graph-derived SBOMs and linked-library ABI records, signs and stores its TAAP attestation,
+binds that evidence to the signed result, verifies the graph, and writes native or DSSE/in-toto
+JSON. `abi.cpp` offloads linked-binary extraction, compares an output with the newest earlier
+descriptor for its path, stores `abi/1`, and issues `abi_compatibility/1`.
+`content.cpp` creates each result's canonical output tree, folds named upstream trees below
+`deps/<name>/`, imports signed result graphs between sibling project caches, and enumerates the
+signature-valid input/output claims consumed by dependency resolution. `normalise.cpp` classifies
+collected artifacts and applies directory-mode, deterministic-archive, and hash-based Python
+bytecode rules on the runtime compute pool before storage.
+`relocation.cpp` scans materialised or repository-backed install trees on the runtime compute pool,
+uses the binary readers for runtime paths, and reports stable file offsets. `wrap.cpp` invokes it
+before install-result publication and records an explicit waiver in the saved scheduling reason.
 `policy.cpp` validates and digests repository policy, walks source and toolchain input trees, verifies
 subject-indexed attestations, counts distinct approved issuers, and produces refusal or warning
 reports before cache lookup and execution.
 
 `why.cpp` re-evaluates that policy for a recorded action before classifying a hit or ordinary miss,
-and reports the first unsatisfied refuse rule as a typed policy cause.
+reports the first unsatisfied refuse rule as a typed policy cause, and identifies hits where distinct
+signed upstream input trees produced one unchanged named output tree.
 
 `facts.cpp` owns canonical configure-probe forms, exact toolchain/sysroot/target keys,
 content-addressed fact records, index rebuild, Autotools and CMake cache-variable discovery, and
@@ -35,7 +46,8 @@ content-addressed fact records, index rebuild, Autotools and CMake cache-variabl
 provenance and SBOMs and owns output-path lookup.
 `sbom.cpp` walks producing results to manifest leaves, adds toolchain and nested-repository
 components, writes SPDX 2.3 and CycloneDX 1.5 from one model, stores signed `sbom/1` claims, and
-performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts.
+performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts through the shared private
+binary readers.
 
 `wrap.cpp` snapshots an existing working tree, uses the persistent project cache and toolchain pin,
 validates saved actions, launches one writable observed mount, derives child actions from process
@@ -46,9 +58,14 @@ execution and wrapping demand persisted `action_result` graph nodes before the d
 wrapper primes a node for every discovered tool action; after an upstream miss, the child hook
 checks a condition over the producer's output bytes before accepting a downstream hit, giving
 unchanged objects early cutoff without hiding a changed object from the linker.
+Install mode adds build-system prefix and relative-loader conventions, stages through `DESTDIR`,
+and publishes the logical prefix as an unrooted install tree.
 Refreshed saved actions retain their prior dependency order so invalidated producer outputs are
 known before any dependent plan is accepted.
-Completed wrap reports include validation backlog and the most recent graph divergence. Unless
+The exec-time hook is found relative to the running binary in a build tree or the installed
+`libexec/liquid` directory; its checkout-specific build path is never compiled into libliquid.
+Completed wrap reports include validation backlog, the most recent graph divergence, and
+incompatible linked-library comparisons. Unless
 verification is disabled, wrap schedules the combined graph and action sample after publication.
 `trace.cpp` derives dependency edges when a result manifest reads another action's output, stores a
 `build_trace` record for every wrap, computes longest paths, loads the latest retained trace, and
@@ -97,8 +114,9 @@ remote eligibility to the Linux read guard and returns an unauthorized error con
 forbidden read path. `wrap.cpp` checks REAPI ActionCache only after disk, imports under the same
 candidate, and passes the imported result through the ordinary signed manifest-validating lookup.
 For liquid's scheduler, `distribution.cpp` passes the prepared native action and exact cost
-decision to `remote_executor::execute_prepared`. The publication path imports and verifies the
-worker's TAAP-signed result, provenance, and SBOMs without replacing that identity.
+decision to `remote_executor::execute_prepared`. The publication path imports the worker's
+TAAP-signed result, provenance, SBOMs, ABI records, and compatibility attestations without
+replacing that identity.
 For a known wrapped action whose input validation misses, the wrap plan carries that action
 family's recorded timings into a Phase 2 action, replaces captured fixed environment values with
 the executor's deterministic values, maps the captured executable from either its toolchain or

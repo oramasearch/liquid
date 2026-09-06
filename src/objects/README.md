@@ -8,16 +8,22 @@ commitments.
 `slsa_provenance/1` carries typed `buildDefinition` and `runDetails` maps in canonical SLSA field
 names. Every signature is excluded from the canonical signing body.
 
-Build result version 3 carries non-overlapping queued, sandbox, exec, hash, and store durations plus
+Build result version 4 carries non-overlapping queued, sandbox, exec, hash, and store durations plus
 the complete local/remote/race schedule: timing history, size class, byte counts, queue depth, cache
-locality, batch fields, estimates, and reason. Producer actor, execution bounds, provenance digest,
-SBOM-attestation digests, and the schedule are covered by the canonical TAAP signature. The decoder
-accepts version 2 and maps version 1's upload duration to store time. Cache hit/miss diagnostics are
+locality, batch fields, estimates, and reason. It adds `abi/1` record and
+`abi_compatibility/1` attestation references. Producer actor, execution bounds, provenance digest,
+SBOM-attestation digests, ABI references, and the schedule are covered by the canonical TAAP
+signature. The decoder accepts versions 1 through 3 and maps version 1's upload duration to store
+time. Cache hit/miss diagnostics are
 request state and stay outside those immutable bytes. `build_trace` records preserve action results,
 dependency edges, phase timing, cache outcomes, schedules, and build wall time. Canonical `sbom`
-records hold the unsigned base SPDX or CycloneDX document.
+records hold the unsigned base SPDX or CycloneDX document. Canonical `abi` records bind a library
+blob to its binary kind, architecture, install name, exports, and needed libraries.
 The scheduling-record encoder and decoder are also reused as one length-delimited field in the
 private worker protocol, keeping the signed result and submitted placement decision byte-identical.
+Result record version 4 adds the canonical `output_tree` referenced by the producer signature.
+Sandbox record version 2 adds the ordered output-normaliser rule names, binding normalisation
+behavior into action identity while preserving version-1 encoding for definitions without rules.
 `action-index-root` records persist sorted candidate/result entries, divergence, and the optional
 verification-attestation digest plus ordered trace digests so the disk projection can be rebuilt
 and collection can traverse every published result, attestation, and trace.

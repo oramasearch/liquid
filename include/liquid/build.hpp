@@ -9,7 +9,9 @@
 #include <string>
 #include <vector>
 
+#include "liquid/abi.hpp"
 #include "liquid/attestation.hpp"
+#include "liquid/data.hpp"
 #include "liquid/export.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/graph.hpp"
@@ -30,6 +32,11 @@ struct LIQUID_EXPORT platform {
     std::string arch;
 };
 
+struct LIQUID_EXPORT named_input {
+    std::string name;
+    digest source;
+};
+
 struct LIQUID_EXPORT action_input {
     std::vector<std::string> command;
     std::string cwd;
@@ -40,6 +47,7 @@ struct LIQUID_EXPORT action_input {
     liquid::platform platform;
     std::optional<std::chrono::seconds> timeout;
     bool remote_eligible{};
+    std::vector<named_input> dependency_inputs;
 };
 
 struct LIQUID_EXPORT result_id {
@@ -50,6 +58,21 @@ struct LIQUID_EXPORT action_output {
     std::string path;
     std::uint32_t mode{};
     digest blob;
+};
+
+struct LIQUID_EXPORT relocation_finding {
+    std::string file;
+    std::uint64_t offset{};
+    std::string context;
+};
+
+struct LIQUID_EXPORT relocation_report {
+    bool relocatable{true};
+    std::vector<relocation_finding> findings;
+};
+
+struct LIQUID_EXPORT relocation_check_options {
+    std::optional<std::filesystem::path> install_prefix;
 };
 
 struct LIQUID_EXPORT observed_input {
@@ -255,9 +278,12 @@ struct LIQUID_EXPORT action_result {
     std::optional<std::chrono::sys_seconds> started_at;
     std::optional<std::chrono::sys_seconds> finished_at;
     std::optional<digest> provenance;
-    std::uint64_t record_version{3};
+    std::uint64_t record_version{4};
     std::vector<digest> sboms;
+    std::vector<digest> abis;
+    std::vector<digest> abi_compatibility;
     std::optional<execution_schedule> schedule;
+    std::optional<digest> output_tree;
 };
 
 struct LIQUID_EXPORT provenance_report {
@@ -310,6 +336,10 @@ struct LIQUID_EXPORT wrap_options {
     std::optional<std::filesystem::path> cache_directory;
     std::optional<std::filesystem::path> fact_directory;
     std::optional<remote_config> remote;
+    std::optional<session_id> session;
+    std::vector<named_input> inputs;
+    std::optional<std::filesystem::path> install_prefix;
+    bool allow_embedded_prefix{};
 };
 
 struct LIQUID_EXPORT critical_action {
@@ -457,6 +487,7 @@ struct LIQUID_EXPORT wrap_report {
     cache_report cache;
     std::optional<digest> trace;
     std::chrono::milliseconds wall_time{};
+    std::uint64_t peak_rss_bytes{};
     action_timing phase_totals;
     double parallelism{};
     std::vector<critical_action> critical_path;
@@ -464,6 +495,18 @@ struct LIQUID_EXPORT wrap_report {
     std::uint64_t probes_started{};
     std::uint64_t graph_validation_backlog{};
     std::optional<graph_validation_record> last_graph_divergence;
+    std::optional<digest> output_tree;
+    struct abi_break {
+        std::string output;
+        digest previous;
+        abi_report report;
+    };
+    std::vector<abi_break> abi_breaks;
+};
+
+struct LIQUID_EXPORT known_output {
+    digest input_tree;
+    digest output_tree;
 };
 
 struct LIQUID_EXPORT why_slow_report {
@@ -561,6 +604,9 @@ struct LIQUID_EXPORT why_report {
 
 namespace build {
 
+[[nodiscard]] LIQUID_EXPORT runtime::task<relocation_report>
+relocation_check(std::filesystem::path output_tree, relocation_check_options options = {});
+
 [[nodiscard]] LIQUID_EXPORT result<build_handle> start(repository& source, action_input input);
 [[nodiscard]] LIQUID_EXPORT result<build_handle>
 start(repository& source, action_input input, remote_executor& remote);
@@ -581,6 +627,8 @@ execute(repository& source, action_input input, remote_executor& remote);
 [[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<result_id>>
 execute_batch(repository& source, std::vector<action_input> inputs, remote_executor& remote);
 [[nodiscard]] LIQUID_EXPORT runtime::task<action_result> result(repository& source, result_id id);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<known_output>>
+known_outputs(repository& source);
 [[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report> verify_provenance(repository& source,
                                                                                result_id id);
 [[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report>

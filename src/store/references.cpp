@@ -108,7 +108,11 @@ std::vector<digest> extract_blob(std::span<const std::byte> bytes) {
     const auto blob = objects::decode_blob(bytes);
     if (!blob)
         return {};
-    return blob->chunks;
+    auto output = blob->chunks;
+    for (const auto& entry : blob->format_entries) {
+        append_once(output, entry);
+    }
+    return output;
 }
 
 std::vector<digest> extract_action(std::span<const std::byte> bytes) {
@@ -127,8 +131,14 @@ std::vector<digest> extract_result(std::span<const std::byte> bytes) {
         append_once(output, *result->provenance);
     for (const auto& sbom : result->sboms)
         append_once(output, sbom);
+    for (const auto& abi : result->abis)
+        append_once(output, abi);
+    for (const auto& statement : result->abi_compatibility)
+        append_once(output, statement);
     for (const auto& action_output : result->outputs)
         append_once(output, action_output.blob);
+    if (result->output_tree)
+        append_once(output, *result->output_tree);
     return output;
 }
 
@@ -136,9 +146,12 @@ std::vector<digest> extract_attestation(std::span<const std::byte> bytes) {
     const auto value = objects::decode_attestation(bytes);
     if (!value)
         return {};
-    const auto field =
-        value->profile == "sbom/1" ? std::string_view{"document"} : std::string_view{"delta"};
-    if (value->profile != "sbom/1" && value->profile != "delta/1")
+    const auto field = value->profile == "sbom/1"    ? std::string_view{"document"}
+                       : value->profile == "delta/1" ? std::string_view{"delta"}
+                       : value->profile == "abi_compatibility/1"
+                           ? std::string_view{"compatible_with"}
+                           : std::string_view{};
+    if (field.empty())
         return {};
     const auto reference =
         std::ranges::find(value->attributes, field, &attestation_attribute::name);
@@ -149,6 +162,11 @@ std::vector<digest> extract_attestation(std::span<const std::byte> bytes) {
         return {};
     auto id = parse_digest(*text);
     return id ? std::vector<digest>{*id} : std::vector<digest>{};
+}
+
+std::vector<digest> extract_abi(std::span<const std::byte> bytes) {
+    const auto value = objects::decode_abi(bytes);
+    return value ? std::vector<digest>{value->subject} : std::vector<digest>{};
 }
 
 std::vector<digest> extract_delta(std::span<const std::byte> bytes) {
@@ -202,6 +220,7 @@ reference_registry::reference_registry() {
     register_kind("attestation", extract_attestation);
     register_kind("delta", extract_delta);
     register_kind("sbom", [](std::span<const std::byte>) { return std::vector<digest>{}; });
+    register_kind("abi", extract_abi);
 }
 
 void reference_registry::register_kind(std::string kind, reference_extractor extractor) {
@@ -264,6 +283,8 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "build_trace";
     if (objects::decode_sbom(bytes))
         return "sbom";
+    if (objects::decode_abi(bytes))
+        return "abi";
     return "unknown";
 }
 

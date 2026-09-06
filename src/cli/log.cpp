@@ -70,6 +70,13 @@ auto print_checkpoint(const liquid::transparency::checkpoint_trust& value) -> vo
 } // namespace
 
 auto transparency_log(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "timestamps") {
+        return repo_log(argc, argv);
+    }
+    if (argc == 2 && std::string_view{argv[0]} == "verify" &&
+        std::string_view{argv[1]} == "--timestamps") {
+        return repo_log(argc, argv);
+    }
     if (argc == 0 ||
         (argc == 1 &&
          (std::string_view{argv[0]} == "--json" || std::string_view{argv[0]} == "--ops")) ||

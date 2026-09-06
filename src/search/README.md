@@ -11,6 +11,11 @@ written once for each blob even when several paths reference it. The built-in da
 one delta segment per delivered drip; the generic fan-out publishes its cursor only after that
 segment's manifest is published.
 
+Tier 1 and Tier 2 format entries are indexed at `container!/entry` with their logical content
+digest. A drip touching a recognised container replaces its complete path family so removed nested
+entries become tombstones. Working scans and immutable-ref indexing use the same registry expansion
+and limits. The daemon-target test replaces a ZIP and proves the prior member document disappears.
+
 `repository_access.hpp` exposes only the private index directory to the implementation of the
 public `repository::search` and `repository::plan_search` operations in `repository.cpp`. The
 planner classifies the query, measures active bytes, blobs, capture-cursor freshness, and trigram

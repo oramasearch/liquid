@@ -365,9 +365,15 @@ TEST(Store, EvictsRemoteRegisteredContentAndHydratesItAgain) {
     ASSERT_GE(remote.chunks.size(), 3U);
     const auto registered = liquid::runtime::block_on(store.register_remote(remote));
     ASSERT_TRUE(registered) << registered.error().message;
+    const auto bytes_before = liquid::runtime::block_on(store.local_bytes());
+    ASSERT_TRUE(bytes_before) << bytes_before.error().message;
+    ASSERT_GE(*bytes_before, source.size());
 
     const auto evicted = liquid::runtime::block_on(store.evict(*stored));
     ASSERT_TRUE(evicted) << evicted.error().message;
+    const auto bytes_after = liquid::runtime::block_on(store.local_bytes());
+    ASSERT_TRUE(bytes_after) << bytes_after.error().message;
+    EXPECT_EQ(*bytes_after, 0U);
     const auto remote_only = liquid::runtime::block_on(store.has(*stored));
     ASSERT_TRUE(remote_only) << remote_only.error().message;
     EXPECT_EQ(*remote_only, liquid::blob_availability::remote);
@@ -376,7 +382,27 @@ TEST(Store, EvictsRemoteRegisteredContentAndHydratesItAgain) {
     EXPECT_GT(collected->packs_deleted, 0U);
 
     store = {};
+    auto hydrated_chunks = std::uint64_t{};
+    auto hydrated_bytes = std::uint64_t{};
+    auto remote_accesses = std::uint64_t{};
+    options.remote_sources.clear();
+    options.on_hydration = [&](liquid::digest content,
+                               liquid::digest,
+                               std::uint64_t count,
+                               bool) -> liquid::runtime::task<void> {
+        EXPECT_EQ(liquid::to_string(content), liquid::to_string(*stored));
+        ++hydrated_chunks;
+        hydrated_bytes += count;
+        co_return liquid::result<void>{};
+    };
+    options.on_remote_access = [&](liquid::digest content) {
+        EXPECT_EQ(liquid::to_string(content), liquid::to_string(*stored));
+        ++remote_accesses;
+    };
     store = open_store(temporary.path(), options);
+    const auto added_source =
+        liquid::runtime::block_on(store.register_remote_source("memory", service));
+    ASSERT_TRUE(added_source) << added_source.error().message;
     const auto after_reopen = liquid::runtime::block_on(store.has(*stored));
     ASSERT_TRUE(after_reopen) << after_reopen.error().message;
     EXPECT_EQ(*after_reopen, liquid::blob_availability::remote);
@@ -389,12 +415,87 @@ TEST(Store, EvictsRemoteRegisteredContentAndHydratesItAgain) {
         range,
         std::vector<std::byte>(source.begin() + static_cast<std::size_t>(offset),
                                source.begin() + static_cast<std::size_t>(offset) + range.size()));
+    const auto range_chunks = hydrated_chunks;
+    const auto range_bytes = hydrated_bytes;
+    EXPECT_GE(range_chunks, 3U);
+    EXPECT_EQ(remote_accesses, 1U);
+
+    const auto local_read = liquid::runtime::block_on(store.read(*stored, offset, range));
+    ASSERT_TRUE(local_read) << local_read.error().message;
+    EXPECT_EQ(remote_accesses, 2U);
 
     const auto evicted_again = liquid::runtime::block_on(store.evict(*stored));
     ASSERT_TRUE(evicted_again) << evicted_again.error().message;
     const auto hydrated = liquid::runtime::block_on(store.get(*stored));
     ASSERT_TRUE(hydrated) << hydrated.error().message;
     EXPECT_EQ(*hydrated, source);
+    EXPECT_EQ(hydrated_chunks, range_chunks + remote.chunks.size());
+    EXPECT_EQ(hydrated_bytes, range_bytes + source.size());
+    EXPECT_EQ(remote_accesses, 3U);
+}
+
+liquid::runtime::task<void> delayed_evict(liquid::store* subject, liquid::digest id) {
+    auto [delay_error] = co_await liquid::runtime::delay(std::chrono::milliseconds{2});
+    if (delay_error) {
+        co_return std::unexpected(liquid::error{
+            liquid::errc::internal, delay_error.message(), "concurrent eviction delay"});
+    }
+    co_return co_await subject->evict(id);
+}
+
+liquid::runtime::task<liquid::collection_report> evict_during_collection(liquid::store* store,
+                                                                         liquid::digest id) {
+    auto [wait_error, collection, eviction] = co_await liquid::runtime::when_all(
+        liquid::runtime::as_io(store->collect()), liquid::runtime::as_io(delayed_evict(store, id)));
+    if (wait_error) {
+        co_return std::unexpected(liquid::error{
+            liquid::errc::internal, wait_error.message(), "concurrent eviction test"});
+    }
+    if (!collection) {
+        co_return std::unexpected(collection.error());
+    }
+    if (!eviction) {
+        co_return std::unexpected(eviction.error());
+    }
+    co_return *collection;
+}
+
+TEST(Store, EvictionDuringCollectionStaysRemote) {
+    temporary_store temporary;
+    auto service = std::make_shared<memory_blob_service>();
+    auto options = liquid::store_options{};
+    options.pack_size = 1;
+    options.write_through = service;
+    options.remote_sources.emplace("memory", service);
+    auto store = open_store(temporary.path(), options);
+    for (std::uint64_t index = 0; index != 40; ++index) {
+        const auto extra = liquid::runtime::block_on(store.put(bytes(4096, 400 + index)));
+        ASSERT_TRUE(extra) << extra.error().message;
+    }
+    const auto source = bytes(768U * 1024U, 206);
+    const auto stored = liquid::runtime::block_on(store.put(source));
+    ASSERT_TRUE(stored) << stored.error().message;
+    const auto remote = service->registered_blob();
+    ASSERT_GE(remote.chunks.size(), 3U);
+    const auto registered = liquid::runtime::block_on(store.register_remote(remote));
+    ASSERT_TRUE(registered) << registered.error().message;
+    auto root = liquid::runtime::block_on(store.lease_root(*stored, std::chrono::hours{1}));
+    ASSERT_TRUE(root) << root.error().message;
+
+    // The eviction lands while the collector marks; the sweep must keep its tombstones even
+    // though the leased object's chunks are reachable in the snapshot.
+    const auto report = liquid::runtime::block_on(evict_during_collection(&store, *stored));
+    ASSERT_TRUE(report) << report.error().message;
+    const auto availability = liquid::runtime::block_on(store.has(*stored));
+    ASSERT_TRUE(availability) << availability.error().message;
+    EXPECT_EQ(*availability, liquid::blob_availability::remote);
+
+    store = {};
+    std::filesystem::remove_all(temporary.path() / "index");
+    store = open_store(temporary.path(), options);
+    const auto rebuilt = liquid::runtime::block_on(store.has(*stored));
+    ASSERT_TRUE(rebuilt) << rebuilt.error().message;
+    EXPECT_EQ(*rebuilt, liquid::blob_availability::remote);
 }
 
 TEST(Store, RefusesToEvictContentThatIsNotRegisteredRemote) {

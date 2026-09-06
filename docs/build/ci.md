@@ -12,10 +12,11 @@ on each desktop platform.
 
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
-| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, Autoconf, Automake, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount scenario, `liquid version` |
-| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
+| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, PostgreSQL server/client, Autoconf, Automake, GNU `time`, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount and PostgreSQL data-branch scenarios, `liquid version` |
+| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario, `liquid version` |
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
+| Linux self-host | `ubuntu-24.04` | Clang 19, CMake, Ninja, libfuse3 | CMake bootstrap, two `liquid wrap` builds, 100% second-run disk hits, byte-identical static library and CLI, shared libliquid build |
 
 Every static or shared CTest run includes `consumer-project-build`. It installs the already-built
 parent artifacts into a test-local prefix, configures a separate CMake project against that package
@@ -46,6 +47,14 @@ repository at no cost. Linux arm64 verification is deferred until a suitable run
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
 `-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
 
+The hot-update demo builds a loadable definition object and drives one `liquid-hot-demo` process
+through `value=1` and `value=2`, proving tier-1 redirection at its Capy resumption boundary on
+macOS arm64 and Linux x86_64. The tier-3 case executes the restart hook through the ordinary build
+sandbox and verifies the appended outcome, old result, new result, and tier arguments. Linux CI
+always has libfuse3 for that test. A macOS machine needs macFUSE; without it the restart-hook case
+reports the same explicit skip as the other sandbox-dependent tests. Classification and the live
+tier-1 path still execute.
+
 The Linux jobs install `libfuse3-dev`, `fuse3`, Autoconf, and Automake. Configuration requires the `fuse3`
 pkg-config package on Linux, and the mount test exercises a 64 MiB repository through libfuse3
 when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device, the test reports
@@ -59,18 +68,29 @@ Hosted CI cannot build while the org submodule token is missing, and macOS build
 classes of Linux difference: libc++ supplies some standard headers transitively where libstdc++
 does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
 `std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same
-toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3, Autoconf,
-Automake). Build it once
+toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3, PostgreSQL,
+Autoconf, Automake, and GNU `time` at `/usr/bin/time` for ad-hoc measurements). Build it once
 and run the whole suite against a worktree; `--privileged` with `/dev/fuse` lets the mount and
 sandbox tests run for real:
 
 ```sh
 docker build -t liquid-linux-ci tools/linux-ci
 docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-linux-ci \
-  bash -c 'cmake -S . -B build-linux -G Ninja && cmake --build build-linux -- -k 0 \
+  bash -c 'pg_version=$(ls /etc/postgresql | sort -Vr | head -1) \
+           && pg_ctlcluster "$pg_version" main start \
+           && runuser -u postgres -- psql -c "ALTER USER postgres PASSWORD '\''liquid'\''" \
+           && export LIQUID_TEST_POSTGRES_URL=postgresql://postgres:liquid@127.0.0.1:5432/postgres \
+           && cmake -S . -B build-linux -G Ninja && cmake --build build-linux -- -k 0 \
            && ctest --test-dir build-linux --output-on-failure --timeout 600 \
                     -LE "large|sim-long|realworld"'
 ```
+
+`DataBranch.isolates_discards_promotes_and_refuses_a_changed_base` starts a private cluster on a
+reserved loopback port when the test process is not root. The root-run Linux image starts its
+packaged cluster explicitly and supplies `LIQUID_TEST_POSTGRES_URL` as above. The test reports its
+missing server/client prerequisite when neither route exists; Windows records the documented
+unsupported skip. `DataBranch.automatic_mechanism_checks_reflink_support_and_cluster_eligibility`
+runs on every platform and exercises the filesystem probe without requiring PostgreSQL.
 
 The included `consumer-project-build` is the installed-package proof; run it alone with:
 
@@ -100,6 +120,14 @@ path now passes `-f` and the mountpoint through `fuse_parse_cmdline`, gives `fus
 allocated loop configuration, and issues one offloaded fresh-path lookup after `fuse_exit` during
 an explicit unmount. The uncached lookup wakes the blocked libfuse worker without blocking the runtime
 executor. A successful named run reports one passed test and no skipped tests.
+
+For a Linux self-host measurement, bind-mount the checkout at `/liquid/work` and set
+`LIQUID_WRAP_CACHE=/liquid/work/.liquid-build/self-host-cache`; both the wrapped build tree and
+the cache then live on the host bind mount rather than Docker's writable layer. Run
+`bash tools/linux-ci/self-host-memory.sh <log> <wrap command>` inside the container to sample
+the cgroup-v2 `memory.current` and `memory.stat` fields plus `VmRSS`/`VmHWM` for the wrapper and
+its descendants every ten seconds. Keep the log with the self-host result, particularly on a
+memory-limit failure.
 
 `BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
 The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.

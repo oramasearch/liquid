@@ -1,11 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -15,7 +18,12 @@
 #include <unistd.h>
 #endif
 
+#if defined(__linux__)
+#include <sys/xattr.h>
+#endif
+
 #include "../temporary_directory.hpp"
+#include "drive/settings.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/vfs.hpp"
 #include "repository/testing.hpp"
@@ -59,13 +67,34 @@ auto mode_for(const liquid::tree& root, std::string_view name) -> std::uint32_t 
     return found == root.entries.end() ? 0U : found->mode;
 }
 
+class unavailable_source final : public liquid::remote_blob_source {
+public:
+    liquid::runtime::task<std::vector<liquid::digest>>
+    find_missing(std::string, std::vector<liquid::digest> blobs) override {
+        co_return blobs;
+    }
+
+    liquid::runtime::task<std::uint64_t>
+    read_range(std::string, liquid::digest, std::uint64_t, std::span<std::byte>) override {
+        co_return std::unexpected(liquid::error{liquid::errc::unavailable, "test peer is offline"});
+    }
+
+    liquid::runtime::task<void>
+    write(std::string, liquid::digest, std::vector<std::byte>) override {
+        co_return std::unexpected(liquid::error{liquid::errc::unavailable, "test peer is offline"});
+    }
+};
+
 TEST(VfsMount, hydrates_captures_and_reuses_cache) {
 #if defined(_WIN32)
     GTEST_SKIP() << "Phase 1 provides materialise-only VFS support on Windows";
 #else
     mount_tree repository_path;
     mount_tree mountpoint;
-    auto created = liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+    auto options = liquid::repository_options{};
+    options.storage.remote_sources.emplace("offline", std::make_shared<unavailable_source>());
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create(repository_path.path(), std::move(options)));
     ASSERT_TRUE(created) << created.error().message;
     auto repository = std::move(*created);
     auto large = std::vector<std::byte>(64U * 1024U * 1024U);
@@ -73,6 +102,15 @@ TEST(VfsMount, hydrates_captures_and_reuses_cache) {
         large[index] = std::byte{static_cast<unsigned char>((index * 29U + 7U) & 0xffU)};
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("large.bin", large)));
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("locked.txt", text_bytes("locked"))));
+    const auto offline_contents = text_bytes("offline");
+    auto offline_id = liquid::hash(liquid::algorithm::blake3, offline_contents);
+    ASSERT_TRUE(offline_id);
+    auto offline_blob = liquid::blob{.chunks = {*offline_id},
+                                     .size = offline_contents.size(),
+                                     .chunk_sizes = {offline_contents.size()},
+                                     .content = *offline_id,
+                                     .remote = liquid::remote_blob_location{"offline", "drive"}};
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write_remote("offline.bin", offline_blob)));
     ASSERT_TRUE(liquid::runtime::block_on(repository.lock("locked.txt")));
 
     auto mounted = liquid::runtime::block_on(liquid::vfs::mount(repository, mountpoint.path()));
@@ -80,6 +118,44 @@ TEST(VfsMount, hydrates_captures_and_reuses_cache) {
         GTEST_SKIP() << "FUSE unavailable: " << mounted.error().message;
     ASSERT_TRUE(mounted) << mounted.error().message << ": " << mounted.error().context;
     auto handle = std::move(*mounted);
+
+#if defined(__linux__)
+    const auto locked_path = mountpoint.path() / "locked.txt";
+    constexpr auto pin_name = "user.liquid.pin";
+    constexpr auto state_name = "user.liquid.state";
+    ASSERT_EQ(::setxattr(locked_path.c_str(), pin_name, "1", 1, 0), 0) << std::strerror(errno);
+    auto attribute = std::array<char, 32>{};
+    const auto pin_size =
+        ::getxattr(locked_path.c_str(), pin_name, attribute.data(), attribute.size());
+    ASSERT_EQ(pin_size, 1) << std::strerror(errno);
+    EXPECT_EQ(std::string_view{attribute.data(), static_cast<std::size_t>(pin_size)}, "1");
+    const auto state_size =
+        ::getxattr(locked_path.c_str(), state_name, attribute.data(), attribute.size());
+    ASSERT_GT(state_size, 0) << std::strerror(errno);
+    EXPECT_EQ(std::string_view{attribute.data(), static_cast<std::size_t>(state_size)},
+              "available-offline");
+    const auto names_size = ::listxattr(locked_path.c_str(), nullptr, 0);
+    ASSERT_GT(names_size, 0) << std::strerror(errno);
+    auto names = std::string(static_cast<std::size_t>(names_size), '\0');
+    ASSERT_EQ(::listxattr(locked_path.c_str(), names.data(), names.size()), names_size)
+        << std::strerror(errno);
+    EXPECT_NE(names.find(pin_name), std::string::npos);
+    EXPECT_NE(names.find(state_name), std::string::npos);
+    ASSERT_EQ(::setxattr(locked_path.c_str(), pin_name, "0", 1, 0), 0) << std::strerror(errno);
+
+    const auto offline_descriptor = ::open((mountpoint.path() / "offline.bin").c_str(), O_RDONLY);
+    ASSERT_GE(offline_descriptor, 0) << std::strerror(errno);
+    auto offline_byte = std::byte{};
+    errno = 0;
+    EXPECT_EQ(::read(offline_descriptor, &offline_byte, 1), -1);
+    EXPECT_EQ(errno, EAGAIN);
+    ASSERT_EQ(::close(offline_descriptor), 0);
+    auto drive_settings =
+        liquid::runtime::block_on(liquid::drive_detail::load_settings(repository));
+    ASSERT_TRUE(drive_settings);
+    EXPECT_NE(drive_settings->offline_reason.find("peer unreachable while hydrating offline.bin"),
+              std::string::npos);
+#endif
 
     constexpr std::uint64_t offset = 40ULL * 1024ULL * 1024ULL;
     auto range = std::vector<std::byte>(4096);

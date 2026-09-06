@@ -81,6 +81,11 @@ No Kubernetes knowledge required for the common path. What that provides:
 - Logs, metrics and traces.
 - Rollback to any prior state.
 
+**Implemented in liquid #84:** `liquid deploy` uses the operator-owned REST control plane through
+libliquid's HTTP client. It accepts only digest-pinned interim images, creates named environments,
+reports status, and records rollback targets. The control-plane contract is local until #124
+publishes its operator-owned OpenAPI document; liquid does not link Zetta or lake code.
+
 **No buildpacks.** Railway, Render and Heroku use heuristics (Nixpacks, Railpack,
 CNB) to guess how to build a repository. liquid does not guess — it *knows*, because
 it built it ([04](04-build-engine.md)). Every deployment carries exact provenance for
@@ -97,6 +102,11 @@ liquid **owns the entire common path**, and underneath remains ordinary Kubernet
 that an operator can inspect and override with `kubectl`.
 
 ## Chunk-aware distribution to nodes
+
+**Implemented for liquid #202:** `liquid node-store serve` receives image tree metadata without
+content chunks, exposes the tree through a reference-counted read-only VFS mount, reuses shared
+chunks across images, and enforces a node-local logical byte budget. The k0s proxy snapshotter is
+tracked separately in k0s #14; OCI projection remains liquid #28.
 
 Because liquid's store is content-defined chunks and liquid may control the
 snapshotter, nodes fetch only chunks they lack — **across images, not just within
@@ -121,6 +131,12 @@ Referenced from the repository, minted at deploy time
 ([11](11-secrets-and-encryption.md)). One-way delivery to a cluster, in the manner of
 Sealed Secrets, so committing a secret does not require the author to be able to read
 it back.
+
+**Implemented in liquid #204:** liquid's versioned canonical-CBOR envelope uses a fresh X25519
+ephemeral key and XChaCha20-Poly1305 for each value. The authenticated scope binds the target
+cluster and, when supplied, namespace and secret name exactly. The public API and CLI seal to a
+Lake environment's published key; the operator-side unseal and Lake capability remain companion
+work. See [the byte-level format and fixture](../library/sealed-secrets.md).
 
 ## Open questions
 

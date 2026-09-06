@@ -189,6 +189,15 @@ runtime::task<blob_availability> store::has(digest id) {
     co_return co_await impl_->value->has(id);
 }
 
+runtime::task<void> store::register_remote_source(std::string id,
+                                                  std::shared_ptr<remote_blob_source> source) {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::register_remote_source"});
+    }
+    co_return co_await impl_->value->register_remote_source(std::move(id), std::move(source));
+}
+
 runtime::task<void> store::register_remote(blob value) {
     if (!impl_) {
         co_return std::unexpected(
@@ -203,6 +212,14 @@ runtime::task<void> store::evict(digest id) {
             error{errc::invalid_argument, "store is not open", "store::evict"});
     }
     co_return co_await impl_->value->evict(id);
+}
+
+runtime::task<std::uint64_t> store::local_bytes() {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::local_bytes"});
+    }
+    co_return co_await impl_->value->local_bytes();
 }
 
 runtime::task<std::optional<object_key_version>> store::key_version(digest id) {

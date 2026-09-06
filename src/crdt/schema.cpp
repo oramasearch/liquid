@@ -133,6 +133,8 @@ auto validate_write(const am::Document& document, const operation& op) -> result
         return std::unexpected(components.error());
     if (op.ref.empty())
         return std::unexpected(invalid("write reference is empty", op.path));
+    if (op.value_kind != "blob" && op.value_kind != "tree" && op.value_kind != "repo")
+        return std::unexpected(invalid("write kind is invalid", op.path));
     auto current = tree(document);
     if (!current)
         return std::unexpected(current.error());
@@ -319,13 +321,16 @@ auto apply_write(am::Transaction& transaction, const am::ObjId& tree_root, const
         auto reference = transaction.put(**existing, ref_key, op.ref);
         if (!reference)
             return reference;
+        auto kind = transaction.put(**existing, kind_key, op.value_kind);
+        if (!kind)
+            return kind;
         return transaction.put(**existing, mode_key, static_cast<std::uint64_t>(op.mode));
     } else {
         auto created = transaction.put_object(*parent, components.back(), am::ObjType::map);
         if (!created)
             return std::unexpected(created.error());
         for (auto result :
-             {transaction.put(*created, kind_key, "blob"),
+             {transaction.put(*created, kind_key, op.value_kind),
               transaction.put(*created, id_key, bytes(id)),
               transaction.put(*created, mode_key, static_cast<std::uint64_t>(op.mode)),
               transaction.put(*created, ref_key, op.ref)}) {
@@ -547,13 +552,20 @@ auto schema::inspect(const am::Document& document, std::string_view path)
         entry{std::move(**kind), *id, static_cast<std::uint32_t>(**mode), std::move(**ref)}};
 }
 
-auto schema::entries(const am::Document& document) -> result<std::vector<entry>> {
+auto schema::entry_names(const am::Document& document) -> result<std::vector<std::string>> {
     auto root = tree(document);
     if (!root)
         return std::unexpected(root.error());
     if (!*root)
         return std::unexpected(corrupt("tree root is missing"));
     auto keys = checked(document.keys(**root), errc::corrupt, "read tree entries");
+    if (!keys)
+        return std::unexpected(keys.error());
+    return *keys;
+}
+
+auto schema::entries(const am::Document& document) -> result<std::vector<entry>> {
+    auto keys = entry_names(document);
     if (!keys)
         return std::unexpected(keys.error());
     auto output = std::vector<entry>{};

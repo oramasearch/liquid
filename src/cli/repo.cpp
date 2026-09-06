@@ -20,6 +20,8 @@ namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
 auto history_operations(int argc, char** argv) -> int;
+auto log_timestamps(int argc, char** argv) -> int;
+auto verify_log_timestamps(int argc, char** argv) -> int;
 
 namespace {
 
@@ -80,13 +82,14 @@ auto daemon_targets_json(const std::optional<liquid::daemon_status>& status) -> 
         for (std::size_t index = 0; index != status->targets.size(); ++index) {
             const auto& target = status->targets[index];
             output += std::format("{}{{\"name\":{},\"cursor\":{},\"behind\":{},\"deliveries\":{},"
-                                  "\"last_error\":{}}}",
+                                  "\"last_error\":{},\"detail\":{}}}",
                                   index == 0 ? "" : ",",
                                   json_string(target.name),
                                   json_string(target.cursor.token),
                                   target.behind,
                                   target.deliveries,
-                                  target.last_error ? json_string(*target.last_error) : "null");
+                                  target.last_error ? json_string(*target.last_error) : "null",
+                                  target.detail ? json_string(*target.detail) : "null");
         }
     }
     output += ']';
@@ -103,6 +106,57 @@ auto daemon_paths_json(const std::optional<liquid::daemon_status>& status) -> st
     }
     output += ']';
     return output;
+}
+
+auto flow_scope_name(liquid::flow_scope scope) -> std::string_view {
+    switch (scope) {
+    case liquid::flow_scope::actor:
+        return "actor";
+    case liquid::flow_scope::document:
+        return "document";
+    case liquid::flow_scope::repository:
+        return "repository";
+    }
+    return "repository";
+}
+
+auto flow_reason_name(liquid::flow_pause_reason reason) -> std::string_view {
+    switch (reason) {
+    case liquid::flow_pause_reason::none:
+        return "none";
+    case liquid::flow_pause_reason::persistence:
+        return "persistence";
+    case liquid::flow_pause_reason::consumers:
+        return "consumers";
+    }
+    return "none";
+}
+
+auto flow_json(const std::optional<liquid::daemon_status>& status) -> std::string {
+    auto buckets = std::string{"["};
+    if (status) {
+        for (std::size_t index = 0; index != status->flow.buckets.size(); ++index) {
+            const auto& bucket = status->flow.buckets[index];
+            buckets +=
+                std::format("{}{{\"scope\":{},\"key\":{},\"tokens\":{},\"rate\":{},\"burst\":{},"
+                            "\"rejected\":{}}}",
+                            index == 0 ? "" : ",",
+                            json_string(flow_scope_name(bucket.scope)),
+                            json_string(bucket.key),
+                            bucket.tokens,
+                            bucket.rate,
+                            bucket.burst,
+                            bucket.rejected);
+        }
+    }
+    buckets += ']';
+    return std::format("{{\"paused\":{},\"reason\":{},\"persistence_lag\":{},\"consumer_lag\":{},"
+                       "\"buckets\":{}}}",
+                       status && status->flow.paused ? "true" : "false",
+                       json_string(status ? flow_reason_name(status->flow.reason) : "none"),
+                       status ? status->flow.persistence_lag : 0,
+                       status ? status->flow.consumer_lag : 0,
+                       buckets);
 }
 
 auto graph_divergence_json(const std::optional<liquid::daemon_status>& status) -> std::string {
@@ -151,30 +205,6 @@ auto join(int argc, char** argv) -> std::string {
     return output;
 }
 
-auto input_files(const std::filesystem::path& root)
-    -> liquid::result<std::vector<std::filesystem::path>> {
-    auto code = std::error_code{};
-    auto output = std::vector<std::filesystem::path>{};
-    if (!std::filesystem::exists(root, code)) {
-        if (code) {
-            return std::unexpected(liquid::error{liquid::errc::io, code.message(), root.string()});
-        }
-        return output;
-    }
-    for (std::filesystem::recursive_directory_iterator iterator{
-             root, std::filesystem::directory_options::skip_permission_denied, code};
-         !code && iterator != std::filesystem::recursive_directory_iterator{};
-         iterator.increment(code)) {
-        if (iterator->is_regular_file(code)) {
-            output.push_back(iterator->path());
-        }
-    }
-    if (code) {
-        return std::unexpected(liquid::error{liquid::errc::io, code.message(), root.string()});
-    }
-    return output;
-}
-
 auto open_repository() -> liquid::result<liquid::repository> {
     return liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
 }
@@ -189,6 +219,25 @@ auto strings_json(const std::vector<std::string>& values) -> std::string {
     return output;
 }
 
+auto data_branches_json(const std::vector<liquid::data_branch_record>& branches) -> std::string {
+    auto output = std::string{"["};
+    for (std::size_t index = 0; index < branches.size(); ++index) {
+        const auto& branch = branches[index];
+        output +=
+            std::format("{}{{\"id\":{},\"session\":{},\"database\":{},\"url\":{},\"mechanism\":{},"
+                        "\"created_at\":{}}}",
+                        index == 0 ? "" : ",",
+                        json_string(branch.id),
+                        json_string(liquid::to_string(branch.session)),
+                        json_string(branch.database),
+                        json_string(branch.url),
+                        json_string(liquid::to_string(branch.mechanism)),
+                        branch.created_at.time_since_epoch().count());
+    }
+    output += ']';
+    return output;
+}
+
 } // namespace
 
 auto repo_init(int argc, char** argv) -> int {
@@ -196,21 +245,16 @@ auto repo_init(int argc, char** argv) -> int {
         return usage("init accepts at most one path");
     }
     const auto path = argc == 1 ? std::filesystem::path{argv[0]} : std::filesystem::current_path();
-    auto files = input_files(path);
-    if (!files) {
-        return fail(files.error());
-    }
     auto repository = liquid::runtime::block_on(liquid::repository::create(path));
     if (!repository) {
         return fail(repository.error());
     }
-    for (const auto& source : *files) {
-        auto relative = source.lexically_relative(path).generic_string();
-        auto written =
-            liquid::runtime::block_on(repository->write_file(std::move(relative), source));
-        if (!written) {
-            return fail(written.error());
-        }
+    auto options = liquid::import_options{};
+    options.message = "initial import";
+    options.ignore_patterns = {".liquid-store/**", "LIQUID_REPO", "LIQUID_JOURNAL"};
+    auto imported = liquid::runtime::block_on(repository->import_tree(path, std::move(options)));
+    if (!imported) {
+        return fail(imported.error());
     }
     std::println("initialised {}", path.string());
     return 0;
@@ -313,8 +357,10 @@ auto repo_status(int argc, char** argv) -> int {
         std::println(
             "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
             "directories\":{},\"head\":{},\"agents\":{{\"require_base\":{},\"actors\":{}}},"
+            "\"data_branches\":{},"
             "\"capture\":{{\"state\":{},\"pending_drips\":{},"
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
+            "\"flow\":{},"
             "\"daemon\":{{\"available\":{},\"running\":{},"
             "\"pid\":{},\"graph_keys\":{},\"graph_values\":{},\"graph_memory\":{},"
             "\"graph_ceiling\":{},\"graph_validation_backlog\":{},"
@@ -328,6 +374,7 @@ auto repo_status(int argc, char** argv) -> int {
             current->head ? json_string(head) : "null",
             current->agents.require_base ? "true" : "false",
             strings_json(current->agents.actors),
+            data_branches_json(current->data_branches),
             json_string(daemon_current && daemon_current->capture.state ==
                                               liquid::capture_status::state::paused
                             ? "paused"
@@ -336,6 +383,7 @@ auto repo_status(int argc, char** argv) -> int {
             daemon_current ? daemon_current->capture.overflow_count : 0,
             daemon_current ? daemon_current->capture.recrawl_count : 0,
             json_string(daemon_current ? daemon_current->capture.last_cursor.token : ""),
+            flow_json(daemon_current),
             daemon_current ? "true" : "false",
             daemon_current && daemon_current->running ? "true" : "false",
             daemon_current ? daemon_current->process_id : 0,
@@ -361,6 +409,14 @@ auto repo_status(int argc, char** argv) -> int {
         for (const auto& actor : current->agents.actors) {
             std::println("agent_actor={}", actor);
         }
+        for (const auto& branch : current->data_branches) {
+            std::println("data_branch={} session={} database={} mechanism={} url={}",
+                         branch.id,
+                         liquid::to_string(branch.session),
+                         branch.database,
+                         liquid::to_string(branch.mechanism),
+                         branch.url);
+        }
         std::println("daemon_available={}", daemon_current.has_value());
         std::println("capture_state={}",
                      daemon_current &&
@@ -375,6 +431,12 @@ auto repo_status(int argc, char** argv) -> int {
                      daemon_current ? daemon_current->capture.recrawl_count : 0);
         std::println("capture_cursor={}",
                      daemon_current ? daemon_current->capture.last_cursor.token : "");
+        std::println("flow paused={} reason={} persistence_lag={} consumer_lag={}",
+                     daemon_current && daemon_current->flow.paused,
+                     flow_reason_name(daemon_current ? daemon_current->flow.reason
+                                                     : liquid::flow_pause_reason::none),
+                     daemon_current ? daemon_current->flow.persistence_lag : 0,
+                     daemon_current ? daemon_current->flow.consumer_lag : 0);
         std::println("daemon_running={}", daemon_current && daemon_current->running);
         if (daemon_current) {
             std::println("daemon_pid={}", daemon_current->process_id);
@@ -411,6 +473,9 @@ auto repo_status(int argc, char** argv) -> int {
                              target.cursor.token,
                              target.behind,
                              target.deliveries);
+                if (target.detail) {
+                    std::println("daemon_target_detail={} {}", target.name, *target.detail);
+                }
             }
         }
     }
@@ -418,6 +483,12 @@ auto repo_status(int argc, char** argv) -> int {
 }
 
 auto repo_log(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "timestamps") {
+        return log_timestamps(argc - 1, argv + 1);
+    }
+    if (argc >= 1 && std::string_view{argv[0]} == "verify") {
+        return verify_log_timestamps(argc - 1, argv + 1);
+    }
     auto json = false;
     auto ops = false;
     for (auto index = 0; index < argc; ++index) {
@@ -427,7 +498,7 @@ auto repo_log(int argc, char** argv) -> int {
         } else if (argument == "--ops") {
             ops = true;
         } else {
-            return usage("log accepts only --ops and --json");
+            return usage("log accepts --ops, --json, timestamps <log-url>, or verify --timestamps");
         }
     }
     auto repository = open_repository();

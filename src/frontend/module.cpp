@@ -1,6 +1,7 @@
 #include "liquid/frontend.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -252,22 +253,86 @@ auto frontend_module::operator=(frontend_module&&) noexcept -> frontend_module& 
 
 auto frontend_module::linked(const liquid_frontend_module_v1* descriptor)
     -> result<frontend_module> {
+    constexpr auto base_descriptor_size = offsetof(liquid_frontend_module_v1, language_metadata);
     if (!descriptor || descriptor->abi_version != LIQUID_FRONTEND_ABI_VERSION ||
-        descriptor->struct_size < sizeof(liquid_frontend_module_v1) || !descriptor->name ||
+        descriptor->struct_size < base_descriptor_size || !descriptor->name ||
         descriptor->language_count == 0 || !descriptor->languages || !descriptor->units ||
         !descriptor->compile_unit || !descriptor->assemble || !descriptor->symbols) {
         return std::unexpected(frontend_error(
             errc::invalid_argument, "frontend descriptor does not implement ABI v1", "frontend"));
     }
     for (std::size_t index = 0; index < descriptor->language_count; ++index) {
-        if (!descriptor->languages[index].name || descriptor->languages[index].name[0] == '\0') {
+        const auto& language = descriptor->languages[index];
+        if (!language.name || language.name[0] == '\0' ||
+            (language.extension_count != 0 && !language.extensions)) {
             return std::unexpected(frontend_error(
                 errc::invalid_argument, "frontend has an invalid language", descriptor->name));
+        }
+    }
+    constexpr auto metadata_size = offsetof(liquid_frontend_module_v1, syntax);
+    if (descriptor->struct_size >= metadata_size) {
+        if (descriptor->language_metadata_count != 0 && !descriptor->language_metadata) {
+            return std::unexpected(frontend_error(errc::invalid_argument,
+                                                  "frontend has invalid language metadata",
+                                                  descriptor->name));
+        }
+        for (std::size_t index = 0; index < descriptor->language_metadata_count; ++index) {
+            const auto& metadata = descriptor->language_metadata[index];
+            if (!metadata.language ||
+                (metadata.tier_mechanism != LIQUID_FRONTEND_TIER_FRONTEND &&
+                 metadata.tier_mechanism != LIQUID_FRONTEND_TIER_GRAMMAR) ||
+                (metadata.tier_mechanism == LIQUID_FRONTEND_TIER_GRAMMAR &&
+                 (!metadata.grammar_digest || metadata.grammar_digest[0] == '\0'))) {
+                return std::unexpected(frontend_error(errc::invalid_argument,
+                                                      "frontend has invalid language metadata",
+                                                      descriptor->name));
+            }
         }
     }
     auto implementation = std::make_unique<impl>();
     implementation->descriptor = descriptor;
     return frontend_module{std::move(implementation)};
+}
+
+auto frontend_module::syntax(std::string_view language,
+                             std::span<const std::byte> blob,
+                             std::span<const std::byte> context_cbor,
+                             frontend_callbacks callbacks) const -> result<syntax_tree> {
+    constexpr auto syntax_size =
+        offsetof(liquid_frontend_module_v1, syntax) + sizeof(liquid_frontend_module_v1::syntax);
+    if (!impl_ || !supports(language) || impl_->descriptor->struct_size < syntax_size ||
+        !impl_->descriptor->syntax) {
+        return std::unexpected(frontend_error(
+            errc::unsupported, "frontend does not expose concrete syntax", std::string{language}));
+    }
+    auto valid_context = validate_input(context_cbor, "frontend syntax context");
+    if (!valid_context) {
+        return std::unexpected(valid_context.error());
+    }
+    auto bridge = callback_bridge{};
+    auto abi = abi_callbacks(callbacks, bridge);
+    auto output = liquid_frontend_owned_bytes_v1{};
+    auto abi_error = liquid_frontend_error_v1{};
+    const auto language_text = std::string{language};
+    const auto status = impl_->descriptor->syntax(
+        impl_->descriptor->module_context,
+        language_text.c_str(),
+        {reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size()},
+        {reinterpret_cast<const std::uint8_t*>(context_cbor.data()), context_cbor.size()},
+        &abi,
+        &output,
+        &abi_error);
+    if (status != LIQUID_FRONTEND_STATUS_OK) {
+        return std::unexpected(
+            frontend_error(status_code(status),
+                           abi_error.message ? abi_error.message : "frontend syntax failed",
+                           std::string{name()}));
+    }
+    auto copied = copy_output(output, name());
+    if (!copied) {
+        return std::unexpected(copied.error());
+    }
+    return decode_syntax_tree(*copied);
 }
 
 auto frontend_module::load(std::filesystem::path shared_object) -> result<frontend_module> {
@@ -325,6 +390,44 @@ auto frontend_module::languages() const -> std::vector<std::string> {
     output.reserve(impl_->descriptor->language_count);
     for (std::size_t index = 0; index < impl_->descriptor->language_count; ++index) {
         output.emplace_back(impl_->descriptor->languages[index].name);
+    }
+    return output;
+}
+
+auto frontend_module::language_details() const -> std::vector<frontend_language> {
+    auto output = std::vector<frontend_language>{};
+    if (!impl_) {
+        return output;
+    }
+    const auto* descriptor = impl_->descriptor;
+    constexpr auto metadata_size = offsetof(liquid_frontend_module_v1, syntax);
+    const auto has_metadata = descriptor->struct_size >= metadata_size;
+    output.reserve(descriptor->language_count);
+    for (std::size_t index = 0; index < descriptor->language_count; ++index) {
+        const auto& registered = descriptor->languages[index];
+        auto value = frontend_language{.language = registered.name};
+        value.extensions.reserve(registered.extension_count);
+        for (std::size_t extension = 0; extension < registered.extension_count; ++extension) {
+            value.extensions.emplace_back(registered.extensions[extension]);
+        }
+        if (has_metadata) {
+            for (std::size_t metadata_index = 0;
+                 metadata_index < descriptor->language_metadata_count;
+                 ++metadata_index) {
+                const auto& metadata = descriptor->language_metadata[metadata_index];
+                if (value.language != metadata.language) {
+                    continue;
+                }
+                value.tier_mechanism = metadata.tier_mechanism == LIQUID_FRONTEND_TIER_GRAMMAR
+                                           ? frontend_tier_mechanism::grammar
+                                           : frontend_tier_mechanism::frontend;
+                if (metadata.grammar_digest) {
+                    value.grammar_digest = metadata.grammar_digest;
+                }
+                break;
+            }
+        }
+        output.push_back(std::move(value));
     }
     return output;
 }
@@ -612,6 +715,18 @@ auto frontend_registry::find(std::string_view language) const -> result<const fr
             errc::not_found, "no frontend is registered for the language", std::string{language}));
     }
     return &*found;
+}
+
+auto frontend_registry::languages() const -> std::vector<frontend_language> {
+    auto output = std::vector<frontend_language>{};
+    for (const auto& module : impl_->modules) {
+        auto registered = module.language_details();
+        output.insert(output.end(),
+                      std::make_move_iterator(registered.begin()),
+                      std::make_move_iterator(registered.end()));
+    }
+    std::ranges::sort(output, {}, &frontend_language::language);
+    return output;
 }
 
 } // namespace liquid

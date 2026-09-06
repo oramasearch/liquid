@@ -11,9 +11,10 @@
 > a retained GPU text layer inside Dear ImGui.
 
 **Status:** the demand-driven query graph in #20, per-checkout daemon in #21, continuous clean
- validation in #23, per-definition frontend granularity in #65, local search index in #22, symbol
- records in #66, measured search planner in #67, public build/test streams in #193, and public
- configured-build plans plus one-call repository builds in #200 are
+validation in #23, per-definition frontend granularity in #65, local search index in #22, symbol
+records in #66, measured search planner in #67, public build/test streams in #193, the configured
+drive target in #195, public configured-build plans plus one-call repository builds in #200, and
+structural editing in #205 are
 implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
 bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
@@ -75,6 +76,11 @@ version-1 framed CBOR connection. Each server session owns its repository, handl
 until `build_finished`; an attached in-process consumer receives decoded public `build_event`
 values rather than protocol types. This is the interface liquify uses for inline build and test
 results.
+
+Structural editing uses `edit_preview` and `edit_apply` operations on that same framed connection.
+Their payload is the canonical public request or preview record; their response is the canonical
+preview or result record. The daemon calls repository tasks against its checkout, preserving graph
+and capture ownership rather than creating a second editing service.
 
 Issue #200 adds `build_plan` and `build_repository` beside that direct-action path. The first
 returns complete configured action inputs, producer dependencies, and validated hit state. The
@@ -158,9 +164,9 @@ that persists the graph. The earlier `LIQUID_REPO/daemon/` design path cannot be
 `LIQUID_REPO` is the repository checkpoint file, not a directory. It owns the capture subscription
 ([`capture.md`](capture.md)): a drip arrives as a journal cursor advance; the daemon maps changed
 paths to inputs, marks the minimum stale, and fans out to pluggable targets in order: the build
-graph (demand what the last build demanded), the local search index (#22), collaborators and lake
-(the sync client from
-[`sync.md`](sync.md)), each with its own cursor, at-least-once and idempotent, as
+graph (demand what the last build demanded), hot update (#32), the local search index (#22),
+collaborators, and the configured drive client from [`drive.md`](drive.md), each with its own
+cursor, at-least-once and idempotent, as
 `features/22` requires. `liquid status` shows what the last drip triggered and how far each target
 is behind.
 
@@ -178,14 +184,38 @@ named pipes. liquify links libliquid and hosts the graph in-process (liquify hos
 service when it is the first client, and the CLI attaches to it), which is the whole point of the
 architecture and is the only way to avoid a serialisation boundary.
 
-The built-in target order is build, search, collaborators, then lake. The build target marks only
-working-tree inputs named by the drip operations changed through #20's public graph. The remaining
-built-ins are idempotent acceptance hooks until #22 and the collaborator work bind their
-implementations.
+The built-in target order is build, configured hot-update, search, collaborators, then drive when
+the checkout has drive metadata; an unconfigured checkout retains the lake acceptance hook. The
+build target marks only working-tree inputs named by the drip operations changed through #20's
+public graph. The hot-update target is implemented by #32: it builds persisted
+`config.hot_update.targets`, classifies each prior/new evidence pair, applies a signed tier-1 or
+tier-2 patch, or invokes the sandboxed restart hook. Its status detail names the latest outcome,
+tier, and record. The search and drive targets publish their real updates; the collaborator hook
+remains pending its consumer. The complete safety and retry contract is in
+[hot-update.md](hot-update.md).
 Callers can instead pass ordered `daemon_target` implementations. Every target persists its own
 journal cursor only after successful delivery. Replayed or duplicate cursor values are ignored;
 a failed target keeps its old cursor and error, so restart retries it. `liquid status` reports the
-last drip, changed paths, delivery count, cursor, error, and cursor distance for each target.
+last drip, changed paths, delivery count, cursor, error, optional detail, cursor distance, and
+undelivered drip count for each target.
+
+### Flow watermarks
+
+The daemon reports two independent lag measures. Persistence lag is
+`capture_status::pending_drips`; consumer lag is the largest `behind` value across delivery targets
+and registered in-process consumers. Target `behind` values count observed drips, not journal cursor
+bytes. `flow_config::pause_above` and `resume_below` form a
+hysteresis band. Above the high mark, writes return `errc::busy` with `paused_for=persistence` or
+`paused_for=consumers`; the pause remains until that measure reaches the low mark. The configured
+`max_unacknowledged` is also an upper bound for consumer lag.
+
+`daemon::report_consumer_lag(name, behind)` is a task-returning hook for an in-process client that
+is not a delivery target. liquify reports its render backlog through this hook. Reporting a lower
+value updates the existing named consumer, so it participates in the same resume decision without
+gaining a delivery cursor.
+
+`daemon_status::flow` contains `paused`, `reason`, `persistence_lag`, `consumer_lag`, and live
+bucket rows with scope, key, tokens, rate, burst, and rejection count since daemon start.
 
 ## Continuous clean-rebuild validation (#23)
 
@@ -262,9 +292,10 @@ in-process:
   there is no second path.
 - **Rendering (decision §15).** The buffer is a retained GPU text layer inside Dear ImGui with a
   per-blob cached line layout; panels and the shell stay ImGui.
-- **The plugin ABI (decision §14).** One C ABI (query kinds registered by name, values as
-  canonical CBOR, callbacks for progress and cancellation) that frontend modules, format codecs and
-  editor plugins share; no VS Code compatibility in this phase.
+- **The plugin ABI (decision §14).** `frontend_abi.h` defines the versioned
+  `liquify_plugin_v1` descriptor: query kinds registered by name, commands with bindings and
+  argument schemas, panels described by canonical CBOR, and the frontend boundary's owned values,
+  progress, and cancellation callbacks. No VS Code compatibility is included in this phase.
 
 ## Waves
 

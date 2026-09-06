@@ -117,6 +117,9 @@ operation. There is no clone, and disk grows with what you actually read.
 **Structural editing.** The AST already exists — liquid parses for incremental
 compilation, diff and search. Refactors, structural selection and structural diff
 ([03](03-diff-and-merge.md)) come from the tree the build is already using.
+Liquid #205 implements the shared libliquid and daemon records for C and C++ rename, extract,
+move, and concrete-tree edits, including preview, attribution, exact apply, and grouped undo.
+Liquify's selection, panels, and keyboard surface remain in liquify #8.
 
 **Multiplayer without a second system.** The datastore is a CRDT, so convergent
 concurrent editing is a property of the storage layer rather than a separate
@@ -127,6 +130,11 @@ synchronisation service bolted alongside it. That is a real head start — but s
 **Review in place.** Changes from lake ([18](18-lake-service.md)) are reviewed in the
 editor, against real semantics rather than a text diff — and comments anchor to
 cursors that survive rebases.
+
+**Implementation status.** Liquid #201 provides the coroutine forge client consumed by liquify:
+review and comment records, branch protections, edit-surviving anchor advancement, and polling
+events for review updates, comments, and repository head movement. The liquify review panel remains
+in its own repository.
 
 **Build, test, deploy inline.** Same graph. A test result is a query; a deployment
 ([13](13-deployment-runtime.md)) is an action.

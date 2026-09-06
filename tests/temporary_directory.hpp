@@ -68,10 +68,17 @@ public:
 private:
     static auto temporary_root() -> std::filesystem::path {
         auto code = std::error_code{};
-        const auto temporary_root = std::filesystem::temp_directory_path(code);
+        auto temporary_root = std::filesystem::temp_directory_path(code);
         if (code) {
             throw std::runtime_error("liquid tests require a writable temporary root: " +
                                      code.message());
+        }
+        if (temporary_root.is_relative()) {
+            temporary_root = std::filesystem::absolute(temporary_root, code);
+            if (code) {
+                throw std::runtime_error("liquid tests require an absolute temporary root: " +
+                                         code.message());
+            }
         }
         return temporary_root;
     }

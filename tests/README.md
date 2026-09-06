@@ -4,39 +4,89 @@ The default suite covers the public library surface and the local store. Focused
 collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
+`test_forge.cpp` covers lake review, comment, state, and branch-protection round trips; every
+documented envelope error; bearer isolation; HTTPS with the committed certificate; rebase anchor
+mapping; polling review events; and the built CLI's pinned JSON. `support/forge_double` provides the
+installable in-memory server used by those cases and downstream liquify tests.
+`test_deploy.cpp` covers digest-pinned control-plane deployment creation, action-key reuse,
+rollback to a prior deployment or change, readiness projection, persisted deployment configuration,
+and control-plane envelope failures.
+
+Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
+identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
+`transparency/` records how the initial and renewed RFC 4998 fixtures were generated through lake's
+production timestamp service and contains the timestamp, trust, tampering, and renewal cases.
+OpenSSL generates ephemeral RSA and P-384 signatures only in the test process so the private
+verification engine is checked against an independent implementation for PKCS#1 v1.5, RSA-PSS,
+ECDSA, SHA-256, and SHA-384; no OpenSSL call enters the verification path.
+The main test binary compiles the private signature translation unit directly so this coverage also
+runs when libliquid's internal symbols are hidden by a shared build.
+The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
+URL or explicit TSA anchor file is absent.
 
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
-Linux, reports a clear error when the temporary root is not writable, and removes the directory at
-process exit. Tests may use fixed names beneath that directory, but must never name a fixed path
-directly beneath the temporary root. `TemporaryDirectory.*` covers root selection, per-process
-stability, unique child creation, cleanup, and the failure diagnostic.
+Linux, resolves a relative temporary root before subprocesses can change directory, reports a clear
+error when the temporary root is not writable, and removes the directory at process exit. Tests may
+use fixed names beneath that directory, but must never name a fixed path directly beneath the
+temporary root. `TemporaryDirectory.*` covers root selection, per-process stability, unique child
+creation, cleanup, and the failure diagnostic. Subprocess daemon coverage supplies the same root
+relative to the checkout before changing directory.
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
+`test_data.cpp` starts a private PostgreSQL cluster when `initdb`, `pg_ctl`, and the client tools
+are available. A root-run container supplies `LIQUID_TEST_POSTGRES_URL` instead. The integration
+fixture prefers versioned PostgreSQL binary directories before Debian's wrapper scripts. The
+case proves branch writes leave the base and sibling branch unchanged, session environments select
+their own URLs through a sandboxed client action, discard removes the database, quiet-base promote
+replaces it, changed-base promote is refused, records/configuration persist, and status exposes live
+branches. It also proves an ordinary sandbox cannot execute an arbitrary external binary without a
+data client allowance. It skips with the missing prerequisite when neither mode is available. The
+portable selector case probes APFS/Linux copy-on-write support and proves an ineligible local
+cluster falls back to template copying.
+The shared-library macOS test target compiles the private platform launcher that its denial case
+exercises, so hidden library visibility does not omit that profile coverage.
+Spec parsing, canonical package records, universe loading, solver dimensions, cancellation,
+explanations, optimisation, CLI output, and the generated scale workload live in `resolve/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
-eviction, collector reclamation, and range/full rehydration. `test_repository.cpp` pins the
-exact readability report for revisions written before and after rotation and its three disclosure
-statements.
+eviction, live-byte accounting, runtime source registration, hydration observation, collector
+reclamation, and range/full rehydration. `test_repository.cpp` pins the exact readability report
+for revisions written before and after rotation and its three disclosure statements.
+`test_node_store.cpp` checks local and operator status, readiness, metrics, attestation bytes,
+OpenAPI isolation, and the three MCP tool declarations. Its Linux FUSE case mounts two 64 MiB
+images that differ by one 4 MiB file, reads both, checks shared-chunk avoidance, prefetch,
+reference counts, budget eviction, and non-remote protection; macOS records the documented skip
+when macFUSE is absent.
 
 Retention coverage spans `store/`, `build/`, and `cli/`: persisted forever-ref reachability,
 mixed-cost size-cap eviction, rule counts, and rule/lease/expiry explanations all run in the default
 portable suite.
 
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
+`test_secret.cpp` covers the sealed-secret record, authenticated fields, exact scope checks,
+X25519 failure paths, deterministic interoperability fixture, and Lake public-key response.
+`cli/secret.cmake` exercises raw-CBOR and base64 command round trips without stderr disclosure.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
 `test_transparency.cpp` consumes Lake's deterministic fixture and checks checkpoint signatures,
 witness quorum, every tile level, inclusion and consistency proofs, and altered or missing input.
 Its `cve_2026_56865` case keeps valid leaf bytes while changing a verified parent hash tile.
+Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
+Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
-The `formats/` cases cover
-the strict JSON and `.env` codecs used by structured configuration encryption; `encryption/`
+The `formats/` cases cover the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
+decoders, exact Tier 1 repack, deterministic tar writing, volatile fields, malformed boundaries,
+nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs used by
+structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
-file writes, and key diffs.
+file writes, key diffs, v1/v2/v3 wrapped-key compatibility, age specification vectors, Shamir
+quorums, local and remote provider round trips, request authentication, and every ordered
+cross-provider rewrap with unchanged pack bytes. The remote provider doubles bind only to loopback
+and make no external requests.
 
 Repository tests cover persisted operation records and their public newest-first view, operation
 undo for writes, imported batches, records, and locks, skipped newer state, two-replica local
@@ -49,7 +99,10 @@ one repository without losing the other, and reopens by identifier. Tree-diff ca
 additions, removals, content and mode changes, `node_id` moves, opt-in text hunks, and stored
 conflict values. Text-anchor cases map unchanged and shifted lines, approximate replacements,
 deleted regions and files, and a renamed node in one unsorted batch. CLI scenario and
-command-documentation tests live in `cli/`. `test_runtime.cpp`
+command-documentation tests live in `cli/`. Flow-control cases pin the eleventh-write refusal and
+operation count, update-size rejection, cross-actor directory isolation, persisted configuration,
+daemon pause/resume and bucket status, peer HTTP 429 retry projection, and the status JSON fixture.
+`test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
@@ -58,7 +111,8 @@ and a synchronized replica whose signed write arrives before refusal. The CLI sc
 also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
-exclusion, and parse the CLI explanation contract. The opt-in measurement target records scan and
+exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI
+explanation contract. The opt-in measurement target records scan and
 index costs across working-set sizes.
 `liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and
 measures a fresh-process repository open for the automerge-cpp adoption comparison.
@@ -71,10 +125,19 @@ bytes across repeated pushes, pulls into an empty repository, and rejects a corr
 signature without changing state. It checks change-to-ref context, derives false fast-forward
 state for divergent history, applies mixed per-ref outcomes, preserves exact reasons, keeps
 all-refused and atomic pushes unchanged, retains uploaded objects, converts callback exceptions to
-refusals, and reads a legacy reply. Its CLI case starts the real `serve sync --allow-ref main`
+refusals, and reads a legacy reply. Metadata-only receipt verifies tree and blob records while
+leaving every payload chunk remote. Its CLI case starts the real `serve sync --allow-ref main`
+refusals, reads a legacy reply, and proves a flow-refused push leaves repository metadata
+unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
+
+Drive coverage persists policy and per-path state across reopen, checks folder inheritance and
+explicit overrides, retains lazy placeholders, records peer failure reasons, queues repository
+writes, reports hydration state, and validates every extended-attribute value. The desktop badge
+mapping tests run without GNOME or KDE. Linux FUSE coverage calls the mounted attribute setters,
+getters, and list operation directly.
 
 Build tests cover the disk action index's reopen and rebuild paths, public configured-plan schema,
 named configuration errors, and current root digests on every platform. In the
@@ -89,7 +152,9 @@ repository's regular files. Daemon coverage injects a stale cached query and obs
 validation backlog and divergence status.
 Frontend tests load the Clang implementation as a separate shared object, register the same ABI
  statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
- to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
+ to discover C definitions. Grammar coverage recomputes every locked parser/scanner/query digest,
+parses one committed sample per configured language without error nodes, checks required tag-query
+unit discovery and ABI rejection, and exercises the public grammar metadata registry. The CMake frontend fixture compiles two C++ definition objects, proves a
  body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
  before assembly. The registered `frontend-one-function-measure` CTest performs the same
  one-definition edit against liquid's own tree with the configured compiler, asserts the action and
@@ -100,14 +165,23 @@ rejection, and the DSSE/in-toto projection's canonical attestation digest round-
 cache-hit case also proves that the existing provenance attestation is reused without re-signing.
 Portable SBOM cases prove the SPDX/CycloneDX required structure, exact input and toolchain digests,
 nested-repository pins, signatures, and universal inference markers; CLI cases invoke both formats.
+Portable ABI cases decode digest-pinned ELF, Mach-O, and PE fixtures, while native shared-library
+fixtures exercise exported functions and objects, additions, removals, GNU symbol versions, debug
+signatures, canonical records, signed compatibility attestations, and stable CLI JSON. The
+privileged wrapper case checks the incompatible build event and opt-in failing exit status.
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
-`compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
+`compile_commands.json` projects, a relocatable CMake install tree, and cache reuse from a different
+checkout path. Portable relocation cases scan clean and embedded prefixes, absolute package
+metadata, and a digest-pinned Mach-O with an absolute install name. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,
 rate-one sampling, and CLI verification of every wrapped action. The same wrap fixture performs a
 complete graph pass and requires zero query divergences.
 Portable build
 diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
 statistics, recorded scheduling decisions and inputs, and the JSON forms of `why` and `cache stats`.
+They also cover canonical output normalisation, signed input/output claims, named dependency-tree
+folding, cross-project cascade termination, and an opt-in pinned zlib/libpng/program chain that
+records process counts and load average.
 Mount-backed observability coverage constructs a two-action sleeping dependency chain and verifies
 result timing, durable trace edges, critical-path queries, scheduling metadata, and Chrome
 trace-event JSON. Distribution coverage uses a second store to materialise source and toolchain
@@ -134,3 +208,7 @@ through public libliquid API.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.
+Hot-update tests classify fixture pairs across all tiers, prove that comment-only output equality is
+tier 0, require ABI evidence for tier 2, reject unsigned patches, and reconstruct a two-patch
+composition. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
+case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.

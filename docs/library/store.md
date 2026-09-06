@@ -1,7 +1,7 @@
 # Content-defined chunk store
 
 **Status: implemented for single-process stores with local chunks, registered remote blobs,
-pre-pack write-through, and local eviction (liquid #1, #7, #8, #17, #46, #116, #199).**
+pre-pack write-through, and local eviction (liquid #1, #7, #8, #17, #46, #116, #199, #208).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -108,12 +108,21 @@ converted to `errc::io` at the private boundary.
 source id, and instance in `remotes.meta`. `store::has` distinguishes `absent`, `remote`, and
 `local`; a registered blob becomes local only when every named chunk is present. The configured
 `store_options::remote_sources` map resolves source ids to `remote_blob_source` handles.
+`store::register_remote_source` adds or replaces a source after the store is open so long-running
+node processes can discover repositories without reopening their shared store.
 
 `get` fetches all missing chunks and verifies the whole-content digest. `read` fetches only complete
 chunks intersecting its requested range. Every returned range is length-checked, each chunk is
 hashed before `put_plain`, and the assembled object is hashed before `get` succeeds. Remote bytes
 therefore enter packs through the same verified, deduplicated path as local writes. The separate
 metadata file is atomically replaced and survives reopen; it carries locations, not content.
+`store_options::on_hydration` observes each newly fetched chunk after it has entered the verified
+store path; the completion flag identifies the last chunk in the blob's ordered table. Node-store
+uses the coroutine callback for per-image counters and budget checks.
+`store_options::on_remote_access` observes successful reads of remote-registered content, including
+reads served entirely from local chunks; node-store uses it for least-recently-read ordering.
+`store::local_bytes` reports the deduplicated raw size of live indexed chunks, excluding obsolete
+and evicted pack entries.
 
 ## Write-through ordering
 
@@ -238,6 +247,64 @@ dead chunks before wholly dead packs are removed. Sparse packs below the collect
 compacted as described below. The full lease model, crash order, report fields, and verification
 are in [gc.md](gc.md).
 
+### The collector's yield and the mutation mutex
+
+Two defects met in `GarbageCollection.PutAfterEpochHighWaterSurvives`; liquid #208 fixes both.
+
+The crash. The collector gave up its executor between packs with `runtime::delay(1ns)`. Capy's
+`delay_awaitable::await_suspend` arms the timer first and registers its `std::stop_callback`
+afterwards. A one-nanosecond timer fires inside that window: the timer thread posts the
+continuation, another runner resumes the coroutine, `await_resume` sees no active stop callback
+and skips it, the awaiter is destroyed with its frame slot, and the suspending thread then
+constructs and registers a `std::stop_callback` in memory the frame no longer owns. That node stays
+in the stop state's intrusive list. The collector's next awaiter, the sweep's mutex waiter, reuses
+the memory, and when it registers its own callback on the same token the list splice writes the
+node's address over the waiter's executor reference; the put's `unlock` then posts through the
+corrupted vtable (`pc = 0x0` in `executor_ref::post`, caught with gdb in `put_selected`'s
+`lock_guard` destructor; a core shows `executor_ref::vt_` equal to the address of the waiter's own
+callback storage). Release 29 of 50 runs on `20e5407` in the `liquid-linux-ci` container; the
+write-through change altered the timing enough to make it reproduce on most runs. The collector
+now yields with `runtime::yield`, which posts the continuation to the caller's executor and arms
+nothing (see [runtime.md](runtime.md)); `liquid verify`'s scheduled graph validation used the same
+one-nanosecond delay and was changed too. The ordering in Capy's `delay.hpp` is a Capy defect to
+report upstream.
+
+The mutex. ThreadSanitizer on the same tree also reports a real data race in Capy's
+`async_mutex`: `collector::run`'s inlined `lock_awaiter::await_suspend` writing the waiter queue
+on one `block_on` runner thread against `async_mutex::unlock`'s `pop_front` reading it on another,
+inside the backend's `mutation_` member. `async_mutex` is documented for one executor only, while
+`runtime::block_on` and the default context each run one `io_context` on several threads, and
+Corosio resumes a coroutine after file I/O directly on the completing runner
+(`posix_random_access_file::raf_op::operator()` calls `coro.resume()` without dispatching through
+the awaiter's executor), so a store coroutine that holds the lock across a pack write comes back on
+an arbitrary thread and a Capy `strand` cannot keep the lock on one executor. The backend therefore
+serializes mutation with liquid's own `mutation_mutex` (`src/store/mutation_mutex.hpp`): an
+asynchronous mutex safe from any thread that follows Capy's IoAwaitable protocol (`io_env`,
+`continuation`, `executor_ref`, stop tokens), so call sites read exactly as with
+`async_mutex::scoped_lock`. Waiters queue in FIFO order under a short native mutex, resume through
+the executor they suspended on, become visible only after every field another thread may read is
+written, and are not touched after they are published; an atomic state resolves the race between
+unlock and cancellation.
+
+Two strand designs were measured before the cause was found and are recorded because they looked
+like fixes: one strand per store over the shared default context, and one per store in the
+caller's context. Both replaced the collector's environment through `capy::run` and so masked the
+corruption in this test; the first crashed `Sync.DivergentReferenceUpdateIsNotFastForward` with a
+bus error when the caller's `io_context` shut down with a cross-context post still queued, and the
+second reproduced the original crash in `Store.EvictionDuringCollectionStaysRemote`. Neither is in
+the tree.
+
+The ordering invariant the collector relies on is: a put holds the mutation lock from before its
+write-through callback until its object is published, and appends no pack frame before that
+callback succeeds; collection records its pack and offset high-water position under the same lock,
+then treats every later frame as live when it reacquires the lock for sweep. Eviction and
+redaction load and advance the committed tombstone epoch while holding that lock, and the sweep
+reloads the latest committed manifest under the lock, so a tombstone committed while it marked
+stays dead in the rebuilt index even when the frame is after the high-water mark or reachable from
+the snapshot. Thus a put is either inside the collection snapshot or retained after its high-water
+mark, and an eviction is ordered wholly before the sweep commit or wholly after it and survives
+either way.
+
 ## Pack compaction
 
 `collection_options::compact_below` defaults to `0.5`. A partially dead pack is compacted when
@@ -295,7 +362,8 @@ written to a temporary file, synchronized, and atomically renamed.
 If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
 tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
 
-Concurrent coroutines on one store serialize mutation with `capy::async_mutex`. Reads use immutable
+Concurrent coroutines on one store serialize mutation with the store's thread-safe
+`mutation_mutex`. Reads use immutable
 runs and are not given that mutation lock. Cross-process access is outside this issue's contract.
 
 ## Tuning and verification

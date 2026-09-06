@@ -50,6 +50,22 @@ auto reason_name(liquid::cache_miss_reason reason) -> std::string_view {
     return "unknown";
 }
 
+auto change_name(liquid::abi_change_kind kind) -> std::string_view {
+    switch (kind) {
+    case liquid::abi_change_kind::added:
+        return "added";
+    case liquid::abi_change_kind::removed:
+        return "removed";
+    case liquid::abi_change_kind::type_changed:
+        return "type_changed";
+    case liquid::abi_change_kind::size_changed:
+        return "size_changed";
+    case liquid::abi_change_kind::version_changed:
+        return "version_changed";
+    }
+    return "type_changed";
+}
+
 auto hit_rate(const liquid::wrap_report& report) -> double {
     const auto total = report.hits + report.misses;
     return total == 0 ? 0.0 : static_cast<double>(report.hits) * 100.0 / static_cast<double>(total);
@@ -109,6 +125,7 @@ void print_miss(const liquid::cache_miss& miss) {
 
 auto wrap(int argc, char** argv) -> int {
     auto options = liquid::wrap_options{};
+    auto fail_on_abi_break = false;
     auto command = std::vector<std::string>{};
     for (auto index = 0; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
@@ -122,6 +139,21 @@ auto wrap(int argc, char** argv) -> int {
         }
         if (command.empty() && argument == "--explain") {
             options.explain = true;
+            continue;
+        }
+        if (command.empty() && argument == "--fail-on-abi-break") {
+            fail_on_abi_break = true;
+            continue;
+        }
+        if (command.empty() && argument == "--install-prefix") {
+            if (++index == argc) {
+                return usage("wrap --install-prefix requires an absolute path");
+            }
+            options.install_prefix = argv[index];
+            continue;
+        }
+        if (command.empty() && argument == "--allow-embedded-prefix") {
+            options.allow_embedded_prefix = true;
             continue;
         }
         if (command.empty() && argument == "--remote") {
@@ -236,6 +268,34 @@ auto wrap(int argc, char** argv) -> int {
             options.target = value;
             continue;
         }
+        if (command.empty() && argument == "--session") {
+            if (++index == argc) {
+                return usage("wrap --session requires an id");
+            }
+            auto session = liquid::parse_session_id(argv[index]);
+            if (!session) {
+                return fail(session.error());
+            }
+            options.session = *session;
+            continue;
+        }
+        if (command.empty() && argument == "--input") {
+            if (++index == argc) {
+                return usage("wrap --input requires name=result-or-tree-digest");
+            }
+            const auto value = std::string_view{argv[index]};
+            const auto separator = value.find('=');
+            if (separator == std::string_view::npos || separator == 0 ||
+                separator + 1 == value.size()) {
+                return usage("wrap --input requires name=result-or-tree-digest");
+            }
+            auto source = liquid::parse_digest(value.substr(separator + 1));
+            if (!source) {
+                return usage("wrap --input requires name=result-or-tree-digest");
+            }
+            options.inputs.push_back({std::string{value.substr(0, separator)}, std::move(*source)});
+            continue;
+        }
         if (command.empty() && argument == "--")
             continue;
         command.emplace_back(argument);
@@ -245,17 +305,22 @@ auto wrap(int argc, char** argv) -> int {
     if (options.remote && options.remote->endpoint.empty()) {
         return usage("wrap remote options require --remote or --scheduler <endpoint>");
     }
+    if (options.allow_embedded_prefix && !options.install_prefix) {
+        return usage("wrap --allow-embedded-prefix requires --install-prefix");
+    }
     auto result = liquid::runtime::block_on(
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));
     if (!result)
         return fail(result.error());
-    std::println("actions={} hits={} misses={} processes_started={} probes_started={} outer={}",
+    std::println("actions={} hits={} misses={} processes_started={} probes_started={} outer={} "
+                 "output_tree={}",
                  result->actions,
                  result->hits,
                  result->misses,
                  result->processes_started,
                  result->probes_started,
-                 result->outer == liquid::cache_status::hit ? "hit" : "miss");
+                 result->outer == liquid::cache_status::hit ? "hit" : "miss",
+                 result->output_tree ? liquid::to_string(*result->output_tree) : "unavailable");
     std::println("disk_hit_rate={:.2f}% bytes_transferred={} bytes_avoided={} bytes_rebuilt={}",
                  hit_rate(*result),
                  result->cache.disk.bytes_transferred,
@@ -279,10 +344,12 @@ auto wrap(int argc, char** argv) -> int {
     for (const auto& action : result->critical_path) {
         critical_path_time += action.duration;
     }
-    std::println("wall_ms={} critical_path_ms={} parallelism={:.2f} queued_ms={} sandbox_ms={} "
-                 "exec_ms={} hash_ms={} store_ms={} bytes_served={} bytes_rebuilt={} trace={}",
+    std::println("wall_ms={} critical_path_ms={} peak_rss_bytes={} parallelism={:.2f} queued_ms={} "
+                 "sandbox_ms={} exec_ms={} hash_ms={} store_ms={} bytes_served={} bytes_rebuilt={} "
+                 "trace={}",
                  result->wall_time.count(),
                  critical_path_time.count(),
+                 result->peak_rss_bytes,
                  result->parallelism,
                  result->phase_totals.queued.count(),
                  result->phase_totals.sandbox.count(),
@@ -312,7 +379,24 @@ auto wrap(int argc, char** argv) -> int {
     for (const auto& warning : result->policy_warnings) {
         std::println(stderr, "warning: {}", warning);
     }
-    return result->exit;
+    for (const auto& abi_break : result->abi_breaks) {
+        auto summary = std::string{};
+        const auto count = std::min<std::size_t>(abi_break.report.changes.size(), 3);
+        for (auto index = std::size_t{}; index < count; ++index) {
+            if (!summary.empty()) {
+                summary += "; ";
+            }
+            summary += abi_break.report.changes[index].symbol + " " +
+                       std::string{change_name(abi_break.report.changes[index].kind)};
+        }
+        std::println("abi-break: {} previous={} {}",
+                     abi_break.output,
+                     liquid::to_string(abi_break.previous),
+                     summary);
+    }
+    return result->exit != 0                                  ? result->exit
+           : fail_on_abi_break && !result->abi_breaks.empty() ? 1
+                                                              : 0;
 }
 
 } // namespace liquid_cli

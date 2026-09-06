@@ -1,305 +1,386 @@
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <optional>
 #include <string>
-#include <string_view>
-#include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
-#include <nlohmann/json.hpp>
+#include <openssl/core_names.h>
+#include <openssl/ec.h>
+#include <openssl/evp.h>
+#include <openssl/rsa.h>
 
-#include "liquid/hash.hpp"
-#include "liquid/runtime.hpp"
+#include "crypto/signature.hpp"
 #include "liquid/transparency.hpp"
 
 namespace {
 
-using json = nlohmann::json;
-namespace transparency = liquid::transparency;
-
-auto failure(liquid::errc code, std::string message) -> liquid::error {
-    return {code, std::move(message), "transparency test source"};
+auto read_bytes(const std::filesystem::path& path) -> std::vector<std::byte> {
+    std::ifstream input(path, std::ios::binary);
+    input.seekg(0, std::ios::end);
+    const auto size = input.tellg();
+    input.seekg(0, std::ios::beg);
+    std::vector<std::byte> output(static_cast<std::size_t>(size));
+    input.read(reinterpret_cast<char*>(output.data()), size);
+    return output;
 }
 
-auto hex(std::string_view text) -> std::vector<std::byte> {
-    const auto nibble = [](char character) -> unsigned char {
-        if (character >= '0' && character <= '9') {
-            return static_cast<unsigned char>(character - '0');
-        }
-        return static_cast<unsigned char>(character - 'a' + 10);
+auto read_text(const std::filesystem::path& path) -> std::string {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+auto fixture(std::string_view name) -> std::filesystem::path {
+    return std::filesystem::path(LIQUID_TRANSPARENCY_FIXTURES) / name;
+}
+
+auto fixture_trust() -> liquid::x509::trust_anchor_set {
+    liquid::x509::trust_anchor_set trust;
+    const auto added = trust.add_pem(read_text(fixture("tsa-root.pem")));
+    EXPECT_TRUE(added) << added.error().message;
+    return trust;
+}
+
+auto hex(std::span<const std::byte> input) -> std::string {
+    constexpr std::string_view alphabet = "0123456789abcdef";
+    std::string output;
+    output.reserve(input.size() * 2);
+    for (const std::byte value : input) {
+        const auto byte = std::to_integer<unsigned int>(value);
+        output.push_back(alphabet[byte >> 4]);
+        output.push_back(alphabet[byte & 0x0f]);
+    }
+    return output;
+}
+
+template <class T, auto Free> struct openssl_deleter {
+    auto operator()(T* value) const -> void {
+        Free(value);
+    }
+};
+
+using openssl_key = std::unique_ptr<EVP_PKEY, openssl_deleter<EVP_PKEY, EVP_PKEY_free>>;
+using openssl_key_context =
+    std::unique_ptr<EVP_PKEY_CTX, openssl_deleter<EVP_PKEY_CTX, EVP_PKEY_CTX_free>>;
+using openssl_digest_context =
+    std::unique_ptr<EVP_MD_CTX, openssl_deleter<EVP_MD_CTX, EVP_MD_CTX_free>>;
+using openssl_number = std::unique_ptr<BIGNUM, openssl_deleter<BIGNUM, BN_free>>;
+
+auto generate_key(int identifier, int curve = 0) -> openssl_key {
+    auto context = openssl_key_context{EVP_PKEY_CTX_new_id(identifier, nullptr)};
+    EVP_PKEY* output = nullptr;
+    if (!context || EVP_PKEY_keygen_init(context.get()) != 1) {
+        return {};
+    }
+    if (identifier == EVP_PKEY_RSA && EVP_PKEY_CTX_set_rsa_keygen_bits(context.get(), 2048) != 1) {
+        return {};
+    }
+    if (identifier == EVP_PKEY_EC &&
+        EVP_PKEY_CTX_set_ec_paramgen_curve_nid(context.get(), curve) != 1) {
+        return {};
+    }
+    if (EVP_PKEY_keygen(context.get(), &output) != 1) {
+        return {};
+    }
+    return openssl_key{output};
+}
+
+auto number_bytes(const BIGNUM* value) -> std::vector<std::byte> {
+    std::vector<std::byte> output(static_cast<std::size_t>(BN_num_bytes(value)));
+    BN_bn2bin(value, reinterpret_cast<unsigned char*>(output.data()));
+    return output;
+}
+
+auto rsa_public_key(EVP_PKEY* value) -> std::optional<liquid::crypto::public_key> {
+    BIGNUM* modulus_value = nullptr;
+    BIGNUM* exponent_value = nullptr;
+    if (EVP_PKEY_get_bn_param(value, OSSL_PKEY_PARAM_RSA_N, &modulus_value) != 1 ||
+        EVP_PKEY_get_bn_param(value, OSSL_PKEY_PARAM_RSA_E, &exponent_value) != 1) {
+        BN_free(modulus_value);
+        BN_free(exponent_value);
+        return std::nullopt;
+    }
+    auto modulus = openssl_number{modulus_value};
+    auto exponent = openssl_number{exponent_value};
+    return liquid::crypto::public_key{
+        .kind = liquid::crypto::signature_kind::rsa_pkcs1,
+        .first = number_bytes(modulus.get()),
+        .second = number_bytes(exponent.get()),
     };
-    auto output = std::vector<std::byte>{};
-    output.reserve(text.size() / 2);
-    for (auto index = std::size_t{}; index < text.size(); index += 2) {
-        output.push_back(std::byte{
-            static_cast<unsigned char>((nibble(text[index]) << 4U) | nibble(text[index + 1]))});
+}
+
+auto ec_public_key(EVP_PKEY* value, liquid::crypto::curve_kind curve, std::size_t coordinate_size)
+    -> std::optional<liquid::crypto::public_key> {
+    std::size_t size = 0;
+    if (EVP_PKEY_get_octet_string_param(value, OSSL_PKEY_PARAM_PUB_KEY, nullptr, 0, &size) != 1) {
+        return std::nullopt;
     }
+    std::vector<std::byte> encoded(size);
+    if (EVP_PKEY_get_octet_string_param(value,
+                                        OSSL_PKEY_PARAM_PUB_KEY,
+                                        reinterpret_cast<unsigned char*>(encoded.data()),
+                                        encoded.size(),
+                                        &size) != 1 ||
+        size != 1 + coordinate_size * 2 || encoded.front() != std::byte{4}) {
+        return std::nullopt;
+    }
+    return liquid::crypto::public_key{
+        .kind = liquid::crypto::signature_kind::ecdsa,
+        .curve = curve,
+        .first = {encoded.begin() + 1,
+                  encoded.begin() + static_cast<std::ptrdiff_t>(1 + coordinate_size)},
+        .second = {encoded.begin() + static_cast<std::ptrdiff_t>(1 + coordinate_size),
+                   encoded.end()},
+    };
+}
+
+auto sign(EVP_PKEY* key, const EVP_MD* digest, std::span<const std::byte> message, bool pss = false)
+    -> std::vector<std::byte> {
+    auto context = openssl_digest_context{EVP_MD_CTX_new()};
+    EVP_PKEY_CTX* key_context = nullptr;
+    if (!context || EVP_DigestSignInit(context.get(), &key_context, digest, nullptr, key) != 1) {
+        return {};
+    }
+    if (pss && (EVP_PKEY_CTX_set_rsa_padding(key_context, RSA_PKCS1_PSS_PADDING) != 1 ||
+                EVP_PKEY_CTX_set_rsa_mgf1_md(key_context, digest) != 1 ||
+                EVP_PKEY_CTX_set_rsa_pss_saltlen(key_context, EVP_MD_get_size(digest)) != 1)) {
+        return {};
+    }
+    std::size_t size = 0;
+    if (EVP_DigestSign(context.get(),
+                       nullptr,
+                       &size,
+                       reinterpret_cast<const unsigned char*>(message.data()),
+                       message.size()) != 1) {
+        return {};
+    }
+    std::vector<std::byte> output(size);
+    if (EVP_DigestSign(context.get(),
+                       reinterpret_cast<unsigned char*>(output.data()),
+                       &size,
+                       reinterpret_cast<const unsigned char*>(message.data()),
+                       message.size()) != 1) {
+        return {};
+    }
+    output.resize(size);
     return output;
-}
-
-auto hash(std::string_view text) -> transparency::hash {
-    auto decoded = hex(text);
-    auto output = transparency::hash{};
-    std::ranges::copy(decoded, output.begin());
-    return output;
-}
-
-auto base64url(std::string value) -> std::vector<std::byte> {
-    for (auto& character : value) {
-        if (character == '-') {
-            character = '+';
-        } else if (character == '_') {
-            character = '/';
-        }
-    }
-    constexpr std::string_view alphabet =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    auto output = std::vector<std::byte>{};
-    auto accumulator = std::uint32_t{};
-    auto bits = 0U;
-    for (const auto character : value) {
-        const auto position = alphabet.find(character);
-        accumulator = (accumulator << 6U) | static_cast<std::uint32_t>(position);
-        bits += 6;
-        if (bits < 8) {
-            continue;
-        }
-        bits -= 8;
-        output.push_back(std::byte{static_cast<unsigned char>((accumulator >> bits) & 0xffU)});
-    }
-    return output;
-}
-
-auto digest(std::span<const std::byte> bytes) -> transparency::hash {
-    auto calculated = liquid::hash(liquid::algorithm::sha256, bytes);
-    EXPECT_TRUE(calculated.has_value());
-    return calculated->bytes;
-}
-
-auto entry_tile(std::span<const std::vector<std::byte>> entries) -> std::vector<std::byte> {
-    constexpr std::string_view header = "LAKE-TILE-1\n";
-    auto output = std::vector<std::byte>{};
-    output.insert(output.end(),
-                  reinterpret_cast<const std::byte*>(header.data()),
-                  reinterpret_cast<const std::byte*>(header.data() + header.size()));
-    for (const auto& entry : entries) {
-        const auto length = static_cast<std::uint32_t>(entry.size());
-        output.push_back(std::byte{static_cast<unsigned char>(length >> 24U)});
-        output.push_back(std::byte{static_cast<unsigned char>(length >> 16U)});
-        output.push_back(std::byte{static_cast<unsigned char>(length >> 8U)});
-        output.push_back(std::byte{static_cast<unsigned char>(length)});
-        output.insert(output.end(), entry.begin(), entry.end());
-    }
-    return output;
-}
-
-struct fixture {
-    transparency::checkpoint checkpoint;
-    liquid::actor identity;
-    transparency::log_configuration configuration;
-    std::vector<transparency::tile> tiles;
-    std::vector<std::vector<std::byte>> entries;
-    std::vector<transparency::inclusion_proof> inclusion;
-    transparency::consistency_proof consistency;
-    transparency::checkpoint old_checkpoint;
-};
-
-auto load_fixture() -> fixture {
-    auto stream = std::ifstream{LIQUID_TRANSPARENCY_FIXTURE};
-    auto source = json{};
-    stream >> source;
-    const auto& record = source.at("checkpoint");
-    const auto& body = record.at("checkpoint");
-    auto checkpoint = transparency::checkpoint{};
-    checkpoint.sequence = record.at("sequence").get<std::uint64_t>();
-    checkpoint.tree_size = body.at("tree_size").get<std::uint64_t>();
-    checkpoint.entry_tile_width = body.at("tile_width").get<std::uint64_t>();
-    checkpoint.hash_tile_width = body.at("hash_tile_width").get<std::uint64_t>();
-    checkpoint.root_hash = hash(body.at("root_hash").get<std::string>());
-    checkpoint.checkpoint_hash = hash(record.at("checkpoint_hash_sha256").get<std::string>());
-    checkpoint.signature.signer = record.at("signature").at("signer").get<std::string>();
-    checkpoint.signature.bytes =
-        base64url(record.at("signature").at("signature").get<std::string>());
-    const auto dumped = body.dump();
-    checkpoint.canonical_body.assign(
-        reinterpret_cast<const std::byte*>(dumped.data()),
-        reinterpret_cast<const std::byte*>(dumped.data() + dumped.size()));
-    auto configuration = transparency::log_configuration{};
-    configuration.witness_threshold = 2;
-    for (const auto& item : record.at("witness_signatures")) {
-        auto public_key = hash(item.at("public_key").get<std::string>());
-        checkpoint.witness_signatures.push_back({item.at("endpoint").get<std::string>(),
-                                                 public_key,
-                                                 hex(item.at("signature").get<std::string>())});
-        configuration.witnesses.push_back({item.at("endpoint").get<std::string>(), public_key});
-    }
-    const auto key = base64url(source.at("lake_identity").at("public_key").get<std::string>());
-    auto identity = liquid::actor{
-        source.at("lake_identity").at("taap_id").get<std::string>(), "ed25519", {}, key, {}};
-    auto tiles = std::vector<transparency::tile>{};
-    for (const auto& item : source.at("tiles")) {
-        auto tile = transparency::tile{};
-        tile.level = item.at("level").get<std::uint32_t>();
-        tile.index = item.at("index").get<std::uint64_t>();
-        tile.width = item.contains("entries") ? item.at("entries").get<std::uint64_t>()
-                                              : item.at("hashes").get<std::uint64_t>();
-        tile.sha256 = hash(item.at("sha256").get<std::string>());
-        tile.bytes = base64url(item.at("tile").get<std::string>());
-        tiles.push_back(std::move(tile));
-    }
-    auto entries = std::vector<std::vector<std::byte>>{};
-    for (const auto& item : source.at("entries")) {
-        entries.push_back(base64url(item.get<std::string>()));
-    }
-    auto inclusion = std::vector<transparency::inclusion_proof>{};
-    for (const auto& item : source.at("proofs").at("inclusion")) {
-        auto proof = transparency::inclusion_proof{};
-        proof.leaf_index = item.at("leaf_index").get<std::uint64_t>();
-        proof.tree_size = item.at("tree_size").get<std::uint64_t>();
-        proof.root_hash = hash(item.at("root_hash").get<std::string>());
-        proof.bound_checkpoint = checkpoint;
-        for (const auto& item_hash : item.at("audit_path")) {
-            proof.audit_path.push_back(hash(item_hash.get<std::string>()));
-        }
-        inclusion.push_back(std::move(proof));
-    }
-    const auto& consistency_json = source.at("proofs").at("consistency");
-    auto consistency = transparency::consistency_proof{};
-    consistency.old_tree_size = consistency_json.at("old_tree_size").get<std::uint64_t>();
-    consistency.new_tree_size = consistency_json.at("new_tree_size").get<std::uint64_t>();
-    consistency.old_root_hash = hash(consistency_json.at("old_root_hash").get<std::string>());
-    consistency.new_root_hash = hash(consistency_json.at("new_root_hash").get<std::string>());
-    consistency.bound_checkpoint = checkpoint;
-    for (const auto& item_hash : consistency_json.at("audit_path")) {
-        consistency.audit_path.push_back(hash(item_hash.get<std::string>()));
-    }
-    auto old_checkpoint = transparency::checkpoint{};
-    old_checkpoint.tree_size = consistency.old_tree_size;
-    old_checkpoint.root_hash = consistency.old_root_hash;
-    return {std::move(checkpoint),
-            std::move(identity),
-            std::move(configuration),
-            std::move(tiles),
-            std::move(entries),
-            std::move(inclusion),
-            std::move(consistency),
-            std::move(old_checkpoint)};
-}
-
-class fixture_source final : public transparency::log_source {
-public:
-    explicit fixture_source(fixture data) : data_(std::move(data)) {}
-
-    [[nodiscard]] std::string name() const override {
-        return "fixture log";
-    }
-
-    [[nodiscard]] liquid::runtime::task<liquid::actor> identity() override {
-        co_return data_.identity;
-    }
-
-    [[nodiscard]] liquid::runtime::task<transparency::log_configuration> configuration() override {
-        co_return data_.configuration;
-    }
-
-    [[nodiscard]] liquid::runtime::task<transparency::checkpoint> current_checkpoint() override {
-        co_return data_.checkpoint;
-    }
-
-    [[nodiscard]] liquid::runtime::task<transparency::tile>
-    get_tile(std::uint32_t level, std::uint64_t index, std::uint64_t width) override {
-        if (missing_tile) {
-            co_return std::unexpected(
-                failure(liquid::errc::not_found, "requested tile is missing"));
-        }
-        const auto found = std::ranges::find_if(data_.tiles, [=](const auto& tile) {
-            return tile.level == level && tile.index == index && tile.width == width;
-        });
-        if (found == data_.tiles.end()) {
-            co_return std::unexpected(
-                failure(liquid::errc::not_found, "requested tile is missing"));
-        }
-        co_return *found;
-    }
-
-    [[nodiscard]] liquid::runtime::task<transparency::inclusion_proof>
-    get_inclusion_proof(std::uint64_t, std::uint64_t) override {
-        co_return std::unexpected(
-            failure(liquid::errc::not_found, "inclusion proof is not configured"));
-    }
-
-    [[nodiscard]] liquid::runtime::task<transparency::consistency_proof>
-    get_consistency_proof(std::uint64_t, std::uint64_t) override {
-        co_return std::unexpected(
-            failure(liquid::errc::not_found, "consistency proof is not configured"));
-    }
-
-    fixture data_;
-    bool missing_tile{};
-};
-
-TEST(transparency, verifies_lake_conformance_fixture) {
-    auto data = load_fixture();
-    ASSERT_TRUE(data.checkpoint.verify({data.identity, data.configuration}));
-    for (auto index = std::size_t{}; index < data.entries.size(); ++index) {
-        EXPECT_TRUE(data.inclusion[index].verify(data.entries[index], data.checkpoint));
-    }
-    EXPECT_TRUE(data.consistency.verify(data.old_checkpoint, data.checkpoint));
-    auto source = fixture_source{std::move(data)};
-    auto client = transparency::log_client{source};
-    EXPECT_TRUE(liquid::runtime::block_on(client.verify_tiles(source.data_.checkpoint)));
-}
-
-TEST(transparency, refuses_modified_missing_reordered_and_substituted_tiles) {
-    auto data = load_fixture();
-    auto modified = fixture_source{data};
-    modified.data_.tiles[0].bytes[16] ^= std::byte{1};
-    EXPECT_FALSE(modified.data_.tiles[0].entries());
-
-    auto missing = fixture_source{data};
-    missing.missing_tile = true;
-    auto missing_client = transparency::log_client{missing};
-    EXPECT_FALSE(liquid::runtime::block_on(missing_client.verify_tiles(missing.data_.checkpoint)));
-
-    auto reordered = fixture_source{data};
-    std::swap(reordered.data_.entries[0], reordered.data_.entries[1]);
-    reordered.data_.tiles[0].bytes = entry_tile(reordered.data_.entries);
-    reordered.data_.tiles[0].sha256 = digest(reordered.data_.tiles[0].bytes);
-    auto reordered_client = transparency::log_client{reordered};
-    EXPECT_FALSE(
-        liquid::runtime::block_on(reordered_client.verify_tiles(reordered.data_.checkpoint)));
-
-    auto substituted = fixture_source{std::move(data)};
-    substituted.data_.tiles[0].bytes[16] ^= std::byte{1};
-    substituted.data_.tiles[0].sha256 = digest(substituted.data_.tiles[0].bytes);
-    auto substituted_client = transparency::log_client{substituted};
-    EXPECT_FALSE(
-        liquid::runtime::block_on(substituted_client.verify_tiles(substituted.data_.checkpoint)));
-}
-
-TEST(transparency, cve_2026_56865_refuses_a_valid_leaf_tile_with_wrong_parent) {
-    auto data = load_fixture();
-    auto parent = fixture_source{data};
-    parent.data_.tiles[1].bytes[17] ^= std::byte{1};
-    parent.data_.tiles[1].sha256 = digest(parent.data_.tiles[1].bytes);
-    auto parent_client = transparency::log_client{parent};
-    EXPECT_FALSE(liquid::runtime::block_on(parent_client.verify_tiles(parent.data_.checkpoint)));
-
-    data.inclusion[0].audit_path[0][0] ^= std::byte{1};
-    EXPECT_FALSE(data.inclusion[0].verify(data.entries[0], data.checkpoint));
-    data.consistency.audit_path[0][0] ^= std::byte{1};
-    EXPECT_FALSE(data.consistency.verify(data.old_checkpoint, data.checkpoint));
-}
-
-TEST(transparency, requires_distinct_configured_witnesses) {
-    auto data = load_fixture();
-    data.configuration.witness_threshold = 3;
-    auto verified = data.checkpoint.verify({data.identity, data.configuration});
-    ASSERT_FALSE(verified);
-    EXPECT_EQ(verified.error().message, "checkpoint witness threshold not met");
 }
 
 } // namespace
+
+TEST(TransparencyTimestamp, VerifiesLakeInitialEvidence) {
+    const auto record = read_bytes(fixture("lake-initial.ers"));
+    const auto checkpoint_signature = read_bytes(fixture("checkpoint-signature.bin"));
+    auto trust = fixture_trust();
+    const auto verified =
+        liquid::transparency::evidence_record::verify(record, checkpoint_signature, trust);
+    ASSERT_TRUE(verified) << verified.error().message;
+    EXPECT_EQ(verified->digest_algorithm, "sha256");
+    ASSERT_EQ(verified->archive_timestamps.size(), 1U);
+    const auto& timestamp = verified->archive_timestamps.front().timestamp;
+    EXPECT_EQ(timestamp.policy, "1.3.6.1.4.1.57264.1");
+    EXPECT_EQ(timestamp.digest_algorithm, "sha256");
+    EXPECT_EQ(timestamp.signature_algorithm, "ecdsa");
+    EXPECT_FALSE(timestamp.nonce.empty());
+    ASSERT_EQ(timestamp.certificate_path.size(), 2U);
+    EXPECT_TRUE(timestamp.signer.digital_signature);
+    EXPECT_TRUE(timestamp.signer.timestamp_signing);
+}
+
+TEST(TransparencyTimestamp, VerifiesLakeRenewalAndPreservesPredecessor) {
+    const auto initial = read_bytes(fixture("lake-initial.ers"));
+    const auto renewed = read_bytes(fixture("lake-renewed.ers"));
+    const auto checkpoint_signature = read_bytes(fixture("checkpoint-signature.bin"));
+    auto trust = fixture_trust();
+    const auto initial_verified =
+        liquid::transparency::evidence_record::verify(initial, checkpoint_signature, trust);
+    const auto renewed_verified =
+        liquid::transparency::evidence_record::verify(renewed, checkpoint_signature, trust);
+    ASSERT_TRUE(initial_verified) << initial_verified.error().message;
+    ASSERT_TRUE(renewed_verified) << renewed_verified.error().message;
+    ASSERT_EQ(renewed_verified->archive_timestamps.size(), 2U);
+    EXPECT_EQ(renewed_verified->archive_timestamps.front().encoded,
+              initial_verified->archive_timestamps.front().encoded);
+    EXPECT_LE(renewed_verified->archive_timestamps.front().timestamp.generated_at,
+              renewed_verified->archive_timestamps.back().timestamp.generated_at);
+}
+
+TEST(TransparencyTimestamp, RejectsUntrustedChangedAndBrokenEvidence) {
+    const auto checkpoint_signature = read_bytes(fixture("checkpoint-signature.bin"));
+    const auto initial = read_bytes(fixture("lake-initial.ers"));
+    const auto renewed = read_bytes(fixture("lake-renewed.ers"));
+
+    liquid::x509::trust_anchor_set no_trust;
+    const auto untrusted =
+        liquid::transparency::evidence_record::verify(initial, checkpoint_signature, no_trust);
+    ASSERT_FALSE(untrusted);
+    EXPECT_EQ(untrusted.error().code, liquid::errc::unauthorized);
+    EXPECT_NE(untrusted.error().message.find("untrusted TSA"), std::string::npos);
+
+    auto trust = fixture_trust();
+    auto changed = initial;
+    changed.back() ^= std::byte{1};
+    const auto changed_result =
+        liquid::transparency::evidence_record::verify(changed, checkpoint_signature, trust);
+    ASSERT_FALSE(changed_result);
+    EXPECT_NE(changed_result.error().message.find("initial timestamp token"), std::string::npos);
+
+    auto broken = renewed;
+    broken.back() ^= std::byte{1};
+    const auto broken_result =
+        liquid::transparency::evidence_record::verify(broken, checkpoint_signature, trust);
+    ASSERT_FALSE(broken_result);
+    EXPECT_NE(broken_result.error().message.find("broken predecessor link"), std::string::npos);
+}
+
+TEST(TransparencyTimestamp, RejectsWrongImprintAndNamesUnsupportedDigest) {
+    const auto record = read_bytes(fixture("lake-initial.ers"));
+    const auto checkpoint_signature = read_bytes(fixture("checkpoint-signature.bin"));
+    auto trust = fixture_trust();
+
+    auto wrong_signature = checkpoint_signature;
+    wrong_signature.front() ^= std::byte{1};
+    const auto wrong_imprint =
+        liquid::transparency::evidence_record::verify(record, wrong_signature, trust);
+    ASSERT_FALSE(wrong_imprint);
+    EXPECT_NE(wrong_imprint.error().message.find("message imprint"), std::string::npos);
+
+    auto unsupported_record = record;
+    const std::vector<std::byte> sha256_oid{
+        std::byte{0x60},
+        std::byte{0x86},
+        std::byte{0x48},
+        std::byte{0x01},
+        std::byte{0x65},
+        std::byte{0x03},
+        std::byte{0x04},
+        std::byte{0x02},
+        std::byte{0x01},
+    };
+    const auto occurrence = std::search(
+        unsupported_record.begin(), unsupported_record.end(), sha256_oid.begin(), sha256_oid.end());
+    ASSERT_NE(occurrence, unsupported_record.end());
+    *(occurrence + 8) = std::byte{0x02};
+    const auto unsupported = liquid::transparency::evidence_record::verify(
+        unsupported_record, checkpoint_signature, trust);
+    ASSERT_FALSE(unsupported);
+    EXPECT_EQ(unsupported.error().code, liquid::errc::unsupported);
+    EXPECT_NE(unsupported.error().message.find("2.16.840.1.101.3.4.2.2"), std::string::npos);
+    EXPECT_NE(unsupported.error().message.find("SHA-256 required"), std::string::npos);
+}
+
+TEST(TransparencyTimestamp, RejectsCertificateWithoutTimestampPurpose) {
+    auto record = read_bytes(fixture("lake-initial.ers"));
+    const auto checkpoint_signature = read_bytes(fixture("checkpoint-signature.bin"));
+    auto trust = fixture_trust();
+    const std::vector<std::byte> timestamp_eku{
+        std::byte{0x2b},
+        std::byte{0x06},
+        std::byte{0x01},
+        std::byte{0x05},
+        std::byte{0x05},
+        std::byte{0x07},
+        std::byte{0x03},
+        std::byte{0x08},
+    };
+    const auto occurrence =
+        std::search(record.begin(), record.end(), timestamp_eku.begin(), timestamp_eku.end());
+    ASSERT_NE(occurrence, record.end());
+    *(occurrence + 7) = std::byte{0x09};
+    const auto rejected =
+        liquid::transparency::evidence_record::verify(record, checkpoint_signature, trust);
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error().code, liquid::errc::unauthorized);
+    EXPECT_NE(rejected.error().message.find("id-kp-timeStamping"), std::string::npos);
+}
+
+TEST(TransparencySignature, Sha384MatchesStandardVector) {
+    constexpr std::string_view input = "abc";
+    const auto encoded = std::as_bytes(std::span(input));
+    const auto digest = liquid::crypto::digest(liquid::crypto::digest_kind::sha384, encoded);
+    ASSERT_TRUE(digest) << digest.error().message;
+    EXPECT_EQ(hex(*digest),
+              "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed"
+              "8086072ba1e7cc2358baeca134c825a7");
+}
+
+TEST(TransparencySignature, VerifiesRsaPkcs1AndPss) {
+    const auto key = generate_key(EVP_PKEY_RSA);
+    ASSERT_TRUE(key);
+    const auto public_key = rsa_public_key(key.get());
+    ASSERT_TRUE(public_key);
+    constexpr std::string_view input = "liquid timestamp signature interoperability";
+    const auto message = std::as_bytes(std::span(input));
+
+    const auto pkcs1_signature = sign(key.get(), EVP_sha256(), message);
+    ASSERT_FALSE(pkcs1_signature.empty());
+    const auto pkcs1 =
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::rsa_pkcs1,
+                                             .digest = liquid::crypto::digest_kind::sha256,
+                                         },
+                                         message,
+                                         pkcs1_signature);
+    EXPECT_TRUE(pkcs1) << pkcs1.error().message;
+
+    const auto pss_signature = sign(key.get(), EVP_sha384(), message, true);
+    ASSERT_FALSE(pss_signature.empty());
+    const auto pss =
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::rsa_pss,
+                                             .digest = liquid::crypto::digest_kind::sha384,
+                                             .pss_salt_length = 48,
+                                         },
+                                         message,
+                                         pss_signature);
+    EXPECT_TRUE(pss) << pss.error().message;
+
+    auto changed = pss_signature;
+    changed.back() ^= std::byte{1};
+    EXPECT_FALSE(
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::rsa_pss,
+                                             .digest = liquid::crypto::digest_kind::sha384,
+                                             .pss_salt_length = 48,
+                                         },
+                                         message,
+                                         changed));
+}
+
+TEST(TransparencySignature, VerifiesP384Sha384) {
+    const auto key = generate_key(EVP_PKEY_EC, NID_secp384r1);
+    ASSERT_TRUE(key);
+    const auto public_key = ec_public_key(key.get(), liquid::crypto::curve_kind::p384, 48);
+    ASSERT_TRUE(public_key);
+    constexpr std::string_view input = "liquid P-384 timestamp signature interoperability";
+    const auto message = std::as_bytes(std::span(input));
+    const auto signature = sign(key.get(), EVP_sha384(), message);
+    ASSERT_FALSE(signature.empty());
+    const auto verified =
+        liquid::crypto::verify_signature(*public_key,
+                                         liquid::crypto::signature_parameters{
+                                             .kind = liquid::crypto::signature_kind::ecdsa,
+                                             .digest = liquid::crypto::digest_kind::sha384,
+                                         },
+                                         message,
+                                         signature);
+    EXPECT_TRUE(verified) << verified.error().message;
+
+    auto changed = signature;
+    changed.back() ^= std::byte{1};
+    EXPECT_FALSE(liquid::crypto::verify_signature(*public_key,
+                                                  liquid::crypto::signature_parameters{
+                                                      .kind = liquid::crypto::signature_kind::ecdsa,
+                                                      .digest = liquid::crypto::digest_kind::sha384,
+                                                  },
+                                                  message,
+                                                  changed));
+}

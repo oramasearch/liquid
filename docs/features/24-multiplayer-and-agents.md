@@ -102,14 +102,19 @@ Supporting controls, all of which liquid needs:
 | Control | Behaviour |
 |---|---|
 | **Batch and coalesce** | Group adjacent inserts and deletes into transactions; merge updates before publication. |
-| **Flow control** | Bound unacknowledged operations per peer; pause generation when persistence or rendering lag crosses a watermark. |
-| **Rate limits** | Token buckets per agent, per document, per tenant, plus maximum update size. **Must pause or reject explicitly** — silently dropping CRDT operations breaks causal dependencies. |
+| **Flow control — implemented by #85** | Bound unacknowledged operations per peer; pause generation when persistence or rendering lag crosses a watermark. |
+| **Rate limits — implemented by #85** | Token buckets per agent, per document, per tenant, plus maximum update size. **Must pause or reject explicitly** — silently dropping CRDT operations breaks causal dependencies. |
 | **Agent-aware rendering** | Throttle highlighting, diagnostics and tests independently from ingestion. Show *"agent changing lines 80–140"*, not an animation of 10,000 keystrokes. |
 
 **Avoid whole-file rewrites.** Replacing an entire file creates enormous churn and
 tombstones compared with a range- or AST-level edit, and destroys authorship
 granularity. liquid's structural layer ([03](03-diff-and-merge.md)) should let agents
 express edits at the node level.
+
+The implemented controls persist bucket and watermark configuration in the repository document,
+reject before opening a CRDT transaction, apply the same author buckets to pushed metadata, and
+publish persistence/consumer lag plus rejection counters in daemon status. liquify can register
+its render backlog through the task-returning consumer-lag hook.
 
 ### 2. Attribution, recorded not inferred
 
@@ -249,6 +254,7 @@ actors and attestations were already required for other reasons.
   above reduces how much it matters.
 - **Presence at scale** — dozens of agents in one workspace is a UI problem nobody has
   solved.
-- **Data isolation for agents.** Git worktrees do not isolate a database; liquid should
-  extend isolation to data namespaces, in the manner of copy-on-write database
-  branching. Currently unspecified.
+- **Data isolation beyond PostgreSQL.** Git worktrees do not isolate a database. The PostgreSQL
+  session-branch lifecycle and its template-copy baseline plus local reflink fast path are specified
+  in [data branching](../library/data-branching.md); other database engines and external services
+  remain open.

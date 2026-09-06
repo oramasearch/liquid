@@ -24,11 +24,11 @@ namespace {
 
 class temporary_repository {
 public:
-    temporary_repository()
+    explicit temporary_repository(liquid::repository_options options = {})
         : path_(liquid::test::fixture_path("liquid-daemon-test-" +
                                            std::to_string(next_.fetch_add(1)))) {
         std::filesystem::remove_all(path_);
-        auto created = liquid::runtime::block_on(liquid::repository::create(path_));
+        auto created = liquid::runtime::block_on(liquid::repository::create(path_, options));
         if (!created) {
             throw std::runtime_error(created.error().message);
         }
@@ -93,6 +93,30 @@ private:
     std::vector<std::string>& order_;
     mutable std::mutex mutex_;
     std::uint64_t deliveries_{};
+};
+
+class stalled_target final : public liquid::daemon_target {
+public:
+    auto name() const -> std::string override {
+        return "stalled";
+    }
+
+    liquid::runtime::task<void> deliver(liquid::daemon_delivery) override {
+        if (stalled_.load(std::memory_order_acquire)) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::busy, "consumer is stalled", "daemon flow test"});
+        }
+        ++deliveries_;
+        co_return {};
+    }
+
+    auto release() -> void {
+        stalled_.store(false, std::memory_order_release);
+    }
+
+private:
+    std::atomic_bool stalled_{true};
+    std::atomic_uint64_t deliveries_{};
 };
 
 auto options(std::chrono::milliseconds idle = std::chrono::seconds{5}) -> liquid::daemon_options {
@@ -207,6 +231,108 @@ TEST(Daemon, drip_invalidates_only_changed_paths_and_advances_targets) {
     EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
 }
 
+TEST(Daemon, consumer_lag_crosses_high_watermark_and_resumes_below_low_watermark) {
+    auto repository_options = liquid::repository_options{};
+    repository_options.flow.pause_above = 2;
+    repository_options.flow.resume_below = 1;
+    temporary_repository location{repository_options};
+    auto started = liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+
+    ASSERT_TRUE(liquid::runtime::block_on(started->report_consumer_lag("render", 3)));
+    auto paused = liquid::runtime::block_on(started->status());
+    ASSERT_TRUE(paused);
+    EXPECT_TRUE(paused->flow.paused);
+    EXPECT_EQ(paused->flow.reason, liquid::flow_pause_reason::consumers);
+    EXPECT_EQ(paused->flow.consumer_lag, 3U);
+    auto writer = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(writer);
+    auto refused = liquid::runtime::block_on(writer->write("paused.txt", bytes("paused")));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::busy);
+    EXPECT_NE(refused.error().context.find("paused_for=consumers"), std::string::npos);
+
+    ASSERT_TRUE(liquid::runtime::block_on(started->report_consumer_lag("render", 2)));
+    auto between = liquid::runtime::block_on(started->status());
+    ASSERT_TRUE(between);
+    EXPECT_TRUE(between->flow.paused);
+    ASSERT_FALSE(between->flow.buckets.empty());
+    EXPECT_EQ(between->flow.buckets.back().rejected, 1U);
+
+    ASSERT_TRUE(liquid::runtime::block_on(started->report_consumer_lag("render", 1)));
+    auto resumed = liquid::runtime::block_on(started->status());
+    ASSERT_TRUE(resumed);
+    EXPECT_FALSE(resumed->flow.paused);
+    EXPECT_EQ(resumed->flow.reason, liquid::flow_pause_reason::none);
+    ASSERT_FALSE(resumed->flow.buckets.empty());
+    EXPECT_EQ(resumed->flow.buckets.back().scope, liquid::flow_scope::repository);
+    EXPECT_TRUE(liquid::runtime::block_on(writer->write("resumed.txt", bytes("resumed"))));
+
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+}
+
+TEST(Daemon, stalled_target_pauses_above_high_watermark_and_resumes_after_delivery) {
+    auto repository_options = liquid::repository_options{};
+    repository_options.flow.pause_above = 1;
+    repository_options.flow.resume_below = 0;
+    temporary_repository location{repository_options};
+    auto stalled = std::make_shared<stalled_target>();
+    auto daemon_options = options();
+    daemon_options.targets.push_back(stalled);
+    auto started =
+        liquid::runtime::block_on(liquid::daemon::start(location.path(), daemon_options));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+
+    {
+        auto first = std::ofstream{location.path() / "first.txt"};
+        first << "first\n";
+    }
+    ASSERT_TRUE(liquid::runtime::block_on(
+        [](std::chrono::milliseconds duration) -> liquid::runtime::task<void> {
+            auto [delay_error] = co_await liquid::runtime::delay(duration);
+            if (delay_error) {
+                co_return std::unexpected(liquid::error{
+                    liquid::errc::internal, delay_error.message(), "daemon flow test"});
+            }
+            co_return {};
+        }(std::chrono::milliseconds{20})));
+    {
+        auto second = std::ofstream{location.path() / "second.txt"};
+        second << "second\n";
+    }
+
+    auto paused = liquid::result<liquid::daemon_status>{};
+    for (auto attempt = 0; attempt != 500; ++attempt) {
+        paused = liquid::runtime::block_on(started->status());
+        ASSERT_TRUE(paused);
+        if (paused->flow.reason == liquid::flow_pause_reason::consumers &&
+            paused->flow.consumer_lag > repository_options.flow.pause_above) {
+            break;
+        }
+        ASSERT_TRUE(liquid::runtime::block_on(
+            [](std::chrono::milliseconds duration) -> liquid::runtime::task<void> {
+                auto [delay_error] = co_await liquid::runtime::delay(duration);
+                if (delay_error) {
+                    co_return std::unexpected(liquid::error{
+                        liquid::errc::internal, delay_error.message(), "daemon flow test"});
+                }
+                co_return {};
+            }(std::chrono::milliseconds{10})));
+    }
+    ASSERT_TRUE(paused->flow.paused);
+    EXPECT_EQ(paused->flow.reason, liquid::flow_pause_reason::consumers);
+    EXPECT_EQ(paused->flow.consumer_lag, 2U);
+
+    stalled->release();
+    auto delivered = wait_for_delivery(*started, 0);
+    ASSERT_TRUE(delivered) << (delivered ? "" : delivered.error().message);
+    EXPECT_FALSE(delivered->flow.paused);
+    EXPECT_EQ(delivered->flow.consumer_lag, 0U);
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+}
+
 TEST(Daemon, idle_capacity_validates_and_reports_graph_divergence) {
     temporary_repository location;
     const auto graph_directory = location.path() / ".liquid" / "daemon" / "query-graph";
@@ -249,8 +375,16 @@ TEST(Daemon, idle_capacity_validates_and_reports_graph_divergence) {
 TEST(Daemon, command_starts_on_first_use_and_attaches_to_same_process) {
     temporary_repository location;
     const auto output = location.path() / "status.json";
-    const auto command = std::string{"cd \""} + location.path().string() + "\" && \"" + LIQUID_CLI +
-                         "\" status --json > \"" + output.string() + "\"";
+    auto child_environment = std::string{};
+    const auto temporary_root = std::filesystem::temp_directory_path();
+    if (temporary_root.is_relative()) {
+        const auto absolute_root = std::filesystem::absolute(temporary_root);
+        const auto relative_root = std::filesystem::relative(absolute_root, location.path());
+        child_environment = "TMPDIR=\"" + relative_root.string() + "\" ";
+    }
+    const auto command = std::string{"cd \""} + location.path().string() + "\" && " +
+                         child_environment + "\"" + LIQUID_CLI + "\" status --json > \"" +
+                         output.string() + "\"";
     ASSERT_EQ(std::system(command.c_str()), 0);
 
     auto attached = liquid::runtime::block_on(liquid::daemon::attach(location.path()));
@@ -259,9 +393,27 @@ TEST(Daemon, command_starts_on_first_use_and_attaches_to_same_process) {
     ASSERT_TRUE(status);
     auto input = std::ifstream{output};
     const auto json = std::string{std::istreambuf_iterator<char>{input}, {}};
+    auto normalized_json = json;
+    const auto lag_prefix = std::string{"\"persistence_lag\":"};
+    const auto lag_start = normalized_json.find(lag_prefix);
+    if (lag_start != std::string::npos) {
+        const auto value_start = lag_start + lag_prefix.size();
+        const auto value_end = normalized_json.find(',', value_start);
+        normalized_json.replace(value_start, value_end - value_start, "0");
+    }
+    auto fixture_input = std::ifstream{std::filesystem::path{LIQUID_SOURCE_ROOT} /
+                                       "tests/fixtures/status-flow.json"};
+    auto flow_fixture = std::string{std::istreambuf_iterator<char>{fixture_input}, {}};
+    if (!flow_fixture.empty() && flow_fixture.back() == '\n') {
+        flow_fixture.pop_back();
+    }
     EXPECT_NE(json.find("\"pid\":" + std::to_string(status->process_id)), std::string::npos);
     EXPECT_NE(json.find("\"graph_validation_backlog\":0"), std::string::npos);
     EXPECT_NE(json.find("\"last_graph_divergence\":null"), std::string::npos);
+    EXPECT_NE(normalized_json.find("\"flow\":" + flow_fixture), std::string::npos);
+    EXPECT_NE(json.find("\"persistence_lag\":"), std::string::npos);
+    EXPECT_NE(json.find("\"consumer_lag\":"), std::string::npos);
+    EXPECT_NE(json.find("\"buckets\":[{"), std::string::npos);
 
     EXPECT_TRUE(liquid::runtime::block_on(attached->shutdown()));
 }
@@ -289,7 +441,16 @@ TEST(DaemonFanout, ordered_targets_advance_once_for_duplicate_delivery) {
     const auto id = fingerprint("drip");
     auto delivery =
         liquid::daemon_delivery{.value = {.id = {id}, .ops = {{"a.cpp"}}}, .cursor = {"42:0"}};
+    ASSERT_TRUE(fanout.observe(delivery.cursor));
+    auto pending = fanout.target_status();
+    ASSERT_EQ(pending.size(), 2U);
+    EXPECT_EQ(pending.front().behind, 1U);
+    EXPECT_EQ(pending.back().behind, 1U);
     EXPECT_TRUE(liquid::runtime::block_on(fanout.deliver(delivery)));
+    auto delivered = fanout.target_status();
+    ASSERT_EQ(delivered.size(), 2U);
+    EXPECT_EQ(delivered.front().behind, 0U);
+    EXPECT_EQ(delivered.back().behind, 0U);
     EXPECT_TRUE(liquid::runtime::block_on(fanout.deliver(delivery)));
     EXPECT_EQ(order, (std::vector<std::string>{"first", "second"}));
     EXPECT_EQ(first->deliveries(), 1);

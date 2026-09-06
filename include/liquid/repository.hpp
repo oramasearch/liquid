@@ -13,9 +13,14 @@
 #include <variant>
 #include <vector>
 
+#include "liquid/abi.hpp"
 #include "liquid/build.hpp"
+#include "liquid/data.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/flow.hpp"
+#include "liquid/format.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
@@ -26,21 +31,14 @@ namespace liquid {
 
 namespace repository_detail {
 struct build_access;
+struct data_access;
 struct search_access;
 struct testing;
 struct vfs_access;
 struct git_access;
+struct drive_access;
 struct sync_access;
 } // namespace repository_detail
-
-struct LIQUID_EXPORT session_id {
-    std::array<std::byte, 16> bytes{};
-
-    auto operator==(const session_id&) const -> bool = default;
-};
-
-[[nodiscard]] LIQUID_EXPORT std::string to_string(const session_id& value);
-[[nodiscard]] LIQUID_EXPORT result<session_id> parse_session_id(std::string_view text);
 
 enum class encryption_mode : std::uint8_t { leaf, file };
 
@@ -68,6 +66,34 @@ struct LIQUID_EXPORT verify_config {
 struct LIQUID_EXPORT agents_config {
     bool require_base{};
     std::vector<std::string> actors;
+};
+
+struct LIQUID_EXPORT hot_update_target_config {
+    std::string name;
+    std::filesystem::path endpoint;
+
+    auto operator==(const hot_update_target_config&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT hot_update_config {
+    std::vector<std::string> restart_hook;
+    std::vector<hot_update_target_config> targets;
+
+    auto operator==(const hot_update_config&) const -> bool = default;
+};
+
+enum class deploy_on_push : std::uint8_t { none, preview };
+
+struct LIQUID_EXPORT deploy_environment_config {
+    std::optional<std::string> domain;
+    std::map<std::string, std::string> env;
+    std::vector<std::string> secrets;
+};
+
+struct LIQUID_EXPORT deployment_config {
+    std::string control_plane;
+    std::map<std::string, deploy_environment_config> environments;
+    deploy_on_push on_push{deploy_on_push::none};
 };
 
 struct LIQUID_EXPORT ref_retention_rule {
@@ -117,10 +143,15 @@ struct LIQUID_EXPORT repository_options {
     cache_config cache{};
     verify_config verify{};
     agents_config agents{};
+    hot_update_config hot_update{};
+    deployment_config deploy{};
     policy_config policy{};
     retention_config retention{};
+    flow_config flow{};
     std::optional<remote_config> remote;
+    data_config data{};
     std::optional<session_id> session;
+    bool defer_tree_load{};
 };
 
 struct LIQUID_EXPORT log_options {
@@ -173,6 +204,7 @@ struct LIQUID_EXPORT repository_status {
     std::vector<std::string> oversized_directories;
     std::optional<change_id> head;
     agents_config agents;
+    std::vector<data_branch_record> data_branches;
 };
 
 struct LIQUID_EXPORT snapshot {
@@ -189,8 +221,32 @@ enum class tree_diff_kind : std::uint8_t {
     conflicted,
 };
 
+enum class container_diff_kind : std::uint8_t {
+    added,
+    removed,
+    modified,
+};
+
+struct container_diff;
+
+struct LIQUID_EXPORT container_diff_entry {
+    std::string path;
+    container_diff_kind kind{container_diff_kind::modified};
+    std::optional<digest> old_digest;
+    std::optional<digest> new_digest;
+    std::shared_ptr<container_diff> nested;
+};
+
+struct LIQUID_EXPORT container_diff {
+    std::string codec;
+    format_tier tier{format_tier::chunk_only};
+    std::vector<container_diff_entry> entries;
+    bool truncated{};
+};
+
 struct LIQUID_EXPORT tree_diff_options {
     bool text{};
+    bool formats{};
 };
 
 struct LIQUID_EXPORT tree_diff_entry {
@@ -204,6 +260,7 @@ struct LIQUID_EXPORT tree_diff_entry {
     std::optional<digest> old_blob;
     std::optional<digest> new_blob;
     std::optional<std::vector<line_change>> line_hunks;
+    std::optional<container_diff> container;
     std::vector<digest> old_conflicts;
     std::vector<digest> new_conflicts;
 };
@@ -222,6 +279,18 @@ struct LIQUID_EXPORT mapped_anchor {
     std::uint64_t column{};
     bool moved{};
     bool approximate{};
+    bool deleted{};
+};
+
+struct LIQUID_EXPORT path_history_entry {
+    change_id change;
+    std::string path;
+    node_id node{};
+    std::optional<digest> value;
+    std::uint32_t mode{0100644};
+    actor by;
+    std::chrono::sys_seconds at;
+    std::string message;
     bool deleted{};
 };
 
@@ -285,8 +354,18 @@ struct LIQUID_EXPORT readability_report {
     std::vector<std::string> limits;
 };
 
-struct LIQUID_EXPORT op_id {
-    digest value;
+struct LIQUID_EXPORT import_options {
+    std::vector<std::string> ignore_patterns;
+    bool follow_symlinks{};
+    std::string message{"import tree"};
+};
+
+struct LIQUID_EXPORT tree_import_report {
+    std::optional<op_id> drip;
+    std::uint64_t files_seen{};
+    std::uint64_t changed{};
+    std::uint64_t bytes_hashed{};
+    std::uint64_t bytes_written{};
 };
 
 struct LIQUID_EXPORT operation_record {
@@ -380,6 +459,7 @@ public:
     [[nodiscard]] static runtime::task<repository> open_build(std::filesystem::path working_tree,
                                                               repository_options options = {});
     [[nodiscard]] runtime::task<tree> root();
+    [[nodiscard]] result<node_id> id() const;
     [[nodiscard]] runtime::task<digest> root_digest();
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
@@ -387,6 +467,8 @@ public:
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
     [[nodiscard]] runtime::task<void>
     write_file(std::string path, std::filesystem::path source, write_options options = {});
+    [[nodiscard]] runtime::task<tree_import_report> import_tree(std::filesystem::path root,
+                                                                import_options options = {});
     [[nodiscard]] runtime::task<void>
     write_remote(std::string path, blob value, write_options options = {});
     [[nodiscard]] runtime::task<digest> store_remote_blob(blob value);
@@ -432,6 +514,8 @@ public:
     [[nodiscard]] runtime::task<mapped_anchor> map_anchor(text_anchor anchor, change_id target);
     [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
     map_anchors(std::span<const text_anchor> anchors, change_id target);
+    [[nodiscard]] runtime::task<std::vector<path_history_entry>> history(std::string path);
+    [[nodiscard]] runtime::task<void> restore(std::string path, change_id change);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
     [[nodiscard]] runtime::task<action_input> action(digest id);
     [[nodiscard]] runtime::task<record_page<repository_attestation>>
@@ -441,6 +525,7 @@ public:
     [[nodiscard]] runtime::task<record_page<build_trace>> traces(record_page_options page = {});
     [[nodiscard]] runtime::task<record_page<sbom_report>> sboms(result_id result,
                                                                 record_page_options page = {});
+    [[nodiscard]] runtime::task<abi_descriptor> abi(digest library_blob);
     [[nodiscard]] runtime::task<readability_report>
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
@@ -457,6 +542,9 @@ public:
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
     [[nodiscard]] runtime::task<digest> store_symbols(symbol_record value);
     [[nodiscard]] runtime::task<symbol_record> symbols(digest id);
+    [[nodiscard]] runtime::task<edit_preview> preview_edit(edit_request request,
+                                                           edit_attribution attribution);
+    [[nodiscard]] runtime::task<edit_result> apply_edit(const edit_preview& preview);
     [[nodiscard]] runtime::task<void> set_policy(policy_config policy);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);
@@ -473,6 +561,10 @@ public:
                                                           std::span<sync_item> output);
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
+    [[nodiscard]] hot_update_config hot_update_configuration() const;
+    [[nodiscard]] deployment_config deploy_configuration() const;
+    [[nodiscard]] flow_config flow_configuration() const;
+    [[nodiscard]] std::vector<flow_bucket_status> flow_buckets() const;
 
 private:
     [[nodiscard]] runtime::task<std::optional<stale_revalidation>>
@@ -482,10 +574,12 @@ private:
     redact_impl(std::string path, std::vector<std::byte> replacement, digest target);
 
     friend struct repository_detail::build_access;
+    friend struct repository_detail::data_access;
     friend struct repository_detail::search_access;
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     friend struct repository_detail::git_access;
+    friend struct repository_detail::drive_access;
     friend struct repository_detail::sync_access;
     struct impl;
     std::unique_ptr<impl> impl_;

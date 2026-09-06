@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/error.hpp"
@@ -59,6 +60,37 @@ struct LIQUID_EXPORT frontend_unit {
     std::vector<std::byte> canonical_value;
 };
 
+struct LIQUID_EXPORT syntax_node {
+    std::string kind;
+    bool named{};
+    std::optional<std::string> field;
+    frontend_source_range range;
+    std::vector<syntax_node> children;
+
+    syntax_node() = default;
+    syntax_node(const syntax_node& other);
+    syntax_node(syntax_node&& other) noexcept;
+    auto operator=(const syntax_node& other) -> syntax_node&;
+    auto operator=(syntax_node&& other) noexcept -> syntax_node&;
+
+    [[nodiscard]] auto node_at(std::uint64_t byte) const -> const syntax_node*;
+    [[nodiscard]] auto enclosing(std::string_view node_kind) const -> const syntax_node*;
+
+private:
+    syntax_node* parent_{};
+
+    void relink(syntax_node* parent = nullptr);
+    friend auto decode_syntax_tree(std::span<const std::byte> value) -> result<struct syntax_tree>;
+};
+
+struct LIQUID_EXPORT syntax_tree {
+    std::string language;
+    syntax_node root;
+};
+
+[[nodiscard]] LIQUID_EXPORT auto decode_syntax_tree(std::span<const std::byte> value)
+    -> result<syntax_tree>;
+
 struct LIQUID_EXPORT frontend_callbacks {
     std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
     std::function<bool()> cancelled;
@@ -90,7 +122,17 @@ struct LIQUID_EXPORT symbol_record {
     digest subject;
     std::string language;
     symbol_origin origin{symbol_origin::syntactic};
+    std::string grammar;
     std::vector<symbol_occurrence> occurrences;
+};
+
+enum class frontend_tier_mechanism : std::uint8_t { frontend = 1, grammar = 2 };
+
+struct LIQUID_EXPORT frontend_language {
+    std::string language;
+    std::vector<std::string> extensions;
+    frontend_tier_mechanism tier_mechanism{frontend_tier_mechanism::frontend};
+    std::string grammar_digest;
 };
 
 [[nodiscard]] LIQUID_EXPORT auto encode_symbols(const symbol_record& value)
@@ -115,6 +157,7 @@ public:
 
     [[nodiscard]] auto name() const -> std::string_view;
     [[nodiscard]] auto languages() const -> std::vector<std::string>;
+    [[nodiscard]] auto language_details() const -> std::vector<frontend_language>;
     [[nodiscard]] auto supports(std::string_view language) const -> bool;
     [[nodiscard]] auto units(std::string_view language,
                              std::span<const std::byte> blob,
@@ -139,6 +182,10 @@ public:
                                            std::span<const std::byte> action_output,
                                            frontend_callbacks callbacks = {}) const
         -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto syntax(std::string_view language,
+                              std::span<const std::byte> blob,
+                              std::span<const std::byte> context_cbor = {},
+                              frontend_callbacks callbacks = {}) const -> result<syntax_tree>;
 
 private:
     struct impl;
@@ -158,6 +205,7 @@ public:
     auto add(frontend_module module) -> result<void>;
     auto load(std::filesystem::path shared_object) -> result<void>;
     [[nodiscard]] auto find(std::string_view language) const -> result<const frontend_module*>;
+    [[nodiscard]] auto languages() const -> std::vector<frontend_language>;
 
 private:
     struct impl;

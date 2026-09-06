@@ -9,6 +9,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -19,24 +20,31 @@
 #include <thread>
 
 #if !defined(_WIN32)
+#include <sys/resource.h>
 #include <unistd.h>
 #endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
 
+#include "build/abi.hpp"
+#include "build/budgets.hpp"
 #include "build/cache.hpp"
+#include "build/content.hpp"
 #include "build/executor.hpp"
 #include "build/facts.hpp"
 #include "build/materialise.hpp"
+#include "build/normalise.hpp"
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
+#include "build/relocation.hpp"
 #include "build/repository_access.hpp"
 #include "build/tests.hpp"
 #include "build/trace.hpp"
 #include "build/verify.hpp"
 #include "build/why.hpp"
 #include "build/wrap.hpp"
+#include "data/environment.hpp"
 #include "formats/json.hpp"
 #include "liquid/graph.hpp"
 #include "objects/records.hpp"
@@ -45,9 +53,6 @@
 #include "vfs/backend.hpp"
 #include "vfs/repository_access.hpp"
 
-#ifndef LIQUID_WRAP_HOOK_PATH
-#define LIQUID_WRAP_HOOK_PATH ""
-#endif
 #ifndef LIQUID_WRAP_HOOK_FILENAME
 #define LIQUID_WRAP_HOOK_FILENAME "libliquid-wrap-hook.so"
 #endif
@@ -56,10 +61,71 @@ namespace liquid::build {
 namespace {
 
 constexpr auto virtual_root = std::string_view{"/liquid/work"};
+constexpr auto install_staging_root = std::string_view{"out/prefix"};
+
+static_assert(build_detail::restored_output_files_in_flight == 1);
+
+auto peak_rss_bytes() -> std::uint64_t {
+#if defined(_WIN32)
+    return 0;
+#else
+    auto usage = rusage{};
+    if (::getrusage(RUSAGE_SELF, &usage) != 0) {
+        return 0;
+    }
+#if defined(__APPLE__)
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024;
+#endif
+#endif
+}
 
 struct observation_log {
     mutable std::mutex mutex;
-    std::vector<vfs_detail::observed_request> requests;
+    struct process_observations {
+        std::map<std::string, digest> inputs;
+        std::set<std::string> writes;
+        std::set<std::string> changed_inputs;
+        std::optional<std::string> denied_write;
+    };
+
+    std::map<std::int64_t, process_observations> processes;
+    std::map<std::string, digest> inputs;
+    std::set<std::string> changed_inputs;
+
+    void record(vfs_detail::observed_request request) {
+        auto lock = std::scoped_lock{mutex};
+        auto& process = processes[request.pid];
+        if (request.operation == vfs_detail::observed_operation::write) {
+            if (request.denied) {
+                process.denied_write = std::move(request.path);
+            } else if (!request.path.empty()) {
+                process.writes.insert(std::move(request.path));
+            }
+            return;
+        }
+        if ((request.operation != vfs_detail::observed_operation::open &&
+             request.operation != vfs_detail::observed_operation::read) ||
+            request.denied || request.path.empty() || !request.content) {
+            return;
+        }
+        record_input(process.inputs, process.changed_inputs, request.path, *request.content);
+        record_input(inputs, changed_inputs, std::move(request.path), std::move(*request.content));
+    }
+
+private:
+    static void record_input(std::map<std::string, digest>& entries,
+                             std::set<std::string>& changed,
+                             std::string path,
+                             digest content) {
+        const auto found = entries.find(path);
+        if (found != entries.end() &&
+            (found->second.alg != content.alg || found->second.bytes != content.bytes)) {
+            changed.insert(path);
+        }
+        entries.insert_or_assign(std::move(path), std::move(content));
+    }
 };
 
 struct traced_process {
@@ -88,7 +154,6 @@ struct saved_action {
 };
 
 struct wrap_state {
-    std::set<std::string> sources;
     std::set<std::string> outputs;
     std::set<std::string> tools;
     std::vector<std::string> action_command;
@@ -139,6 +204,11 @@ runtime::task<action_result> load_result(repository& source, digest id);
 auto wrap_error(errc code, std::string message, const std::filesystem::path& context = {})
     -> error {
     return {code, std::move(message), context.string()};
+}
+
+auto stage_error(std::string_view stage, error value) -> error {
+    value.message = std::string{stage} + ": " + value.message;
+    return value;
 }
 
 auto same_digest(const digest& left, const digest& right) -> bool {
@@ -237,9 +307,10 @@ runtime::task<build_detail::cache_lookup> demand_wrap_action(graph& queries,
     const auto candidate_text = to_string(*candidate);
     state.requests.insert_or_assign(candidate_text,
                                     wrap_query_request{input, sandbox, previous.manifest});
+    const auto input_fingerprint = to_string(previous.action) + "\n" + to_string(input.inputs);
     auto cache_entry = co_await queries.set_input(
         {graph_input_kind::environment, "action-result/" + candidate_text},
-        graph_bytes(to_string(previous.action)),
+        graph_bytes(input_fingerprint),
         durability::high);
     if (!cache_entry) {
         co_return std::unexpected(cache_entry.error());
@@ -402,12 +473,13 @@ auto read_state(const std::filesystem::path& path) -> liquid::result<wrap_state>
             output.outer_result = *id;
             continue;
         }
+        if (fields[0] == "S") {
+            continue;
+        }
         auto value = unhex(fields[1]);
         if (!value)
             return std::unexpected(value.error());
-        if (fields[0] == "S")
-            output.sources.insert(std::move(*value));
-        else if (fields[0] == "O")
+        if (fields[0] == "O")
             output.outputs.insert(std::move(*value));
         else if (fields[0] == "T")
             output.tools.insert(std::move(*value));
@@ -426,8 +498,6 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
     auto output = std::ofstream{temporary, std::ios::binary | std::ios::trunc};
     if (!output)
         return std::unexpected(wrap_error(errc::io, "cannot write wrap state", path));
-    for (const auto& source : state.sources)
-        output << "S\t" << hex(source) << '\n';
     for (const auto& item : state.outputs)
         output << "O\t" << hex(item) << '\n';
     for (const auto& tool : state.tools)
@@ -462,20 +532,25 @@ auto wrap_hook_path() -> liquid::result<std::filesystem::path> {
     auto candidates = std::vector<std::filesystem::path>{};
     if (const auto* configured = std::getenv("LIQUID_WRAP_HOOK"))
         candidates.emplace_back(configured);
-    candidates.emplace_back(LIQUID_WRAP_HOOK_PATH);
 #if defined(__linux__)
     auto code = std::error_code{};
     const auto executable = std::filesystem::read_symlink("/proc/self/exe", code);
-    if (!code)
+    if (!code) {
+        candidates.push_back(executable.parent_path() / LIQUID_WRAP_HOOK_FILENAME);
+        candidates.push_back(executable.parent_path() / ".." / LIQUID_WRAP_HOOK_FILENAME);
         candidates.push_back(executable.parent_path() / "../libexec/liquid" /
                              LIQUID_WRAP_HOOK_FILENAME);
+    }
 #elif defined(__APPLE__)
     auto size = std::uint32_t{};
     static_cast<void>(_NSGetExecutablePath(nullptr, &size));
     auto executable = std::string(size, '\0');
     if (_NSGetExecutablePath(executable.data(), &size) == 0) {
         executable.resize(std::strlen(executable.c_str()));
-        candidates.push_back(std::filesystem::path{executable}.parent_path() / "../libexec/liquid" /
+        const auto executable_directory = std::filesystem::path{executable}.parent_path();
+        candidates.push_back(executable_directory / LIQUID_WRAP_HOOK_FILENAME);
+        candidates.push_back(executable_directory / ".." / LIQUID_WRAP_HOOK_FILENAME);
+        candidates.push_back(executable_directory / "../libexec/liquid" /
                              LIQUID_WRAP_HOOK_FILENAME);
     }
 #endif
@@ -488,71 +563,70 @@ auto wrap_hook_path() -> liquid::result<std::filesystem::path> {
                                       LIQUID_WRAP_HOOK_FILENAME));
 }
 
-auto excluded_path(std::string_view path,
-                   const std::set<std::string>& outputs,
-                   const std::filesystem::path& cache,
-                   const std::filesystem::path& root) -> bool {
-    if (path == ".git" || path.starts_with(".git/") || path == ".liquid-store" ||
-        path.starts_with(".liquid-store/") || path == "LIQUID_REPO" || path == "LIQUID_JOURNAL" ||
-        path.starts_with(".liquid-build/")) {
-        return true;
-    }
-    if (outputs.contains(std::string{path}))
-        return true;
-    const auto relative_cache = cache.lexically_relative(root).generic_string();
-    return !relative_cache.empty() && !relative_cache.starts_with("../") &&
-           (path == relative_cache || path.starts_with(relative_cache + "/"));
-}
-
-auto source_files(const std::filesystem::path& root,
-                  const std::set<std::string>& outputs,
-                  const std::filesystem::path& cache)
-    -> liquid::result<std::map<std::string, std::filesystem::path>> {
-    auto result = std::map<std::string, std::filesystem::path>{};
-    auto code = std::error_code{};
-    for (std::filesystem::recursive_directory_iterator iterator{
-             root, std::filesystem::directory_options::skip_permission_denied, code};
-         !code && iterator != std::filesystem::recursive_directory_iterator{};
-         iterator.increment(code)) {
-        const auto relative = iterator->path().lexically_relative(root).generic_string();
-        if (iterator->is_directory(code) && excluded_path(relative, outputs, cache, root)) {
-            iterator.disable_recursion_pending();
-            continue;
-        }
-        if (iterator->is_regular_file(code) && !excluded_path(relative, outputs, cache, root))
-            result.emplace(relative, iterator->path());
-    }
-    if (code)
-        return std::unexpected(wrap_error(errc::io, code.message(), root));
-    return result;
-}
-
 runtime::task<void> sync_sources(repository& source,
                                  const std::filesystem::path& root,
                                  const std::filesystem::path& cache,
-                                 wrap_state& state) {
-    auto files = source_files(root, state.outputs, cache);
-    if (!files)
-        co_return std::unexpected(files.error());
-    for (const auto& old : state.sources) {
-        if (files->contains(old))
+                                 wrap_state& state,
+                                 const std::vector<std::string>& command) {
+    auto options = import_options{};
+    options.message = "synchronise wrap sources";
+    options.ignore_patterns = {
+        ".git/**", ".liquid-store/**", "LIQUID_REPO", "LIQUID_JOURNAL", ".liquid-build/**"};
+    auto configured_inputs = std::vector<std::string>{};
+    const auto add_configured_input = [&](std::string_view directory) {
+        if (directory.empty()) {
+            return;
+        }
+        const auto relative = std::filesystem::path{directory}.lexically_normal().generic_string();
+        if (relative.empty() || relative.starts_with("../") || relative.starts_with('/')) {
+            return;
+        }
+        if (std::ranges::find(configured_inputs, relative) != configured_inputs.end()) {
+            return;
+        }
+        configured_inputs.push_back(relative);
+        options.ignore_patterns.push_back("!" + relative);
+        options.ignore_patterns.push_back("!" + relative + "/**");
+    };
+    const auto add_current_build_directory = [&](const std::vector<std::string>& arguments) {
+        for (auto index = std::size_t{}; index != arguments.size(); ++index) {
+            if (arguments[index] == "--build" && index + 1 != arguments.size()) {
+                add_configured_input(arguments[index + 1]);
+            } else if (arguments[index].starts_with("--build=")) {
+                add_configured_input(std::string_view{arguments[index]}.substr(8));
+            }
+        }
+    };
+    const auto add_configured_build_directory = [&](const std::vector<std::string>& arguments) {
+        for (auto index = std::size_t{}; index != arguments.size(); ++index) {
+            if (arguments[index] == "-B" && index + 1 != arguments.size()) {
+                add_configured_input(arguments[index + 1]);
+            } else if (arguments[index].starts_with("-B") && arguments[index].size() > 2) {
+                add_configured_input(std::string_view{arguments[index]}.substr(2));
+            }
+        }
+    };
+    add_current_build_directory(command);
+    add_configured_build_directory(state.action_command);
+    for (const auto& output : state.outputs) {
+        const auto is_configured_input =
+            std::ranges::any_of(configured_inputs, [&output](const std::string& configured) {
+                return output == configured || output.starts_with(configured + "/");
+            });
+        if (is_configured_input) {
             continue;
-        auto removed = co_await source.remove(old);
-        if (!removed && removed.error().code != errc::not_found)
-            co_return std::unexpected(removed.error());
+        }
+        options.ignore_patterns.push_back(output);
+        options.ignore_patterns.push_back(output + "/**");
     }
-    state.sources.clear();
-    for (const auto& [relative, path] : *files) {
-        auto written = co_await source.write_file(relative, path);
-        if (!written)
-            co_return std::unexpected(written.error());
-        auto status = std::filesystem::status(path);
-        auto mode = static_cast<std::uint32_t>(status.permissions()) & 0777U;
-        auto mode_set = co_await repository_detail::vfs_access::set_mode(
-            source, relative, static_cast<std::uint32_t>(S_IFREG) | mode);
-        if (!mode_set)
-            co_return std::unexpected(mode_set.error());
-        state.sources.insert(relative);
+    const auto relative_cache = cache.lexically_relative(root).generic_string();
+    if (!relative_cache.empty() && !relative_cache.starts_with("../")) {
+        options.ignore_patterns.push_back(relative_cache);
+        options.ignore_patterns.push_back(relative_cache + "/**");
+    }
+    auto imported = co_await source.import_tree(root, std::move(options));
+    if (!imported) {
+        co_return std::unexpected(imported.error());
     }
     co_return liquid::result<void>{};
 }
@@ -588,12 +662,135 @@ runtime::task<std::vector<std::byte>> blob_contents(repository& source, digest i
     co_return output;
 }
 
+runtime::task<void> stream_store_object(repository& source,
+                                        digest id,
+                                        std::uint64_t size,
+                                        const std::shared_ptr<std::ofstream>& output,
+                                        const std::filesystem::path& target) {
+    auto offset = std::uint64_t{};
+    while (offset != size) {
+        const auto remaining = size - offset;
+        const auto count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(remaining, build_detail::restored_output_buffer_bytes));
+        auto bytes = std::vector<std::byte>(count);
+        auto read = co_await repository_detail::build_access::read(source, id, offset, bytes);
+        if (!read) {
+            co_return std::unexpected(read.error());
+        }
+        if (*read == 0 || *read > bytes.size()) {
+            co_return std::unexpected(
+                wrap_error(errc::corrupt, "cached output is truncated", target));
+        }
+        bytes.resize(static_cast<std::size_t>(*read));
+        auto written = co_await runtime::offload([output, bytes = std::move(bytes), target] {
+            output->write(reinterpret_cast<const char*>(bytes.data()),
+                          static_cast<std::streamsize>(bytes.size()));
+            if (!*output) {
+                return liquid::result<void>{
+                    std::unexpected(wrap_error(errc::io, "cannot materialise output", target))};
+            }
+            return liquid::result<void>{};
+        });
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        if (!*written) {
+            co_return std::unexpected(written->error());
+        }
+        offset += *read;
+    }
+    co_return liquid::result<void>{};
+}
+
+runtime::task<void> stream_blob_to_file(repository& source,
+                                        digest id,
+                                        const std::filesystem::path& target,
+                                        std::uint32_t mode) {
+    auto raw = co_await repository_detail::build_access::get(source, id);
+    if (!raw) {
+        co_return std::unexpected(raw.error());
+    }
+    auto blob = objects::decode_blob(*raw);
+    if (!blob) {
+        co_return std::unexpected(blob.error());
+    }
+    auto created =
+        co_await runtime::offload([target] -> liquid::result<std::shared_ptr<std::ofstream>> {
+            auto code = std::error_code{};
+            std::filesystem::create_directories(target.parent_path(), code);
+            if (code) {
+                return std::unexpected(wrap_error(errc::io, code.message(), target));
+            }
+            auto output =
+                std::make_shared<std::ofstream>(target, std::ios::binary | std::ios::trunc);
+            if (!*output) {
+                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
+            }
+            return output;
+        });
+    if (!created) {
+        co_return std::unexpected(created.error());
+    }
+    if (!*created) {
+        co_return std::unexpected(created->error());
+    }
+    const auto& output = **created;
+    if (blob->content.alg == algorithm::blake3 || blob->content.alg == algorithm::sha256 ||
+        blob->content.alg == algorithm::blake3_keyed) {
+        auto copied =
+            co_await stream_store_object(source, blob->content, blob->size, output, target);
+        if (!copied) {
+            co_return std::unexpected(copied.error());
+        }
+    } else {
+        for (auto index = std::size_t{}; index != blob->chunks.size(); ++index) {
+            auto copied = co_await stream_store_object(
+                source, blob->chunks[index], blob->chunk_sizes[index], output, target);
+            if (!copied) {
+                co_return std::unexpected(copied.error());
+            }
+        }
+    }
+    auto closed = co_await runtime::offload([output, target, mode] -> liquid::result<void> {
+        output->close();
+        if (!*output) {
+            return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
+        }
+        auto code = std::error_code{};
+        std::filesystem::permissions(target,
+                                     static_cast<std::filesystem::perms>(mode & 0777U),
+                                     std::filesystem::perm_options::replace,
+                                     code);
+        if (code) {
+            return std::unexpected(wrap_error(errc::io, code.message(), target));
+        }
+        return {};
+    });
+    if (!closed) {
+        co_return std::unexpected(closed.error());
+    }
+    if (!*closed) {
+        co_return std::unexpected(closed->error());
+    }
+    co_return liquid::result<void>{};
+}
+
 runtime::task<void> materialise_result(repository& source, const action_result& value) {
     for (const auto& output : value.outputs) {
-        auto contents = co_await blob_contents(source, output.blob);
-        if (!contents)
-            co_return std::unexpected(contents.error());
-        auto written = co_await source.write(output.path, std::move(*contents));
+        auto root = repository_detail::build_access::root_path(source);
+        if (!root) {
+            co_return std::unexpected(root.error());
+        }
+        static auto restored_index = std::atomic_uint64_t{};
+        const auto temporary =
+            *root / ("restored-output-" + std::to_string(restored_index.fetch_add(1)));
+        auto copied = co_await stream_blob_to_file(source, output.blob, temporary, output.mode);
+        if (!copied) {
+            co_return std::unexpected(copied.error());
+        }
+        auto written = co_await source.write_file(output.path, temporary);
+        auto code = std::error_code{};
+        std::filesystem::remove(temporary, code);
         if (!written)
             co_return std::unexpected(written.error());
         auto mode = co_await repository_detail::vfs_access::set_mode(
@@ -608,37 +805,10 @@ runtime::task<void> materialise_result(repository& source,
                                        const action_result& value,
                                        const std::filesystem::path& working_tree) {
     for (const auto& output : value.outputs) {
-        auto contents = co_await blob_contents(source, output.blob);
-        if (!contents)
-            co_return std::unexpected(contents.error());
         const auto target = working_tree / output.path;
-        auto copied = co_await runtime::offload([target,
-                                                 bytes = std::move(*contents),
-                                                 mode = output.mode]() -> liquid::result<void> {
-            auto code = std::error_code{};
-            std::filesystem::create_directories(target.parent_path(), code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            auto stream = std::ofstream{target, std::ios::binary | std::ios::trunc};
-            if (!stream)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            stream.write(reinterpret_cast<const char*>(bytes.data()),
-                         static_cast<std::streamsize>(bytes.size()));
-            stream.close();
-            if (!stream)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            std::filesystem::permissions(target,
-                                         static_cast<std::filesystem::perms>(mode & 0777U),
-                                         std::filesystem::perm_options::replace,
-                                         code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            return {};
-        });
+        auto copied = co_await stream_blob_to_file(source, output.blob, target, output.mode);
         if (!copied)
             co_return std::unexpected(copied.error());
-        if (!*copied)
-            co_return std::unexpected(copied->error());
     }
     co_return liquid::result<void>{};
 }
@@ -647,43 +817,21 @@ runtime::task<void> copy_outputs(repository& source,
                                  const std::filesystem::path& root,
                                  const std::set<std::string>& outputs) {
     for (const auto& path : outputs) {
-        auto contents = co_await source.read(path);
-        if (!contents) {
-            if (contents.error().code == errc::not_found)
-                continue;
-            co_return std::unexpected(contents.error());
-        }
         auto entry = co_await repository_detail::vfs_access::entry(source, path);
-        if (!entry)
-            co_return std::unexpected(entry.error());
+        if (!entry) {
+            if (entry.error().code == errc::not_found)
+                continue;
+            co_return std::unexpected(wrap_error(entry.error().code, entry.error().message, path));
+        }
+        if (entry->kind != node_kind::blob) {
+            continue;
+        }
         auto target = root / path;
-        auto copied = co_await runtime::offload([target,
-                                                 bytes = std::move(*contents),
-                                                 mode = entry->mode]() -> liquid::result<void> {
-            auto code = std::error_code{};
-            std::filesystem::create_directories(target.parent_path(), code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            auto output = std::ofstream{target, std::ios::binary | std::ios::trunc};
-            if (!output)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            output.write(reinterpret_cast<const char*>(bytes.data()),
-                         static_cast<std::streamsize>(bytes.size()));
-            output.close();
-            if (!output)
-                return std::unexpected(wrap_error(errc::io, "cannot materialise output", target));
-            std::filesystem::permissions(target,
-                                         static_cast<std::filesystem::perms>(mode & 0777U),
-                                         std::filesystem::perm_options::replace,
-                                         code);
-            if (code)
-                return std::unexpected(wrap_error(errc::io, code.message(), target));
-            return {};
-        });
-        if (!copied)
-            co_return std::unexpected(copied.error());
-        if (!*copied)
-            co_return std::unexpected(copied->error());
+        auto copied = co_await stream_blob_to_file(source, entry->object, target, entry->mode);
+        if (!copied) {
+            co_return std::unexpected(
+                wrap_error(copied.error().code, copied.error().message, path));
+        }
     }
     co_return liquid::result<void>{};
 }
@@ -862,24 +1010,27 @@ auto manifest_for(const observation_log& observed,
                   std::int64_t pid,
                   const std::set<std::string>& written)
     -> liquid::result<std::vector<observed_input>> {
-    auto entries = std::map<std::string, digest>{};
     auto lock = std::scoped_lock{observed.mutex};
-    for (const auto& request : observed.requests) {
-        if ((pid >= 0 && request.pid != pid) || request.denied || !request.content ||
-            request.path.empty() || written.contains(request.path) ||
-            (request.operation != vfs_detail::observed_operation::open &&
-             request.operation != vfs_detail::observed_operation::read)) {
-            continue;
-        }
-        const auto found = entries.find(request.path);
-        if (found != entries.end() && !same_digest(found->second, *request.content))
-            return std::unexpected(wrap_error(
-                errc::internal, "wrapped input changed while it was read", request.path));
-        entries.insert_or_assign(request.path, *request.content);
+    const auto found = observed.processes.find(pid);
+    const auto* process = pid >= 0 && found != observed.processes.end() ? &found->second : nullptr;
+    if (pid >= 0 && !process) {
+        return std::vector<observed_input>{};
+    }
+    const auto& changed = pid >= 0 ? process->changed_inputs : observed.changed_inputs;
+    const auto changed_path = std::ranges::find_if(
+        changed, [&](const std::string& path) { return !written.contains(path); });
+    if (changed_path != changed.end()) {
+        return std::unexpected(
+            wrap_error(errc::internal, "wrapped input changed while it was read", *changed_path));
     }
     auto output = std::vector<observed_input>{};
-    for (const auto& [path, content] : entries)
+    const auto& entries = pid >= 0 ? process->inputs : observed.inputs;
+    for (const auto& [path, content] : entries) {
+        if (written.contains(path)) {
+            continue;
+        }
         output.push_back({path, content});
+    }
     return output;
 }
 
@@ -887,10 +1038,9 @@ auto writes_by_process(const observation_log& observed)
     -> std::map<std::int64_t, std::set<std::string>> {
     auto output = std::map<std::int64_t, std::set<std::string>>{};
     auto lock = std::scoped_lock{observed.mutex};
-    for (const auto& request : observed.requests) {
-        if (request.operation == vfs_detail::observed_operation::write && !request.denied &&
-            !request.path.empty()) {
-            output[request.pid].insert(request.path);
+    for (const auto& [pid, process] : observed.processes) {
+        if (!process.writes.empty()) {
+            output.insert_or_assign(pid, process.writes);
         }
     }
     return output;
@@ -927,7 +1077,8 @@ collect_action_outputs(repository& source, const std::set<std::string>& paths) {
             co_return std::unexpected(entry.error());
         }
         if (entry->kind == node_kind::blob)
-            output.push_back({path, entry->mode & 0777U, entry->object});
+            output.push_back(
+                {path, build_detail::normalised_output_mode(entry->mode & 0777U), entry->object});
     }
     co_return output;
 }
@@ -941,11 +1092,13 @@ runtime::task<saved_action> publish_action(repository& source,
                                            digest sandbox,
                                            const observation_log& observed,
                                            const std::set<std::string>& writes,
+                                           const std::set<std::string>* complete_outputs,
                                            digest empty_blob,
                                            int exit,
                                            std::chrono::sys_seconds started_at,
                                            std::chrono::sys_seconds finished_at,
-                                           bool publish) {
+                                           bool publish,
+                                           const wrap_options* publication_options) {
     const auto hash_started = std::chrono::steady_clock::now();
     auto output_paths = co_await collect_action_outputs(source, writes);
     if (!output_paths)
@@ -991,6 +1144,49 @@ runtime::task<saved_action> publish_action(repository& source,
                                         .reason = "wrap has no remote executor configured"};
     value.started_at = started_at;
     value.finished_at = finished_at;
+    if (complete_outputs) {
+        auto tree_outputs = co_await collect_action_outputs(source, *complete_outputs);
+        if (!tree_outputs) {
+            co_return std::unexpected(tree_outputs.error());
+        }
+        if (publication_options && publication_options->install_prefix) {
+            const auto install_root = std::filesystem::path{install_staging_root} /
+                                      publication_options->install_prefix->relative_path();
+            auto install_outputs = std::vector<action_output>{};
+            for (const auto& output : *tree_outputs) {
+                const auto relative =
+                    std::filesystem::path{output.path}.lexically_relative(install_root);
+                if (relative.empty() || relative == ".." || *relative.begin() == "..") {
+                    continue;
+                }
+                auto installed = output;
+                installed.path = relative.generic_string();
+                install_outputs.push_back(std::move(installed));
+            }
+            if (!install_outputs.empty()) {
+                auto relocation = co_await build_detail::relocation_check(
+                    source, install_outputs, publication_options->install_prefix);
+                if (!relocation) {
+                    co_return std::unexpected(relocation.error());
+                }
+                if (!relocation->relocatable && !publication_options->allow_embedded_prefix) {
+                    co_return std::unexpected(build_detail::relocation_failure(*relocation));
+                }
+                if (publication_options->allow_embedded_prefix) {
+                    value.schedule->reason +=
+                        "; relocation check waived by --allow-embedded-prefix (" +
+                        std::to_string(relocation->findings.size()) + " findings)";
+                }
+                tree_outputs = std::move(install_outputs);
+            }
+        }
+        auto output_tree = co_await build_detail::store_output_tree(source, *tree_outputs);
+        if (!output_tree) {
+            co_return std::unexpected(output_tree.error());
+        }
+        value.output_tree = *output_tree;
+        value.record_version = 4;
+    }
     auto stored_result = co_await build_detail::store_result_with_provenance(source, value);
     if (!stored_result)
         co_return std::unexpected(stored_result.error());
@@ -1027,7 +1223,8 @@ auto fixed_environment(const wrap_options& options) -> std::map<std::string, std
                                                           {"TMPDIR", "/tmp"},
                                                           {"LANG", "C.UTF-8"},
                                                           {"TZ", "UTC"},
-                                                          {"SOURCE_DATE_EPOCH", "0"}};
+                                                          {"SOURCE_DATE_EPOCH", "0"},
+                                                          {"ZERO_AR_DATE", "1"}};
     if (const auto* compiler = std::getenv("CC"))
         environment["CC"] = compiler;
     if (const auto* compiler = std::getenv("CXX"))
@@ -1036,7 +1233,64 @@ auto fixed_environment(const wrap_options& options) -> std::map<std::string, std
         environment["CMAKE_BUILD_PARALLEL_LEVEL"] = std::to_string(options.jobs);
         environment["MAKEFLAGS"] = "-j" + std::to_string(options.jobs);
     }
+    if (options.install_prefix) {
+        environment["DESTDIR"] = std::string{virtual_root} + "/" + install_staging_root.data();
+        environment["CMAKE_INSTALL_PREFIX"] = options.install_prefix->generic_string();
+        environment["LIQUID_INSTALL_TREE"] = std::string{install_staging_root};
+#if defined(__APPLE__)
+        environment["LDFLAGS"] = "-Wl,-rpath,@loader_path/../lib";
+#else
+        environment["LDFLAGS"] = "-Wl,-rpath,$ORIGIN/../lib -Wl,-z,origin -Wl,--enable-new-dtags";
+#endif
+        if (options.allow_embedded_prefix) {
+            environment["LIQUID_ALLOW_EMBEDDED_PREFIX"] = "1";
+        }
+    }
     return environment;
+}
+
+auto has_data_url(const std::map<std::string, std::string>& environment) -> bool {
+    return std::ranges::any_of(environment, [](const auto& item) {
+        return item.second.starts_with("postgresql://") || item.second.starts_with("postgres://");
+    });
+}
+
+auto contains_argument(const std::vector<std::string>& command, std::string_view prefix) -> bool {
+    return std::ranges::any_of(command, [&](const auto& argument) {
+        return std::string_view{argument}.starts_with(prefix);
+    });
+}
+
+void apply_install_conventions(std::vector<std::string>& command, const wrap_options& options) {
+    if (!options.install_prefix || command.empty()) {
+        return;
+    }
+    const auto program = std::filesystem::path{command.front()}.filename().string();
+    if (program == "cmake" && !contains_argument(command, "--build") &&
+        !contains_argument(command, "--install") && !contains_argument(command, "-P")) {
+        if (!contains_argument(command, "-DCMAKE_INSTALL_PREFIX=")) {
+            command.push_back("-DCMAKE_INSTALL_PREFIX=" + options.install_prefix->generic_string());
+        }
+#if defined(__APPLE__)
+        if (!contains_argument(command, "-DCMAKE_INSTALL_NAME_DIR=")) {
+            command.push_back("-DCMAKE_INSTALL_NAME_DIR=@rpath");
+        }
+        if (!contains_argument(command, "-DCMAKE_INSTALL_RPATH=")) {
+            command.push_back("-DCMAKE_INSTALL_RPATH=@loader_path/../lib");
+        }
+#else
+        if (!contains_argument(command, "-DCMAKE_BUILD_RPATH_USE_ORIGIN=")) {
+            command.push_back("-DCMAKE_BUILD_RPATH_USE_ORIGIN=ON");
+        }
+        if (!contains_argument(command, "-DCMAKE_INSTALL_RPATH=")) {
+            command.push_back("-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib");
+        }
+#endif
+    }
+    if ((program == "configure" || program == "configure.ac") &&
+        !contains_argument(command, "--prefix=")) {
+        command.push_back("--prefix=" + options.install_prefix->generic_string());
+    }
 }
 
 auto apply_cached_variables(std::vector<std::string>& command,
@@ -1057,17 +1311,18 @@ auto apply_cached_variables(std::vector<std::string>& command,
 auto probe_program_digest(const observation_log& observed, std::int64_t pid)
     -> std::optional<digest> {
     auto lock = std::scoped_lock{observed.mutex};
-    for (const auto& request : observed.requests) {
-        if (request.pid != pid || !request.content) {
-            continue;
-        }
-        const auto path = std::filesystem::path{request.path};
+    const auto found = observed.processes.find(pid);
+    if (found == observed.processes.end()) {
+        return std::nullopt;
+    }
+    for (const auto& [name, content] : found->second.inputs) {
+        const auto path = std::filesystem::path{name};
         const auto extension = path.extension().string();
         if (path.filename().string().starts_with("conftest.") ||
-            (request.path.contains("CMakeScratch/TryCompile-") &&
+            (name.contains("CMakeScratch/TryCompile-") &&
              (extension == ".c" || extension == ".cc" || extension == ".cpp" ||
               extension == ".cxx"))) {
-            return request.content;
+            return content;
         }
     }
     return std::nullopt;
@@ -1474,8 +1729,8 @@ auto write_toolchain(const std::filesystem::path& path, digest value) -> liquid:
     return {};
 }
 
-runtime::task<digest> store_sandbox(repository& source) {
-    auto encoded = objects::encode(wrap_sandbox_definition());
+runtime::task<digest> store_sandbox(repository& source, bool network) {
+    auto encoded = objects::encode(wrap_sandbox_definition(network));
     if (!encoded)
         co_return std::unexpected(encoded.error());
     co_return co_await repository_detail::build_access::put_record(source, std::move(*encoded));
@@ -1483,16 +1738,28 @@ runtime::task<digest> store_sandbox(repository& source) {
 
 runtime::task<action_result> load_result(repository& source, digest id) {
     auto bytes = co_await repository_detail::build_access::get(source, id);
-    if (!bytes)
+    if (!bytes) {
         co_return std::unexpected(bytes.error());
-    co_return objects::decode_result(*bytes);
+    }
+    auto value = objects::decode_result(*bytes);
+    if (!value) {
+        co_return std::unexpected(
+            wrap_error(value.error().code, value.error().message, "wrap result " + to_string(id)));
+    }
+    co_return *value;
 }
 
 runtime::task<objects::action_record> load_action(repository& source, digest id) {
     auto bytes = co_await repository_detail::build_access::get(source, id);
-    if (!bytes)
+    if (!bytes) {
         co_return std::unexpected(bytes.error());
-    co_return objects::decode_action(*bytes);
+    }
+    auto value = objects::decode_action(*bytes);
+    if (!value) {
+        co_return std::unexpected(
+            wrap_error(value.error().code, value.error().message, "wrap action " + to_string(id)));
+    }
+    co_return *value;
 }
 
 auto remove_run(const std::filesystem::path& path) -> liquid::result<void> {
@@ -1617,6 +1884,19 @@ runtime::task<void> record_rebuilt_action(repository& source,
     }
     report.cache.bytes_rebuilt += *bytes;
     add_timing(report, result_id{saved.result}, *value, cache_status::miss, start_offset);
+    auto abi_breaks = co_await build_detail::abi_breaks(source, *value);
+    if (!abi_breaks) {
+        co_return std::unexpected(abi_breaks.error());
+    }
+    for (auto& abi_break : *abi_breaks) {
+        const auto present = std::ranges::any_of(report.abi_breaks, [&](const auto& existing) {
+            return existing.output == abi_break.output &&
+                   same_digest(existing.previous, abi_break.previous);
+        });
+        if (!present) {
+            report.abi_breaks.push_back(std::move(abi_break));
+        }
+    }
     if (!reason_recorded) {
         auto action = co_await load_action(source, value->action);
         if (!action) {
@@ -1640,6 +1920,7 @@ runtime::task<void> complete_report(const std::filesystem::path& cache_directory
                                     wrap_report& report) {
     report.wall_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started);
+    report.peak_rss_bytes = peak_rss_bytes();
     report.cache.hits = report.hits;
     report.cache.misses = report.misses;
     report.cache.disk.hits = report.hits - report.cache.remote.hits;
@@ -1721,6 +2002,8 @@ runtime::task<std::optional<result_id>> import_remote_result(repository& source,
     }
     (*value)->provenance.reset();
     (*value)->sboms.clear();
+    (*value)->abis.clear();
+    (*value)->abi_compatibility.clear();
     (*value)->sig.clear();
     auto stored = co_await build_detail::store_result_with_provenance(source, **value);
     if (!stored) {
@@ -2015,6 +2298,7 @@ runtime::task<bool> serve_outer_action(repository& source,
         state.outputs.insert(action_output.path);
     report.exit = value->exit;
     report.outer = cache_status::hit;
+    report.output_tree = value->output_tree;
     report.actions = (state.action_command == command ? state.actions.size() : std::size_t{}) + 1;
     report.hits = report.actions;
     report.cache.bytes_served += lookup.bytes_served;
@@ -2102,8 +2386,7 @@ execute_observed_run(repository& source,
         mount,
         {known_outputs.begin(), known_outputs.end()},
         [observations](vfs_detail::observed_request request) {
-            auto lock = std::scoped_lock{observations->mutex};
-            observations->requests.push_back(std::move(request));
+            observations->record(std::move(request));
         },
         false);
     if (!mounted) {
@@ -2123,6 +2406,9 @@ execute_observed_run(repository& source,
     environment["LIQUID_WRAP_PLAN"] = plan_path.string();
     environment["LIQUID_WRAP_ROOT"] = mount.string();
     environment["LIQUID_WRAP_TRACE"] = trace.string();
+    if (options.install_prefix) {
+        environment["DESTDIR"] = (mount / install_staging_root).string();
+    }
 #else
     environment["LD_PRELOAD"] = "/liquid/wrap-hook.so";
     environment["LIQUID_WRAP_PLAN"] = "/liquid/plan";
@@ -2141,7 +2427,8 @@ execute_observed_run(repository& source,
                                                        .trace = trace,
                                                        .plan = plan_path,
                                                        .command = {},
-                                                       .environment = environment};
+                                                       .environment = environment,
+                                                       .network = has_data_url(environment)};
     const auto started_at =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     auto seeded = co_await launch_seed_processes(request, commands->seeds, options.jobs);
@@ -2218,18 +2505,36 @@ runtime::task<void> publish_observed_run(repository& source,
                                          bool outer_miss_recorded,
                                          wrap_report& report) {
     report.exit = run.launch.exit;
+    const auto writes = writes_by_process(*run.observations);
+    auto all_writes = std::set<std::string>{};
+    for (const auto& [pid, paths] : writes) {
+        all_writes.insert(paths.begin(), paths.end());
+    }
+    auto complete_outputs = all_writes;
+    complete_outputs.insert(state.outputs.begin(), state.outputs.end());
+    auto normalised = co_await build_detail::normalise_repository_outputs(source, complete_outputs);
+    if (!normalised) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(normalised.error());
+    }
     auto cut = co_await source.cut("wrap output snapshot");
     if (!cut) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(cut.error());
+        co_return std::unexpected(stage_error("recording wrap output snapshot", cut.error()));
     }
     auto log = co_await source.log();
     if (!log || log->empty()) {
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(log ? wrap_error(errc::internal, "wrap output is missing")
-                                      : log.error());
+                                      : stage_error("reading wrap output snapshot", log.error()));
     }
-    const auto replay_tree = log->front().root;
+    auto folded_replay =
+        co_await build_detail::fold_dependency_inputs(source, log->front().root, options.inputs);
+    if (!folded_replay) {
+        static_cast<void>(remove_run(run.directory));
+        co_return std::unexpected(folded_replay.error());
+    }
+    const auto replay_tree = *folded_replay;
     const auto previous_actions = state.actions;
     const auto previous_outer = state.outer_result
                                     ? std::optional<result_id>{result_id{*state.outer_result}}
@@ -2245,7 +2550,7 @@ runtime::task<void> publish_observed_run(repository& source,
         auto stored = co_await store_toolchain(source, state.tools);
         if (!stored) {
             static_cast<void>(remove_run(run.directory));
-            co_return std::unexpected(stored.error());
+            co_return std::unexpected(stage_error("storing wrap toolchain", stored.error()));
         }
         toolchain = *stored;
         auto pinned = write_toolchain(toolchain_path, *stored);
@@ -2261,18 +2566,14 @@ runtime::task<void> publish_observed_run(repository& source,
     auto empty_blob = co_await repository_detail::build_access::put_file(source, empty);
     if (!empty_blob) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(empty_blob.error());
+        co_return std::unexpected(stage_error("storing wrap empty output", empty_blob.error()));
     }
-    const auto writes = writes_by_process(*run.observations);
     const auto driver_pid = run.processes.front().pid;
-    auto all_writes = std::set<std::string>{};
-    for (const auto& [pid, paths] : writes)
-        all_writes.insert(paths.begin(), paths.end());
     for (const auto& process : run.processes) {
         auto program = co_await probe_program_text(source, *run.observations, process.pid);
         if (!program) {
             static_cast<void>(remove_run(run.directory));
-            co_return std::unexpected(program.error());
+            co_return std::unexpected(stage_error("reading configure probe", program.error()));
         }
         const auto is_probe = build_detail::probe_process(process.command, process.cwd) &&
                               shareable_probe_program(*program);
@@ -2334,14 +2635,16 @@ runtime::task<void> publish_observed_run(repository& source,
                                                  sandbox,
                                                  *run.observations,
                                                  found->second,
+                                                 nullptr,
                                                  *empty_blob,
                                                  0,
                                                  run.started_at,
                                                  run.finished_at,
-                                                 options.cache);
+                                                 options.cache,
+                                                 nullptr);
         if (!published) {
             static_cast<void>(remove_run(run.directory));
-            co_return std::unexpected(published.error());
+            co_return std::unexpected(stage_error("publishing wrapped action", published.error()));
         }
         if (is_probe && !fact_answers_used) {
             auto answer = fact_answer{.exit = 0, .result = published->result};
@@ -2391,20 +2694,23 @@ runtime::task<void> publish_observed_run(repository& source,
                                                sandbox,
                                                *run.observations,
                                                all_writes,
+                                               &complete_outputs,
                                                *empty_blob,
                                                report.exit,
                                                run.started_at,
                                                run.finished_at,
-                                               options.cache);
+                                               options.cache,
+                                               &options);
     if (!outer_saved) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(outer_saved.error());
+        co_return std::unexpected(stage_error("publishing outer wrap action", outer_saved.error()));
     }
     auto outer_value = co_await load_result(source, outer_saved->result);
     if (!outer_value) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(outer_value.error());
+        co_return std::unexpected(stage_error("loading outer wrap result", outer_value.error()));
     }
+    report.output_tree = outer_value->output_tree;
     if (backend && backend->config().publish) {
         auto outer_action = co_await load_action(source, outer_value->action);
         if (!outer_action) {
@@ -2421,7 +2727,7 @@ runtime::task<void> publish_observed_run(repository& source,
     auto outer_bytes = co_await build_detail::output_bytes(source, *outer_value);
     if (!outer_bytes) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(outer_bytes.error());
+        co_return std::unexpected(stage_error("counting outer wrap outputs", outer_bytes.error()));
     }
     report.cache.bytes_rebuilt += *outer_bytes;
     if (report.trace_actions.empty()) {
@@ -2465,12 +2771,12 @@ runtime::task<void> publish_observed_run(repository& source,
     auto copied = co_await copy_outputs(source, working_tree, state.outputs);
     if (!copied) {
         static_cast<void>(remove_run(run.directory));
-        co_return std::unexpected(copied.error());
+        co_return std::unexpected(stage_error("restoring wrap outputs", copied.error()));
     }
     auto saved = write_state(state_path, state);
     auto removed = remove_run(run.directory);
     if (!saved)
-        co_return std::unexpected(saved.error());
+        co_return std::unexpected(stage_error("saving wrap state", saved.error()));
     if (!removed)
         co_return std::unexpected(removed.error());
     auto outer_recorded =
@@ -2488,14 +2794,16 @@ runtime::task<void> publish_observed_run(repository& source,
 
 } // namespace
 
-objects::sandbox_record wrap_sandbox_definition() {
+objects::sandbox_record wrap_sandbox_definition(bool network) {
     return {.mechanism = "wrap user+mount+net namespaces with exec-time hook v1",
             .work_root = "/liquid/work/",
             .toolchain_root = "/usr/",
             .home_root = "/tmp/home/",
             .temporary_root = "/tmp/",
-            .fixed_environment = {"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"},
-            .network = false};
+            .fixed_environment =
+                {"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH", "ZERO_AR_DATE"},
+            .network = network,
+            .output_normalisers = build_detail::output_normaliser_rules()};
 }
 
 liquid::result<std::filesystem::path>
@@ -2509,6 +2817,10 @@ runtime::task<std::pair<digest, std::string>> phase2_toolchain(repository& sourc
                                                                std::string_view cwd,
                                                                std::string_view command) {
     co_return co_await phase2_toolchain_impl(source, recorded, inputs, cwd, command);
+}
+
+runtime::task<digest> capture_toolchain(repository& source, std::set<std::string> executables) {
+    co_return co_await store_toolchain(source, executables);
 }
 
 runtime::task<action_result> run_wrapped_action(repository& source,
@@ -2582,7 +2894,8 @@ runtime::task<action_result> run_wrapped_action(repository& source,
                                                        .stderr_path = stderr_path,
                                                        .cwd = cwd,
                                                        .command = action.input.command,
-                                                       .environment = std::move(environment)};
+                                                       .environment = std::move(environment),
+                                                       .network = has_data_url(action.input.env)};
     build_detail::testing::record_sandbox_spawn();
     auto launched = co_await runtime::offload(
         [request = std::move(request)] { return sandbox_detail::launch_wrap(request); });
@@ -2672,6 +2985,17 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     const auto wrap_started = std::chrono::steady_clock::now();
     if (command.empty() || command.front().empty())
         co_return std::unexpected(wrap_error(errc::invalid_argument, "wrap command is empty"));
+    if (options.allow_embedded_prefix && !options.install_prefix) {
+        co_return std::unexpected(
+            wrap_error(errc::invalid_argument, "embedded-prefix waiver requires --install-prefix"));
+    }
+    if (options.install_prefix &&
+        (!options.install_prefix->is_absolute() ||
+         options.install_prefix->lexically_normal() != *options.install_prefix)) {
+        co_return std::unexpected(wrap_error(errc::invalid_argument,
+                                             "install prefix must be an absolute normalized path",
+                                             *options.install_prefix));
+    }
     auto code = std::error_code{};
     working_tree = std::filesystem::canonical(working_tree, code);
     if (code || !std::filesystem::is_directory(working_tree))
@@ -2690,6 +3014,22 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!facts_key)
         co_return std::unexpected(facts_key.error());
     auto action_environment = fixed_environment(options);
+    if (options.session) {
+        auto data_repository =
+            co_await repository::open(working_tree, repository_options{.session = options.session});
+        if (!data_repository) {
+            co_return std::unexpected(data_repository.error());
+        }
+        auto data_environment =
+            data_detail::session_environment(*data_repository, *options.session);
+        if (!data_environment) {
+            co_return std::unexpected(data_environment.error());
+        }
+        for (auto& [name, value] : *data_environment) {
+            action_environment.insert_or_assign(std::move(name), std::move(value));
+        }
+    }
+    apply_install_conventions(command, options);
     const auto fact_variables = build_detail::cached_variables(facts, *facts_key);
     apply_cached_variables(command, action_environment, fact_variables);
     if (build_detail::foreign_target(*facts_key))
@@ -2711,7 +3051,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     const auto repository_path = *cache_directory / "repository";
     auto source =
         std::filesystem::exists(repository_path / "LIQUID_REPO")
-            ? co_await repository::open(repository_path)
+            ? co_await repository::open(repository_path, {.defer_tree_load = true})
             : co_await repository::create(repository_path,
                                           repository_options{.cache = cache_config{.publish = true},
                                                              .remote = options.remote});
@@ -2745,17 +3085,9 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!queries) {
         co_return std::unexpected(queries.error());
     }
-    auto synced = co_await sync_sources(*source, working_tree, *cache_directory, *state);
+    auto synced = co_await sync_sources(*source, working_tree, *cache_directory, *state, command);
     if (!synced)
         co_return std::unexpected(synced.error());
-    for (const auto& saved : state->actions) {
-        auto value = co_await load_result(*source, saved.result);
-        if (!value)
-            continue;
-        auto materialised = co_await materialise_result(*source, *value);
-        if (!materialised)
-            co_return std::unexpected(materialised.error());
-    }
     auto cut = co_await source->cut("wrap input snapshot");
     if (!cut)
         co_return std::unexpected(cut.error());
@@ -2763,7 +3095,18 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!log || log->empty())
         co_return std::unexpected(log ? wrap_error(errc::internal, "wrap snapshot is missing")
                                       : log.error());
-    const auto input_tree = log->front().root;
+    const auto base_input_tree = log->front().root;
+    auto imported_inputs =
+        co_await build_detail::import_wrap_inputs(*source, *cache_directory, options.inputs);
+    if (!imported_inputs) {
+        co_return std::unexpected(imported_inputs.error());
+    }
+    auto folded_inputs =
+        co_await build_detail::fold_dependency_inputs(*source, base_input_tree, options.inputs);
+    if (!folded_inputs) {
+        co_return std::unexpected(folded_inputs.error());
+    }
+    const auto input_tree = *folded_inputs;
     auto toolchain = read_toolchain(toolchain_path);
     if (!toolchain)
         co_return std::unexpected(toolchain.error());
@@ -2778,7 +3121,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                 co_return std::unexpected(pinned.error());
         }
     }
-    auto sandbox = co_await store_sandbox(*source);
+    auto sandbox = co_await store_sandbox(*source, has_data_url(action_environment));
     if (!sandbox)
         co_return std::unexpected(sandbox.error());
     auto report = wrap_report{};
@@ -2830,6 +3173,16 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
             co_return report;
         }
         outer_miss_recorded = true;
+    }
+    for (const auto& saved : state->actions) {
+        auto value = co_await load_result(*source, saved.result);
+        if (!value) {
+            continue;
+        }
+        auto materialised = co_await materialise_result(*source, *value);
+        if (!materialised) {
+            co_return std::unexpected(materialised.error());
+        }
     }
     if (*toolchain) {
         auto prepared = co_await prepare_cache_plan(*source,
@@ -2891,8 +3244,9 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                                                    !fact_variables.empty(),
                                                    outer_miss_recorded,
                                                    report);
-    if (!published)
-        co_return std::unexpected(published.error());
+    if (!published) {
+        co_return std::unexpected(stage_error("publishing observed wrap run", published.error()));
+    }
     if (*toolchain) {
         auto tests =
             co_await build_detail::discover_cmake_tests(*source, working_tree, **toolchain);
@@ -2902,15 +3256,16 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     }
     auto primed = co_await prime_wrap_actions(*queries, query_state, *state, *sandbox);
     if (!primed) {
-        co_return std::unexpected(primed.error());
+        co_return std::unexpected(stage_error("priming wrap action cache", primed.error()));
     }
     auto recorded = build_detail::record_configuration_facts(working_tree, *facts_key, facts);
-    if (!recorded)
-        co_return std::unexpected(recorded.error());
+    if (!recorded) {
+        co_return std::unexpected(stage_error("recording configuration facts", recorded.error()));
+    }
     auto completed =
         co_await complete_report(*cache_directory, *source, cache, wrap_started, report);
     if (!completed) {
-        co_return std::unexpected(completed.error());
+        co_return std::unexpected(stage_error("recording wrap report", completed.error()));
     }
     add_graph_validation_status(report, *queries);
     if (options.verify) {

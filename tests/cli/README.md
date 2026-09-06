@@ -15,8 +15,16 @@ The help/documentation comparison also pins the `scheduler` and `worker` command
 The scenario also pins `remote_bytes` in the status JSON contract.
 It maps an anchor from the imported change through a later rename and checks the returned path and
 flags.
+It lists history through that rename, restores the imported version as a new drip, and cuts the
+restoration without changing an earlier change.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
+
+`format-diff.cmake` creates two changes through the public repository API and proves that
+`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and tier.
+
+`symbols-python.cmake` creates a Python source file and proves `liquid symbols` selects the locked
+Python grammar and reports `origin=syntactic`.
 
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.
@@ -25,7 +33,16 @@ The SBOM command tests exercise SPDX and CycloneDX output for the wrapped CMake 
 check each format's identifying field.
 `delta.cmake` drives create, apply, and catalog fetch through the executable and compares target,
 applied, and fetched file digests.
+`secret.cmake` seals file input to raw CBOR and base64, unseals both forms through the executable,
+and proves that the plaintext is absent from stderr.
 
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
 identity encode, decode, and verification APIs.
+
+The admission process test invokes `attest image` and verifies its printed digest through
+`attest verify`, then starts the built `serve admission` command over TLS and explicit insecure
+HTTP and posts committed Kubernetes fixtures.
+`cli-keys` creates an encrypted store through `store_options::custody`, then drives `keys show`,
+`rotate`, `revoke`, `rewrap`, and `split`. It checks the rotation disclosures, the one-line mutation
+reports, all emitted Shamir shares, and the final persisted custody kind.

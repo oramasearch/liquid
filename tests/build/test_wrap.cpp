@@ -14,6 +14,7 @@
 
 #include "../temporary_directory.hpp"
 #include "build/cache.hpp"
+#include "build/materialise.hpp"
 #include "build/repository_access.hpp"
 #include "formats/json.hpp"
 #include "liquid/build.hpp"
@@ -98,13 +99,17 @@ auto available(std::string_view command) -> bool {
     return false;
 }
 
+auto clang_command() -> std::string {
+    return std::system("command -v clang >/dev/null 2>&1") == 0 ? "clang" : "clang-19";
+}
+
 auto run_wrap(const std::filesystem::path& project,
               const std::filesystem::path& cache,
               std::vector<std::string> command,
               bool explain = false,
               std::uint32_t jobs = 0,
-              std::optional<liquid::remote_config> remote = {})
-    -> liquid::result<liquid::wrap_report> {
+              std::optional<liquid::remote_config> remote = {},
+              std::vector<liquid::named_input> inputs = {}) -> liquid::result<liquid::wrap_report> {
     return liquid::runtime::block_on(
         liquid::build::wrap(project,
                             std::move(command),
@@ -114,7 +119,8 @@ auto run_wrap(const std::filesystem::path& project,
                                                  .verify = false,
                                                  .cache_directory = cache,
                                                  .fact_directory = cache.parent_path() / "facts",
-                                                 .remote = std::move(remote)}));
+                                                 .remote = std::move(remote),
+                                                 .inputs = std::move(inputs)}));
 }
 
 auto shell_quote(std::string_view value) -> std::string {
@@ -262,10 +268,17 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
         fixture.project(), fixture.cache(), {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"});
     ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
     ASSERT_EQ(configured->exit, 0);
+    EXPECT_TRUE(std::filesystem::is_regular_file(fixture.project() / "build/CMakeCache.txt"));
     auto first =
         run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, false, 3);
     ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
     ASSERT_EQ(first->exit, 0);
+    auto cached_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(cached_repository) << cached_repository.error().message;
+    const auto imported_cache =
+        liquid::runtime::block_on(cached_repository->read("build/CMakeCache.txt"));
+    EXPECT_TRUE(imported_cache) << imported_cache.error().message;
     EXPECT_GE(first->processes_started, 3U);
     EXPECT_TRUE(std::filesystem::is_regular_file(fixture.project() / "build/wrapped"));
 
@@ -361,6 +374,8 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
         })) << liquid::to_string(tool);
     }
 
+    const auto before_second = repository->status();
+    ASSERT_TRUE(before_second) << before_second.error().message;
     auto second =
         run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, false, 3);
     ASSERT_TRUE(second) << second.error().message << ": " << second.error().context;
@@ -368,6 +383,13 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(second->processes_started, 0U);
     EXPECT_EQ(second->outer, liquid::cache_status::hit);
     EXPECT_EQ(second->hits + second->misses, second->actions);
+    EXPECT_LT(second->peak_rss_bytes, std::uint64_t{512 * 1024 * 1024});
+    auto after_second_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(after_second_repository) << after_second_repository.error().message;
+    const auto after_second = after_second_repository->status();
+    ASSERT_TRUE(after_second) << after_second.error().message;
+    EXPECT_EQ(after_second->pending_drips, before_second->pending_drips);
     auto statistics =
         liquid::runtime::block_on(liquid::build::cache_stats(fixture.project(), fixture.cache()));
     ASSERT_TRUE(statistics) << statistics.error().message;
@@ -509,6 +531,142 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(other_built->outer, liquid::cache_status::hit);
     EXPECT_EQ(std::getenv("LD_PRELOAD"), nullptr);
     EXPECT_EQ(std::getenv("DYLD_INSERT_LIBRARIES"), nullptr);
+}
+
+TEST(BuildWrap, unchanged_upstream_output_terminates_a_cross_project_cascade) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("clang")) {
+        GTEST_SKIP() << "clang is absent";
+    }
+    wrap_directory fixture{"cmake"};
+    auto code = std::error_code{};
+    std::filesystem::remove_all(fixture.project(), code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::create_directories(fixture.project(), code);
+    ASSERT_FALSE(code) << code.message();
+    {
+        auto source = std::ofstream{fixture.project() / "value.c"};
+        source << "int dependency_value(void) { return 7; }\n";
+    }
+    const auto compiler = clang_command();
+    const auto compile = compiler + " -c value.c -o value.o";
+    auto first = run_wrap(fixture.project(), fixture.cache(), {"/bin/sh", "-c", compile});
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    ASSERT_EQ(first->processes_started, 1U);
+    ASSERT_TRUE(first->output_tree);
+    auto upstream_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(upstream_repository) << upstream_repository.error().message;
+    auto upstream_cache = liquid::build_detail::disk_cache{*upstream_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(upstream_cache.open()));
+    auto first_result = liquid::runtime::block_on(upstream_cache.find_output("value.o"));
+    ASSERT_TRUE(first_result) << first_result.error().message;
+    ASSERT_TRUE(*first_result);
+
+    const auto downstream = fixture.second_checkout();
+    std::filesystem::remove_all(downstream, code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::create_directories(downstream, code);
+    ASSERT_FALSE(code) << code.message();
+    auto consumed = run_wrap(downstream,
+                             fixture.second_cache(),
+                             {"/bin/sh", "-c", "cp deps/upstream/value.o copied.o"},
+                             false,
+                             0,
+                             {},
+                             {{"upstream", (**first_result).value}});
+    ASSERT_TRUE(consumed) << consumed.error().message << ": " << consumed.error().context;
+    ASSERT_GT(consumed->processes_started, 0U);
+
+    {
+        auto source = std::ofstream{fixture.project() / "value.c", std::ios::app};
+        source << "// output-preserving source change\n";
+    }
+    auto rebuilt = run_wrap(fixture.project(), fixture.cache(), {"/bin/sh", "-c", compile});
+    ASSERT_TRUE(rebuilt) << rebuilt.error().message << ": " << rebuilt.error().context;
+    ASSERT_EQ(rebuilt->processes_started, 1U);
+    ASSERT_TRUE(rebuilt->output_tree);
+    EXPECT_EQ(liquid::to_string(*rebuilt->output_tree), liquid::to_string(*first->output_tree));
+    auto rebuilt_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(rebuilt_repository) << rebuilt_repository.error().message;
+    auto rebuilt_cache = liquid::build_detail::disk_cache{*rebuilt_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(rebuilt_cache.open()));
+    auto second_result = liquid::runtime::block_on(rebuilt_cache.find_output("value.o"));
+    ASSERT_TRUE(second_result) << second_result.error().message;
+    ASSERT_TRUE(*second_result);
+    EXPECT_NE(liquid::to_string((**second_result).value),
+              liquid::to_string((**first_result).value));
+
+    auto terminated = run_wrap(downstream,
+                               fixture.second_cache(),
+                               {"/bin/sh", "-c", "cp deps/upstream/value.o copied.o"},
+                               false,
+                               0,
+                               {},
+                               {{"upstream", (**second_result).value}});
+    ASSERT_TRUE(terminated) << terminated.error().message << ": " << terminated.error().context;
+    EXPECT_EQ(terminated->processes_started, 0U);
+    EXPECT_EQ(terminated->outer, liquid::cache_status::hit);
+    auto explanation = liquid::runtime::block_on(
+        liquid::build::why(downstream, "copied.o", fixture.second_cache()));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    EXPECT_EQ(explanation->cause.detail,
+              "input deps/upstream unchanged: same normalised tree after upstream rebuild");
+    auto downstream_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.second_cache() / "repository"));
+    ASSERT_TRUE(downstream_repository) << downstream_repository.error().message;
+    auto claims = liquid::runtime::block_on(liquid::build::known_outputs(*downstream_repository));
+    ASSERT_TRUE(claims) << claims.error().message;
+    const auto upstream_claims = std::ranges::count_if(*claims, [&](const auto& claim) {
+        return liquid::to_string(claim.output_tree) == liquid::to_string(*first->output_tree);
+    });
+    EXPECT_GE(upstream_claims, 2);
+}
+
+TEST(BuildWrap, incompatible_shared_library_is_reported_and_can_fail_the_cli) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("cmake") || !available("ninja") || !available("clang")) {
+        GTEST_SKIP() << "cmake, ninja, or clang is absent";
+    }
+    wrap_directory fixture{"abi"};
+    auto cache_environment = scoped_environment{"LIQUID_WRAP_CACHE", fixture.cache().string()};
+    ASSERT_TRUE(cache_environment.valid());
+    auto configured = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(),
+                            {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"},
+                            {.cache = true, .verify = false}));
+    ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
+    ASSERT_EQ(configured->exit, 0);
+    auto first = liquid::runtime::block_on(liquid::build::wrap(
+        fixture.project(), {"cmake", "--build", "build"}, {.cache = true, .verify = false}));
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    ASSERT_EQ(first->exit, 0);
+    EXPECT_TRUE(first->abi_breaks.empty());
+
+    auto source = std::ofstream{fixture.project() / "abi.c", std::ios::trunc};
+    source << "int abi_retained(double value) { return (int)value + 1; }\n";
+    source.close();
+#if defined(LIQUID_CLI)
+    const auto output = fixture.project().parent_path() / "abi-break-output";
+    const auto command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                         shell_quote(LIQUID_CLI) +
+                         " wrap --fail-on-abi-break cmake --build build --clean-first >" +
+                         shell_quote(output.string()) + " 2>&1";
+    const auto status = std::system(command.c_str());
+    auto input = std::ifstream{output};
+    const auto text =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    ASSERT_TRUE(WIFEXITED(status)) << text;
+    EXPECT_EQ(WEXITSTATUS(status), 1) << text;
+    EXPECT_NE(text.find("abi-break:"), std::string::npos) << text;
+    EXPECT_NE(text.find("abi_removed removed"), std::string::npos) << text;
+    EXPECT_NE(text.find("abi_retained type_changed"), std::string::npos) << text;
+#endif
 }
 
 TEST(BuildWrap, recursive_make_is_split_into_actions) {
@@ -1013,6 +1171,94 @@ TEST(BuildWrap, foreign_target_refuses_an_uncached_probe_before_compiler_entry) 
 
 TEST(BuildWrap, mount_backed_scenarios_are_skipped_without_linux_fuse) {
     GTEST_SKIP() << "liquid wrap mount scenarios require Linux FUSE";
+}
+
+#endif
+
+#if LIQUID_BUILD_HAS_FUSE && (defined(__linux__) || defined(__APPLE__))
+
+TEST(BuildWrap, installed_cmake_tree_moves_and_embedded_prefix_policy_is_recorded) {
+#if defined(__linux__)
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+#endif
+    if (!available("cmake") || !available("ninja") || !available("clang")) {
+        GTEST_SKIP() << "cmake, ninja, or clang is absent";
+    }
+    wrap_directory fixture{"relocation"};
+    const auto prefix = std::filesystem::path{"/opt/liquid-relocation"};
+    const auto options = [&](bool allow = false) {
+        return liquid::wrap_options{.cache = true,
+                                    .verify = false,
+                                    .cache_directory = fixture.cache(),
+                                    .fact_directory = fixture.cache().parent_path() / "facts",
+                                    .install_prefix = prefix,
+                                    .allow_embedded_prefix = allow};
+    };
+    auto configured = liquid::runtime::block_on(liquid::build::wrap(
+        fixture.project(), {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"}, options()));
+    ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
+    ASSERT_EQ(configured->exit, 0);
+    auto built = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), {"cmake", "--build", "build"}, options()));
+    ASSERT_TRUE(built) << built.error().message << ": " << built.error().context;
+    ASSERT_EQ(built->exit, 0);
+    auto installed = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), {"cmake", "--install", "build"}, options()));
+    ASSERT_TRUE(installed) << installed.error().message << ": " << installed.error().context;
+    ASSERT_EQ(installed->exit, 0);
+    ASSERT_TRUE(installed->output_tree);
+
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(repository) << repository.error().message;
+    const auto first = fixture.project().parent_path() / "installed-x";
+    const auto second = fixture.project().parent_path() / "installed-y";
+    auto materialised = liquid::runtime::block_on(
+        liquid::build_detail::materialise_tree(*repository, *installed->output_tree, first));
+    ASSERT_TRUE(materialised) << materialised.error().message;
+    auto code = std::error_code{};
+    std::filesystem::copy(first, second, std::filesystem::copy_options::recursive, code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::remove_all(first, code);
+    ASSERT_FALSE(code) << code.message();
+    const auto program_output = fixture.project().parent_path() / "relocation-output";
+    const auto run = shell_quote((second / "bin/relocation-tool").string()) + " >" +
+                     shell_quote(program_output.string());
+    ASSERT_EQ(std::system(run.c_str()), 0);
+    auto input = std::ifstream{program_output};
+    auto text = std::string{};
+    std::getline(input, text);
+    EXPECT_EQ(text, "73");
+    auto clean = liquid::runtime::block_on(
+        liquid::build::relocation_check(second, {.install_prefix = prefix}));
+    ASSERT_TRUE(clean) << clean.error().message;
+    EXPECT_TRUE(clean->relocatable);
+
+    const auto installed_relative = "out/prefix/opt/liquid-relocation/share/embedded.txt";
+    const auto dirty_command = std::vector<std::string>{
+        "/bin/sh",
+        "-c",
+        "mkdir -p out/prefix/opt/liquid-relocation/share && printf '/opt/liquid-relocation\\n' "
+        "> out/prefix/opt/liquid-relocation/share/embedded.txt"};
+    auto waived = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), dirty_command, options(true)));
+    ASSERT_TRUE(waived) << waived.error().message << ": " << waived.error().context;
+    auto explanation = liquid::runtime::block_on(
+        liquid::build::why(fixture.project(), installed_relative, fixture.cache()));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    ASSERT_TRUE(explanation->schedule);
+    EXPECT_NE(explanation->schedule->reason.find("relocation check waived"), std::string::npos);
+
+    auto rejected_command = dirty_command;
+    rejected_command.back() =
+        "printf '/liquid/work/rejected\\n' > " + std::string{installed_relative};
+    auto rejected = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), std::move(rejected_command), options()));
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error().code, liquid::errc::invalid_argument);
+    EXPECT_NE(rejected.error().message.find("embedded.txt@"), std::string::npos);
 }
 
 #endif

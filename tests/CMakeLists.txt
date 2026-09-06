@@ -6,18 +6,25 @@ set(LIQUID_HTTP2_TEST_SOURCES
 
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
+  test_asn1.cpp
   test_drip.cpp
   test_delta.cpp
+  test_deploy.cpp
   test_daemon.cpp
+  test_data.cpp
   test_error.cpp
+  test_forge.cpp
   test_hash.cpp
+  test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_node_store.cpp
   test_object.cpp
   test_remote.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  resolve/test_resolution.cpp
   workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
@@ -28,10 +35,14 @@ add_executable(liquid-tests
   test_repository.cpp
   test_stale_reasoning.cpp
   test_runtime.cpp
+  test_secret.cpp
   test_store.cpp
-  test_transparency.cpp
   test_temporary_directory.cpp
+  test_lake_transparency.cpp
+  test_transparency.cpp
+  ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
+  admission/test_review.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp
   scan/test_redaction.cpp
@@ -55,32 +66,60 @@ add_executable(liquid-tests
   build/test_policy.cpp
   build/test_facts.cpp
   build/test_graph.cpp
+  build/test_content.cpp
+  build/test_normalise.cpp
   build/test_provenance.cpp
+  build/test_relocation.cpp
   build/test_why.cpp
   build/test_sbom.cpp
+  build/test_abi.cpp
   build/test_symbols.cpp
   build/test_wrap.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
+if(BUILD_SHARED_LIBS)
+  target_sources(liquid-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/build/content.cpp
+    ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
+    ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    ${PROJECT_SOURCE_DIR}/src/store/references.cpp
+    ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
+  if(APPLE)
+    target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
+  endif()
+endif()
 if(UNIX)
-  target_sources(liquid-tests PRIVATE test_sync.cpp)
+  target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid
+  liquid_forge_double
   liquid_monocypher
   orama::oramacore-cpp
   GTest::gtest_main
+  Boost::assert
+  Boost::config
+  Boost::throw_exception
   Boost::corosio
   Boost::corosio_openssl)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
+  ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
+  ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
-target_include_directories(liquid-tests PRIVATE
-  ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME desktop-nautilus-badge-mapping
+  COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/tools/desktop/linux/nautilus/test_badges.py)
+add_test(NAME desktop-dolphin-badge-mapping
+  COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/tools/desktop/linux/dolphin/test_badges.py)
 
 add_executable(liquid-http2-test-server
   http2/test_server.cpp
@@ -96,6 +135,28 @@ if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
+add_executable(liquid-secret-fixture-generator EXCLUDE_FROM_ALL secret_fixture.cpp)
+target_include_directories(liquid-secret-fixture-generator PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-secret-fixture-generator PRIVATE liquid::liquid)
+
+foreach(ABI_FIXTURE IN ITEMS v1 added break)
+  add_library(liquid-abi-fixture-${ABI_FIXTURE} SHARED
+    build/abi_fixture_${ABI_FIXTURE}.c)
+  set_target_properties(liquid-abi-fixture-${ABI_FIXTURE} PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    OUTPUT_NAME liquid-abi-fixture-${ABI_FIXTURE}
+    SOVERSION 1)
+  if(MSVC)
+    target_compile_options(liquid-abi-fixture-${ABI_FIXTURE} PRIVATE /Zi)
+  else()
+    target_compile_options(liquid-abi-fixture-${ABI_FIXTURE} PRIVATE -g)
+  endif()
+  if(UNIX AND NOT APPLE)
+    target_link_options(liquid-abi-fixture-${ABI_FIXTURE} PRIVATE
+      "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/build/abi_fixture.map")
+  endif()
+  add_dependencies(liquid-tests liquid-abi-fixture-${ABI_FIXTURE})
+endforeach()
 if(UNIX)
   add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
   target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
@@ -103,22 +164,59 @@ if(UNIX)
 endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+  LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_ABI_FIXTURE_V1="$<TARGET_FILE:liquid-abi-fixture-v1>"
+  LIQUID_ABI_FIXTURE_ADDED="$<TARGET_FILE:liquid-abi-fixture-added>"
+  LIQUID_ABI_FIXTURE_BREAK="$<TARGET_FILE:liquid-abi-fixture-break>"
+  LIQUID_ABI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/fixtures/abi"
   LIQUID_SOURCE_ROOT="${PROJECT_SOURCE_DIR}"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+if(UNIX)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"
+    LIQUID_ADMISSION_TLS_CERT="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
+    LIQUID_ADMISSION_TLS_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem")
+endif()
 target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TLS_CERTIFICATE="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
+  LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
+  LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures"
   LIQUID_TRANSPARENCY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/transparency/fixture.json")
 if(LIQUID_BUILD_FRONTENDS)
-  target_sources(liquid-tests PRIVATE build/test_frontend.cpp)
+  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
     LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
     LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
+    LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
+    LIQUID_GRAMMAR_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/grammars"
     LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
     LIQUID_NM="${CMAKE_NM}")
-  target_link_libraries(liquid-tests PRIVATE liquid-frontend-clang-static)
+  target_include_directories(liquid-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/modules/frontends
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
+  target_link_libraries(liquid-tests PRIVATE
+    liquid-frontend-clang-static
+    liquid_frontend_syntax)
+
+  add_test(NAME grammar-lock-digests
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_GRAMMAR_LOCK=${LIQUID_GRAMMAR_LOCK}
+      -DLIQUID_GRAMMAR_SOURCE_MAP=${LIQUID_GRAMMAR_SOURCE_MAP}
+      -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGrammars.cmake)
+
+  add_executable(liquid-grammar-measure build/measure_grammars.cpp)
+  target_include_directories(liquid-grammar-measure PRIVATE
+    ${PROJECT_SOURCE_DIR}/modules/frontends
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
+  target_compile_definitions(liquid-grammar-measure PRIVATE
+    LIQUID_GRAMMAR_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/grammars")
+  target_link_libraries(liquid-grammar-measure PRIVATE liquid_frontend_syntax)
 endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
@@ -129,8 +227,31 @@ if(UNIX)
     LIQUID_WRAP_SLEEP_TOOL="$<TARGET_FILE:liquid-wrap-sleep-tool>")
 endif()
 
+if(UNIX)
+  add_executable(liquid-hot-demo-tests
+    hot_update/test_demo.cpp
+    ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+    ${PROJECT_SOURCE_DIR}/src/objects/records.cpp)
+  target_include_directories(liquid-hot-demo-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(liquid-hot-demo-tests PRIVATE
+    liquid::liquid
+    liquid::hot
+    GTest::gtest_main)
+  target_compile_definitions(liquid-hot-demo-tests PRIVATE
+    LIQUID_HOT_DEMO="$<TARGET_FILE:liquid-hot-demo>"
+    LIQUID_HOT_DEMO_PATCH="$<TARGET_FILE:liquid-hot-demo-patch>"
+    LIQUID_HOT_DEMO_RESTART_HOOK="$<TARGET_FILE:liquid-hot-demo-restart-hook>"
+    LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
+  add_dependencies(liquid-hot-demo-tests
+    liquid-hot-demo
+    liquid-hot-demo-patch
+    liquid-hot-demo-restart-hook)
+  gtest_discover_tests(liquid-hot-demo-tests)
+endif()
+
 if(LIQUID_BUILD_CLI)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")
+  add_dependencies(liquid-tests liquid-cli)
   if(NOT APPLE)
   set(LIQUID_SYMBOLS_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/symbols-cli-repository)
   add_test(NAME symbols-cli-clean
@@ -160,6 +281,13 @@ if(LIQUID_BUILD_CLI)
     FIXTURES_REQUIRED symbols_cli_build
     WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY}
     PASS_REGULAR_EXPRESSION "origin=compiler")
+  endif()
+  if(LIQUID_BUILD_FRONTENDS)
+    add_test(NAME symbols-cli-python
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_SYMBOLS_PYTHON_ROOT=${CMAKE_CURRENT_BINARY_DIR}/symbols-python-repository
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/symbols-python.cmake)
   endif()
   add_executable(liquid-gc-cli-fixture store/gc_cli_fixture.cpp)
   target_link_libraries(liquid-gc-cli-fixture PRIVATE liquid::liquid)
@@ -196,11 +324,29 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-transparency-configuration
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/transparency.cmake)
   add_test(NAME cli-delta
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_DELTA_ROOT=${CMAKE_CURRENT_BINARY_DIR}/delta-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/delta.cmake)
+  add_test(NAME cli-secret
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_SECRET_ROOT=${CMAKE_CURRENT_BINARY_DIR}/secret-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/secret.cmake)
+  add_executable(liquid-format-diff-fixture cli/format_diff_fixture.cpp)
+  target_link_libraries(liquid-format-diff-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-format-diff
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_FORMAT_DIFF_FIXTURE=$<TARGET_FILE:liquid-format-diff-fixture>
+      -DLIQUID_FORMAT_DIFF_ROOT=${CMAKE_CURRENT_BINARY_DIR}/format-diff-cli
+      -DLIQUID_FORMAT_FIXTURES=${PROJECT_SOURCE_DIR}/tests/fixtures/formats
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/format-diff.cmake)
   add_test(NAME cli-why-json
     COMMAND ${CMAKE_COMMAND} -E env
       LIQUID_WRAP_CACHE=${CMAKE_CURRENT_BINARY_DIR}/why-cli-cache
@@ -225,6 +371,14 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
+  target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-keys
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_KEYS_FIXTURE=$<TARGET_FILE:liquid-keys-cli-fixture>
+      -DLIQUID_KEYS_ROOT=${CMAKE_CURRENT_BINARY_DIR}/keys-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/keys.cmake)
   add_test(NAME cli-sbom-spdx
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --spdx)
   set_tests_properties(cli-sbom-spdx PROPERTIES
@@ -233,6 +387,17 @@ if(LIQUID_BUILD_CLI)
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --cyclonedx)
   set_tests_properties(cli-sbom-cyclonedx PROPERTIES
     PASS_REGULAR_EXPRESSION "\"bomFormat\"[^\n]*\"CycloneDX\"")
+  add_test(NAME cli-abi-show-json
+    COMMAND $<TARGET_FILE:liquid-cli> abi show $<TARGET_FILE:liquid-abi-fixture-v1> --json)
+  set_tests_properties(cli-abi-show-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"version\":1[^\n]*\"liquid_abi_retained\"")
+  add_test(NAME cli-abi-diff-json
+    COMMAND $<TARGET_FILE:liquid-cli> abi diff
+      $<TARGET_FILE:liquid-abi-fixture-v1>
+      $<TARGET_FILE:liquid-abi-fixture-added>
+      --json)
+  set_tests_properties(cli-abi-diff-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"verdict\":\"compatible_additions\"[^\n]*\"liquid_abi_added\"")
 endif()
 
 add_executable(liquid-vfs-queue-tests
@@ -250,6 +415,12 @@ add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
 if(LIQUID_BUILD_FRONTENDS)
+  add_executable(liquid-edit-measure edit_measure.cpp)
+  target_link_libraries(liquid-edit-measure PRIVATE liquid::liquid)
+  target_compile_definitions(liquid-edit-measure PRIVATE
+    LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>")
+  add_dependencies(liquid-edit-measure liquid-frontend-tree-sitter)
+
   add_executable(liquid-frontend-measure frontend_measure.cpp)
   target_sources(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp)
   if(NOT UNIX)
@@ -325,26 +496,34 @@ target_link_libraries(liquid-store-sim-tests PRIVATE liquid::liquid GTest::gtest
 gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 
 add_executable(liquid-header-tests
+  headers/abi.cpp
+  headers/admission.cpp
   headers/attestation.cpp
   headers/build.cpp
   headers/daemon.cpp
   headers/drip.cpp
+  headers/edit.cpp
   headers/delta.cpp
+  headers/drive.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/format.cpp
+  headers/flow.cpp
   headers/frontend.cpp
   headers/git.cpp
   headers/graph.cpp
   headers/hash.cpp
+  headers/hot_update.cpp
   headers/identity.cpp
   headers/liquid.cpp
+  headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp
   headers/remote.cpp
   headers/repository.cpp
+  headers/resolve.cpp
   headers/runtime.cpp
   headers/store.cpp
-  headers/transparency.cpp
   headers/sync.cpp
   headers/version.cpp
   headers/vfs.cpp
@@ -355,6 +534,13 @@ add_test(NAME public-headers-isolated COMMAND liquid-header-tests)
 add_executable(liquid-frontend-c-header headers/frontend_abi.c)
 target_include_directories(liquid-frontend-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME public-frontend-c-header COMMAND liquid-frontend-c-header)
+
+add_executable(liquid-hot-c-header headers/hot_abi.c)
+target_include_directories(liquid-hot-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-hot-c-header COMMAND liquid-hot-c-header)
+add_executable(liquid-format-c-header headers/format_abi.c)
+target_include_directories(liquid-format-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-format-c-header COMMAND liquid-format-c-header)
 
 add_executable(liquid-cbor-tests encoding/test_cbor.cpp)
 target_sources(liquid-cbor-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
@@ -368,23 +554,39 @@ gtest_discover_tests(liquid-cbor-tests)
 add_executable(liquid-format-tests
   formats/test_dotenv.cpp
   formats/test_json.cpp
+  formats/test_registry.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
 target_include_directories(liquid-format-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(liquid-format-tests PRIVATE
+  LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_FORMAT_TEST_MODULE="$<TARGET_FILE:liquid-format-test-module>")
 target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_main)
+add_library(liquid-format-test-module MODULE formats/module.c)
+target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_dependencies(liquid-format-tests liquid-format-test-module)
 gtest_discover_tests(liquid-format-tests)
 
 add_executable(liquid-encryption-tests
+  encryption/test_custody.cpp
   encryption/test_leaf.cpp
   encryption/test_repository_leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp
   ${PROJECT_SOURCE_DIR}/src/encryption/leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
-  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp
+  ${PROJECT_SOURCE_DIR}/src/hash/sha256.c
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/age.cpp
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/common.cpp)
+if(UNIX)
+  target_sources(liquid-encryption-tests PRIVATE encryption/test_remote_custody.cpp)
+endif()
 target_include_directories(liquid-encryption-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
+target_compile_definitions(liquid-encryption-tests PRIVATE
+  LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-encryption-tests PRIVATE
   liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main)
 gtest_discover_tests(liquid-encryption-tests)
@@ -443,6 +645,16 @@ if(LIQUID_REALWORLD_TESTS)
       -DLIQUID_REALWORLD_GIT_DIRECTORY=${LIQUID_REALWORLD_GIT_DIRECTORY}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/git/realworld.cmake)
   set_tests_properties(git-realworld PROPERTIES LABELS realworld)
+endif()
+
+option(LIQUID_CONTENT_CHAIN_TESTS "Register the opt-in content-addressed build chain" OFF)
+if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
+  add_test(NAME content-addressed-build-chain
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONTENT_CHAIN_ROOT=${CMAKE_CURRENT_BINARY_DIR}/content-addressed-build-chain
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/build/content-addressed-chain.cmake)
+  set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
 endif()
 
 add_executable(liquid-repository-scenario repository/scenario.cpp)

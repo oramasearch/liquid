@@ -27,10 +27,13 @@
 #include <unistd.h>
 #include <vector>
 
+#include "drive/settings.hpp"
 #include "hydration.hpp"
+#include "liquid/sync.hpp"
 #include "request_queue.hpp"
 #include "vfs/observation.hpp"
 #include "vfs/repository_access.hpp"
+#include "vfs/xattrs.hpp"
 
 namespace liquid::vfs_detail {
 namespace {
@@ -45,7 +48,7 @@ auto fuse_path(const char* path) -> std::string {
 auto fuse_error(const error& value, bool reading = false) -> int {
     if (reading) {
         std::cerr << "liquid VFS: " << value.message << ": " << value.context << '\n';
-        return -EIO;
+        return value.code == errc::unavailable ? -EAGAIN : -EIO;
     }
     auto number = EIO;
     switch (value.code) {
@@ -94,6 +97,27 @@ auto prepare_mountpoint(const std::filesystem::path& path) -> result<void> {
     return {};
 }
 
+runtime::task<void> configure_drive_remote(repository& source, const mount_options& options) {
+    auto configured = co_await source.metadata("drive.remote");
+    if (!configured) {
+        co_return std::unexpected(configured.error());
+    }
+    if (!*configured) {
+        co_return result<void>{};
+    }
+    const auto& bytes = **configured;
+    auto url = std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    auto endpoint = std::shared_ptr<sync_endpoint>{};
+    try {
+        endpoint = std::make_shared<sync_endpoint>(
+            url, sync_endpoint_options{.bearer_token = options.bearer_token});
+    } catch (const std::exception& caught) {
+        co_return std::unexpected(error{errc::invalid_argument, caught.what(), "drive.remote"});
+    }
+    co_return co_await repository_detail::vfs_access::register_remote_source(
+        source, std::move(url), std::move(endpoint));
+}
+
 runtime::task<void> wake_fuse_loop(std::filesystem::path mountpoint) {
     auto awakened = co_await runtime::offload([mountpoint = std::move(mountpoint)] {
         struct stat attributes{};
@@ -119,25 +143,26 @@ public:
           cache_(repository_root_ / "LIQUID_VFS" / "chunks"),
           queue_(std::make_shared<request_queue>()), sink_(std::move(sink)),
           snapshot_root_(std::move(snapshot_root)) {
-        if (!snapshot_root_) {
-            for (auto& output : initial_outputs) {
-                modification_times_.insert_or_assign(std::move(output), 2'000'000'000);
-            }
-            return;
-        }
         for (auto& output : initial_outputs) {
             const auto directory = output.ends_with('/');
             auto path = std::filesystem::path{directory ? output.substr(0, output.size() - 1)
                                                         : std::move(output)};
+            const auto normalized = path.generic_string();
+            modification_times_.insert_or_assign(normalized, 2'000'000'000);
+            if (!snapshot_root_) {
+                continue;
+            }
+            if (!options_.read_only) {
+                current_entries_.insert_or_assign(normalized, directory);
+                continue;
+            }
             auto parent = path.parent_path();
             while (!parent.empty()) {
                 virtual_entries_.insert_or_assign(parent.generic_string(), node_kind::tree);
                 parent = parent.parent_path();
             }
-            const auto normalized = path.generic_string();
             virtual_entries_.insert_or_assign(normalized,
                                               directory ? node_kind::tree : node_kind::blob);
-            modification_times_.insert_or_assign(normalized, 2'000'000'000);
         }
     }
 
@@ -311,8 +336,23 @@ public:
     }
 
     auto entry(std::string path) -> runtime::task<repository_detail::vfs_entry> {
+        auto configured = co_await drive_detail::load_settings(source_);
+        if (!configured) {
+            co_return std::unexpected(configured.error());
+        }
+        if (!path.empty() &&
+            drive_detail::effective_state(*configured, path) == drive_path_state::not_synced_here) {
+            co_return std::unexpected(
+                error{errc::not_found, "path is excluded on this device", path});
+        }
+        if (deleted_path(path)) {
+            co_return std::unexpected(
+                error{errc::not_found, "entry was removed during execution", path});
+        }
         auto value = result<repository_detail::vfs_entry>{};
-        if (snapshot_root_) {
+        if (current_path(path)) {
+            value = co_await repository_detail::vfs_access::entry(source_, path);
+        } else if (snapshot_root_) {
             value = co_await repository_detail::vfs_access::entry(source_, *snapshot_root_, path);
         } else {
             value = co_await repository_detail::vfs_access::entry(source_, path);
@@ -332,8 +372,20 @@ public:
     }
 
     auto children(std::string path) -> runtime::task<std::vector<repository_detail::vfs_entry>> {
+        auto configured = co_await drive_detail::load_settings(source_);
+        if (!configured) {
+            co_return std::unexpected(configured.error());
+        }
+        if (!path.empty() &&
+            drive_detail::effective_state(*configured, path) == drive_path_state::not_synced_here) {
+            co_return std::unexpected(
+                error{errc::not_found, "path is excluded on this device", path});
+        }
         auto values = result<std::vector<repository_detail::vfs_entry>>{};
-        if (snapshot_root_) {
+        const auto current_directory = current_path(path);
+        if (current_directory) {
+            values = co_await repository_detail::vfs_access::children(source_, path);
+        } else if (snapshot_root_) {
             values =
                 co_await repository_detail::vfs_access::children(source_, *snapshot_root_, path);
         } else {
@@ -347,9 +399,36 @@ public:
             }
             values = std::vector<repository_detail::vfs_entry>{};
         }
+        if (!current_directory && current_below(path)) {
+            std::erase_if(*values, [this, &path](const auto& entry) {
+                const auto candidate = path.empty() ? entry.name : path + "/" + entry.name;
+                return current_path(candidate) || current_below(candidate);
+            });
+            auto current = co_await repository_detail::vfs_access::children(source_, path);
+            if (current) {
+                for (auto& entry : *current) {
+                    const auto candidate = path.empty() ? entry.name : path + "/" + entry.name;
+                    if (!current_path(candidate) && !current_below(candidate)) {
+                        continue;
+                    }
+                    std::erase_if(*values,
+                                  [&entry](const auto& value) { return value.name == entry.name; });
+                    values->push_back(std::move(entry));
+                }
+            } else if (current.error().code != errc::not_found) {
+                co_return std::unexpected(current.error());
+            }
+        }
+        std::erase_if(*values, [this, &path](const auto& entry) {
+            const auto candidate = path.empty() ? entry.name : path + "/" + entry.name;
+            return deleted_path(candidate);
+        });
         for (const auto& [candidate, kind] : virtual_entries_) {
             const auto candidate_path = std::filesystem::path{candidate};
             if (candidate_path.parent_path().generic_string() != path) {
+                continue;
+            }
+            if (deleted_path(candidate)) {
                 continue;
             }
             const auto name = candidate_path.filename().generic_string();
@@ -360,6 +439,11 @@ public:
             const auto mode = kind == node_kind::tree ? 0040755U : 0100644U;
             values->push_back({.name = name, .kind = kind, .mode = mode});
         }
+        std::erase_if(*values, [&](const auto& entry) {
+            const auto candidate = path.empty() ? entry.name : path + "/" + entry.name;
+            return drive_detail::effective_state(*configured, candidate) ==
+                   drive_path_state::not_synced_here;
+        });
         co_return values;
     }
 
@@ -367,8 +451,43 @@ public:
         return cache_;
     }
 
+    auto settings() -> runtime::task<drive_detail::stored_settings> {
+        co_return co_await drive_detail::load_settings(source_);
+    }
+
+    auto set_drive_state(std::string path, drive_path_state state)
+        -> runtime::task<drive_detail::stored_settings> {
+        co_return co_await drive_detail::set_path_state(source_, std::move(path), state);
+    }
+
+    auto record_hydrated(std::string path) -> runtime::task<void> {
+        co_return co_await drive_detail::record_hydrated(source_, std::move(path));
+    }
+
+    auto record_offline(std::string reason) -> runtime::task<void> {
+        co_return co_await drive_detail::record_offline_reason(source_, std::move(reason));
+    }
+
     auto read_only() const -> bool {
         return options_.read_only;
+    }
+
+    auto immutable(std::string_view path) const -> bool {
+        return path == "deps" || path.starts_with("deps/");
+    }
+
+    void mark_current(std::string path, bool recursive = false) {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        deleted_entries_.erase(path);
+        current_entries_.insert_or_assign(std::move(path), recursive);
+    }
+
+    void mark_deleted(std::string path, bool recursive = false) {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        std::erase_if(current_entries_, [&path](const auto& value) {
+            return value.first == path || value.first.starts_with(path + "/");
+        });
+        deleted_entries_.insert_or_assign(std::move(path), recursive);
     }
 
     void captured() {
@@ -398,6 +517,32 @@ public:
 
 private:
     static auto make_operations() -> fuse_operations;
+
+    static auto path_matches(std::string_view path, std::string_view root, bool recursive) -> bool {
+        return path == root || (recursive && path.starts_with(std::string{root} + "/"));
+    }
+
+    auto current_path(std::string_view path) const -> bool {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        return std::ranges::any_of(current_entries_, [&path](const auto& value) {
+            return path_matches(path, value.first, value.second);
+        });
+    }
+
+    auto current_below(std::string_view path) const -> bool {
+        const auto prefix = path.empty() ? std::string{} : std::string{path} + "/";
+        auto lock = std::scoped_lock{overlay_mutex_};
+        return std::ranges::any_of(current_entries_, [&prefix](const auto& value) {
+            return value.first.starts_with(prefix);
+        });
+    }
+
+    auto deleted_path(std::string_view path) const -> bool {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        return std::ranges::any_of(deleted_entries_, [&path](const auto& value) {
+            return path_matches(path, value.first, value.second);
+        });
+    }
 
     void set_ready(error failure) {
         {
@@ -435,6 +580,9 @@ private:
     observation_sink sink_;
     std::optional<digest> snapshot_root_;
     std::map<std::string, node_kind, std::less<>> virtual_entries_;
+    mutable std::mutex overlay_mutex_;
+    std::map<std::string, bool, std::less<>> current_entries_;
+    std::map<std::string, bool, std::less<>> deleted_entries_;
     std::atomic_uint64_t writes_captured_{};
     mutable std::mutex modification_mutex_;
     std::map<std::string, std::int64_t, std::less<>> modification_times_;
@@ -505,14 +653,16 @@ open_request(fuse_backend* state, std::string path, std::int64_t pid, int flags)
         co_return fuse_error(entry.error());
     if (entry->kind != node_kind::blob)
         co_return -EISDIR;
-    if (state->read_only() && (flags & (O_WRONLY | O_RDWR)) != 0) {
+    const auto writing = (flags & (O_WRONLY | O_RDWR)) != 0;
+    if ((state->read_only() || state->immutable(path)) && writing) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
-    if (!state->read_only() && (flags & O_TRUNC) != 0) {
+    if (!state->read_only() && !state->immutable(path) && (flags & O_TRUNC) != 0) {
         auto written = co_await state->source().write(path, {}, {.mode = entry->mode});
         if (!written)
             co_return fuse_error(written.error());
+        state->mark_current(path);
         state->cache().invalidate(entry->node);
         state->captured();
         state->touch(path);
@@ -531,9 +681,46 @@ runtime::task<int> read_request(fuse_backend* state,
     auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
+    auto configured = co_await state->settings();
+    if (!configured)
+        co_return fuse_error(configured.error());
+    const auto path_state = drive_detail::effective_state(*configured, path);
+    if (path_state == drive_path_state::not_synced_here)
+        co_return -ENOENT;
+    const auto hydrate_fully = drive_detail::should_hydrate_fully(*configured, path, entry->size);
+    if (hydrate_fully) {
+        auto hydrated = co_await state->cache().hydrate(state->source(), *entry);
+        if (!hydrated) {
+            if (entry->remotely_available &&
+                (hydrated.error().code == errc::unavailable || hydrated.error().code == errc::io ||
+                 hydrated.error().code == errc::not_found)) {
+                const auto reason = "peer unreachable while hydrating " + path;
+                auto recorded = co_await state->record_offline(reason);
+                if (!recorded)
+                    co_return fuse_error(recorded.error());
+                co_return fuse_error(error{errc::unavailable, reason, path}, true);
+            }
+            co_return fuse_error(hydrated.error(), true);
+        }
+    }
     auto bytes = co_await state->cache().read(state->source(), *entry, offset, size);
-    if (!bytes)
+    if (!bytes) {
+        if (entry->remotely_available &&
+            (bytes.error().code == errc::unavailable || bytes.error().code == errc::io ||
+             bytes.error().code == errc::not_found)) {
+            const auto reason = "peer unreachable while hydrating " + path;
+            auto recorded = co_await state->record_offline(reason);
+            if (!recorded)
+                co_return fuse_error(recorded.error());
+            co_return fuse_error(error{errc::unavailable, reason, path}, true);
+        }
         co_return fuse_error(bytes.error(), true);
+    }
+    if (hydrate_fully) {
+        auto recorded = co_await state->record_hydrated(path);
+        if (!recorded)
+            co_return fuse_error(recorded.error());
+    }
     *output = std::move(*bytes);
     state->observe(observed_operation::read, std::move(path), pid, entry->object);
     co_return static_cast<int>(output->size());
@@ -541,7 +728,7 @@ runtime::task<int> read_request(fuse_backend* state,
 
 runtime::task<int>
 create_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -549,6 +736,7 @@ create_request(fuse_backend* state, std::string path, std::int64_t pid, std::uin
     auto written = co_await state->source().write(path, {}, {.mode = file_mode});
     if (!written)
         co_return fuse_error(written.error());
+    state->mark_current(path);
     state->captured();
     state->touch(path);
     state->observe(observed_operation::write, std::move(path), pid);
@@ -560,7 +748,7 @@ runtime::task<int> write_request(fuse_backend* state,
                                  std::int64_t pid,
                                  std::uint64_t offset,
                                  std::vector<std::byte> input) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -580,6 +768,7 @@ runtime::task<int> write_request(fuse_backend* state,
         co_await state->source().write(path, std::move(*contents), {.mode = entry->mode});
     if (!written)
         co_return fuse_error(written.error());
+    state->mark_current(path);
     state->cache().invalidate(entry->node);
     state->captured();
     state->touch(path);
@@ -589,7 +778,7 @@ runtime::task<int> write_request(fuse_backend* state,
 
 runtime::task<int>
 remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool directory) {
-    if (state->read_only())
+    if (state->read_only() || state->immutable(path))
         co_return -EROFS;
     auto entry = co_await state->entry(path);
     if (!entry)
@@ -608,6 +797,7 @@ remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool dir
     auto removed = co_await state->source().remove(path);
     if (!removed)
         co_return fuse_error(removed.error());
+    state->mark_deleted(path, directory);
     state->cache().invalidate(entry->node);
     state->captured();
     state->touch(path);
@@ -617,7 +807,7 @@ remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool dir
 
 runtime::task<int>
 rename_request(fuse_backend* state, std::string from, std::string to, std::int64_t pid) {
-    if (state->read_only())
+    if (state->read_only() || state->immutable(from) || state->immutable(to))
         co_return -EROFS;
     if (from == to)
         co_return 0;
@@ -647,6 +837,9 @@ rename_request(fuse_backend* state, std::string from, std::string to, std::int64
     auto moved = co_await state->source().move(from, to);
     if (!moved)
         co_return fuse_error(moved.error());
+    const auto recursive = source->kind != node_kind::blob;
+    state->mark_deleted(from, recursive);
+    state->mark_current(to, recursive);
     state->captured();
     state->touch(from);
     state->touch(to);
@@ -657,7 +850,7 @@ rename_request(fuse_backend* state, std::string from, std::string to, std::int64
 
 runtime::task<int>
 mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -665,6 +858,7 @@ mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
         state->source(), path, static_cast<std::uint32_t>(S_IFDIR) | (mode & 0777U));
     if (!created)
         co_return fuse_error(created.error());
+    state->mark_current(path, true);
     state->captured();
     state->touch(path);
     state->observe(observed_operation::write, std::move(path), pid);
@@ -673,7 +867,7 @@ mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
 
 runtime::task<int>
 truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint64_t size) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -688,6 +882,7 @@ truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::u
         co_await state->source().write(path, std::move(*contents), {.mode = entry->mode});
     if (!written)
         co_return fuse_error(written.error());
+    state->mark_current(path);
     state->cache().invalidate(entry->node);
     state->captured();
     state->touch(path);
@@ -697,7 +892,7 @@ truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::u
 
 runtime::task<int>
 chmod_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -709,6 +904,7 @@ chmod_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
         state->source(), path, static_cast<std::uint32_t>(type) | (mode & 0777U));
     if (!changed)
         co_return fuse_error(changed.error());
+    state->mark_current(path, entry->kind != node_kind::blob);
     state->captured();
     state->touch(path);
     state->observe(observed_operation::write, std::move(path), pid);
@@ -725,6 +921,101 @@ runtime::task<int> statfs_request(std::shared_ptr<struct statvfs> output) {
     output->f_files = 1024ULL * 1024ULL * 1024ULL;
     output->f_ffree = output->f_files;
     output->f_namemax = 255;
+    co_return 0;
+}
+
+runtime::task<int> getxattr_request(fuse_backend* state,
+                                    std::string path,
+                                    std::string name,
+                                    std::shared_ptr<std::string> output) {
+    auto entry = co_await state->entry(path);
+    if (!entry)
+        co_return fuse_error(entry.error());
+    auto configured = co_await state->settings();
+    if (!configured)
+        co_return fuse_error(configured.error());
+    const auto path_state = drive_detail::effective_state(*configured, path);
+    auto value = drive_xattr_value(path_state, name);
+    if (!value) {
+        co_return -ENODATA;
+    }
+    *output = std::move(*value);
+    co_return static_cast<int>(output->size());
+}
+
+runtime::task<int>
+listxattr_request(fuse_backend* state, std::string path, std::shared_ptr<std::string> output) {
+    auto entry = co_await state->entry(std::move(path));
+    if (!entry)
+        co_return fuse_error(entry.error());
+    *output = drive_xattr_names();
+    co_return static_cast<int>(output->size());
+}
+
+runtime::task<void> hydrate_pinned_path(fuse_backend* state,
+                                        std::string path,
+                                        const repository_detail::vfs_entry& entry) {
+    if (entry.kind == node_kind::blob) {
+        auto hydrated = co_await state->cache().hydrate(state->source(), entry);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+        co_return co_await state->record_hydrated(std::move(path));
+    }
+    auto children = co_await state->children(path);
+    if (!children) {
+        co_return std::unexpected(children.error());
+    }
+    for (const auto& child : *children) {
+        const auto child_path = path.empty() ? child.name : path + "/" + child.name;
+        auto hydrated = co_await hydrate_pinned_path(state, child_path, child);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    co_return result<void>{};
+}
+
+runtime::task<int>
+setxattr_request(fuse_backend* state, std::string path, std::string name, std::string value) {
+    auto entry = co_await state->entry(path);
+    if (!entry)
+        co_return fuse_error(entry.error());
+    auto selected = drive_xattr_state(name, value);
+    if (!selected)
+        co_return selected.error().code == errc::not_found ? -ENODATA : -EINVAL;
+    auto configured = co_await state->set_drive_state(path, *selected);
+    if (!configured)
+        co_return fuse_error(configured.error());
+    const auto pin_file = entry->kind == node_kind::blob;
+    const auto pin_folder = entry->kind != node_kind::blob && configured->policy.pin_folders;
+    if (*selected == drive_path_state::available_offline && (pin_file || pin_folder)) {
+        auto hydrated = co_await hydrate_pinned_path(state, path, *entry);
+        if (!hydrated) {
+            if (hydrated.error().code == errc::unavailable || hydrated.error().code == errc::io ||
+                hydrated.error().code == errc::not_found) {
+                const auto reason = "peer unreachable while pinning " + path;
+                auto recorded = co_await state->record_offline(reason);
+                if (!recorded)
+                    co_return fuse_error(recorded.error());
+                co_return fuse_error(error{errc::unavailable, reason, path}, true);
+            }
+            co_return fuse_error(hydrated.error(), true);
+        }
+    }
+    co_return 0;
+}
+
+runtime::task<int> removexattr_request(fuse_backend* state, std::string path, std::string name) {
+    if (name != state_xattr && name != pin_xattr)
+        co_return -ENODATA;
+    auto entry = co_await state->entry(path);
+    if (!entry)
+        co_return fuse_error(entry.error());
+    auto configured =
+        co_await state->set_drive_state(std::move(path), drive_path_state::online_only);
+    if (!configured)
+        co_return fuse_error(configured.error());
     co_return 0;
 }
 
@@ -909,6 +1200,79 @@ int fuse_statfs(const char*, struct statvfs* output) {
     return result;
 }
 
+#if defined(__APPLE__)
+int fuse_getxattr(
+    const char* path, const char* name, char* value, size_t size, std::uint32_t position) {
+    if (position != 0)
+        return -EINVAL;
+#else
+int fuse_getxattr(const char* path, const char* name, char* value, size_t size) {
+#endif
+    auto* state = current_backend();
+    if (!state)
+        return -EIO;
+    auto output = std::make_shared<std::string>();
+    const auto result = state->queue()->submit(
+        [state, path = fuse_path(path), name = std::string{name ? name : ""}, output] {
+            return getxattr_request(state, path, name, output);
+        });
+    if (result < 0 || size == 0)
+        return result;
+    if (size < output->size())
+        return -ERANGE;
+    std::memcpy(value, output->data(), output->size());
+    return result;
+}
+
+int fuse_listxattr(const char* path, char* list, size_t size) {
+    auto* state = current_backend();
+    if (!state)
+        return -EIO;
+    auto output = std::make_shared<std::string>();
+    const auto result = state->queue()->submit(
+        [state, path = fuse_path(path), output] { return listxattr_request(state, path, output); });
+    if (result < 0 || size == 0)
+        return result;
+    if (size < output->size())
+        return -ERANGE;
+    std::memcpy(list, output->data(), output->size());
+    return result;
+}
+
+#if defined(__APPLE__)
+int fuse_setxattr(const char* path,
+                  const char* name,
+                  const char* value,
+                  size_t size,
+                  int flags,
+                  std::uint32_t position) {
+    if (position != 0)
+        return -EINVAL;
+#else
+int fuse_setxattr(const char* path, const char* name, const char* value, size_t size, int flags) {
+#endif
+    auto* state = current_backend();
+    if (!state)
+        return -EIO;
+    static_cast<void>(flags);
+    return state->queue()->submit([state,
+                                   path = fuse_path(path),
+                                   name = std::string{name ? name : ""},
+                                   value = std::string{value ? value : "", size}] {
+        return setxattr_request(state, path, name, value);
+    });
+}
+
+int fuse_removexattr(const char* path, const char* name) {
+    auto* state = current_backend();
+    if (!state)
+        return -EIO;
+    return state->queue()->submit(
+        [state, path = fuse_path(path), name = std::string{name ? name : ""}] {
+            return removexattr_request(state, path, name);
+        });
+}
+
 auto fuse_backend::make_operations() -> fuse_operations {
     auto operations = fuse_operations{};
     operations.getattr = fuse_getattr;
@@ -924,6 +1288,10 @@ auto fuse_backend::make_operations() -> fuse_operations {
     operations.truncate = fuse_truncate;
     operations.chmod = fuse_chmod;
     operations.statfs = fuse_statfs;
+    operations.getxattr = fuse_getxattr;
+    operations.listxattr = fuse_listxattr;
+    operations.setxattr = fuse_setxattr;
+    operations.removexattr = fuse_removexattr;
     return operations;
 }
 
@@ -947,6 +1315,9 @@ start_fuse(repository& source, std::filesystem::path mountpoint, mount_options o
         co_return std::unexpected(prepared.error());
     if (!*prepared)
         co_return std::unexpected(prepared->error());
+    auto remote = co_await configure_drive_remote(source, options);
+    if (!remote)
+        co_return std::unexpected(remote.error());
     auto state =
         std::make_shared<fuse_backend>(source, std::move(mountpoint), std::move(*root), options);
     auto initialised = co_await state->initialise_cache();
@@ -979,14 +1350,13 @@ runtime::task<std::shared_ptr<backend>> start_observed_fuse(repository& source,
         co_return std::unexpected(prepared.error());
     if (!*prepared)
         co_return std::unexpected(prepared->error());
-    auto state =
-        std::make_shared<fuse_backend>(source,
-                                       std::move(mountpoint),
-                                       std::move(*root),
-                                       mount_options{.read_only = read_only},
-                                       std::move(sink),
-                                       std::move(outputs),
-                                       read_only ? std::optional{std::move(tree)} : std::nullopt);
+    auto state = std::make_shared<fuse_backend>(source,
+                                                std::move(mountpoint),
+                                                std::move(*root),
+                                                mount_options{.read_only = read_only},
+                                                std::move(sink),
+                                                std::move(outputs),
+                                                std::move(tree));
     auto initialised = co_await state->initialise_cache();
     if (!initialised)
         co_return std::unexpected(initialised.error());

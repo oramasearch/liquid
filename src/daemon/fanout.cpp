@@ -1,5 +1,6 @@
 #include "daemon/fanout.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <fstream>
 #include <limits>
@@ -144,6 +145,44 @@ auto fanout::load() -> result<void> {
     if (const auto* cursor = text_field(*decoded, "last_cursor")) {
         last_cursor_.token = *cursor;
     }
+    observed_cursor_ = last_cursor_;
+    for (const auto& [name, value] : state_) {
+        static_cast<void>(name);
+        observed_deliveries_ = std::max(observed_deliveries_, value.deliveries);
+    }
+    const auto* observed_cursor_value = field(*decoded, "observed_cursor");
+    const auto* observed_deliveries_value = field(*decoded, "observed_deliveries");
+    if (observed_cursor_value || observed_deliveries_value) {
+        const auto* observed_cursor = observed_cursor_value
+                                          ? std::get_if<std::string>(&observed_cursor_value->data)
+                                          : nullptr;
+        const auto* observed_deliveries =
+            observed_deliveries_value ? std::get_if<std::uint64_t>(&observed_deliveries_value->data)
+                                      : nullptr;
+        if (!observed_cursor || !observed_deliveries) {
+            return std::unexpected(
+                failure(errc::corrupt, "invalid observed daemon state", state_path_));
+        }
+        observed_cursor_.token = *observed_cursor;
+        observed_deliveries_ = *observed_deliveries;
+    } else {
+        auto last_offset = cursor_offset(last_cursor_);
+        if (!last_offset) {
+            return std::unexpected(last_offset.error());
+        }
+        auto target_offset = std::uint64_t{};
+        for (const auto& [name, value] : state_) {
+            static_cast<void>(name);
+            auto current = cursor_offset(value.cursor);
+            if (!current) {
+                return std::unexpected(current.error());
+            }
+            target_offset = std::max(target_offset, *current);
+        }
+        if (*last_offset > target_offset) {
+            ++observed_deliveries_;
+        }
+    }
     if (const auto* drip_value = text_field(*decoded, "last_drip");
         drip_value && !drip_value->empty()) {
         auto parsed = parse_digest(*drip_value);
@@ -168,7 +207,28 @@ auto fanout::load() -> result<void> {
     return {};
 }
 
+auto fanout::observe(const journal_cursor& cursor) -> result<void> {
+    std::lock_guard lock(mutex_);
+    auto incoming = cursor_offset(cursor);
+    if (!incoming) {
+        return std::unexpected(incoming.error());
+    }
+    auto observed = cursor_offset(observed_cursor_);
+    if (!observed) {
+        return std::unexpected(observed.error());
+    }
+    if (*incoming > *observed) {
+        observed_cursor_ = cursor;
+        ++observed_deliveries_;
+    }
+    return {};
+}
+
 runtime::task<void> fanout::deliver(daemon_delivery delivery) {
+    auto observed = observe(delivery.cursor);
+    if (!observed) {
+        co_return std::unexpected(observed.error());
+    }
     auto incoming = cursor_offset(delivery.cursor);
     if (!incoming) {
         co_return std::unexpected(incoming.error());
@@ -232,20 +292,20 @@ runtime::task<void> fanout::deliver(daemon_delivery delivery) {
     co_return {};
 }
 
-auto fanout::target_status(const journal_cursor& capture_cursor) const
-    -> std::vector<daemon_target_status> {
+auto fanout::target_status() const -> std::vector<daemon_target_status> {
     std::lock_guard lock(mutex_);
-    auto capture_end = cursor_offset(capture_cursor).value_or(0);
     auto output = std::vector<daemon_target_status>{};
     output.reserve(targets_.size());
     for (const auto& target : targets_) {
         const auto& value = state_.at(target->name());
-        const auto target_end = cursor_offset(value.cursor).value_or(0);
         output.push_back({.name = target->name(),
                           .cursor = value.cursor,
-                          .behind = capture_end > target_end ? capture_end - target_end : 0,
+                          .behind = observed_deliveries_ > value.deliveries
+                                        ? observed_deliveries_ - value.deliveries
+                                        : 0,
                           .deliveries = value.deliveries,
-                          .last_error = value.last_error});
+                          .last_error = value.last_error,
+                          .detail = target->detail()});
     }
     return output;
 }
@@ -292,6 +352,8 @@ auto fanout::persist() const -> result<void> {
     auto encoded = cbor::encode(
         map({{"v", cbor::value{std::uint64_t{1}}},
              {"targets", cbor::value{std::move(targets)}},
+             {"observed_cursor", cbor::value{observed_cursor_.token}},
+             {"observed_deliveries", cbor::value{observed_deliveries_}},
              {"last_cursor", cbor::value{last_cursor_.token}},
              {"last_drip", cbor::value{last_drip_ ? to_string(last_drip_->value) : ""}},
              {"invalidated", cbor::value{std::move(invalidated)}}}));

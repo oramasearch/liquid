@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <ranges>
 #include <set>
@@ -20,6 +21,9 @@
 #include "build/repository_access.hpp"
 #include "build/sbom.hpp"
 #include "build/wrap.hpp"
+#include "formats/binary/elf.hpp"
+#include "formats/binary/macho.hpp"
+#include "formats/binary/pe.hpp"
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
 #include "objects/records.hpp"
@@ -39,6 +43,8 @@ struct sbom_model {
     std::vector<sbom_component> components;
     std::vector<sbom_relationship> relationships;
     std::vector<std::string> evidence;
+    std::map<std::string, std::string> component_ids;
+    std::set<std::string> relationship_ids;
 };
 
 auto same_digest(const digest& left, const digest& right) -> bool {
@@ -149,31 +155,37 @@ auto component_id(std::size_t index) -> std::string {
     return "component-" + std::to_string(index + 1);
 }
 
+auto component_key(const sbom_component& component) -> std::string {
+    auto output = component.name + "\n" + component.kind + "\n";
+    if (component.content) {
+        output += to_string(*component.content);
+    }
+    output += "\n";
+    if (component.repository_id) {
+        output += *component.repository_id;
+    }
+    output += "\n";
+    if (component.pinned_change) {
+        output += to_string(*component.pinned_change);
+    }
+    return output;
+}
+
 auto add_component(sbom_model& model, sbom_component component) -> std::string {
-    const auto found = std::ranges::find_if(model.components, [&](const auto& existing) {
-        const auto content_matches = (!existing.content && !component.content) ||
-                                     (existing.content && component.content &&
-                                      same_digest(*existing.content, *component.content));
-        const auto pin_matches = (!existing.pinned_change && !component.pinned_change) ||
-                                 (existing.pinned_change && component.pinned_change &&
-                                  same_digest(*existing.pinned_change, *component.pinned_change));
-        return existing.name == component.name && existing.kind == component.kind &&
-               content_matches && existing.repository_id == component.repository_id && pin_matches;
-    });
-    if (found != model.components.end()) {
-        return found->id;
+    const auto key = component_key(component);
+    if (const auto found = model.component_ids.find(key); found != model.component_ids.end()) {
+        return found->second;
     }
     component.id = component_id(model.components.size());
     const auto id = component.id;
     model.components.push_back(std::move(component));
+    model.component_ids.emplace(key, id);
     return id;
 }
 
 void add_relationship(sbom_model& model, std::string from, std::string to, std::string kind) {
-    const auto present = std::ranges::any_of(model.relationships, [&](const auto& item) {
-        return item.from == from && item.to == to && item.kind == kind;
-    });
-    if (!present) {
+    const auto key = from + "\n" + to + "\n" + kind;
+    if (model.relationship_ids.insert(key).second) {
         model.relationships.push_back({std::move(from), std::move(to), std::move(kind)});
     }
 }
@@ -187,6 +199,12 @@ public:
                const action_result& value,
                const action_output& target,
                std::optional<digest> current_result) -> runtime::task<sbom_model> {
+        tool_components_.clear();
+        repository_components_.clear();
+        auto indexed = co_await index_producers();
+        if (!indexed) {
+            co_return std::unexpected(indexed.error());
+        }
         auto model = sbom_model{.subject = target.blob,
                                 .name = target.path,
                                 .created = value.finished_at.value_or(value.observed_at),
@@ -226,35 +244,59 @@ private:
     };
 
     auto load_action(digest id) -> runtime::task<objects::action_record> {
+        const auto key = to_string(id);
+        if (const auto found = actions_.find(key); found != actions_.end()) {
+            co_return found->second;
+        }
         auto bytes = co_await repository_detail::build_access::get(source_, id);
         if (!bytes) {
             co_return std::unexpected(bytes.error());
         }
-        co_return objects::decode_action(*bytes);
+        auto decoded = objects::decode_action(*bytes);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        const auto [stored, inserted] = actions_.emplace(key, std::move(*decoded));
+        static_cast<void>(inserted);
+        co_return stored->second;
+    }
+
+    auto index_producers() -> runtime::task<void> {
+        if (producers_indexed_) {
+            co_return result<void>{};
+        }
+        for (const auto& entry : entries_) {
+            if (entry.sequence == 0 || entry.divergent) {
+                continue;
+            }
+            for (const auto& output : entry.value.outputs) {
+                producers_[to_string(output.blob)].push_back(
+                    producer{entry.id.value, entry.sequence, entry.value, output});
+            }
+        }
+        producers_indexed_ = true;
+        co_return result<void>{};
     }
 
     auto find_producer(digest content,
                        std::span<const digest> visited,
-                       std::uint64_t before_sequence) -> runtime::task<std::optional<producer>> {
-        auto newest = std::optional<producer>{};
-        auto sequence = std::uint64_t{};
-        for (const auto& entry : entries_) {
-            if (entry.sequence == 0 || entry.divergent || entry.sequence >= before_sequence ||
+                       std::uint64_t before_sequence) const -> std::optional<producer> {
+        const auto found = producers_.find(to_string(content));
+        if (found == producers_.end()) {
+            return std::nullopt;
+        }
+        const auto* newest = static_cast<const producer*>(nullptr);
+        for (const auto& candidate : found->second) {
+            if (candidate.sequence >= before_sequence ||
                 std::ranges::any_of(
-                    visited, [&](const auto& id) { return same_digest(id, entry.id.value); })) {
+                    visited, [&](const auto& id) { return same_digest(id, candidate.id); })) {
                 continue;
             }
-            auto value = entry.value;
-            const auto output = std::ranges::find_if(
-                value.outputs, [&](const auto& item) { return same_digest(item.blob, content); });
-            if (output != value.outputs.end() && entry.sequence >= sequence) {
-                sequence = entry.sequence;
-                auto selected_output = *output;
-                newest = producer{
-                    entry.id.value, entry.sequence, std::move(value), std::move(selected_output)};
+            if (!newest || candidate.sequence > newest->sequence) {
+                newest = &candidate;
             }
         }
-        co_return newest;
+        return newest ? std::optional<producer>{*newest} : std::nullopt;
     }
 
     auto collect_toolchain(sbom_model& model,
@@ -262,6 +304,10 @@ private:
                            std::string prefix,
                            std::vector<digest>& visited)
         -> runtime::task<std::vector<std::string>> {
+        const auto cache_key = to_string(root) + "\n" + prefix;
+        if (const auto found = tool_components_.find(cache_key); found != tool_components_.end()) {
+            co_return found->second;
+        }
         if (std::ranges::any_of(visited,
                                 [&](const auto& value) { return same_digest(value, root); })) {
             co_return std::vector<std::string>{};
@@ -295,6 +341,7 @@ private:
             output.push_back(add_component(
                 model, {.name = path, .kind = "tool", .content = entry.ref, .inferred = false}));
         }
+        tool_components_.emplace(cache_key, output);
         co_return output;
     }
 
@@ -303,6 +350,11 @@ private:
                               std::string prefix,
                               std::vector<digest>& visited)
         -> runtime::task<std::vector<std::string>> {
+        const auto cache_key = to_string(root) + "\n" + prefix;
+        if (const auto found = repository_components_.find(cache_key);
+            found != repository_components_.end()) {
+            co_return found->second;
+        }
         if (std::ranges::any_of(visited,
                                 [&](const auto& value) { return same_digest(value, root); })) {
             co_return std::vector<std::string>{};
@@ -339,6 +391,7 @@ private:
                                             .pinned_change = entry.ref,
                                             .inferred = false}));
         }
+        repository_components_.emplace(cache_key, output);
         co_return output;
     }
 
@@ -366,11 +419,8 @@ private:
             add_relationship(model, artifact, repository, "generated_from");
         }
         for (const auto& input : value.manifest) {
-            auto producer = co_await find_producer(input.content, visited, before_sequence);
+            auto producer = find_producer(input.content, visited, before_sequence);
             if (!producer) {
-                co_return std::unexpected(producer.error());
-            }
-            if (!*producer) {
                 const auto component = add_component(model,
                                                      {.name = input.path,
                                                       .kind = "input",
@@ -380,22 +430,18 @@ private:
                 continue;
             }
             const auto component = add_component(model,
-                                                 {.name = (*producer)->output.path,
+                                                 {.name = producer->output.path,
                                                   .kind = "artifact",
-                                                  .content = (*producer)->output.blob,
+                                                  .content = producer->output.blob,
                                                   .inferred = false});
             add_relationship(model, artifact, component, "generated_from");
-            visited.push_back((*producer)->id);
-            auto action_value = co_await load_action((*producer)->value.action);
+            visited.push_back(producer->id);
+            auto action_value = co_await load_action(producer->value.action);
             if (!action_value) {
                 co_return std::unexpected(action_value.error());
             }
-            auto expanded = co_await visit_action(model,
-                                                  *action_value,
-                                                  (*producer)->value,
-                                                  component,
-                                                  visited,
-                                                  (*producer)->sequence);
+            auto expanded = co_await visit_action(
+                model, *action_value, producer->value, component, visited, producer->sequence);
             if (!expanded) {
                 co_return std::unexpected(expanded.error());
             }
@@ -405,7 +451,21 @@ private:
 
     repository& source_;
     std::vector<repository_result> entries_;
+    bool producers_indexed_{};
+    std::map<std::string, std::vector<producer>> producers_;
+    std::map<std::string, objects::action_record> actions_;
+    std::map<std::string, std::vector<std::string>> tool_components_;
+    std::map<std::string, std::vector<std::string>> repository_components_;
 };
+
+void retarget_model(sbom_model& model, const action_output& target) {
+    model.subject = target.blob;
+    model.name = target.path;
+    if (!model.components.empty()) {
+        model.components.front().name = target.path;
+        model.components.front().content = target.blob;
+    }
+}
 
 auto spdx_id(std::string_view id) -> std::string {
     auto output = std::string{"SPDXRef-"};
@@ -710,228 +770,6 @@ auto render_attached(const sbom_model& model,
     return render_document(model, format, std::move(*attachment));
 }
 
-auto read_u16(std::span<const std::byte> bytes, std::size_t offset, bool little)
-    -> std::optional<std::uint16_t> {
-    if (offset + 2 > bytes.size()) {
-        return std::nullopt;
-    }
-    const auto a = std::to_integer<std::uint16_t>(bytes[offset]);
-    const auto b = std::to_integer<std::uint16_t>(bytes[offset + 1]);
-    return little ? static_cast<std::uint16_t>(a | (b << 8U))
-                  : static_cast<std::uint16_t>((a << 8U) | b);
-}
-
-auto read_u32(std::span<const std::byte> bytes, std::size_t offset, bool little)
-    -> std::optional<std::uint32_t> {
-    if (offset + 4 > bytes.size()) {
-        return std::nullopt;
-    }
-    auto output = std::uint32_t{};
-    for (auto index = 0U; index < 4; ++index) {
-        const auto source = little ? index : 3U - index;
-        output |= std::to_integer<std::uint32_t>(bytes[offset + source]) << (index * 8U);
-    }
-    return output;
-}
-
-auto read_u64(std::span<const std::byte> bytes, std::size_t offset, bool little)
-    -> std::optional<std::uint64_t> {
-    if (offset + 8 > bytes.size()) {
-        return std::nullopt;
-    }
-    auto output = std::uint64_t{};
-    for (auto index = 0U; index < 8; ++index) {
-        const auto source = little ? index : 7U - index;
-        output |= std::to_integer<std::uint64_t>(bytes[offset + source]) << (index * 8U);
-    }
-    return output;
-}
-
-auto fixed_string(std::span<const std::byte> bytes, std::size_t offset, std::size_t size)
-    -> std::string {
-    if (offset >= bytes.size()) {
-        return {};
-    }
-    size = std::min(size, bytes.size() - offset);
-    auto output = std::string{};
-    for (auto index = std::size_t{}; index < size; ++index) {
-        const auto value = std::to_integer<unsigned char>(bytes[offset + index]);
-        if (value == 0) {
-            break;
-        }
-        if (value < 0x20 || value > 0x7e) {
-            return {};
-        }
-        output.push_back(static_cast<char>(value));
-    }
-    return output;
-}
-
-auto printable_strings(std::span<const std::byte> bytes) -> std::vector<std::string> {
-    auto output = std::vector<std::string>{};
-    auto current = std::string{};
-    for (const auto byte : bytes) {
-        const auto value = std::to_integer<unsigned char>(byte);
-        if (value >= 0x20 && value <= 0x7e) {
-            if (current.size() < 512) {
-                current.push_back(static_cast<char>(value));
-            }
-            continue;
-        }
-        if (current.size() >= 4 && output.size() < 20'000) {
-            output.push_back(std::move(current));
-        }
-        current.clear();
-    }
-    if (current.size() >= 4 && output.size() < 20'000) {
-        output.push_back(std::move(current));
-    }
-    return output;
-}
-
-void inspect_elf(std::span<const std::byte> bytes,
-                 std::vector<std::string>& sections,
-                 std::vector<std::string>& symbols) {
-    if (bytes.size() < 64 || std::to_integer<unsigned char>(bytes[4]) < 1 ||
-        std::to_integer<unsigned char>(bytes[4]) > 2) {
-        return;
-    }
-    const auto is64 = std::to_integer<unsigned char>(bytes[4]) == 2;
-    const auto little = std::to_integer<unsigned char>(bytes[5]) == 1;
-    const auto section_offset = is64 ? read_u64(bytes, 40, little)
-                                     : std::optional<std::uint64_t>{read_u32(bytes, 32, little)};
-    const auto entry_size = read_u16(bytes, is64 ? 58 : 46, little);
-    const auto count = read_u16(bytes, is64 ? 60 : 48, little);
-    const auto string_index = read_u16(bytes, is64 ? 62 : 50, little);
-    if (!section_offset || !entry_size || !count || !string_index || *string_index >= *count) {
-        return;
-    }
-    const auto header = *section_offset + static_cast<std::uint64_t>(*entry_size) * *string_index;
-    const auto names_offset =
-        is64 ? read_u64(bytes, header + 24, little)
-             : std::optional<std::uint64_t>{read_u32(bytes, header + 16, little)};
-    const auto names_size =
-        is64 ? read_u64(bytes, header + 32, little)
-             : std::optional<std::uint64_t>{read_u32(bytes, header + 20, little)};
-    if (!names_offset || !names_size || *names_offset + *names_size > bytes.size()) {
-        return;
-    }
-    for (auto index = std::uint16_t{}; index < *count; ++index) {
-        const auto at = *section_offset + static_cast<std::uint64_t>(*entry_size) * index;
-        const auto name = read_u32(bytes, at, little);
-        if (!name || *name >= *names_size) {
-            continue;
-        }
-        const auto value = fixed_string(bytes, *names_offset + *name, 96);
-        if (!value.empty()) {
-            sections.push_back(value);
-        }
-    }
-    const auto strings = printable_strings(bytes);
-    for (const auto& value : strings) {
-        if ((value.starts_with("_") || value.find("::") != std::string::npos ||
-             value.starts_with("GLIBC")) &&
-            symbols.size() < 256) {
-            symbols.push_back(value);
-        }
-    }
-}
-
-void inspect_macho(std::span<const std::byte> bytes,
-                   std::vector<std::string>& sections,
-                   std::vector<std::string>& symbols) {
-    const auto magic = read_u32(bytes, 0, true);
-    if (!magic) {
-        return;
-    }
-    const auto is64 = *magic == 0xfeedfacfU || *magic == 0xcffaedfeU;
-    const auto little = *magic == 0xfeedfaceU || *magic == 0xfeedfacfU;
-    const auto commands = read_u32(bytes, 16, little);
-    auto offset = static_cast<std::size_t>(is64 ? 32 : 28);
-    if (!commands) {
-        return;
-    }
-    for (auto index = std::uint32_t{}; index < *commands && offset + 8 <= bytes.size(); ++index) {
-        const auto command = read_u32(bytes, offset, little);
-        const auto size = read_u32(bytes, offset + 4, little);
-        if (!command || !size || *size < 8 || offset + *size > bytes.size()) {
-            return;
-        }
-        if (*command == (is64 ? 0x19U : 0x1U)) {
-            const auto count = read_u32(bytes, offset + (is64 ? 64 : 48), little).value_or(0);
-            auto section = offset + (is64 ? 72 : 56);
-            const auto stride = static_cast<std::size_t>(is64 ? 80 : 68);
-            for (auto item = std::uint32_t{}; item < count && section + stride <= offset + *size;
-                 ++item) {
-                const auto name = fixed_string(bytes, section, 16);
-                if (!name.empty()) {
-                    sections.push_back(name);
-                }
-                section += stride;
-            }
-        }
-        if (*command == 0x2U) {
-            const auto symbol_offset = read_u32(bytes, offset + 8, little).value_or(0);
-            const auto symbol_count = read_u32(bytes, offset + 12, little).value_or(0);
-            const auto string_offset = read_u32(bytes, offset + 16, little).value_or(0);
-            const auto string_size = read_u32(bytes, offset + 20, little).value_or(0);
-            const auto stride = static_cast<std::size_t>(is64 ? 16 : 12);
-            for (auto item = std::uint32_t{};
-                 item < symbol_count && symbols.size() < 256 &&
-                 symbol_offset + (static_cast<std::uint64_t>(item) + 1) * stride <= bytes.size();
-                 ++item) {
-                const auto name =
-                    read_u32(bytes, symbol_offset + item * stride, little).value_or(0);
-                if (name < string_size) {
-                    const auto value = fixed_string(bytes, string_offset + name, 160);
-                    if (!value.empty()) {
-                        symbols.push_back(value);
-                    }
-                }
-            }
-        }
-        offset += *size;
-    }
-}
-
-void inspect_pe(std::span<const std::byte> bytes,
-                std::vector<std::string>& sections,
-                std::vector<std::string>& symbols) {
-    const auto pe_offset = read_u32(bytes, 0x3c, true);
-    if (!pe_offset || *pe_offset + 24 > bytes.size() ||
-        fixed_string(bytes, *pe_offset, 4) != "PE") {
-        return;
-    }
-    const auto count = read_u16(bytes, *pe_offset + 6, true).value_or(0);
-    const auto symbol_offset = read_u32(bytes, *pe_offset + 12, true).value_or(0);
-    const auto symbol_count = read_u32(bytes, *pe_offset + 16, true).value_or(0);
-    const auto optional_size = read_u16(bytes, *pe_offset + 20, true).value_or(0);
-    auto section = static_cast<std::size_t>(*pe_offset + 24 + optional_size);
-    for (auto index = std::uint16_t{}; index < count && section + 40 <= bytes.size(); ++index) {
-        const auto name = fixed_string(bytes, section, 8);
-        if (!name.empty()) {
-            sections.push_back(name);
-        }
-        section += 40;
-    }
-    const auto string_table = symbol_offset + static_cast<std::uint64_t>(symbol_count) * 18U;
-    for (auto index = std::uint32_t{};
-         index < symbol_count && symbols.size() < 256 &&
-         symbol_offset + (static_cast<std::uint64_t>(index) + 1) * 18U <= bytes.size();
-         ++index) {
-        const auto at = symbol_offset + static_cast<std::uint64_t>(index) * 18U;
-        auto name = fixed_string(bytes, at, 8);
-        if (read_u32(bytes, at, true).value_or(1) == 0) {
-            const auto string_offset = read_u32(bytes, at + 4, true).value_or(0);
-            name = fixed_string(bytes, string_table + string_offset, 160);
-        }
-        if (!name.empty()) {
-            symbols.push_back(std::move(name));
-        }
-        index += std::to_integer<unsigned char>(bytes[at + 17]);
-    }
-}
-
 auto known_version(std::span<const std::string> strings, std::string_view needle)
     -> std::optional<std::string> {
     for (const auto& value : strings) {
@@ -956,6 +794,38 @@ auto known_version(std::span<const std::string> strings, std::string_view needle
     return std::nullopt;
 }
 
+auto printable_strings(std::span<const std::byte> bytes) -> std::vector<std::string> {
+    auto output = std::vector<std::string>{};
+    auto current = std::string{};
+    for (const auto byte : bytes) {
+        const auto value = std::to_integer<unsigned char>(byte);
+        if (value >= 0x20 && value <= 0x7e) {
+            if (current.size() < 512) {
+                current.push_back(static_cast<char>(value));
+            }
+            continue;
+        }
+        if (current.size() >= 4 && output.size() < 20'000) {
+            output.push_back(std::move(current));
+        }
+        current.clear();
+    }
+    if (current.size() >= 4 && output.size() < 20'000) {
+        output.push_back(std::move(current));
+    }
+    return output;
+}
+
+auto little_u32(std::span<const std::byte> bytes) -> std::uint32_t {
+    if (bytes.size() < 4) {
+        return 0;
+    }
+    return std::to_integer<std::uint32_t>(bytes[0]) |
+           (std::to_integer<std::uint32_t>(bytes[1]) << 8U) |
+           (std::to_integer<std::uint32_t>(bytes[2]) << 16U) |
+           (std::to_integer<std::uint32_t>(bytes[3]) << 24U);
+}
+
 auto analyse_binary(const std::filesystem::path& artifact) -> result<sbom_model> {
     auto input = std::ifstream{artifact, std::ios::binary | std::ios::ate};
     if (!input) {
@@ -978,19 +848,26 @@ auto analyse_binary(const std::filesystem::path& artifact) -> result<sbom_model>
     auto format = std::string{"unknown"};
     auto sections = std::vector<std::string>{};
     auto symbols = std::vector<std::string>{};
+    auto inspected = result<formats::binary::image>{std::unexpected(
+        error{errc::unsupported, "foreign artifact format is unknown", artifact.string()})};
     if (bytes.size() >= 4 && bytes[0] == std::byte{0x7f} && bytes[1] == std::byte{'E'} &&
         bytes[2] == std::byte{'L'} && bytes[3] == std::byte{'F'}) {
         format = "ELF";
-        inspect_elf(bytes, sections, symbols);
-    } else if (bytes.size() >= 4 && (read_u32(bytes, 0, true) == 0xfeedfaceU ||
-                                     read_u32(bytes, 0, true) == 0xfeedfacfU ||
-                                     read_u32(bytes, 0, true) == 0xcefaedfeU ||
-                                     read_u32(bytes, 0, true) == 0xcffaedfeU)) {
+        inspected = formats::binary::inspect_elf(bytes);
+    } else if (bytes.size() >= 4 &&
+               (little_u32(bytes) == 0xfeedfaceU || little_u32(bytes) == 0xfeedfacfU ||
+                little_u32(bytes) == 0xcefaedfeU || little_u32(bytes) == 0xcffaedfeU)) {
         format = "Mach-O";
-        inspect_macho(bytes, sections, symbols);
+        inspected = formats::binary::inspect_macho(bytes);
     } else if (bytes.size() >= 2 && bytes[0] == std::byte{'M'} && bytes[1] == std::byte{'Z'}) {
         format = "PE";
-        inspect_pe(bytes, sections, symbols);
+        inspected = formats::binary::inspect_pe(bytes);
+    }
+    if (inspected) {
+        for (const auto& section : inspected->sections) {
+            sections.push_back(section.name);
+        }
+        symbols = inspected->symbol_names;
     }
     auto code = std::error_code{};
     const auto modified = std::filesystem::last_write_time(artifact, code);
@@ -1149,11 +1026,15 @@ runtime::task<void> store_derived_sboms(repository& source,
                                         const objects::action_record& action,
                                         action_result& value) {
     value.sboms.clear();
+    if (value.outputs.empty()) {
+        co_return result<void>{};
+    }
+    auto model = co_await model_for(source, action, value, value.outputs.front(), std::nullopt);
+    if (!model) {
+        co_return std::unexpected(model.error());
+    }
     for (const auto& output : value.outputs) {
-        auto model = co_await model_for(source, action, value, output, std::nullopt);
-        if (!model) {
-            co_return std::unexpected(model.error());
-        }
+        retarget_model(*model, output);
         for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
             auto record = encode_record(*model, format);
             if (!record) {
@@ -1183,6 +1064,64 @@ runtime::task<void> store_derived_sboms(repository& source,
         }
     }
     co_return result<void>{};
+}
+
+auto index_sbom_statements(repository& source, const std::vector<digest>& statement_ids)
+    -> runtime::task<std::optional<std::map<std::string, digest>>> {
+    auto output = std::map<std::string, digest>{};
+    for (const auto id : statement_ids) {
+        auto records = co_await source.attestations({.id = id});
+        if (!records || records->records.empty()) {
+            co_return std::nullopt;
+        }
+        const auto& statement = records->records.front().value;
+        if (statement.profile != "sbom/1") {
+            co_return std::nullopt;
+        }
+        const auto* format = text_attribute(statement, "format");
+        const auto* path = text_attribute(statement, "output");
+        if (!format || !path || !output.emplace(*path + "\n" + *format, id).second) {
+            co_return std::nullopt;
+        }
+    }
+    co_return output;
+}
+
+runtime::task<bool>
+validate_derived_sboms(repository& source, result_id id, const action_result& value) {
+    if (value.sboms.size() != value.outputs.size() * 2) {
+        co_return false;
+    }
+    if (value.outputs.empty()) {
+        co_return true;
+    }
+    auto action = co_await load_action(source, value.action);
+    if (!action) {
+        co_return std::unexpected(action.error());
+    }
+    auto model = co_await model_for(source, *action, value, value.outputs.front(), id.value);
+    if (!model) {
+        co_return std::unexpected(model.error());
+    }
+    auto statements = co_await index_sbom_statements(source, value.sboms);
+    if (!statements || !*statements) {
+        co_return false;
+    }
+    for (const auto& output : value.outputs) {
+        retarget_model(*model, output);
+        for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
+            const auto key = output.path + "\n" + std::string{format_name(format)};
+            const auto found = (*statements)->find(key);
+            if (found == (*statements)->end()) {
+                co_return false;
+            }
+            auto report = co_await build::generate_sbom(source, id, output.path, format);
+            if (!report || !report->verified || !same_digest(report->attestation, found->second)) {
+                co_return false;
+            }
+        }
+    }
+    co_return true;
 }
 
 } // namespace build_detail

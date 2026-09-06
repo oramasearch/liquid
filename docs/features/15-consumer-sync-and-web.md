@@ -5,6 +5,13 @@
 > **Requirement:** a Dropbox/Google Drive-style interface so regular people can use
 > liquid, on the web and locally.
 
+> **Status:** liquid #195 implements the cross-platform drive client: persisted remote, local,
+> and base trees; deterministic reconciliation; named conflict values; resumed sync transfer;
+> path history and restore; CLI one-shot and daemon-hosted watch modes. Liquid #235 adds Linux
+> FUSE online-only, available-offline, and excluded states; persistent pinning; lazy hydration;
+> offline write queues; and GNOME Files and Dolphin badges. Windows CFAPI, macOS File Provider,
+> and lake's web drive remain consumer work in lake #45 and #43.
+
 ## Why this is nearly free
 
 Dropbox's architecture is structurally what liquid already is:
@@ -30,7 +37,7 @@ it, because a shared namespace is a concurrently-edited structured document.
 
 - **Remote tree** — server state.
 - **Local tree** — observed disk state.
-- **Synced tree** — last mutually synchronised state, acting as a per-node merge base.
+- **Base tree** — last mutually synchronised state, acting as a per-node merge base.
 
 Comparing all three reveals whether a path changed locally, remotely, on both sides,
 or merely moved.
@@ -60,7 +67,7 @@ same materialiser that serves developer checkouts
 |---|---|---|
 | **Windows** | Cloud Files API (CFAPI) | Full — NTFS placeholders, hydration callbacks, dehydration, three pin states, **native Shell badges** |
 | **macOS** | File Provider extension | Full — system-driven materialisation, `evictItem`, LRU eviction, Finder decorations. Kernel extensions are deprecated, so this is the only path |
-| **Linux** | FUSE | **No standard placeholder API, no pinning bit, no cross-desktop badge protocol.** Caching, offline policy, error surfaces and desktop integration must be built from scratch |
+| **Linux** | FUSE | Implemented by liquid #235 with repository-local state, xattrs, hydration policy, and separate GNOME Files and Dolphin providers. |
 
 Linux is real work and is budgeted as such.
 
@@ -145,8 +152,6 @@ rather than burying it.
 
 ## Open questions
 
-- **Linux desktop integration** — no standard exists, so how much is worth building
-  for GNOME versus KDE versus headless.
 - **Whether consumer and developer namespaces are the same objects** or two views
   over one store. Probably the latter, but the permission models differ substantially.
 - **CRDT history growth** for a namespace with millions of files over years — the

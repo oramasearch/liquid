@@ -16,14 +16,15 @@ https://github.com/oramasearch/automerge-cpp/issues/13. The dependency tip adopt
 closes that epic: change hashes and chunk encoding are upstream-compatible, public failures are
 checked, transactions roll back, commit metadata and incremental saves exist, remote changes
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
-checkpoints can be loaded shallowly.
+checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, and #41.** The private automerge-cpp wrapper, canonical CBOR
-codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
-working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
-composition, conflict values, session-scoped operation inversion, historical document reads,
-advisory locks, and the repository status are implemented over either a repository-local store or
-a caller-owned store shared by multiple repositories.
+**Status: implemented for liquid #2, #3, #41, #195's history/conflict persistence, and #205.**
+The private automerge-cpp wrapper, canonical CBOR codec, versioned sync framing and drip journal
+are implemented. Repository creation and opening, working-tree reads and writes, recorded moves
+and removals, snapshots and changes, references, composition, persisted conflict values, path
+history and restore, session-scoped operation inversion, historical document reads, advisory locks,
+and repository status are implemented over either a repository-local store or a caller-owned store
+shared by multiple repositories.
 
 ## The two layers, precisely
 
@@ -42,9 +43,10 @@ shortest integers) so the same value always has the same digest on every platfor
 starts with a `kind` and a `v` (format version).
 
 ```
-blob/1      { v:1, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…] }
+blob/1      { v:1, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…],
+              format_entries?:[digest…] }
 blob/2      { v:2, kind:"blob", digest, size, chunks:[digest…], chunk_sizes:[uint…],
-              remote?:{source,instance} }
+              remote?:{source,instance}, format_entries?:[digest…] }
 tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo, id:node_id, ref:digest | repo_ref } … ] }   # sorted by name, bytewise
 change/1    { v:1, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), conflicts?:[conflict…], symbols?:digest, sig:bytes }
@@ -60,9 +62,19 @@ action      { v, kind:"action", inputs:digest(tree), command:[text...], cwd, env
               platform, toolchain:digest(tree), sandbox:digest, timeout_s?, remote_eligible? }
 result      { v, kind:"result", action:digest, outputs, manifest, producer, provenance?, sboms?, sig }
 sbom        { v, kind:"sbom", format:text, document:bytes }
+hot-update-evidence { v:1, kind:"hot-update-evidence", result, artifact, changed_input,
+                      units:[{kind,name,signature,source,output}...], abi_descriptor? }
+patch       { v:1, kind:"patch", supersedes:result_id, target:result_id, tier:1|2,
+              symbols:[text...], object:digest }
+hot-update-outcome { v:1, kind:"hot-update-outcome", supersedes:result_id,
+                     target:result_id, tier:0|3|4, outcome:"patched"|"restart", symbols, evidence }
 query-graph { v:1, kind:"query-graph", nodes:[digest(query-node)…] }
 query-node  { v:1, kind:"query-node", key, fingerprint, durability,
               dependencies:[{key,fingerprint}…], value:digest }
+package/1   { v:1, kind:"package", name, versions, variants, dependencies, provides,
+              conflicts, compilers, targets, patches }
+concretised_spec/1 { v:1, kind:"concretised_spec", name, version, variants, compiler?, target,
+                     dependencies:[{name,type,target,virtual}…], patches, reasons }
 ```
 
 The query graph uses its own store directory and atomic text `ROOT`. Query keys and dependency
@@ -70,6 +82,11 @@ keys are canonical CBOR; dependencies retain read order. Query values are separa
 so opening the graph loads root and node metadata while value bytes remain shallow until demand.
 Only a completed query replaces `ROOT`; interrupted computations leave the previous complete graph
 readable.
+
+`format_entries` retains logical blobs decoded from a Tier 1 or Tier 2 container. It is absent for
+ordinary and legacy blob records, preserving their canonical encoding. Collection follows these
+digests while the parent container is reachable; the container's original chunks remain the
+authoritative bytes.
 
 - **`node_id`** is 16 random bytes minted when a path is created. It is stored in the tree entry
   and in the document entry, and it is what survives a move: a move deletes the old key and puts
@@ -96,8 +113,14 @@ readable.
 - Each result's `sboms` array reaches signed `sbom/1` attestations. Their `document` attribute
   reaches a canonical `sbom` record containing the base SPDX or CycloneDX JSON. See
   [`sbom.md`](sbom.md).
+- Hot-update evidence is associated with its result in repository metadata. Signed patch records
+  form a `supersedes` chain back to the base artifact; restart records preserve the classifier
+  evidence for the non-patching outcome. See [`hot-update.md`](hot-update.md).
 - A `repo` record identifies a repository independently of where it lives; `repo_id` is 16 random
   bytes minted at `create`.
+- Package declarations and complete concretisations use the same canonical-CBOR rules. A
+  concretised spec's digest includes every bound dimension and dependency edge and is its reusable
+  build identity. See [`resolution.md`](resolution.md).
 
 Trees and blobs are values: two repositories with the same content share every record and every
 chunk, because the store is one.
@@ -185,11 +208,13 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
    drip message and millisecond timestamp through `CommitOptions`; the signed liquid drip and
    change records remain the authority for attribution.
 3. **Remote observation uses patches**: apply, merge, and sync receive use the
-   `*_with_patches` entry points. Every returned `std::expected` is checked before the candidate
-   document replaces the active document.
-4. **Persistence uses compact checkpoints**: `save_compact()` output is stored at every cut and
-   every 64 drips, the active directory is reopened with `load_shallow()`, and later journaled
-   drips are replayed on that checkpoint.
+   `*_with_patches` entry points. Sync batches are received into blank checked documents before
+   those documents merge into populated candidates. Every returned `std::expected` is checked
+   before the candidate document replaces the active document.
+4. **Persistence checks its checkpoints**: `save_compact()` output is preferred at every cut and
+   every 64 drips. It is immediately reopened as a sync-capable document; a compact form that fails
+   that check is replaced with complete upstream history bytes. Later journaled drips replay on
+   the checked checkpoint.
 5. **Errors remain values across the wrapper**: local operation failures become
    `errc::invalid_argument`; malformed saves, changes, merges, and sync input become
    `errc::corrupt`. A failed external application leaves the active document unchanged.
@@ -212,13 +237,16 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `split(path, into)` | new `repo` record and document; the subtree's entries move (same `node_id`s) into it; the original keeps `path` as a `repo` entry. History of the subtree is preserved by construction: the old changes still reference the old trees, and the new repository's `root_change` names the change it was split from. |
 | `combine(other, at)` | one change with parents in both repositories (`change_ref` carries `repo_id`); path collisions become conflict values. |
 | `operations()` / `undo(op_id)` | every mutation appends an `op` record to `ops` (`{ id, kind, from, to, at, by, session, inverse }`). `operations()` returns them newest first; `undo` applies the selected inverse as a new operation and returns applied and skipped paths. Undo never rewrites history. |
+| `preview_edit(request, attribution)` / `apply_edit(preview)` | Preview records exact range-local replacements and file digests. Apply checks every input before writing one drip per file, then groups every entry effect into one attributed `structural_edit` operation so one undo restores the complete edit. |
 | `undo_session(session, options)` | reverses the matching session newest first, optionally restricted to paths or drip IDs. Each touched directory is one wrapper transaction; candidates are published only after every transaction succeeds. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
+| `history(path)` | walk snapshots newest first, discover the path's `node_id`, and follow that identity through moves; return values, deletions, actors, timestamps and messages. |
+| `restore(path, change)` | read the historical blob and append an ordinary write drip at the requested path; no ref or earlier change is modified. |
 
 ### Operation records and inverses
 
 The operation vocabulary is `write`, `mkdir`, `move`, `remove`, `set_ref`, `record`, `nest`,
-`split`, `combine`, `lock`, `unlock`, `redact`, `merge`, `set_mode`, and `undo`. A cut and the
+`split`, `combine`, `lock`, `unlock`, `redact`, `merge`, `set_mode`, `structural_edit`, and `undo`. A cut and the
 explicit `record` APIs use `record`, because their mutation is the reference-head transition.
 `import_drips` records the remote batch as one `merge` operation; its range identifies the batch,
 and imported operation records remain unchanged.
@@ -262,8 +290,54 @@ not materialise blob contents. With it, added, removed, and modified blobs are c
 receive `line_hunks`, using the existing `line_change` shape from build diagnostics. Binary values
 leave `line_hunks` disengaged. The line algorithm returns separate hunks for separated edits; for inputs
 whose line matrix would exceed 4,000,000 cells it returns the exact common-prefix/common-suffix
-envelope as one bounded-memory hunk. The value type can gain Phase 4's syntax-aware `structural`
-field without changing these path, identity, conflict, or text fields.
+envelope as one bounded-memory hunk.
+
+Container work is independently opt-in through `tree_diff_options::formats`. A recognised changed
+blob receives a `container_diff` naming the codec and observed tier, then added, removed, and
+modified logical paths with optional nested container diffs. The name `structural` remains reserved
+for source syntax work. Format details and limits are in [formats.md](formats.md).
+
+## Tree import
+
+`repository::import_tree(root, import_options)` walks a local directory one directory at a time,
+hashes every included regular file through the object store, and compares the resulting blob record
+identity with the current working tree. Only added, removed, content-changed, or mode-changed
+entries alter the tree. A non-empty import records one `import` drip whose entry list contains only
+the changed paths; an unchanged tree returns no drip. `tree_import_report` returns that optional
+shared `op_id` drip identifier plus `files_seen`, `changed`,
+`bytes_hashed`, and `bytes_written`.
+
+`import_options::ignore_patterns` supplements `.gitignore` and `.liquidignore` at the imported
+root. Patterns use the repository glob rules; a leading slash anchors at that root and a trailing
+slash selects the directory and its descendants. A `/**` rule also excludes that directory itself,
+so the walk never opens its descendants. Rules are evaluated in order; a later `!` rule includes a
+path again, including the directory selected by an earlier `/**` rule. `wrap` uses that form for the requested preconfigured build directory, which is an input
+to the wrapped CMake build even when the repository ignores build directories. By default symbolic
+links are skipped.
+
+The paged walker represents a new directory with no prior page rather than a synthetic digest, so
+adding a configured build directory does not attempt to load a nonexistent tree object.
+
+Rules from the imported root are evaluated first and caller-supplied rules last, allowing a caller to
+include one configured directory without weakening the root's other exclusions.
+`follow_symlinks` follows them, and `message` is retained with the recorded operation. `liquid
+init`, local `liquid import <path>`, and `liquid wrap` use this one primitive; Git history import
+remains its separate historical-object path.
+
+The repository regression covers an unchanged import, a one-file change with one changed tree
+entry, a removal, both ignore sources, and a synthetic 1,024-file import under a 512 MiB RSS
+ceiling on macOS and Linux.
+
+The walk retains the directory stack and changed entries, never a collection of all discovered
+paths. On a reopened repository it reads and replaces one stored tree page at a time, rather than
+reconstructing the prior tree before comparing it. The imported drip participates in the 64 KiB
+repository journal budget documented in [`build-engine.md`](build-engine.md); reaching that budget
+checkpoints the already-paged tree. Thus importing is bounded by `O(depth + changed entries +
+journal budget)`, rather than the size of either tree.
+
+Recording a change after a paged import reuses an unloaded root page directly. It does not turn the
+unloaded entry map into an empty tree, so configured inputs retained by a deferred open remain in
+the recorded snapshot.
 
 ## Anchors
 
@@ -310,7 +384,7 @@ The layout from here:
   the `node_id` of the root directory, and **`dirs`: a map from directory `node_id` to the digest of
   that directory document's latest saved bytes in the store**. That map is the mutable name→content
   indirection a content-addressed store lacks: to load a directory, look its `node_id` up in `dirs`,
-  `store.get` the digest, `document::load_shallow`. A directory document is saved (and `dirs` updated in one
+  `store.get` the digest, and open either checkpoint encoding as a full document. A directory document is saved (and `dirs` updated in one
   repository-document transaction) at every cut and at a configurable interval; between saves the
   journal's drips replay onto the loaded document. The repository document itself is saved to the
   store at the same moments and its digest is written to `LIQUID_REPO` at the repository root,
@@ -364,8 +438,9 @@ preparation process.
 
 The measured open became 16.7% faster. Peak RSS was effectively unchanged (+1.656 MiB, +0.6%).
 Directory documents remain lazy, so this measures repository-document recovery, the final journal
-interval, checkpoint publication, and store setup. Compact/shallow loading bounds the history of a
-directory when that directory is first accessed and after every later checkpoint.
+interval, checkpoint publication, and store setup. Those measurements record the shallow-loading
+implementation used by liquid #136; liquid #195 instead validates the bounded drive workload with
+sync-capable active directory documents.
 
 Reproduce the workload with:
 
@@ -380,12 +455,20 @@ build-measure/tests/liquid-repository-open-measure open build-measure/open-1
 ## Implementation notes
 
 `LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
-written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
-is a private CRDT document cached by its `node_id`; saving a checkpoint writes `save_compact()`
-bytes to the store, refreshes its `dirs` entry, and replaces the active instance with
-`load_shallow()` of those same bytes. A checkpoint occurs at `cut` and after the configured drip
-interval (64 by default). The checkpoint digest and heads are published before journal entries
-covered by those heads are retired. On open, each directory document is loaded shallowly and
+written through Corosio to a sibling temporary file and atomically renamed. A current checkpoint
+stores the root as a tree-page digest rather than embedding the recursive working tree in the
+repository document. Nested repository entries retain their local child index because their
+objects live in a separate repository store; directory pages remain paged. `LIQUID_JOURNAL` is a
+fixed-size pointer to a paged checkpoint; signed drip bytes are bounded to 64 KiB before another
+checkpoint is published. Each loaded directory is a private CRDT document cached by its `node_id`;
+saving a checkpoint prefers `save_compact()` bytes, verifies that they reopen as a full document,
+and falls back to complete upstream history bytes when needed. The checked bytes refresh the
+`dirs` entry and replace the active instance. Journal publication persists only cached directories;
+a checkpoint synchronizes reachable directories before publication. A checkpoint occurs at `cut`
+and after the configured interval (64 by default). Session undo follows the same bounded journal
+publication path rather than serializing a repository document directly. The checkpoint digest and
+heads are published before journal entries
+covered by those heads are retired. On open, each directory document is loaded sync-capable and
 restored lazily against the journaled working tree before its next mutation. Matching entries are
 left intact, so recovery is idempotent across process restarts.
 
@@ -393,12 +476,10 @@ The actor derivation's device input is the repository checkout path. Two clones 
 repository therefore author under different automerge actors and may create valid concurrent
 sequences; reopening the same checkout keeps its actor stable.
 
-The compact checkpoint bytes are also the full-history archive: loading them with `load()` instead
-of `load_shallow()` reconstructs the pre-checkpoint graph when an old branch or historical query
-needs it. The active shallow document accepts changes whose dependency closure reaches the
-checkpoint heads. A change based only on older pruned heads must be routed to that archive or to a
-fresh snapshot; retiring the archive is valid only after no supported peer or historical query can
-name those heads.
+Compact checkpoint bytes can reconstruct a full document with `load()`; states that cannot do so
+are persisted directly as complete history bytes. Active documents therefore accept synchronization
+dependencies and historical queries through one checked load path. Retiring older stored archives
+is valid only after no supported peer or historical query can name those heads.
 
 Checkpoints written before this dependency bump do not load because the pre-#15 private change
 encoding and hashes are intentionally incompatible. No repository data exists in that format. If
@@ -435,7 +516,10 @@ change digest is the digest of its canonical bytes and is never an automerge has
 - Conflict: create a repository, write and cut `a.txt`, clone it twice, write different values in
   each clone, and exchange directory-document sync frames both ways. Each working copy keeps its
   CRDT-selected entry and reports one `a.txt` conflict value containing the base, left and right
-  references. The next cut carries that value; an ordinary resolution write clears it.
+  references. The next cut carries that value, repository reopen preserves it, and an ordinary
+  resolution write clears it.
+- Path history: write two versions, move and delete the path, then query by the moved name. Restore
+  the first change and assert that it adds one pending drip while the prior log head is unchanged.
 
 The Phase 1 merge helper preserves both differing object references in a `conflict` value. The
 entry remains readable from the local directory document while callers resolve that value.

@@ -17,8 +17,17 @@ Hydration passes a version 2 blob's whole-content digest and logical chunk offse
 Remote ranges therefore enter the existing serialized queue and persistent chunk cache without a
 second VFS path; full materialisation uses the same store-backed content identity.
 
-Read-only observed mounts resolve entries from the action's recorded input-tree digest, while
-mutable capture mounts continue to use the live repository tree. Recorded declared outputs receive
-virtual file and directory placeholders only for read-only execution so bind targets exist without
-altering the captured input snapshot. Snapshot entries retain remote blob metadata so replay uses
-the configured source when it reads a recorded remote input.
+Observed mounts resolve reads from the action's recorded input-tree digest. Mutable capture mounts
+overlay paths after their first write so later reads observe created, replaced, renamed, truncated,
+or permission-changed outputs without exposing unrelated live repository state. The reserved
+`deps/` subtree remains read-only in a mutable mount. Recorded declared outputs become live overlay
+roots in mutable mounts and receive virtual file and directory placeholders in read-only mounts, so
+invalidated outputs are hidden while direct-execution bind targets still exist. Snapshot entries
+retain remote blob metadata so replay uses the configured source when it reads a recorded remote
+input.
+
+Drive mounts register the endpoint stored in `drive.remote`, apply the persisted folder and size
+policy before reads, and return `EAGAIN` when uncached content cannot reach its peer. They expose
+`user.liquid.state` and `user.liquid.pin`; setters persist pin and exclusion choices in repository
+metadata. Excluded entries are removed from lookup and directory results. The pure attribute and
+policy helpers keep their portable coverage separate from the Linux FUSE syscall coverage.

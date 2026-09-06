@@ -8,12 +8,11 @@
 #include <string_view>
 #include <vector>
 
-#include <boost/capy/ex/async_mutex.hpp>
-
 #include "../crypto/crypto.hpp"
 #include "index.hpp"
 #include "leases.hpp"
 #include "liquid/store.hpp"
+#include "mutation_mutex.hpp"
 #include "subject_index.hpp"
 
 namespace liquid::store_detail {
@@ -53,8 +52,11 @@ public:
     read(digest id, std::uint64_t offset, std::span<std::byte> into);
     [[nodiscard]] runtime::task<bool> contains(digest id);
     [[nodiscard]] runtime::task<blob_availability> has(digest id);
+    [[nodiscard]] runtime::task<void>
+    register_remote_source(std::string id, std::shared_ptr<remote_blob_source> source);
     [[nodiscard]] runtime::task<void> register_remote(blob value);
     [[nodiscard]] runtime::task<void> evict(digest id);
+    [[nodiscard]] runtime::task<std::uint64_t> local_bytes();
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
     [[nodiscard]] std::vector<digest> attestations(digest subject) const;
     [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
@@ -110,6 +112,7 @@ private:
 
     std::filesystem::path root_;
     store_options options_;
+    std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources_;
     chunk_index index_;
     std::map<std::uint32_t, pack_contents> packs_;
     std::map<std::string, stored_object> objects_;
@@ -120,7 +123,7 @@ private:
     std::uint32_t current_pack_{};
     std::uint64_t object_batch_depth_{};
     bool objects_dirty_{};
-    boost::capy::async_mutex mutation_;
+    mutation_mutex mutation_;
 };
 
 } // namespace liquid::store_detail

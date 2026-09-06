@@ -7,6 +7,27 @@ rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA p
 and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
 SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages over public
 results, attestations, traces, and result-scoped SBOMs.
+The SBOM finalization bound publishes 24 producer actions and gives one final action 96 reads and
+24 outputs; result creation and cache validation must complete within twenty seconds.
+`test_content.cpp` covers canonical output-tree paths and modes plus read-only named dependency
+folding. `test_normalise.cpp` proves two `ar` headers with different owner, group, mode, and time
+normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root
+binary and text kinds are unchanged, and tree modes preserve only portable executability. The
+provenance tests also enumerate the stored signed input/output claim.
+
+`test_relocation.cpp` checks clean relative metadata and scripts, embedded virtual-root offsets,
+absolute pkg-config and CMake paths, and an absolute Mach-O install name. The `wrap/relocation`
+fixture installs a shared library, executable, header, pkg-config file, and CMake package export.
+The mount-backed wrapper case materialises the tree at one path, moves it, executes it, rejects an
+embedded prefix, and verifies that an allowed hit is retained in `why` diagnostics.
+
+`test_abi.cpp` decodes digest-pinned ELF, Mach-O, and PE fixtures; extracts native shared-library
+exports; checks compatible additions, removals, changed signatures, object sizes, GNU symbol
+versions, and debug signatures; round-trips stored descriptors; verifies the signed compatibility
+attestation; and pins JSON ordering. The privileged `wrap/abi` fixture rebuilds a C shared library
+with a removed function and changed signature, then requires the `abi-break:` event and
+`--fail-on-abi-break` status. The repository-backed case also invokes a result-qualified CLI diff
+between its two stored builds.
 
 Filesystem fixtures allocate their named directories beneath the unique process root specified in
 the parent [`README.md`](../README.md).
@@ -37,6 +58,18 @@ while a changed quoted header executes both recorded readers and assembly.
 `frontend-one-function-measure` is a registered macOS/Linux
 CTest that performs the same count assertion against `src/store/faults.cpp` and prints its elapsed
 milliseconds.
+`test_grammars.cpp` parses the lock-driven sample for every configured grammar without an `ERROR`
+node, runs tag queries for Python, Go, Rust, JavaScript, TypeScript, Java, and Ruby, checks explicit
+unsupported behavior when no tag query exists, rejects a descriptor with a mismatched grammar ABI,
+and checks public registry metadata. `liquid-grammar-measure` reports mean nanoseconds over 100
+parses of each fixture.
+
+`test_edit.cpp` covers concrete syntax, compiler-record rename across two translation units,
+collision refusal, extract, move, node fingerprint refusal, exact after digests, whole-operation
+undo, daemon framing, and CLI JSON. It compiles edited sources with the configured compiler,
+including a copied `src/store/faults.cpp` and a two-file shared-header fixture.
+`liquid-edit-measure` indexes liquid's own source with tree-sitter and reports references, indexed
+files, touched files, text changes, elapsed milliseconds, and the separately sampled host load.
 
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
@@ -69,7 +102,9 @@ The mixed-cost retention case writes a cheap large result and an expensive small
 real store, persists both index rows, exceeds the configured physical cap, and proves collection
 removes only the lower execution-cost-per-byte result.
 
-`wrap/` holds unchanged CMake, Autotools, recursive Make, and compilation-database projects built
+`wrap/` holds unchanged CMake, Autotools, recursive Make, compilation-database, install-tree, and
+shared-library
+projects built
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
@@ -81,11 +116,21 @@ returns the recorded status.
 The configured-build CLI case parses every `liquid build --plan` line and checks the recorded
 compile and link actions, complete input fields, and dependency arrays.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
-and toolchain-tree leaf. Its query-graph cases make a comment-only translation-unit edit execute
+and toolchain-tree leaf. The shared-library fixture exercises automatic ABI publication and the
+compatibility gate. The query-graph cases make a comment-only translation-unit edit execute
 one compiler while preserving the object and link result, then make a semantic edit execute the
 compiler and linker and change the link result.
 The fixture registers a labelled smoke test, and the wrap scenario verifies its public target
 metadata.
+Its cross-project case compiles an upstream object twice across a comment-only source edit, imports
+both signed result claims into a downstream project, and asserts that the identical output tree
+causes zero downstream processes and a named unchanged-input explanation.
+
+`content-addressed-chain.cmake` is the opt-in `realworld` fixture. It fetches zlib 1.3.1 and libpng
+1.6.44 through pinned SHA-256 archives, builds zlib, builds libpng from zlib's named output tree,
+and links a small program from libpng's named output tree. It asserts the zero-process downstream
+comment-only rebuild and the changed-object link path, then prints all process counts and host load
+average.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.
@@ -95,6 +140,7 @@ record decoding, stable cross-file reference identifier, repository-store round 
 explicitly labelled tree-sitter fallback. The Linux `symbols-cli` fixture records a CMake-fixture
 compile with `liquid wrap`, then verifies compiler symbols for its header; macOS excludes that
 fixture because wrapped action execution requires macFUSE.
+The portable `symbols-cli-python` case verifies extension selection and a syntactic Python result.
 
 The real identical-execution cache test verifies every result's provenance and asserts that a hit
 reuses the original attestation digest.

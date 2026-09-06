@@ -17,7 +17,9 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, pluggable KEK custody with trust-domain data-key rotation and revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error, digest, identity
 > document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
@@ -27,7 +29,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > named refs is implemented with measured cost planning, current mapped scans, stable explanations,
 > and atomic per-drip publication. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,
-> bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase or raw-key-file custody,
+> bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase, raw-key-file, age/X25519, cloud KMS, lake transit, or Shamir custody,
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Multiple repositories can use one
 > caller-owned store with repository-scoped checkpoints, journals, and retention leases. Capture subscriptions, default-blocking
@@ -36,26 +38,44 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > metadata also retains verified Lake transparency checkpoints: the public client verifies signed
 > witness-quorum checkpoints, all entry and parent hash tiles, exact TAAP inclusion, consistency,
 > and identity scans before callers trust a log response.
+> structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
+> shared HTTP/1.1 client, `serve sync` adapter, and lake forge review client with its polling event
+> stream and installable double are implemented. VFS full materialisation works on every platform;
 > HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
+> `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
+> atomically reloaded named policy sets at `/admit/<policy>`, structured CBOR/JSON decisions in
+> AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
+> metrics, REST, OpenAPI, and MCP. Complete
+> transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and proofs before log mode accepts a record.
+> HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
+> three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
+> per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the
+> daemon drive target. Issue #235 adds persisted online-only, available-offline, and excluded path
+> state; pin and unpin commands; xattrs; policy-driven and offline-aware hydration; queued-write and
+> hydration-debt status; and GNOME Files and Dolphin badge providers. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, historical document state, composition,
 > conflict values, operation- and session-scoped local-intent undo, advisory
 > locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
-> one-drip streaming file writes, and caller-stated write bases with stale-reasoning refusal,
-> disjoint re-validation, and forced re-planning records are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
+> one-drip streaming file writes and tree imports, and caller-stated write bases with
+> stale-reasoning refusal, disjoint re-validation, and forced re-planning records are implemented.
+> TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
-> Directory CRDT checkpoints are compact and shallow-loaded, remote changes are observed through
-> patches, and every automerge apply, merge, and sync-receive failure is checked.
+> Directory CRDT checkpoints prefer compact bytes with checked full-history fallback and reopen as
+> sync-capable documents; remote changes are observed through patches, and every automerge apply,
+> merge, and sync-receive failure is checked.
 > The `liquid` binary is the documented thin client of the Phase 1 repository, capture, VFS, store,
 > and identity APIs plus the Phase 2 build wrapper. `liquid gc --explain` reports why retained chunks are live. Repository path
 > rules encrypt selected JSON and `.env` leaf values while leaving their structure visible, with
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install. `liquid import git` preserves reachable local Git
 > history and its identity mapping; `liquid export git` writes a standalone Git repository and reports
-> compatibility losses.
+> compatibility losses. Strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA
+> validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against explicitly pinned
+> TSA trust anchors at each token's historical generation time.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
@@ -66,12 +86,22 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Direct build execution
 > and every wrapped tool action are `action_result` graph nodes. A versioned C frontend ABI loads
 > replaceable shared or static language modules outside libliquid. The bundled tree-sitter fallback
-> discovers C and C++ units, while the Clang C++ module emits definition actions and assembles their
+> fetches 49 exact-commit grammars under archive and per-file SHA-256 checks, registers their
+> extensions, and discovers units from pinned tag queries where upstream supplies them. The Clang
+> C++ module emits definition actions and assembles their
 > outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 > that definition's new action; recorded header reads invalidate the definitions that use them.
 > Liquid #66 adds content-addressed per-translation-unit symbol records from a query over recorded
 > compile actions, a labelled tree-sitter fallback, graph retrieval, repository access, and
 > `liquid symbols <path>`.
+> Liquid #32 adds evidence-based hot-update classification for tiers 0–4, signed patch and restart
+> records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and Linux x86_64,
+> sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven daemon target.
+> Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise returns the
+> tier-3 restart outcome.
+> `liquid symbols <path>`; syntactic records and `liquid version --json` carry the grammar-lock
+> digest. The distribution decision and inventory are in
+> [`docs/library/grammars.md`](docs/library/grammars.md).
 > Public build handles now stream queued, started, hit, done, failed, critical-path, and finished
 > events through the library and daemon. CMake test registrations become discoverable cached
 > actions, with `liquid build --events` providing JSON Lines and `liquid test` reporting results.
@@ -79,11 +109,18 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > validated hit state. `repository::build()` and the daemon start the whole selected build in one
 > call, `repository::root_digest()` exposes the current tree record, and `liquid build --plan`
 > prints the daemon plan schema as JSON Lines.
+> Liquid #205 adds canonical structural-edit records and repository/daemon tasks for C and C++
+> rename, extract, move, and concrete-tree edits. Previews contain minimal text changes and
+> refusals; apply verifies file digests, writes one drip per file, and records one attributed
+> operation for whole-edit undo. The bundled tree-sitter frontend now exposes concrete syntax, and
+> `liquid edit` previews or applies through the checkout daemon.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
 > dependency-aware build observability, build-input policy, a cross-project configure fact base,
-> cost-aware retention, and graph-derived SPDX and CycloneDX SBOMs for every output.**
+> cost-aware retention, content-addressed upstream outputs, graph-derived SPDX and CycloneDX SBOMs
+> for every output, and stored ABI descriptors plus signed compatibility comparisons for every built
+> shared library.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -95,6 +132,13 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and every output digest, signs a `reproducibility/1` attestation, and permanently quarantines a
 > divergent result. `wrap` schedules one-in-20 graph and action samples on the shared runtime by
 > default.
+> New signed results carry canonical output-tree digests. `wrap --input <name>=<result|tree>` and
+> direct named inputs mount upstream bytes read-only below `deps/<name>/`; an identical normalised
+> upstream tree stops the downstream cascade. Directory modes, `ar` headers, and Python bytecode
+> are normalised before storage, with the rule set bound into the sandbox digest.
+> `wrap --install-prefix` stages a canonical `bin/lib/include/share` install tree with relative ELF
+> or Mach-O lookup paths. Publication rejects embedded sandbox or install prefixes and absolute
+> binary or package-metadata paths; an explicit waiver is retained in result diagnostics.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
 > in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
@@ -117,6 +161,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > bounded requeue after worker loss, size-class placement from #18's recorded decision, REAPI
 > Execution and ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces.
 > Measured transfer timing remains Phase 3 work.
+> The per-node runtime chunk store is implemented with metadata-only image receipt,
+> reference-counted read-only VFS mounts, shared-chunk reuse counters, logical byte-budget
+> eviction, a local snapshotter listener, TCP health/metrics/REST/OpenAPI/MCP control, and the
+> `liquid node-store` CLI. The containerd proxy snapshotter remains in k0s #14.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -127,6 +175,11 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
 > names the responsible rule and lease. The action-result memory cache tier remains separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
+
+> **Build: liquid builds liquid.** Linux CI configures FetchContent dependencies outside the
+> sandbox, builds the static library and CLI under `liquid wrap` twice, requires a 100% disk hit rate
+> on the second run, and compares both outputs byte for byte with the CMake bootstrap. Static and
+> shared libliquid builds remain covered.
 
 > **Phase 3 build-without-bytes is implemented behind a transport-neutral remote blob source.**
 > Remote result records retain source and instance locations without fetching outputs. Store reads,
@@ -162,7 +215,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > returns a documented unsupported result until Corosio provides named-pipe transport. The daemon
 > uses issue #20's public graph interface for persistence, invalidation, and resident-value bounds.
 > It also performs #23 clean validation during idle slices and reports validation backlog and the
-> last divergence.
+> last divergence. Issue #85 persists actor, directory-document, and repository token buckets;
+> rejects over-budget writes before a CRDT transaction opens; applies the same author limits to
+> pushes; and reports persistence lag, consumer lag, watermarks, and rejection counts.
 
 > **Phase 4 local search and cost planning are implemented.** `liquid search`,
 > `repository::search`, and `repository::plan_search` select BM25F, verified positional trigrams,
@@ -171,6 +226,27 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > publishes changed paths and tombstones after each drip with a durable independent cursor; an
 > atomic manifest replacement makes the whole change visible at once. Identical blobs are indexed
 > once even when several paths refer to them. Named refs use snapshot-specific index slots.
+
+> **Agent application-data branching is implemented for PostgreSQL template copies.** Persisted
+> declarations create one isolated branch per session, guarded promotion refuses a changed base,
+> discard removes disposable data, and status plus `liquid data` expose the live lifecycle. A
+> session-scoped `wrap` receives branch URLs in a network-enabled sandbox. The reflink capability
+> selector is implemented; local cluster control metadata remains required for that lifecycle fast
+> path.
+> **Phase 5 now includes the format registry and its first five codecs.** ZIP, tar, HDF5, Parquet,
+> and SQLite are decoded without format-vendor libraries through a versioned C module ABI. Format
+> trees drive opt-in repository and CLI container diffs, archive entries use `!/` paths in search,
+> and Tier 1 and Tier 2 entries are retained as deduplicated blobs beside the verbatim container.
+> Uncompressed tar has a deterministic writer, while hard or unsupported format surfaces retain
+> honest tiers and opaque reasons.
+> **Phase 5 dependency resolution is implemented.** Canonical
+> `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
+> concrete dependencies, compiler and target constraints, conflicts, and patches. The public
+> Spack-style parser reports exact error columns, while directory and repository universes use the
+> documented `packages/` tree. Liquid's own CDCL engine chooses virtual providers, binds compilers
+> as dependencies, applies target-family fallback, optimises reuse before freshness and defaults,
+> and returns minimal attributed conflict cores. `liquid resolve` prints the graph, stable JSON, or
+> package-selection explanations.
 
 ## Where this sits
 
@@ -195,11 +271,17 @@ and Zetta's.
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
-- [`docs/library/transparency.md`](docs/library/transparency.md) — Lake transparency-log verification, checkpoint bootstrap, proofs, scans, and failure behavior.
+- [`docs/library/transparency.md`](docs/library/transparency.md) — Lake transparency-log checkpoints, tiles, proofs, scans, RFC 3161 timestamps, RFC 4998 evidence, and trust policy.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
+- [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/deploy.md`](docs/library/deploy.md) — operator control-plane deployment records, digest-pinned interim images, rollback, status, and contract boundary.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
+- [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.
+- [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, conflicts, transfer resume, path history, and daemon watching.
+- [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, per-path device state, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, path history, and daemon watching.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 - [`docs/library/gc.md`](docs/library/gc.md) — leased roots, retention rules, cost-aware result eviction, epoch marking, reference extraction, and crash-safe sweep ordering.
@@ -207,23 +289,34 @@ and Zetta's.
 - [`docs/library/leaf-encryption.md`](docs/library/leaf-encryption.md) — JSON and `.env` leaf encryption, path rules, explicit decryption, and structural key diff.
 - [`docs/library/simulation.md`](docs/library/simulation.md) — seeded crash recovery simulation, fault points, invariants, and replay.
 - [`docs/library/identity.md`](docs/library/identity.md) — TAAP/1 identities, local custody, signatures, and verification.
-- [`docs/library/vfs.md`](docs/library/vfs.md) — lazy chunk hydration, FUSE mounts, full materialisation, and platform support.
+- [`docs/library/vfs.md`](docs/library/vfs.md) — lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, full materialisation, and platform support.
 - [`docs/library/git-interop.md`](docs/library/git-interop.md) — local Git import/export, identity mapping, and compatibility reporting.
-- [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, cursor delivery, coalescing, recovery, and telemetry.
+- [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, write buckets, cursor delivery, coalescing, recovery, and telemetry.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
+- [`docs/library/admission.md`](docs/library/admission.md) — image provenance, admission policy, evidence and log verification, TLS, decisions, and deployment boundaries.
+- [`docs/api/admission.md`](docs/api/admission.md) — webhook, control, metrics, REST, OpenAPI, and MCP routes.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, public build streams and ordering, JSON projection, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
+- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, graph value eviction, and shared liquify plugin descriptor.
+- [`docs/library/data-branching.md`](docs/library/data-branching.md) — the decided per-session PostgreSQL data-branch lifecycle, guarded promotion, template-copy baseline, and local reflink fast path.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
+- [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
+- [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
+- [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.
 - [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.
 - [`docs/library/reapi.md`](docs/library/reapi.md) — the REAPI client, remote cache tier, CAS/ActionCache server, configuration, CLI, API map, and peer proof.
+- [`docs/library/self-host.md`](docs/library/self-host.md) — how liquid configures with CMake, builds itself under `liquid wrap`, and compares bootstrap outputs.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/cli/build-events.md`](docs/cli/build-events.md) — the stable build-event JSON-lines schema and ordering.
 - [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
+- [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
+- [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
+- [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 
 | | |
 |---|---|
@@ -311,6 +404,7 @@ library, never the other way round).
 |---|---|
 | `liquid::liquid` (`libliquid`) | the library: `libliquid.a`, or `libliquid.so`/`.dylib` with `-DBUILD_SHARED_LIBS=ON`; symbols hidden by default, `LIQUID_EXPORT` marks the API |
 | `liquid-cli` → `liquid` | the command-line binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
+| `liquid_forge_double`, `liquid-forge-double` | installable in-memory lake forge target and standalone integration-test server |
 | `liquid-tests` | GoogleTest; on by default only when liquid is the top-level project |
 
 ### Build
