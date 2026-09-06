@@ -96,8 +96,11 @@ options. The library owns policy loading, TLS, review decisions, control routes,
 CLI only prints listener state and the explicit insecure-HTTP warning.
 `drive.cpp` configures or reopens a public `drive_client`, prints the persisted three-tree and
 per-reference state, and attaches `--watch` to the checkout daemon after the first successful
-one-shot reconciliation. `history.cpp` lists node-following path versions and restores one as an
-ordinary repository drip through the public repository API.
+one-shot reconciliation. It also prints pending uploads, hydration debt, path availability, and
+offline reasons; `pin` and `unpin` resolve the containing drive and call the public state API.
+`vfs.cpp` passes `LIQUID_TOKEN` to mounts that hydrate through a persisted drive endpoint. Both
+long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
+restores one as an ordinary repository drip through the public repository API.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).

@@ -409,6 +409,7 @@ add_library(libliquid
   src/data.cpp
   src/drip.cpp
   src/drive/client.cpp
+  src/drive/settings.cpp
   src/delta.cpp
   src/edit.cpp
   src/edit_codec.cpp
@@ -512,6 +513,7 @@ add_library(libliquid
   src/vfs/materialise.cpp
   src/vfs/observation.cpp
   src/vfs/request_queue.cpp
+  src/vfs/xattrs.cpp
 )
 if(APPLE)
   target_sources(libliquid PRIVATE src/capture/macos_watcher.cpp src/sandbox/macos.cpp)

@@ -20,6 +20,8 @@ public:
                             const repository_detail::vfs_entry& file,
                             std::uint64_t offset,
                             std::size_t size) -> runtime::task<std::vector<std::byte>>;
+    [[nodiscard]] auto hydrate(repository& source, const repository_detail::vfs_entry& file)
+        -> runtime::task<void>;
     void invalidate(node_id node);
     [[nodiscard]] auto status() const -> mount_status;
 
@@ -36,6 +38,7 @@ private:
                                   std::uint64_t offset,
                                   std::uint64_t size) -> runtime::task<std::vector<std::byte>>;
     [[nodiscard]] auto chunk_path(const digest& id) const -> std::filesystem::path;
+    void record_chunk(const repository_detail::vfs_entry& file, std::size_t index);
 
     static constexpr std::uint64_t capacity = 1024ULL * 1024ULL * 1024ULL;
     std::filesystem::path root_;

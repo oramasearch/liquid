@@ -30,7 +30,7 @@ that the table and `liquid --help` name the same commands.
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, timestamp, or recorded operation history and verify timestamp evidence. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
-| `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]>` | Synchronize or inspect a configured drive folder. | available |
+| `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
@@ -220,10 +220,14 @@ sets `approximate`; and a removed line or file sets `deleted`.
 drip from the selected change and leaves prior changes and refs untouched. See
 [`history.md`](history.md).
 `drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
-counts, conflicts, per-path outcomes, and per-reference outcomes. Refusal reasons are verbatim and
+counts, conflicts, per-path outcomes, and per-reference outcomes. `drive status` also prints the
+hydration threshold, folder-pin rule, pending upload count, non-local byte hydration debt, last
+offline reason, and each path's effective state and reason. Refusal reasons are verbatim and
 make the command exit with status 1 without advancing the base. `drive status` reads the persisted
 state without contacting the server. `--watch` performs one sync and then attaches to the checkout
-daemon. See [`drive.md`](drive.md).
+daemon. `drive pin <path>` resolves the containing drive repository, writes an
+available-offline rule, and hydrates the file or configured folder descendants. `drive unpin`
+writes an explicit online-only rule. See [`drive.md`](drive.md).
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
@@ -570,6 +574,8 @@ liquid history src/main.cpp
 liquid history src/main.cpp --restore blake3:<change-digest>
 liquid drive sync ~/Documents https://lake.live/api/repositories/example
 liquid drive status ~/Documents
+liquid drive pin ~/Documents/Projects
+liquid drive unpin ~/Documents/Projects/archive.zip
 liquid pause
 liquid resume
 liquid watch

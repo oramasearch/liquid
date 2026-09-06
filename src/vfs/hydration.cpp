@@ -141,6 +141,25 @@ auto hydration_cache::chunk_path(const digest& id) const -> std::filesystem::pat
     return root_ / name;
 }
 
+void hydration_cache::record_chunk(const repository_detail::vfs_entry& file, std::size_t index) {
+    auto lock = std::scoped_lock{mutex_};
+    auto& state = files_[file.node];
+    if (!same_chunks(state.chunks, file.chunks)) {
+        state.chunks = file.chunks;
+        state.chunk_sizes = file.chunk_sizes;
+        state.hydrated.assign(file.chunks.size(), false);
+    }
+    if (state.hydrated[index]) {
+        return;
+    }
+    const auto first = std::ranges::none_of(state.hydrated, std::identity{});
+    state.hydrated[index] = true;
+    status_.hydrated_bytes += file.chunk_sizes[index];
+    if (first) {
+        ++status_.hydrated_files;
+    }
+}
+
 runtime::task<std::vector<std::byte>> hydration_cache::load_chunk(
     repository& source, digest content, digest id, std::uint64_t offset, std::uint64_t size) {
     const auto path = chunk_path(id);
@@ -210,20 +229,7 @@ hydration_cache::read(repository& source,
                 chunk_size - begin, static_cast<std::uint64_t>(wanted - copied)));
             std::copy_n(chunk->begin() + begin, amount, output.begin() + copied);
             copied += amount;
-            auto lock = std::scoped_lock{mutex_};
-            auto& state = files_[file.node];
-            if (!same_chunks(state.chunks, file.chunks)) {
-                state.chunks = file.chunks;
-                state.chunk_sizes = file.chunk_sizes;
-                state.hydrated.assign(file.chunks.size(), false);
-            }
-            if (!state.hydrated[index]) {
-                const auto first = std::ranges::none_of(state.hydrated, std::identity{});
-                state.hydrated[index] = true;
-                status_.hydrated_bytes += chunk_size;
-                if (first)
-                    ++status_.hydrated_files;
-            }
+            record_chunk(file, index);
         }
         position = end;
         if (copied == wanted)
@@ -233,6 +239,28 @@ hydration_cache::read(repository& source,
         co_return std::unexpected(
             error{errc::corrupt, "blob chunk metadata does not cover requested range", file.name});
     co_return output;
+}
+
+runtime::task<void> hydration_cache::hydrate(repository& source,
+                                             const repository_detail::vfs_entry& file) {
+    if (file.kind != node_kind::blob) {
+        co_return std::unexpected(error{errc::invalid_argument, "path is not a file", file.name});
+    }
+    if (file.chunks.size() != file.chunk_sizes.size()) {
+        co_return std::unexpected(
+            error{errc::corrupt, "blob chunk metadata is inconsistent", file.name});
+    }
+    auto offset = std::uint64_t{};
+    for (auto index = std::size_t{}; index < file.chunks.size(); ++index) {
+        auto chunk = co_await load_chunk(
+            source, file.content, file.chunks[index], offset, file.chunk_sizes[index]);
+        if (!chunk) {
+            co_return std::unexpected(chunk.error());
+        }
+        record_chunk(file, index);
+        offset += file.chunk_sizes[index];
+    }
+    co_return result<void>{};
 }
 
 void hydration_cache::invalidate(node_id node) {

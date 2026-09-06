@@ -24,6 +24,26 @@ enum class drive_reconciliation_kind : std::uint8_t {
     interrupted_transfer,
 };
 
+enum class drive_path_state : std::uint8_t {
+    online_only = 1,
+    available_offline = 2,
+    not_synced_here = 3,
+};
+
+struct LIQUID_EXPORT drive_settings {
+    std::uint64_t hydration_size_threshold{8ULL * 1024ULL * 1024ULL};
+    bool pin_folders{true};
+};
+
+struct LIQUID_EXPORT drive_path_status {
+    std::string path;
+    drive_path_state state{drive_path_state::online_only};
+    std::uint64_t size{};
+    std::uint64_t hydration_debt{};
+    bool hydrated{};
+    std::string reason;
+};
+
 struct LIQUID_EXPORT drive_reconciliation {
     std::string path;
     std::optional<std::string> old_path;
@@ -47,6 +67,11 @@ struct LIQUID_EXPORT drive_status {
     std::uint64_t state_bytes{};
     std::uint64_t state_memory_ceiling{};
     std::uint64_t full_walks{};
+    drive_settings settings;
+    std::uint64_t pending_uploads{};
+    std::uint64_t hydration_debt{};
+    std::string offline_reason;
+    std::vector<drive_path_status> paths;
     std::vector<conflict> conflicts;
     std::vector<sync_ref_outcome> references;
 };
@@ -80,6 +105,12 @@ public:
                                                           drive_options options = {});
     [[nodiscard]] runtime::task<drive_sync_report> sync();
     [[nodiscard]] runtime::task<drive_status> status();
+    [[nodiscard]] runtime::task<drive_path_status> path_status(std::string path);
+    [[nodiscard]] runtime::task<drive_settings> settings();
+    [[nodiscard]] runtime::task<void> configure(drive_settings settings);
+    [[nodiscard]] runtime::task<void> set_state(std::string path, drive_path_state state);
+    [[nodiscard]] runtime::task<void> pin(std::string path);
+    [[nodiscard]] runtime::task<void> unpin(std::string path);
 
 private:
     [[nodiscard]] static runtime::task<drive_client> open_impl(std::filesystem::path folder,

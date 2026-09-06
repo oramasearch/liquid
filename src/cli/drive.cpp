@@ -5,7 +5,7 @@
 #include <print>
 #include <ranges>
 #include <string_view>
-#include <thread>
+#include <utility>
 
 #include "liquid/daemon.hpp"
 #include "liquid/drive.hpp"
@@ -52,6 +52,18 @@ auto kind_name(liquid::drive_reconciliation_kind kind) -> std::string_view {
     return "unknown";
 }
 
+auto state_name(liquid::drive_path_state state) -> std::string_view {
+    switch (state) {
+    case liquid::drive_path_state::online_only:
+        return "online-only";
+    case liquid::drive_path_state::available_offline:
+        return "available-offline";
+    case liquid::drive_path_state::not_synced_here:
+        return "not-synced-here";
+    }
+    return "online-only";
+}
+
 auto print_status(const liquid::drive_status& status) -> void {
     std::println("folder={}", status.folder.string());
     std::println("remote={}", status.remote);
@@ -64,6 +76,20 @@ auto print_status(const liquid::drive_status& status) -> void {
     std::println("state_bytes={}", status.state_bytes);
     std::println("state_memory_ceiling={}", status.state_memory_ceiling);
     std::println("full_walks={}", status.full_walks);
+    std::println("hydration_size_threshold={}", status.settings.hydration_size_threshold);
+    std::println("pin_folders={}", status.settings.pin_folders);
+    std::println("pending_uploads={}", status.pending_uploads);
+    std::println("hydration_debt={}", status.hydration_debt);
+    std::println("offline_reason={}", status.offline_reason);
+    for (const auto& path : status.paths) {
+        std::println("path={} state={} size={} hydration_debt={} hydrated={} reason={}",
+                     path.path,
+                     state_name(path.state),
+                     path.size,
+                     path.hydration_debt,
+                     path.hydrated,
+                     path.reason);
+    }
     for (const auto& conflict : status.conflicts) {
         std::println("conflict={} values={}", conflict.path, conflict.refs.size());
     }
@@ -79,35 +105,102 @@ auto handle_interrupt(int) -> void {
     interrupted = 1;
 }
 
+auto watch_task(std::filesystem::path folder) -> liquid::runtime::task<void> {
+    auto attached = co_await liquid::daemon::attach(folder);
+    if (!attached) {
+        co_return std::unexpected(attached.error());
+    }
+    std::println("watching {}", folder.string());
+    while (interrupted == 0) {
+        auto status = co_await attached->status();
+        if (!status) {
+            co_return std::unexpected(status.error());
+        }
+        auto [delay_error] = co_await liquid::runtime::delay(std::chrono::milliseconds{50});
+        if (delay_error) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::io, delay_error.message(), "drive watch"});
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
 auto watch(const std::filesystem::path& folder) -> int {
     auto ready = ensure_daemon(folder);
     if (!ready) {
         return fail(ready.error());
     }
-    auto attached = liquid::runtime::block_on(liquid::daemon::attach(folder));
-    if (!attached) {
-        return fail(attached.error());
-    }
     interrupted = 0;
     auto previous = std::signal(SIGINT, handle_interrupt);
-    std::println("watching {}", folder.string());
-    while (interrupted == 0) {
-        auto status = liquid::runtime::block_on(attached->status());
-        if (!status) {
-            std::signal(SIGINT, previous);
-            return fail(status.error());
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds{50});
-    }
+    auto watched = liquid::runtime::block_on(watch_task(folder));
     std::signal(SIGINT, previous);
-    return 0;
+    return watched ? 0 : fail(watched.error());
+}
+
+auto drive_root_and_path(std::filesystem::path requested)
+    -> liquid::runtime::task<std::pair<std::filesystem::path, std::string>> {
+    auto located = co_await liquid::runtime::offload([requested = std::move(requested)] {
+        auto code = std::error_code{};
+        auto target = std::filesystem::absolute(requested, code).lexically_normal();
+        if (code) {
+            return liquid::result<std::pair<std::filesystem::path, std::string>>{std::unexpected(
+                liquid::error{liquid::errc::io, code.message(), requested.string()})};
+        }
+        auto candidate =
+            std::filesystem::is_directory(target, code) ? target : target.parent_path();
+        code.clear();
+        while (!candidate.empty()) {
+            if (std::filesystem::exists(candidate / "LIQUID_REPO", code) && !code) {
+                auto relative = target.lexically_relative(candidate).generic_string();
+                if (relative == ".") {
+                    relative.clear();
+                }
+                return liquid::result<std::pair<std::filesystem::path, std::string>>{
+                    std::pair{candidate, std::move(relative)}};
+            }
+            if (code) {
+                return liquid::result<std::pair<std::filesystem::path, std::string>>{
+                    std::unexpected(
+                        liquid::error{liquid::errc::io, code.message(), candidate.string()})};
+            }
+            const auto parent = candidate.parent_path();
+            if (parent == candidate) {
+                break;
+            }
+            candidate = parent;
+        }
+        return liquid::result<std::pair<std::filesystem::path, std::string>>{std::unexpected(
+            liquid::error{liquid::errc::not_found, "drive repository not found", target.string()})};
+    });
+    if (!located) {
+        co_return std::unexpected(located.error());
+    }
+    co_return std::move(*located);
+}
+
+auto change_pin(std::filesystem::path requested, bool pin)
+    -> liquid::runtime::task<liquid::drive_path_status> {
+    auto located = co_await drive_root_and_path(std::move(requested));
+    if (!located) {
+        co_return std::unexpected(located.error());
+    }
+    auto client = co_await liquid::drive_client::open(located->first);
+    if (!client) {
+        co_return std::unexpected(client.error());
+    }
+    auto changed =
+        pin ? co_await client->pin(located->second) : co_await client->unpin(located->second);
+    if (!changed) {
+        co_return std::unexpected(changed.error());
+    }
+    co_return co_await client->path_status(located->second);
 }
 
 } // namespace
 
 auto drive(int argc, char** argv) -> int {
     if (argc < 1) {
-        return usage("drive <sync|status> ...");
+        return usage("drive <sync|status|pin|unpin> ...");
     }
     const auto command = std::string_view{argv[0]};
     if (command == "status") {
@@ -125,6 +218,21 @@ auto drive(int argc, char** argv) -> int {
             return fail(status.error());
         }
         print_status(*status);
+        return 0;
+    }
+    if (command == "pin" || command == "unpin") {
+        if (argc != 2) {
+            return usage("drive pin|unpin <path>");
+        }
+        auto changed =
+            liquid::runtime::block_on(change_pin(std::filesystem::path{argv[1]}, command == "pin"));
+        if (!changed) {
+            return fail(changed.error());
+        }
+        std::println("path={} state={} reason={}",
+                     changed->path,
+                     state_name(changed->state),
+                     changed->reason);
         return 0;
     }
     if (command != "sync" || argc < 3 || argc > 4) {
