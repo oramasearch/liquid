@@ -25,3 +25,9 @@ roots in mutable mounts and receive virtual file and directory placeholders in r
 invalidated outputs are hidden while direct-execution bind targets still exist. Snapshot entries
 retain remote blob metadata so replay uses the configured source when it reads a recorded remote
 input.
+
+Drive mounts register the endpoint stored in `drive.remote`, apply the persisted folder and size
+policy before reads, and return `EAGAIN` when uncached content cannot reach its peer. They expose
+`user.liquid.state` and `user.liquid.pin`; setters persist pin and exclusion choices in repository
+metadata. Excluded entries are removed from lookup and directory results. The pure attribute and
+policy helpers keep their portable coverage separate from the Linux FUSE syscall coverage.

@@ -1035,7 +1035,9 @@ TEST(Drive, seeded_reconciliation_covers_every_case_and_converges_through_sync_s
 
     ASSERT_TRUE(liquid::runtime::block_on(server_repository->write("shared.txt", bytes("base"))));
     ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("conflict base")));
-    ASSERT_TRUE(liquid::runtime::block_on(client->sync()));
+    auto initial_sync = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(initial_sync) << initial_sync.error().message << ": "
+                              << initial_sync.error().context;
     const auto left = "left-" + std::to_string(random());
     const auto right = "right-" + std::to_string(random());
     write_drive_file(folder.path() / "shared.txt", left);
@@ -1127,6 +1129,109 @@ TEST(Drive, state_memory_ceiling_refuses_an_unbounded_walk) {
     EXPECT_EQ(synchronized.error().context, std::to_string(state_ceiling));
     ASSERT_GT(peak_rss_bytes(), 0U);
     EXPECT_LT(peak_rss_bytes(), rss_ceiling);
+}
+
+TEST(Drive, path_states_settings_and_hydration_records_survive_reopen) {
+    temporary_directory folder;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        server_repository->write("photos/2026/image.jpg", bytes("image"))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("add image")));
+    auto server = liquid::sync_server{*server_repository};
+    sync_http_server http{server};
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        client->configure({.hydration_size_threshold = 4, .pin_folders = true})));
+    auto initial_sync = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(initial_sync) << initial_sync.error().message << ": "
+                              << initial_sync.error().context;
+    EXPECT_FALSE(std::filesystem::exists(folder.path() / "photos/2026/image.jpg"));
+    EXPECT_EQ(initial_sync->status.files, 1U);
+    EXPECT_EQ(initial_sync->status.hydration_debt, 5U);
+    auto repeated_sync = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(repeated_sync) << repeated_sync.error().message << ": "
+                               << repeated_sync.error().context;
+    EXPECT_FALSE(std::filesystem::exists(folder.path() / "photos/2026/image.jpg"));
+    EXPECT_EQ(repeated_sync->status.hydration_debt, 5U);
+    http.fail_next_chunk_read();
+    auto unavailable = liquid::runtime::block_on(client->pin("photos"));
+    ASSERT_FALSE(unavailable);
+    auto offline = liquid::runtime::block_on(client->status());
+    ASSERT_TRUE(offline);
+    EXPECT_NE(offline->offline_reason.find("pinned content is unavailable"), std::string::npos);
+    EXPECT_EQ(offline->hydration_debt, 5U);
+    ASSERT_TRUE(liquid::runtime::block_on(client->pin("photos")));
+    auto pinned = liquid::runtime::block_on(client->path_status("photos/2026/image.jpg"));
+    ASSERT_TRUE(pinned);
+    EXPECT_EQ(pinned->state, liquid::drive_path_state::available_offline);
+    EXPECT_TRUE(pinned->hydrated);
+    EXPECT_EQ(pinned->hydration_debt, 0U);
+    ASSERT_TRUE(liquid::runtime::block_on(client->unpin("photos/2026/image.jpg")));
+    auto unpinned = liquid::runtime::block_on(client->path_status("photos/2026/image.jpg"));
+    ASSERT_TRUE(unpinned);
+    EXPECT_EQ(unpinned->state, liquid::drive_path_state::online_only);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        client->set_state("photos/private", liquid::drive_path_state::not_synced_here)));
+
+    auto reopened = liquid::runtime::block_on(liquid::drive_client::open(folder.path()));
+    ASSERT_TRUE(reopened);
+    auto settings = liquid::runtime::block_on(reopened->settings());
+    ASSERT_TRUE(settings);
+    EXPECT_EQ(settings->hydration_size_threshold, 4U);
+    EXPECT_TRUE(settings->pin_folders);
+    auto persisted = liquid::runtime::block_on(reopened->path_status("photos/2026/image.jpg"));
+    ASSERT_TRUE(persisted);
+    EXPECT_EQ(persisted->state, liquid::drive_path_state::online_only);
+    auto status = liquid::runtime::block_on(reopened->status());
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->hydration_debt, 0U);
+    EXPECT_EQ(status->pending_uploads, 0U);
+    const auto excluded =
+        std::ranges::find(status->paths, "photos/private", &liquid::drive_path_status::path);
+    ASSERT_NE(excluded, status->paths.end());
+    EXPECT_EQ(excluded->state, liquid::drive_path_state::not_synced_here);
+}
+
+TEST(Drive, repository_writes_queue_offline_and_reconcile_later) {
+    temporary_directory folder;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    auto server = liquid::sync_server{*server_repository};
+    sync_http_server http{server};
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client);
+    auto initial_sync = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(initial_sync) << initial_sync.error().message << ": "
+                              << initial_sync.error().context;
+    client = liquid::drive_client{};
+
+    {
+        auto repository = liquid::runtime::block_on(liquid::repository::open(folder.path()));
+        ASSERT_TRUE(repository);
+        ASSERT_TRUE(liquid::runtime::block_on(repository->write("queued.txt", bytes("queued"))));
+        ASSERT_TRUE(liquid::runtime::block_on(repository->cut("queue drive write")));
+    }
+
+    auto reopened = liquid::runtime::block_on(liquid::drive_client::open(folder.path()));
+    ASSERT_TRUE(reopened);
+    auto pending = liquid::runtime::block_on(reopened->status());
+    ASSERT_TRUE(pending);
+    EXPECT_EQ(pending->pending_uploads, 1U);
+    auto synchronized = liquid::runtime::block_on(reopened->sync());
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+    EXPECT_EQ(synchronized->status.pending_uploads, 0U);
+    auto uploaded = liquid::runtime::block_on(server_repository->read("queued.txt"));
+    ASSERT_TRUE(uploaded);
+    EXPECT_EQ(text(*uploaded), "queued");
 }
 
 TEST(Drive, refused_reference_preserves_reason_and_unadvanced_base) {
@@ -1328,6 +1433,7 @@ TEST(Sync, cli_push_and_pull_round_trip) {
     const auto atomic_output = source_path.path() / "atomic-output.txt";
     const auto drive_output = source_path.path() / "drive-output.txt";
     const auto drive_status_output = source_path.path() / "drive-status-output.txt";
+    const auto drive_pin_output = source_path.path() / "drive-pin-output.txt";
     const auto push = "cd " + shell_quote(source_path.path()) + " && " + executable + " push '" +
                       url + "' > " + shell_quote(push_output);
     const auto atomic_push = "cd " + shell_quote(source_path.path()) + " && " + executable +
@@ -1338,6 +1444,11 @@ TEST(Sync, cli_push_and_pull_round_trip) {
                             url + "' > " + shell_quote(drive_output);
     const auto drive_status = executable + " drive status " + shell_quote(drive_path.path()) +
                               " > " + shell_quote(drive_status_output);
+    const auto drive_pin = executable + " drive pin " + shell_quote(drive_path.path() / "cli.txt") +
+                           " > " + shell_quote(drive_pin_output);
+    const auto drive_unpin = executable + " drive unpin " +
+                             shell_quote(drive_path.path() / "cli.txt") + " > " +
+                             shell_quote(drive_pin_output);
     ASSERT_EQ(std::system(push.c_str()), 0);
     auto reopened_source = liquid::runtime::block_on(liquid::repository::open(source_path.path()));
     ASSERT_TRUE(reopened_source);
@@ -1370,6 +1481,15 @@ TEST(Sync, cli_push_and_pull_round_trip) {
         std::string{std::istreambuf_iterator<char>{drive_status_report}, {}};
     EXPECT_NE(drive_status_text.find("remote=" + url), std::string::npos);
     EXPECT_NE(drive_status_text.find("interrupted=false"), std::string::npos);
+    ASSERT_EQ(std::system(drive_pin.c_str()), 0);
+    auto drive_pin_report = std::ifstream{drive_pin_output};
+    auto drive_pin_text = std::string{std::istreambuf_iterator<char>{drive_pin_report}, {}};
+    EXPECT_NE(drive_pin_text.find("state=available-offline"), std::string::npos);
+    drive_pin_report.close();
+    ASSERT_EQ(std::system(drive_unpin.c_str()), 0);
+    drive_pin_report = std::ifstream{drive_pin_output};
+    drive_pin_text = std::string{std::istreambuf_iterator<char>{drive_pin_report}, {}};
+    EXPECT_NE(drive_pin_text.find("state=online-only"), std::string::npos);
     ASSERT_EQ(std::system(pull.c_str()), 0);
     auto opened = liquid::runtime::block_on(liquid::repository::open(destination_path.path()));
     ASSERT_TRUE(opened);
