@@ -32,6 +32,9 @@ freshness input, and three-alternative shape for the small imported working set.
 shared tier line. It also pins Tier 0 text fallback, the JSON tier object, and a Tier 3 opaque
 archive-search result.
 
+`inspect.cmake` runs `liquid inspect --json` twice against a ZIP fixture and verifies that its
+codec identification and JSON projection are stable.
+
 `symbols-python.cmake` creates a Python source file and proves `liquid symbols` selects the locked
 Python grammar and reports its Tier 2 digest plus `origin=syntactic`.
 

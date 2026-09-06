@@ -304,12 +304,13 @@ path ([`data-branching.md`](data-branching.md)).
 
 ## Phase 5: formats, projection, resolution, and configuration
 
-**Format registry.** Phase 5 includes the format registry and its first five codecs. ZIP, tar,
-HDF5, Parquet, and SQLite are decoded without format-vendor libraries through a versioned C module
-ABI. Format trees drive opt-in repository and CLI container diffs, archive entries use `!/` paths
-in search, and Tier 1 and Tier 2 entries are retained as deduplicated blobs beside the verbatim
-container. Uncompressed tar has a deterministic writer, while hard or unsupported format surfaces
-retain honest tiers and opaque reasons ([`formats.md`](formats.md)).
+**Format registry.** Phase 5 includes the format registry and dependency-free ZIP, tar, HDF5,
+Parquet, SQLite, linked-binary, PDF, notebook, office-document, package, wheel, JAR, safetensors,
+and non-executing pickle codecs through a versioned C module ABI. Format trees drive opt-in
+repository and CLI container diffs, archive entries use `!/` paths in search, and Tier 1 and Tier 2
+entries are retained as deduplicated blobs beside the verbatim container. Uncompressed tar has a
+deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
+reasons ([`formats.md`](formats.md)).
 
 **Projection.** Tier A package and image projection is implemented. One checked install tree
 projects to deterministic `.deb`, `.rpm`, `.apk`, OCI image layouts, and digest-pinned Helm charts.

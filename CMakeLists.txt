@@ -423,15 +423,21 @@ add_library(libliquid
   src/error.cpp
   src/formats/dotenv.cpp
   src/formats/apk/apk.cpp
+  src/formats/ar/ar.cpp
+  src/formats/binary/codec.cpp
   src/formats/deb/deb.cpp
   src/formats/deflate/deflate.cpp
   src/formats/hdf5/hdf5.cpp
   src/formats/binary/elf.cpp
   src/formats/binary/macho.cpp
   src/formats/binary/pe.cpp
+  src/formats/xml/xml.cpp
   src/formats/json.cpp
   src/formats/ostree/ostree.cpp
   src/formats/parquet/parquet.cpp
+  src/formats/pdf/pdf.cpp
+  src/formats/model/model.cpp
+  src/formats/document/document.cpp
   src/formats/package/common.cpp
   src/formats/package/codecs.cpp
   src/formats/registry.cpp
@@ -638,6 +644,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/history.cpp
     src/cli/hot_update.cpp
     src/cli/identity.cpp
+    src/cli/inspect.cpp
     src/cli/keys.cpp
     src/cli/locks.cpp
     src/cli/node_store.cpp

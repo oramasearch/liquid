@@ -58,6 +58,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`policy`](policy.md) | check or explain build-input policy | available |
 | [`sbom`](sbom.md) | print a derived or explicitly inferred SBOM | available |
 | [`abi`](abi.md) | show or compare library ABIs | available |
+| [`inspect`](inspect.md) | explain a recognised artifact | available |
 | [`symbols`](symbols.md) | show compiler or syntactic symbols for a source path | available |
 | [`hot-update`](hot-update.md) | classify, apply, or inspect runtime updates | available on macOS arm64 and Linux x86_64 |
 | [`secret`](secret.md) | fetch, seal, or unseal a Lake environment secret | available |
