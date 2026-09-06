@@ -7,6 +7,8 @@ inventory is maintained in `docs/library/api-map.md`.
 `frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
 descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
 errors, progress, and cancellation types while registering queries, commands, and panels.
+`tiers.hpp` defines the pure support matrix projected from the process-global frontend registry,
+the built-in format registry, and the declared platform backends.
 
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.

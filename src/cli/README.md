@@ -45,6 +45,11 @@ repository storage or file contents.
 `diff.cpp` resolves each operand as a ref or change digest and calls public repository diff.
 `--text` opts into line hunks, `--formats` prints codec-tier container trees, an optional path
 filters the result, and `--json` emits the same nested values for tools.
+`tier.cpp` owns the shared `tier: <n> (<mechanism>)` text line and JSON object used by commands that
+degrade. `tiers.cpp` loads installed frontend modules, calls the pure public support-matrix API,
+filters language or format rows, and renders stable text, JSON, or the generated Markdown blocks.
+Diff, symbols, archive search, and wrap use the shared projection; #68, #69, and #70 must reuse it
+when their richer command paths land.
 
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.

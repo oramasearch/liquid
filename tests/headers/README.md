@@ -12,3 +12,5 @@ compilable.
 independent ABI version constants.
 `session.cpp` compiles the speculative-session and collaboration API independently.
 `projection.cpp` covers the Tier A package, OCI image, and Helm request/report API.
+`tiers.cpp` compiles and links the synchronous registry-derived support matrix as an isolated
+public include.

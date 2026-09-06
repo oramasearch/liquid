@@ -105,6 +105,11 @@ Liquid #72 replaces tag-selected tree-sitter inputs with one canonical lock for 
 public grammars. Configure-time archives and every compiled parser/scanner and tag query are pinned
 by SHA-256; the generated registry, public language metadata, syntax fallback, and grammar-set
 provenance all derive from that lock.
+Liquid #71 adds a pure public support matrix projected from the process-global frontend registry,
+the live format registry, and declared platform wrapper backends. Duplicate language registrations
+select the stronger compiler frontend while preserving grammar extensions. `liquid tiers` renders
+stable text, JSON, and generated feature tables; degraded diff, symbols, search, and wrap output
+names its actual tier and mechanism.
 Liquid #201 adds the public lake forge review client, edit-surviving comment advancement, polling
 review events, the `liquid review` command group, and an installable in-memory forge double over
 the shared private HTTP/1.1 client.
@@ -287,7 +292,7 @@ print("broken links:",len(bad)); [print(" ",b) for b in bad]
 PY
 ```
 
-**Keep counts accurate.** `README.md` states topic and feature counts. Recount, never
+**Keep counts accurate.** `docs/README.md` states topic and feature counts. Recount, never
 estimate:
 
 ```sh
@@ -310,15 +315,20 @@ skipped. Treat them as the same checklist, not as an afterthought.
 2. **Count sync** (above) — recount, never estimate.
 3. **Indexes.** A new research topic adds a row to `docs/research/README.md`; a new
    feature doc adds a row to `docs/features/README.md`. Tables — add the row now.
-4. **Root `README.md` and this file.** Any change to what liquid *is*, what it *does*, a
-   new top-level directory, or a new convention updates **both**. A new `docs/`
-   subdirectory that appears in neither is a bug.
+4. **The status record, the docs index, and this file.** Any change to what liquid *is* or
+   what it *does* updates `docs/features/README.md`, the implementation status in
+   `docs/library/status.md`, and this file. A new top-level directory or a new convention
+   updates the root `README.md` and this file. The root `README.md` is a front door: a
+   one-paragraph statement, a short status, build commands, and links; feature and status
+   detail lives under `docs/`. A new `docs/` subdirectory that is not in `docs/README.md`
+   is a bug.
 5. **CI changes.** Run the local proof command before pushing, then wait for every platform
    and sanitizer check and record their results in the pull request.
 
 **This last one has already been missed.** `docs/standards/` existed in the tree before
 it appeared in either file, and TAAP was the security model before this file mentioned
-it. If a change is worth a feature doc, it is worth a line in the README.
+it. If a change is worth a feature doc, it is worth a row in `docs/README.md` and a line in
+`docs/library/status.md`.
 
 **Correct the record when research contradicts a spec.** This has already happened
 twice and both corrections improved the design. Say what changed and why, in the doc.
