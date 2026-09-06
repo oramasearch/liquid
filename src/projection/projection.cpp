@@ -144,7 +144,8 @@ auto metadata_is_safe(const package_metadata& metadata) -> bool {
     };
     if (!safe(metadata.name) || !safe(metadata.version) || !safe(metadata.release) ||
         !safe(metadata.architecture) || !safe(metadata.description) || !safe(metadata.maintainer) ||
-        !safe(metadata.licence) || !safe(metadata.homepage)) {
+        !safe(metadata.licence) || !safe(metadata.homepage) || !safe(metadata.identifier) ||
+        !safe(metadata.publisher) || !safe(metadata.display_name) || !safe(metadata.executable)) {
         return false;
     }
     for (const auto* values : {&metadata.declared_dependencies,
@@ -177,6 +178,10 @@ auto options_are_safe(const projection_options& options) -> bool {
         if (!std::ranges::all_of(*values, safe)) {
             return false;
         }
+    }
+    if (options.entitlements.string().find_first_of("\r\n\0") != std::string::npos ||
+        !safe(options.installer_url)) {
+        return false;
     }
     return std::ranges::all_of(options.conffiles, [](const auto& path) {
         const auto value = std::filesystem::path{path};
@@ -287,9 +292,12 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
             }
             output.source_attestations.insert(
                 output.source_attestations.end(), result->sboms.begin(), result->sboms.end());
-        } else {
-            tree = std::get<digest>(source_value.value);
+        } else if (const auto* digest_value = std::get_if<digest>(&source_value.value)) {
+            tree = *digest_value;
             output.source_ids.push_back(to_string(tree));
+        } else {
+            co_return std::unexpected(
+                failure(errc::invalid_argument, "filesystem sources are only valid for winget"));
         }
         auto collected = co_await collect_tree(source, tree, {}, files);
         if (!collected) {
@@ -367,7 +375,9 @@ runtime::task<digest> store_projection_attestation(repository& source,
 
 result<void> write_file(std::filesystem::path path, std::span<const std::byte> bytes) {
     auto code = std::error_code{};
-    std::filesystem::create_directories(path.parent_path(), code);
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), code);
+    }
     if (code) {
         return std::unexpected(failure(errc::io, code.message(), path.parent_path().string()));
     }
@@ -397,11 +407,22 @@ std::string_view to_string(projection_target target) noexcept {
         return "apk";
     case projection_target::helm_chart:
         return "helm";
+    case projection_target::macos_pkg:
+        return "macos-pkg";
+    case projection_target::macos_dmg:
+        return "macos-dmg";
+    case projection_target::msix:
+        return "msix";
+    case projection_target::winget_manifest:
+        return "winget";
     }
     return "oci";
 }
 
 runtime::task<projection_report> project(repository& source, projection_request request) {
+    if (request.target == projection_target::winget_manifest) {
+        co_return co_await projection_detail::project_winget(source, request);
+    }
     auto prepared = co_await projection_detail::prepare(source, request);
     if (!prepared) {
         co_return std::unexpected(prepared.error());
@@ -417,6 +438,14 @@ runtime::task<projection_report> project(repository& source, projection_request 
     case projection_target::helm_chart:
         co_return co_await projection_detail::project_helm(
             source, std::move(*prepared), request.services);
+    case projection_target::macos_pkg:
+    case projection_target::macos_dmg:
+        co_return co_await projection_detail::project_macos(
+            source, request.target, std::move(*prepared));
+    case projection_target::msix:
+        co_return co_await projection_detail::project_msix(source, std::move(*prepared));
+    case projection_target::winget_manifest:
+        break;
     }
     co_return std::unexpected(error{errc::unsupported, "unknown projection target", "project"});
 }
@@ -474,7 +503,19 @@ result<std::string> projection_report_json(const projection_report& report) {
         const auto& artifact = report.artifacts[index];
         output += "{\"path\":" + quote(artifact.path.generic_string()) +
                   ",\"digest\":" + quote(to_string(artifact.digest)) +
-                  ",\"media_type\":" + quote(artifact.media_type) + "}";
+                  ",\"media_type\":" + quote(artifact.media_type) +
+                  ",\"reproducible\":" + (artifact.reproducible ? "true" : "false") + "}";
+    }
+    output += "],\"signing_requests\":[";
+    for (auto index = std::size_t{}; index < report.signing_requests.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const auto& request = report.signing_requests[index];
+        output += "{\"path\":" + quote(request.path.generic_string()) +
+                  ",\"artifact\":" + quote(request.artifact.generic_string()) +
+                  ",\"unsigned_digest\":" + quote(to_string(request.unsigned_digest)) +
+                  ",\"platform\":" + quote(to_string(request.platform)) + "}";
     }
     output += "],\"attestations\":[";
     for (auto index = std::size_t{}; index < report.attestations.size(); ++index) {
@@ -502,6 +543,16 @@ result<std::string> projection_report_json(const projection_report& report) {
     output += "],\"abi_break_allowed\":";
     output += report.abi_break_allowed ? "true}" : "false}";
     return output;
+}
+
+std::string_view to_string(platform_signing_system platform) noexcept {
+    switch (platform) {
+    case platform_signing_system::macos:
+        return "macos";
+    case platform_signing_system::windows:
+        return "windows";
+    }
+    return "unknown";
 }
 
 } // namespace liquid

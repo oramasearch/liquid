@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|deb|rpm|apk|helm|macos-pkg|macos-dmg|msix|winget> <result|install-tree|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
@@ -22,6 +22,12 @@ Project a recorded build result or install tree into an OCI image, package, or H
 | `--out` | `<dir>` | Write projected artifacts below this directory. | projection |
 | `--depends` | `<dependency>` | Declare a package dependency; repeatable. | none |
 | `--service` | `<value>` | Add a Helm service declaration; repeatable. | none |
+| `--identifier` | `<id>` | Set the platform package identifier. | derived from name |
+| `--publisher` | `<subject>` | Set the MSIX certificate subject. | development subject |
+| `--display-name` | `<name>` | Set the platform display name. | package name |
+| `--executable` | `<path>` | Set the packaged application executable. | derived from name |
+| `--entitlements` | `<path>` | Record macOS signing entitlements. | none |
+| `--installer-url` | `<url>` | Set the winget installer URL. | required for winget |
 | `--compat-gzip` | — | Use gzip-compatible package compression. | false |
 | `--allow-abi-break` | — | Permit an incompatible ABI projection. | false |
 | `--json` | — | Write stable JSON instead of text. | false |

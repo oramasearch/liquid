@@ -102,14 +102,14 @@ jobs:
       - name: Build
         if: matrix.platform != 'windows'
         shell: bash
-        run: cmake --build build
+        run: cmake --build build --parallel 6
 
       - name: Build Windows
         if: matrix.platform == 'windows'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
-          cmake --build build
+          cmake --build build --parallel 6
 
       - name: Test
         if: matrix.platform != 'windows'
@@ -122,6 +122,24 @@ jobs:
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
           ctest --test-dir build --output-on-failure
+
+      - name: Test macOS installer
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          bash tests/platform/macos-installer.sh \
+            ./build/liquid \
+            ./build/liquid-platform-installer-fixture \
+            ./build/liquid-platform-installer-program
+
+      - name: Test Windows installer
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: |
+          tests/platform/windows-installer.ps1 `
+            build/liquid.exe `
+            build/liquid-platform-installer-fixture.exe `
+            build/liquid-platform-installer-program.exe
 
       - name: Run liquid version
         if: matrix.platform != 'windows'
@@ -170,7 +188,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cmake --build build
+        run: cmake --build build --parallel 6
 
       - name: Test
         shell: bash

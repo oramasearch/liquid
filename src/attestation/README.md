@@ -16,3 +16,5 @@ optional producing result. `image.cpp` mints that record with the device identit
 store.
 `delegation/1` validates attenuation-only scoped agent authority for session publication and lease
 claims.
+`platform_signature/1` binds a projected unsigned digest to the signed installer digest,
+certificate fingerprint, native verification, and optional notarisation or timestamp evidence.

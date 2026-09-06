@@ -73,6 +73,9 @@ Secret detector, inline capture, `scan_result/1`, and redaction cases live in `s
 X25519 failure paths, deterministic interoperability fixture, and Lake public-key response.
 `cli/secret.cmake` exercises raw-CBOR and base64 command round trips without stderr disclosure.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
+Platform manifest pins remain in `test_projection.cpp`; `platform/` drives the macOS and Windows
+CI installer proofs with temporary identities, native installation, program launch, and signed
+sidecar verification.
 `test_transparency.cpp` consumes Lake's deterministic fixture and checks checkpoint signatures,
 witness quorum, every tile level, inclusion and consistency proofs, and altered or missing input.
 Its `cve_2026_56865` case keeps valid leaf bytes while changing a verified parent hash tile.

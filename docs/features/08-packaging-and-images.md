@@ -4,8 +4,10 @@
 > [11-container-images](../research/11-container-images/)
 >
 > **Status:** Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm projection is implemented in issue
-> #28, including derived dependencies, ABI refusal, deterministic compression, and attached
-> attestations. Maintainer scripts and conflict transactions remain issue #80; Tier B remains #79.
+> #28. Issue #76 adds reproducible unsigned macOS packages, explicitly non-reproducible disk images,
+> deterministic MSIX and winget manifests, external platform signing, and the
+> `platform_signature/1` chain. The credentialed Apple notarisation run remains pending. Maintainer
+> scripts and conflict transactions remain issue #80; Tier B remains #79.
 
 ## Projection, not translation
 
@@ -37,8 +39,8 @@ valuable, and a later goal.
 | **Alpine `apk`** | The simplest correct target; the natural first implementation. |
 | **Arch `PKGBUILD`** | |
 | **Homebrew** | Formulae and bottles, with relocation. |
-| **Windows** | MSI / MSIX / winget, with Authenticode signing. |
-| **macOS** | `pkg` / `dmg`, with **codesigning and notarisation** — a hard gate, not polish. |
+| **Windows** | MSIX and winget with Authenticode signing are implemented. MSI is not part of #76. |
+| **macOS** | Reproducible unsigned `pkg`, non-reproducible `dmg`, external codesigning, and the notarisation path are implemented. The credentialed notarisation gate is pending. |
 | **Flatpak / Snap / AppImage** | Bundled runtimes. |
 | **OCI images** | See below. |
 | **ostree / bootc commits** | The image-based-OS target, and the closest fit to liquid's model. |
@@ -138,5 +140,9 @@ Archive formats are the easy part. These are not:
 - **How far to pursue Tier B**, and for which distributions first.
 - **Whether to emit source packages** (`.dsc`, `debian/rules`, spec files) or only
   binary packages. Source packages are what distributions actually maintain.
-- **Signing key custody per platform** — Authenticode and notarisation have
-  incompatible trust models.
+- **Signing key custody per platform is decided.** Apple application and installer identities use
+  Keychain or a compatible HSM, the App Store Connect private key enters through the environment
+  only, and Authenticode uses a PFX or CSP-backed certificate. EV Authenticode keys remain on a
+  token or cloud HSM. Timestamp services are public endpoints, not custody providers. The full
+  trust model and the limits of each signature are in
+  [projection.md](../library/projection.md#signing-key-custody-per-platform).

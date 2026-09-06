@@ -20,8 +20,8 @@ the site job packages the committed tree.
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
 | Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, PostgreSQL server/client, Autoconf, Automake, GNU `time`, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount and PostgreSQL data-branch scenarios, `liquid version` |
-| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario, `liquid version` |
-| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
+| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, Apple installer and signing tools, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario; byte-identical package projection; temporary-Keychain signing; `pkgutil`, install, launch, and sidecar verification; `liquid version` |
+| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, Windows SDK `makeappx` and `signtool`, current CMake and Ninja | Configure, build, CTest; MSIX projection; temporary-certificate Authenticode signing; `Add-AppxPackage`, launch, signature and sidecar verification; `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 | Linux self-host | `ubuntu-24.04` | Clang 19, CMake, Ninja, libfuse3 | CMake bootstrap, two `liquid wrap` builds, 100% second-run disk hits, byte-identical static library and CLI, shared libliquid build |
 
@@ -53,6 +53,17 @@ repository at no cost. Linux arm64 verification is deferred until a suitable run
 
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
 `-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
+
+The installer steps run after the ordinary suite. macOS projects the same native fixture twice and
+compares the unsigned packages byte for byte. It creates distinct self-signed application and
+installer identities in a temporary Keychain, trusts the installer certificate only for the job,
+signs without notarisation, installs to `CurrentUserHomeDirectory`, runs the installed executable,
+and removes the trust entry. Windows discovers the newest installed SDK tools, creates and trusts a
+temporary code-signing certificate, projects and signs an MSIX, checks
+`Get-AuthenticodeSignature`, installs with `Add-AppxPackage`, runs the installed executable, and
+removes the package and certificate. Neither job has release credentials. The first real Apple
+notarisation, ticket, date, and `spctl` result remain the explicit release gate in
+[projection.md](../library/projection.md#macos-package-and-disk-image).
 
 The hot-update demo builds a loadable definition object and drives one `liquid-hot-demo` process
 through `value=1` and `value=2`, proving tier-1 redirection at its Capy resumption boundary on

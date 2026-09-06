@@ -1,9 +1,10 @@
 # Package and image projection
 
-Issue #28 implements Tier A projection from a result's checked install tree, or from an explicit
-install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, and Helm charts. Projection
-does not convert one ecosystem package into another: every writer consumes the same canonical
-file tree and metadata request.
+Issues #28 and #76 implement Tier A projection from a result's checked install tree, or from an
+explicit install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, Helm charts, macOS
+packages and disk images, and Windows MSIX and winget manifests. Projection does not convert one
+ecosystem package into another: every writer consumes the same canonical file tree and metadata
+request.
 
 ## Public contract
 
@@ -20,6 +21,12 @@ ABI was explicitly allowed. Projection artifacts are ordinary files or OCI-layou
 publication to a registry is outside this library operation.
 Package identity fields must be safe single path components; relationship fields, target options,
 and Helm values reject control characters before any archive, JSON, or YAML is written.
+
+Platform targets also return whether each artifact is reproducible and one
+`platform_signing_request` per unsigned installer. `sign_platform` consumes that request outside
+projection and `verify_platform_signature` checks both its TAAP sidecar and the operating system's
+native signature. A winget source is the filesystem path of an already-built MSIX because its
+SHA-256 is part of the generated installer manifest.
 
 ## Package formats
 
@@ -98,12 +105,103 @@ image as `repository@sha256:digest`; mutable tags are not accepted or generated.
 The OCI artifact uses the Helm config and content media types and receives the same subject-bound
 attestation manifests. The full deployment graph remains Phase 7.
 
+## Unsigned projection and platform signing
+
+Platform delivery deliberately has two operations:
+
+1. `project` materialises the checked install tree and produces an unsigned installer. Its
+   `projection/1`, provenance, and SBOM evidence bind the reproducible unsigned digest. Projection
+   runs platform tools as actions or through `runtime::offload`; it has no network or Keychain
+   access.
+2. `sign` verifies that unsigned digest, reaches identities only through custody URIs, invokes the
+   native signer outside the sandbox, and writes a signed `platform_signature/1` sidecar. The new
+   statement binds the unsigned digest to the shipped digest, signing-certificate fingerprint,
+   native verification output, and notarisation ticket or timestamp response.
+
+Changing the unsigned artifact after projection is refused. Changing the signed artifact or the
+sidecar is refused by `sign verify`. The signer also refuses an output path that resolves to the
+unsigned input, so a failed signing attempt cannot replace it. The signed digest is intentionally
+different and is not described as a reproducible build output.
+
+### macOS package and disk image
+
+`macos-pkg` invokes Apple's `pkgbuild` and `productbuild` with `--timestamp=none`, a fixed
+environment, fixed payload dates, sorted inputs, and stripped xattrs. `pkgutil --flatten` writes the
+final Apple package. liquid canonicalises the outer XAR's volatile ownership, inode, device, and
+time metadata, then recompresses only its XML table of contents and updates the XAR checksum. It
+does not implement XAR, BOM, or cpio. The committed macOS fixture pins the unsigned digest and
+projects twice to prove byte identity.
+
+`macos-dmg` invokes `hdiutil` over the same tree. HFS+ allocation state is not reproducible, so its
+report says `reproducible=false`; the package is the reproducible installer. A disk image is a
+delivery convenience, not the source of the reproducibility claim.
+
+`sign macos` accepts `keychain:<installer-identity>|<application-identity>`. The second name may be
+omitted only when one test identity supports both purposes. Mach-O payload files are signed with
+`codesign --options runtime`, the request's entitlements, and a trusted timestamp for a release.
+The rebuilt package is signed with the Developer ID Installer identity through `productsign`.
+With all three `LIQUID_APPLE_NOTARY_KEY`, `LIQUID_APPLE_NOTARY_KEY_ID`, and
+`LIQUID_APPLE_NOTARY_ISSUER_ID` values present, the command submits with `xcrun notarytool --wait`,
+staples the accepted ticket, and requires `spctl --assess --type install` to pass. The private API
+key is written only to a mode-`0600` temporary file and is removed after submission. An incomplete
+notary environment produces an explicit skipped result; `--no-notarize` is reserved for local test
+identities.
+
+The release notarisation gate is pending. No credentialed run, ticket ID, `spctl` result, or run
+date is recorded yet. This paragraph must be replaced with that evidence after Steve supplies the
+Developer ID and App Store Connect credentials; credential-free CI is not that gate.
+
+### Windows MSIX and winget
+
+`msix` writes a pinned `AppxManifest.xml`, correctly sized deterministic PNG assets, and a sorted
+MakeAppx mapping, normalises every source timestamp, and invokes the Windows SDK's `makeappx pack`.
+The package identity, publisher subject, display name, executable, version, and architecture come
+from `package_metadata`. Windows CI signs it with a temporary certificate, installs it through
+`Add-AppxPackage`, launches the installed executable, and requires `Get-AuthenticodeSignature` to
+report `Valid`.
+
+`winget` emits the version, installer, and default-locale YAML set. Its installer YAML uses the
+HTTPS MSIX URL from `installer_url` and the exact uppercase SHA-256 of the supplied MSIX. Package
+identifiers are validated before they become output filenames. Portable tests pin the full XML and
+YAML bytes. MSI is not produced by this work.
+
+`sign windows` accepts `file:<pfx-path>` or
+`csp:<provider>|<key-container>|<certificate-path>`. It invokes `signtool sign /fd sha256`; when a
+timestamp server is supplied it also passes `/tr <url> /td sha256`. It then requires
+`signtool verify /pa` to pass. `LIQUID_WINDOWS_PFX_PASSWORD` supplies a PFX password without putting
+it in a request file or output.
+
+## Signing key custody per platform
+
+No signing key or certificate password belongs in the repository. Steve controls the release
+credentials and CI may receive them only as secret environment values. Commands never print secret
+values, private keys, passwords, or full signer arguments.
+
+| Credential | Custody and access | What it proves | What it does not prove |
+|---|---|---|---|
+| Developer ID Application key | macOS Keychain, or an HSM exposed through a Keychain-compatible provider; selected by the application part of `keychain:` | Apple issued the application certificate to the named team and the Mach-O bytes have not changed | Source review, reproducibility, or notarisation |
+| Developer ID Installer key | macOS Keychain or compatible HSM; selected by the installer part of `keychain:` | Apple issued the installer certificate to the named team and the package bytes have not changed | That every payload binary has the right entitlement or that Apple accepted it |
+| App Store Connect API key | Issuer ID and key ID in environment text; private `.p8` content in `LIQUID_APPLE_NOTARY_KEY` only | Authenticates a submission to Apple's notary service | The safety or provenance of submitted code |
+| Authenticode key | `file:` for a locally protected PFX; `csp:` for hardware-token or cloud-HSM providers | The certificate holder signed the exact PE/MSIX bytes | Source review, reproducibility, or current certificate status without trust validation |
+| Authenticode EV key | Hardware token or cloud HSM only; #81 tokens and #51 custody providers are the supported paths | The EV certificate holder signed the bytes without exporting the private key | That the build was benign or reproducible |
+| RFC 3161 timestamp service | Public service URL, independently verified by `signtool` | The signature existed while its certificate was valid | Who built the unsigned artifact |
+
+The `projection/1` and `platform_signature/1` chain supplies the missing build relationship. The
+platform signature authenticates distribution bytes; TAAP binds those bytes back to the checked
+unsigned artifact and its source evidence. #81 remains responsible for token drivers and
+hardware-held signing operations; this work names their custody boundary without implementing
+them.
+
 ## Verification and peers
 
-The committed install-tree fixture pins each target's digest in `tests/test_projection.cpp` and is
-run by both static and shared suites on macOS and by the Linux proof lane. Tests cover the package
+The committed install-tree fixture pins each portable target and macOS package digest in
+`tests/test_projection.cpp` and is run by both static and shared suites on macOS and by the Linux
+proof lane. Tests cover the package
 readers, format-registry recognition, deterministic gzip, repeated projection, OCI referrers,
-signed `projection/1`, digest-only Helm values, and native `helm lint` where Helm is installed.
+signed `projection/1`, `platform_signature/1` schema, pinned Appx and winget manifests, digest-only
+Helm values, and native `helm lint` where Helm is installed. The macOS and Windows workflow steps
+add native projection, temporary-certificate signing, installation, launch, and platform
+verification.
 
 `tools/projection-peers/run-projection-interop.sh` is the distribution-tool proof for `dpkg`,
 `rpm`, `apk`, OCI import, and Helm/k0s. Its images are digest-pinned. The script exits with an

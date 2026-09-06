@@ -85,7 +85,8 @@ built binary under the build directory before CTest compares it with the committ
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
-| `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm\|macos-pkg\|macos-dmg\|msix\|winget> <result\|install-tree\|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--json]` | Project a checked tree into a package or image, or an MSIX into winget manifests. Platform installers are unsigned and include a signing request. | available on the target platform; winget is portable |
+| `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
@@ -439,6 +440,20 @@ additive to reader-derived dependencies. Helm services use
 deterministic gzip encoder for Debian and OCI; `--allow-abi-break` records an explicit override.
 Text output lists artifact and attestation digests, while `--json` adds pinned image references,
 dependency labels, and the ABI override bit. See [projection.md](../library/projection.md).
+
+`macos-pkg`, `macos-dmg`, and `msix` use the same checked-tree input and add platform identity
+metadata. The package is reproducible; the disk image reports that it is not. `winget` instead
+accepts one MSIX path and requires `--installer-url`, then emits the three pinned YAML manifests.
+Every installer projection writes a JSON signing request beside the unsigned artifact.
+
+`sign macos` accepts a Keychain custody URI. Release packages normally name the distinct installer
+and application certificates as `keychain:<installer>|<application>`; application signing uses the
+request's entitlements. Notarisation runs only when all `LIQUID_APPLE_NOTARY_*` values are present,
+and `--no-notarize` is for temporary test identities. `sign windows` accepts `file:<pfx>` with the
+password in `LIQUID_WINDOWS_PFX_PASSWORD`, or `csp:<provider>|<container>|<certificate>` for a
+non-exportable key. `--timestamp-server` enables RFC 3161 timestamping. `sign verify` reads the
+sidecar, verifies its TAAP signature and signed digest, and invokes the platform's native verifier.
+See [projection.md](../library/projection.md#unsigned-projection-and-platform-signing).
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, the outer
 action's status, its canonical `output_tree`, the disk hit rate, bytes transferred, bytes avoided,

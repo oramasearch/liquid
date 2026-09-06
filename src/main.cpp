@@ -78,6 +78,7 @@ auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
 auto config(int argc, char** argv) -> int;
 auto project(int argc, char** argv) -> int;
+auto sign(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
@@ -149,9 +150,21 @@ constexpr auto flags_project = std::to_array<flag>({
     {"--out", "<dir>", "Write projected artifacts below this directory.", "projection"},
     {"--depends", "<dependency>", "Declare a package dependency; repeatable.", "none"},
     {"--service", "<value>", "Add a Helm service declaration; repeatable.", "none"},
+    {"--identifier", "<id>", "Set the platform package identifier.", "derived from name"},
+    {"--publisher", "<subject>", "Set the MSIX certificate subject.", "development subject"},
+    {"--display-name", "<name>", "Set the platform display name.", "package name"},
+    {"--executable", "<path>", "Set the packaged application executable.", "derived from name"},
+    {"--entitlements", "<path>", "Record macOS signing entitlements.", "none"},
+    {"--installer-url", "<url>", "Set the winget installer URL.", "required for winget"},
     {"--compat-gzip", {}, "Use gzip-compatible package compression.", "false"},
     {"--allow-abi-break", {}, "Permit an incompatible ABI projection.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_sign = std::to_array<flag>({
+    {"--identity", "<custody-uri>", "Select the platform signing identity.", "required"},
+    {"--timestamp-server", "<url>", "Select the Authenticode RFC 3161 server.", "none"},
+    {"--out", "<path>", "Write the signed artifact to this path.", "-signed artifact"},
+    {"--no-notarize", {}, "Do not submit a macOS artifact for notarisation.", "false"},
 });
 constexpr auto flags_data = std::to_array<flag>({
     {"--session",
@@ -474,7 +487,8 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::config},
     {"project",
-     "project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> "
+     "project <oci|deb|rpm|apk|helm|macos-pkg|macos-dmg|msix|winget> "
+     "<result|install-tree|installer> --name <name> --version <version> "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
      "project a build into an installable package, image, or chart",
@@ -485,6 +499,17 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::project},
+    {"sign",
+     "sign <macos|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] "
+     "[--out <path>] [--no-notarize] | sign verify <artifact>",
+     "sign or verify a projected platform installer",
+     "macOS signing on macOS; Windows signing on Windows",
+     flags_sign,
+     "Sign outside the projection sandbox and write a platform_signature/1 attestation.",
+     "liquid sign macos projection/example.pkg --identity keychain:Developer-ID",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::sign},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
      "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "
