@@ -399,8 +399,8 @@ liquid watch
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
 two repositories, imports files, cuts changes, moves a path, lists and restores its stable-node
 history, nests a repository, splits a subtree, combines it, reads JSON history and signed drips
-through `log --ops`, reads recorded operations through `ops`, undoes a selected session path, and
-verifies a locked mutation is
+through `log --ops`, checks writer-base validation from the restored change, reads recorded
+operations through `ops`, undoes a selected session path, and verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.

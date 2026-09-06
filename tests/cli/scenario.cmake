@@ -100,6 +100,8 @@ if(restored_version EQUAL -1)
 endif()
 run_liquid(restored_cut_output restored_cut_error restored_cut_result "${workspace}" cut restored)
 require_success(restored_cut_result restored_cut_output restored_cut_error)
+string(REGEX MATCH "change=([^\n]+)" restored_change "${restored_cut_output}")
+set(restored_change "${CMAKE_MATCH_1}")
 
 file(WRITE "${LIQUID_CLI_ROOT}/agent-source.txt" "agent one\n")
 run_liquid(base_log_output base_log_error base_log_result "${workspace}" log --ops --json)
@@ -107,11 +109,11 @@ require_success(base_log_result base_log_output base_log_error)
 string(JSON base_cursor LENGTH "${base_log_output}")
 run_liquid(write_output write_error write_result "${workspace}"
   write agent-one.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt"
-  --base "${moved_change}@${base_cursor}")
+  --base "${restored_change}@${base_cursor}")
 require_success(write_result write_output write_error)
 file(WRITE "${LIQUID_CLI_ROOT}/agent-source.txt" "agent two\n")
 run_liquid(stale_output stale_error stale_result "${workspace}"
-  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${moved_change}")
+  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${restored_change}")
 if(stale_result EQUAL 0)
   message(FATAL_ERROR "stale write unexpectedly succeeded")
 endif()
@@ -120,12 +122,12 @@ if(NOT stale_conflict)
   message(FATAL_ERROR "stale write omitted the conflict: ${stale_error}")
 endif()
 run_liquid(disjoint_output disjoint_error disjoint_result "${workspace}"
-  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${moved_change}"
+  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${restored_change}"
   --on-stale disjoint)
 require_success(disjoint_result disjoint_output disjoint_error)
 file(WRITE "${LIQUID_CLI_ROOT}/agent-source.txt" "agent forced\n")
 run_liquid(force_output force_error force_result "${workspace}"
-  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${moved_change}"
+  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${restored_change}"
   --depends-on agent-one.txt --on-stale force)
 require_success(force_result force_output force_error)
 run_liquid(drip_log_output drip_log_error drip_log_result "${workspace}" log --ops --json)
@@ -138,7 +140,7 @@ string(JSON forced_flag GET "${drip_log_output}" ${forced_index} revalidated)
 string(JSON forced_base GET "${drip_log_output}" ${forced_index} reasoned_from)
 string(JSON initial_cursor GET "${drip_log_output}" ${base_cursor} cursor)
 if(NOT disjoint_flag STREQUAL "disjoint" OR NOT forced_flag STREQUAL "forced" OR
-   NOT forced_base STREQUAL moved_change OR NOT initial_cursor STREQUAL base_cursor)
+   NOT forced_base STREQUAL restored_change OR NOT initial_cursor STREQUAL base_cursor)
   message(FATAL_ERROR "drip log omitted stale-write metadata: ${drip_log_output}")
 endif()
 
