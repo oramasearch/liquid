@@ -23,7 +23,9 @@ HTTP read boundaries.
 
 The sync adapter uses liquid's shared private Corosio HTTP/1.1 client for URL parsing, request and
 response framing, chunked decoding, bearer authentication, and TLS. Protocol paths, media types,
-and CBOR envelopes remain owned by the sync layer.
+and CBOR envelopes remain owned by the sync layer. An endpoint retains the caller-provided
+repository URL as its remote-source identifier while the request client uses the parsed URL, so
+metadata-only drive pulls register chunks against the same source that later hydration uses.
 
 | Method and path | Request body | Successful response |
 |---|---|---|
@@ -55,8 +57,10 @@ token from `LIQUID_TOKEN`; credentials never appear in the URL or output.
 ## Drive client layering
 
 Issue #195's [`drive_client`](drive.md) composes two ordinary endpoints around deterministic
-three-tree reconciliation. Pull imports into a remote-view repository that has an independent
-checkpoint namespace in the synchronized repository's own store. Reconciliation then records and
+three-tree reconciliation. Its `pull_metadata` operation imports tree and blob records into a
+remote-view repository while registering payload chunks against a retained endpoint. The remote
+view has an independent checkpoint namespace in the synchronized repository's own store.
+Reconciliation then records and
 publishes local changes before push. The client persists the pull cursor and an interrupted marker
 as repository metadata before network transfer. Retrying starts at the last acknowledged cursor
 and missing-object negotiation skips chunks already received.
@@ -240,6 +244,9 @@ whole-content digest, ordered chunks, and sizes with `{source, instance}` from i
 walked but not counted again. `bytes_remote` sums the registered chunk sizes not already local.
 Consequently `store::has(blob.content)` reports `remote` for a wholly absent payload immediately
 after receipt, and a later store or VFS read hydrates through the registered source.
+`sync_endpoint::pull_metadata` applies the same metadata-only traversal to an ordinary pull and
+returns `bytes_remote` in its report. Callers retain and register that endpoint under the repository
+URL before allowing later reads.
 
 ## Local server command
 

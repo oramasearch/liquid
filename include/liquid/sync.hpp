@@ -69,6 +69,7 @@ struct LIQUID_EXPORT sync_report {
     std::uint64_t metadata_items{};
     sync_transfer_report sent;
     sync_transfer_report received;
+    std::uint64_t bytes_remote{};
     std::vector<sync_ref_outcome> references;
     std::uint64_t retry_after_ms{};
     std::string exhausted_scope;
@@ -161,6 +162,7 @@ public:
 
     [[nodiscard]] runtime::task<sync_report> push(repository& source);
     [[nodiscard]] runtime::task<sync_report> pull(repository& destination);
+    [[nodiscard]] runtime::task<sync_report> pull_metadata(repository& destination);
 
     [[nodiscard]] runtime::task<std::vector<digest>>
     find_missing(std::string instance, std::vector<digest> blobs) override;

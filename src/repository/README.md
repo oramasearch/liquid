@@ -86,6 +86,8 @@ oramacore type crosses the public boundary.
 Remote file entries use the same working tree and canonical blob reference as local files.
 `store_remote_blob` registers metadata without reading content, `write_remote` records the entry,
 and repository status recursively sums chunk bytes that are not yet local.
+The private VFS adapter can register a runtime remote source on the repository's store, allowing a
+drive mount to resolve metadata-only sync records without exposing store internals publicly.
 
 Sync export pages signed drips, changes, per-directory upstream messages, refs, and content roots.
 Import works on repository and directory candidates, verifies TAAP signatures and checked CRDT

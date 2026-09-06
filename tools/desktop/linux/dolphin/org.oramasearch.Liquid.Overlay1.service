@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.oramasearch.Liquid.Overlay1
+Exec=@LIBEXEC@/liquid-overlay-provider
