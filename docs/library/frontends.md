@@ -111,6 +111,10 @@ names, while `language_details()` returns language, extensions, mechanism, and g
 rows through `languages()`. `frontend_graph` owns the registered action, assembly, and `symbols` query
 kinds, accepts a caller's action executor, and returns each unit action/output, symbol sidecar,
 and assembled translation-unit value.
+The process-global registry also feeds `support_matrix()`. It may contain both a grammar and
+compiler module for one language; `languages()` merges their extensions and reports the Tier 3
+compiler module, while `find()` selects that stronger module. `liquid tiers` loads both bundled
+modules before rendering its matrix.
 The executor remains injected because the daemon and `build::execute` own scheduling, sandboxing,
 toolchain materialisation, and cache policy.
 

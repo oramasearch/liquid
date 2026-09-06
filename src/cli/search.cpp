@@ -4,14 +4,18 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "liquid/daemon.hpp"
+#include "liquid/format.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
+auto print_tier(unsigned level, std::string_view mechanism) -> void;
+auto tier_json(unsigned level, std::string_view mechanism) -> std::string;
 
 namespace {
 
@@ -65,6 +69,7 @@ auto query_kind_name(liquid::search_query_kind value) -> std::string_view {
 
 auto print_plan(const liquid::search_plan& plan) -> void {
     std::println("{{");
+    std::println("  \"tier\": {},", tier_json(0, "chunking"));
     std::println("  \"executor\": \"{}\",", executor_name(plan.executor));
     std::println("  \"query_kind\": \"{}\",", query_kind_name(plan.query_kind));
     std::println("  \"estimated_cost_us\": {},", plan.estimated_cost_us);
@@ -94,6 +99,20 @@ auto print_plan(const liquid::search_plan& plan) -> void {
     }
     std::println("  ]");
     std::println("}}");
+}
+
+auto hit_tier(std::string_view path) -> std::pair<unsigned, std::string> {
+    const auto nested = path.rfind("!/");
+    if (nested == std::string_view::npos) {
+        return {0, "chunking"};
+    }
+    const auto member = path.substr(nested + 2);
+    const auto codecs = liquid::format_registry::global().find_by_extension(member);
+    if (codecs.empty()) {
+        return {3, "format(opaque)"};
+    }
+    const auto& descriptor = codecs.front()->descriptor();
+    return {static_cast<unsigned>(descriptor.tier), "format(" + descriptor.name + ")"};
 }
 
 } // namespace
@@ -157,6 +176,8 @@ auto search(int argc, char** argv) -> int {
         return fail(hits.error());
     }
     for (const auto& hit : *hits) {
+        const auto [level, mechanism] = hit_tier(hit.path);
+        print_tier(level, mechanism);
         if (hit.score) {
             std::println(
                 "{:.6f}\t{}:{}:{}\t{}", *hit.score, hit.path, hit.line, hit.column, hit.snippet);

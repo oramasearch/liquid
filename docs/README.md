@@ -63,6 +63,22 @@ for what is implemented today.
 | Page | What it contains |
 |---|---|
 | [`library/build-engine.md`](library/build-engine.md) | Phase 2's design plus #18's remote scheduling record, #26's content-addressed output trees and normalisation, #166's paged public record enumeration, #193's public build streams, and #200's configured repository plans and one-call builds: action and result records, named dependency inputs, observation by the mount with per-platform enforcement, cache lookup, event ordering and JSON projection, retained timing and scheduling traces, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
+| [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, #18 scheduling, #16 REAPI interoperability, and #63's scheduler and workers. |
+| [`library/workers.md`](library/workers.md) | Scheduler and worker protocol, bounded requeue, TAAP result identity, configuration, control endpoints, and deployment shape. |
+| [`api/README.md`](api/README.md) | Scheduler and worker network capability maps. |
+| [`library/node-store.md`](library/node-store.md) | Per-node shared chunk storage, metadata-only image mounts, listener boundaries, accounting, budgets, and eviction. |
+| [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, flow watermarks, in-process consumer lag, build-stream and structural-edit forwarding, hot-update and drive targets, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
+| [`library/frontends.md`](library/frontends.md) | The versioned frontend and liquify plugin C descriptors, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
+| [`library/edit.md`](library/edit.md) | Structural rename, extract, move, and concrete-tree edits; canonical records, preview/apply guarantees, attribution, grouped undo, CLI use, limits, and own-tree measurement. |
+| [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
+| [`library/search.md`](library/search.md) | Issues #22, #67, and #29's BM25F, positional-trigram, and mapped-scan executors; archive entries; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
+| [`library/formats.md`](library/formats.md) | Issue #29's format registry and C ABI, fidelity tiers, launch codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
+| [`library/support-tiers.md`](library/support-tiers.md) | Issue #71's registry-derived language, format, and platform support matrix and strongest-frontend selection. |
+| [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
+| [`library/symbols.md`](library/symbols.md) | Content-addressed per-translation-unit symbol records, query behavior, fallback labelling, public repository access, and CLI use. |
+| [`library/hot-update.md`](library/hot-update.md) | Tier 0–4 evidence rules, signed patch and restart records, the cooperative `liquid-hot` C ABI, daemon delivery, and reconstructible process composition. |
+| [`library/reapi-codec.md`](library/reapi-codec.md) | Dependency-free protobuf wire encoding, the REAPI v2.3 structs, native record conversion, hash selection, and pinned reference fixtures. |
+| [`library/reapi.md`](library/reapi.md) | REAPI client and server RPCs, the remote cache tier, configuration and CLI, public API map, and NativeLink, BuildBarn, and Bazel proof. |
 | [`library/self-host.md`](library/self-host.md) | The liquid-on-liquid build, fixed-root CMake configuration, cache assertions, and bootstrap output comparison. |
 | [`library/provenance.md`](library/provenance.md) | Automatic result provenance: canonical TAAP storage, the exact SLSA v1 mapping, verification, and in-toto/DSSE export. |
 | [`library/policy.md`](library/policy.md) | Build-input policy: path and toolchain scopes, verified attestation quorums, refusal and warning behavior, and cache isolation. |

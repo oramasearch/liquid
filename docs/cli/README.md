@@ -30,6 +30,7 @@ built binary under the build directory before CTest compares it with the committ
 | Command | Usage | Description | Availability |
 |---|---|---|---|
 | `version` | `version [--json]` | Print the library version. | available |
+| `tiers` | `tiers [--json\|--markdown] [--language <name>\|--format <name>]` | Print declared language, format, and platform support. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
@@ -106,6 +107,27 @@ built binary under the build directory before CTest compares it with the committ
 | `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 
 ## Output and errors
+
+Commands that use a lower support level print one shared line before the affected result:
+
+```text
+tier: <n> (<mechanism>)
+```
+
+Machine-readable output carries the same information as
+`"tier":{"level":<n>,"mechanism":"<mechanism>"}`. `diff` reports `text` for its
+Tier 0 source fallback and `format(<codec>)` for decoded containers; `symbols` reports either the
+grammar digest at Tier 2 or compiler module at Tier 3; archive search reports an unknown member as
+Tier 3 `format(opaque)`; and `wrap` names Linux namespaces, macOS `sandbox-exec`, or Windows's
+unsupported backend. The helper in `src/cli/tier.cpp` owns this spelling.
+
+`inspect` from #70 and the later structural-diff and container-search work in #68 and #69 must use
+the same helper when they register their richer behavior. They add declarations to the existing
+registries rather than maintaining command-local support lists.
+
+`tiers` reads those registries at invocation time. `--json` is the stable machine form,
+`--markdown` emits the marked language/platform and format blocks checked into the feature specs,
+and one `--language` or `--format` selector narrows the result.
 
 `status`, `data list`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`,
 and `cache stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
@@ -659,6 +681,8 @@ creates, applies, and fetches a delta through the built executable and compares 
 by digest. `docs-links` applies the repository link check as a CTest.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.
+`tiers-docs` compares both marked feature blocks byte for byte with `liquid tiers --markdown`, and
+`cli-tiers-json` pins ordering, filters, C++'s Tier 3 frontend, and repeat-run byte stability.
 `cli-secret` round-trips raw CBOR and base64 through the executable and checks that stderr never
 contains the value.
 `tests/test_daemon.cpp` runs start-on-first-status through the built CLI and verifies that a library
