@@ -9,6 +9,8 @@
 
 #include <zstd.h>
 
+#include "encoding/cbor.hpp"
+
 namespace liquid::formats::package {
 namespace {
 
@@ -225,6 +227,31 @@ std::string join(std::span<const std::string> values, std::string_view separator
         output += values[index];
     }
     return output;
+}
+
+result<std::string> attribute(std::span<const std::byte> attributes, std::string_view name) {
+    auto decoded = encoding::cbor::decode(attributes);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto* fields = std::get_if<encoding::cbor::value::map>(&decoded->data);
+    if (!fields) {
+        return std::unexpected(error{errc::corrupt, "package attributes are not a map", {}});
+    }
+    for (const auto& [key, value] : *fields) {
+        const auto* key_text = std::get_if<std::string>(&key.data);
+        if (!key_text || *key_text != name) {
+            continue;
+        }
+        const auto* output = std::get_if<std::string>(&value.data);
+        if (!output) {
+            return std::unexpected(
+                error{errc::corrupt, "package attribute is not text", std::string{name}});
+        }
+        return *output;
+    }
+    return std::unexpected(
+        error{errc::not_found, "package attribute is absent", std::string{name}});
 }
 
 } // namespace liquid::formats::package

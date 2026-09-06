@@ -12,6 +12,10 @@ builds layouts, image layers, subject-bound attestation manifests, and indexes.
 reproducibility, and emits unsigned signing requests. `platform_tools.cpp` is the captured native
 process and file boundary. `signing.cpp` applies Developer ID or Authenticode outside projection,
 writes `platform_signature/1`, and re-runs the native verifier.
+`scripts.cpp` maps one validated install intent to the fixed Debian, RPM, and Alpine lifecycle
+templates. `conflicts.cpp` indexes owned package paths across a request batch or an installed
+inventory and derives explicit replacement relationships. Package projection embeds canonical
+intent and service-unit files and binds generated script digests into `projection/1` and SPDX.
 `homebrew.cpp` writes stable-gzip source and bottle archives plus their formula. `pkgbuild.cpp`
 writes the Arch recipe, `.SRCINFO`, and source archive. `bundled.cpp` writes AppImage, Flatpak, and
 Snap outputs with the owned SquashFS writer. `appimage_runtime.cpp` selects the embedded pinned

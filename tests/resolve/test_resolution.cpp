@@ -528,4 +528,39 @@ TEST(ResolutionSolver, generated_five_hundred_package_universe_resolves_and_reso
                  std::chrono::duration_cast<std::chrono::milliseconds>(warm_elapsed).count());
 }
 
+TEST(ResolutionSolver, two_thousand_package_dependency_chain_builds_without_native_recursion) {
+    // Every package depends on the next one, so the selected graph is one chain whose depth equals
+    // the universe size. Graph construction runs on a runtime worker thread, which on macOS has a
+    // 512 KiB stack; one native frame per link overflowed it long before this length.
+    constexpr auto count = std::size_t{2000};
+    auto universe = liquid::package_universe{};
+    universe.packages.reserve(count);
+    for (std::size_t index = 0; index != count; ++index) {
+        auto package = liquid::package_record{.name = std::format("chain-{:04}", index),
+                                              .versions = {{"1.0", std::nullopt}}};
+        if (index + 1 != count) {
+            package.dependencies.push_back({std::format("chain-{:04}", index + 1),
+                                            false,
+                                            std::nullopt,
+                                            std::nullopt,
+                                            liquid::dependency_type::link});
+        }
+        universe.packages.push_back(std::move(package));
+    }
+    auto resolved = run_resolution(std::move(universe), {parse("chain-0000")});
+    ASSERT_TRUE(resolved) << resolved.error().message;
+    const auto* graph = std::get_if<liquid::resolution_graph>(&*resolved);
+    ASSERT_NE(graph, nullptr);
+    ASSERT_EQ(graph->nodes.size(), count);
+    const auto* head = node(*graph, "chain-0000");
+    const auto* second = node(*graph, "chain-0001");
+    const auto* tail = node(*graph, "chain-1999");
+    ASSERT_NE(head, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(tail, nullptr);
+    ASSERT_EQ(head->dependencies.size(), 1U);
+    EXPECT_EQ(liquid::to_string(head->dependencies.front().target), liquid::to_string(second->id));
+    EXPECT_TRUE(tail->dependencies.empty());
+}
+
 } // namespace

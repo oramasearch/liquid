@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree|installer> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree|installer> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
@@ -21,6 +21,8 @@ Project a recorded result or tree into a package, image, Helm chart, OSTree comm
 | `--arch` | `<arch>` | Set the target architecture. | source architecture |
 | `--out` | `<dir>` | Write projected artifacts below this directory. | projection |
 | `--depends` | `<dependency>` | Declare a package dependency; repeatable. | none |
+| `--against` | `<path>` | Check file ownership against packages or an installed database. | none |
+| `--replaces` | `<package>` | Permit owned paths by deriving replacement relationships. | none |
 | `--service` | `<value>` | Add a Helm service declaration; repeatable. | none |
 | `--identifier` | `<id>` | Set the platform package identifier. | derived from name |
 | `--publisher` | `<subject>` | Set the MSIX certificate subject. | development subject |

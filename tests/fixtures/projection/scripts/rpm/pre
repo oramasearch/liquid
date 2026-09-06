@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+if ! getent group 'liquid_agent' >/dev/null 2>&1; then
+    if command -v 'groupadd' >/dev/null 2>&1; then
+        groupadd --system 'liquid_agent'
+    elif command -v 'addgroup' >/dev/null 2>&1; then
+        addgroup -S 'liquid_agent'
+    fi
+fi
+if ! getent passwd 'liquid_agent' >/dev/null 2>&1; then
+    if command -v 'useradd' >/dev/null 2>&1; then
+        useradd --system --home-dir '/var/lib/liquid-agent' --no-create-home 'liquid_agent'
+    elif command -v 'adduser' >/dev/null 2>&1; then
+        adduser -S -H -h '/var/lib/liquid-agent' 'liquid_agent'
+    fi
+fi
+install -d -m '0750' -o 'liquid_agent' '/var/lib/liquid-agent'
+exit 0

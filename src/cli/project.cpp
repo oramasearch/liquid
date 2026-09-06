@@ -200,7 +200,8 @@ auto project(int argc, char** argv) -> int {
             argument == "--out" || argument == "--depends" || argument == "--service" ||
             argument == "--identifier" || argument == "--publisher" ||
             argument == "--display-name" || argument == "--executable" ||
-            argument == "--entitlements" || argument == "--installer-url" || argument == "--ref" ||
+            argument == "--entitlements" || argument == "--installer-url" ||
+            argument == "--against" || argument == "--replaces" || argument == "--ref" ||
             argument == "--overlay" || argument == "--mode") {
             auto parsed = value(argument);
             if (!parsed) {
@@ -228,6 +229,10 @@ auto project(int argc, char** argv) -> int {
                 request.options.entitlements = std::move(*parsed);
             } else if (argument == "--installer-url") {
                 request.options.installer_url = std::move(*parsed);
+            } else if (argument == "--against") {
+                request.options.against = std::move(*parsed);
+            } else if (argument == "--replaces") {
+                request.metadata.replaces.push_back(std::move(*parsed));
             } else if (argument == "--ref") {
                 request.options.ostree_ref = std::move(*parsed);
             } else if (argument == "--overlay") {

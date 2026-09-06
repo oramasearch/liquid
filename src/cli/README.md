@@ -79,6 +79,11 @@ results from bare tree digests and winget installer paths, calls the public proj
 prints text or stable JSON reports. `sign.cpp` passes custody URIs to the public external signer and
 verifies `platform_signature/1` through the platform verifier. Neither reads package writers or
 repository internals.
+`project.cpp` parses package, OCI, and Helm requests, installed-inventory and replacement options,
+distinguishes stored results from bare tree digests, calls the public projection task, and prints
+text or stable JSON reports. It does not read package writers or repository internals.
+`install.cpp` maps package or tree installation, generation listing, and rollback directly to the
+public atomic-generation tasks.
 `project.cpp` parses native-package, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap
 requests, distinguishes stored results from bare tree digests, calls the public projection task,
 and prints text or stable JSON reports. It does not read package writers or repository internals.

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+if [ "${1:-0}" = '0' ]; then
+    if command -v 'ldconfig' >/dev/null 2>&1; then
+        ldconfig
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+    fi
+fi
+exit 0

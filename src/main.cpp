@@ -85,6 +85,8 @@ auto resolve(int argc, char** argv) -> int;
 auto config(int argc, char** argv) -> int;
 auto project(int argc, char** argv) -> int;
 auto sign(int argc, char** argv) -> int;
+auto install(int argc, char** argv) -> int;
+auto rollback(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
@@ -167,6 +169,14 @@ constexpr auto flags_project = std::to_array<flag>({
     {"--arch", "<arch>", "Set the target architecture.", "source architecture"},
     {"--out", "<dir>", "Write projected artifacts below this directory.", "projection"},
     {"--depends", "<dependency>", "Declare a package dependency; repeatable.", "none"},
+    {"--against",
+     "<path>",
+     "Check file ownership against packages or an installed database.",
+     "none"},
+    {"--replaces",
+     "<package>",
+     "Permit owned paths by deriving replacement relationships.",
+     "none"},
     {"--service", "<value>", "Add a Helm service declaration; repeatable.", "none"},
     {"--identifier", "<id>", "Set the platform package identifier.", "derived from name"},
     {"--publisher", "<subject>", "Set the MSIX certificate subject.", "development subject"},
@@ -189,6 +199,13 @@ constexpr auto flags_sign = std::to_array<flag>({
     {"--timestamp-server", "<url>", "Select the Authenticode RFC 3161 server.", "none"},
     {"--out", "<path>", "Write the signed artifact to this path.", "-signed artifact"},
     {"--no-notarize", {}, "Do not submit a macOS artifact for notarisation.", "false"},
+});
+constexpr auto flags_install = std::to_array<flag>({
+    {"--root", "<dir>", "Select the generation root.", "required"},
+    {"--list", {}, "List complete generations instead of installing.", "false"},
+});
+constexpr auto flags_rollback = std::to_array<flag>({
+    {"--root", "<dir>", "Select the generation root.", "required"},
 });
 constexpr auto flags_data = std::to_array<flag>({
     {"--session",
@@ -552,9 +569,10 @@ constexpr auto commands = std::to_array<command>({
      "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
      "<result|tree|installer> [--overlay [path=]<tree>] "
      "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
-     "[--identifier <id>] [--publisher <subject>] [--display-name <name>] "
-     "[--executable <path>] [--entitlements <path>] [--installer-url <url>] "
-     "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
+     "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] "
+     "[--replaces <package>] [--service <value>] [--identifier <id>] "
+     "[--publisher <subject>] [--display-name <name>] [--executable <path>] "
+     "[--entitlements <path>] [--installer-url <url>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
      "project a build into an installable package, commit, image, or chart",
      "available",
@@ -565,6 +583,26 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::project},
+    {"install",
+     "install <package|install-tree> --root <dir> | install --list --root <dir>",
+     "install or list atomic generations",
+     "available",
+     flags_install,
+     "Stage a projected tree, apply its declarative intents, and atomically select it.",
+     "liquid install example.deb --root /srv/example",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::install},
+    {"rollback",
+     "rollback --root <dir>",
+     "select the previous installed generation",
+     "available",
+     flags_rollback,
+     "Atomically select the generation preceding the current one.",
+     "liquid rollback --root /srv/example",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::rollback},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
      "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "

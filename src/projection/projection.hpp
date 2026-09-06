@@ -19,6 +19,9 @@ struct prepared_projection {
     std::vector<std::string> needed;
     std::vector<std::string> sonames;
     std::map<std::string, std::uint8_t> stability_layers;
+    std::optional<install_intent> install;
+    std::optional<generated_maintainer_scripts> scripts;
+    std::vector<projection_replacement> replacements;
     std::map<std::string, std::uint32_t> directory_modes;
     std::map<std::string, std::string> components;
     std::string base_source;
@@ -30,6 +33,13 @@ struct prepared_projection {
     -> std::map<std::string, std::uint8_t>;
 [[nodiscard]] auto prepare(repository& source, const projection_request& request)
     -> runtime::task<prepared_projection>;
+[[nodiscard]] auto resolve_projection_conflicts(std::span<prepared_projection> prepared,
+                                                std::span<const projection_target> targets)
+    -> result<void>;
+[[nodiscard]] auto resolve_projection_conflicts(prepared_projection& prepared,
+                                                projection_target target,
+                                                const std::filesystem::path& against)
+    -> runtime::task<void>;
 [[nodiscard]] auto dependencies(const prepared_projection& prepared, projection_target target)
     -> std::vector<std::string>;
 [[nodiscard]] auto provides(const prepared_projection& prepared, projection_target target)
@@ -38,6 +48,11 @@ struct prepared_projection {
                                                 const prepared_projection& prepared,
                                                 projection_target target,
                                                 digest subject) -> runtime::task<digest>;
+[[nodiscard]] auto store_script_sbom(repository& source,
+                                     const prepared_projection& prepared,
+                                     projection_target target,
+                                     digest subject,
+                                     std::string output_name) -> runtime::task<digest>;
 [[nodiscard]] auto write_file(std::filesystem::path path, std::span<const std::byte> bytes)
     -> result<void>;
 [[nodiscard]] auto

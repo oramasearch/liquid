@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <map>
 
 #include <zstd.h>
@@ -72,7 +73,8 @@ auto decompress_zstd(std::span<const std::byte> input, std::uint64_t maximum_out
 result<std::vector<std::byte>> write(const package_metadata& metadata,
                                      const projection_options& options,
                                      std::span<const std::string> dependencies,
-                                     std::span<const package::file> files) {
+                                     std::span<const package::file> files,
+                                     const generated_maintainer_scripts* scripts) {
     auto installed_size = std::uint64_t{};
     auto md5sums = std::string{};
     for (const auto& file : files) {
@@ -106,6 +108,12 @@ result<std::vector<std::byte>> write(const package_metadata& metadata,
             value += "/usr/" + path + "\n";
         }
         control_files.push_back({"conffiles", package::text_bytes(value), 0644});
+    }
+    if (scripts) {
+        control_files.push_back({"preinst", package::text_bytes(scripts->pre_install), 0755});
+        control_files.push_back({"postinst", package::text_bytes(scripts->post_install), 0755});
+        control_files.push_back({"prerm", package::text_bytes(scripts->pre_remove), 0755});
+        control_files.push_back({"postrm", package::text_bytes(scripts->post_remove), 0755});
     }
     auto control_tar = package::tar(control_files, options.source_date_epoch);
     auto data_tar = package::tar(files, options.source_date_epoch, "usr");
@@ -185,8 +193,39 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
     }
     output.control.assign(reinterpret_cast<const char*>(control->bytes.data()),
                           control->bytes.size());
+    auto scripts = generated_maintainer_scripts{};
+    auto found_scripts = false;
+    for (const auto& entry : control_tree->entries) {
+        auto* destination = entry.path == "preinst"    ? &scripts.pre_install
+                            : entry.path == "postinst" ? &scripts.post_install
+                            : entry.path == "prerm"    ? &scripts.pre_remove
+                            : entry.path == "postrm"   ? &scripts.post_remove
+                                                       : nullptr;
+        if (destination) {
+            destination->assign(reinterpret_cast<const char*>(entry.bytes.data()),
+                                entry.bytes.size());
+            found_scripts = true;
+        }
+    }
+    if (found_scripts) {
+        output.scripts = std::move(scripts);
+    }
     for (const auto& entry : data_tree->entries) {
         output.files.push_back(entry.path);
+        if (entry.kind != format_entry_kind::member) {
+            continue;
+        }
+        auto mode_text = package::attribute(entry.attributes, "mode");
+        if (!mode_text) {
+            return std::unexpected(mode_text.error());
+        }
+        auto mode = std::uint32_t{};
+        const auto [end, code] =
+            std::from_chars(mode_text->data(), mode_text->data() + mode_text->size(), mode);
+        if (code != std::errc{} || end != mode_text->data() + mode_text->size()) {
+            return std::unexpected(error{errc::corrupt, "deb file mode is invalid", entry.path});
+        }
+        output.payload.push_back({entry.path, entry.bytes, mode});
     }
     output.control_entries = std::move(control_tree->entries);
     output.data_entries = std::move(data_tree->entries);

@@ -522,6 +522,9 @@ add_library(libliquid
   src/identity/keys/keys.cpp
   src/identity/keys/hid.cpp
   src/identity/taap.cpp
+  src/install/faults.cpp
+  src/install/install.cpp
+  src/install/records.cpp
   src/identity/threshold.cpp
   src/import/spack.cpp
   src/node_store.cpp
@@ -533,6 +536,7 @@ add_library(libliquid
   src/objects/records.cpp
   src/protobuf/wire.cpp
   src/projection/helm.cpp
+  src/projection/conflicts.cpp
   src/projection/appimage_runtime.cpp
   src/projection/attestations.cpp
   src/projection/homebrew.cpp
@@ -548,6 +552,7 @@ add_library(libliquid
   src/projection/projection.cpp
   src/projection/signing.cpp
   src/projection/rules.cpp
+  src/projection/scripts.cpp
   src/reapi/conversion.cpp
   src/reapi/client.cpp
   src/reapi/messages.cpp
@@ -716,6 +721,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/history.cpp
     src/cli/hot_update.cpp
     src/cli/identity.cpp
+    src/cli/install.cpp
     src/cli/inspect.cpp
     src/cli/keys.cpp
     src/cli/locks.cpp
