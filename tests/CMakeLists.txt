@@ -22,6 +22,7 @@ add_executable(liquid-tests
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  config/test_configuration.cpp
   resolve/test_resolution.cpp
   workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
@@ -316,6 +317,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-configuration
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONFIG_ROOT=${CMAKE_CURRENT_BINARY_DIR}/configuration-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/configuration.cmake)
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -492,6 +498,7 @@ add_executable(liquid-header-tests
   headers/admission.cpp
   headers/attestation.cpp
   headers/build.cpp
+  headers/configuration.cpp
   headers/daemon.cpp
   headers/drip.cpp
   headers/edit.cpp

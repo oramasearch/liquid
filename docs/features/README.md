@@ -75,10 +75,10 @@ is wrong.
 | [01](01-object-model-and-storage.md) | Object model and storage | The chunk store, Merkle DAG, large-file support, and how everything else sits on it. |
 | [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, splitting and merging unrelated codebases. |
 | [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML. |
-| [04](04-build-engine.md) | Build engine | The incremental query graph, actions, early cutoff, compile-as-you-type, and local critical-path traces. |
+| [04](04-build-engine.md) | Build engine | The incremental query graph, actions, typed `.liquid` targets, early cutoff, compile-as-you-type, and local critical-path traces. |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
-| [07](07-dependency-resolution.md) | Dependency resolution | Content-addressed build inputs plus linked-library ABI extraction and compatibility reports are implemented; Spack-grade solving over variants, compilers, targets and virtual providers follows. |
+| [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |

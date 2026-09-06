@@ -27,3 +27,6 @@ transparency-log interfaces, the one-image review operation, and the long-runnin
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
 engine and its clause encoding stay private.
+`configuration.hpp` defines the `.liquid` AST, exact diagnostics, synchronous check/lower/format
+operations, canonical target/source codecs, asynchronous source fetch, action-backed generators,
+and configured target execution.

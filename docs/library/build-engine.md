@@ -16,7 +16,7 @@ The cache key then covers exactly what was read, and a miss can name the input t
 changed.
 
 **Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
-#23, #26, #193, and #200 implement
+#23, #26, #74, #193, and #200 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -40,6 +40,9 @@ local/remote/race selection, remote batching, and loser cancellation. Issue #16 
 network transport and validated remote cache tier. Issue #63 supplies liquid's scheduler and
 TAAP-signed worker fleet. Configure checks additionally populate a shared content-addressed fact
 base and can be answered across projects without starting the probe.
+Issue #74 projects typed `.liquid` targets into the same `action_input`, verifies declared source
+digests before storage, supplies dependency output trees as named inputs, and runs configuration
+generators through this executor with ordinary provenance.
 
 ## Public repository plans and builds (#200)
 

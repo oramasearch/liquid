@@ -404,6 +404,10 @@ add_library(libliquid
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
   src/cms.cpp
+  src/configuration/language.cpp
+  src/configuration/generator.cpp
+  src/configuration/parser.cpp
+  src/configuration/records.cpp
   src/daemon.cpp
   src/daemon/fanout.cpp
   src/drip.cpp
@@ -597,6 +601,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/capture.cpp
     src/cli/daemon.cpp
     src/cli/compose.cpp
+    src/cli/configuration.cpp
     src/cli/delta.cpp
     src/cli/diff.cpp
     src/cli/edit.cpp

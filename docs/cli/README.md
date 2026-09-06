@@ -31,6 +31,7 @@ that the table and `liquid --help` name the same commands.
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
+| `config` | `config check <file\|dir> \| config lower <file> [--json] [--trace] \| config format <file>` | Check, lower, trace, or canonically format `.liquid` configuration. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
@@ -65,6 +66,8 @@ that the table and `liquid --help` name the same commands.
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--install-prefix <path>] [--allow-embedded-prefix] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions or publish a checked install tree. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `build` | `build --target <name> [--json] \| build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Build a `.liquid` target, plan or start a wrapped repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
@@ -95,6 +98,12 @@ absolute installed package path fails with `invalid argument` and the first thre
 `--allow-embedded-prefix` requires `--install-prefix`; it permits the result and records the waiver
 in the schedule explanation shown by `liquid why`. See
 [relocation.md](../library/relocation.md) for build-system rules.
+`config check` prints the exact two-line `file:line:column` diagnostics from the library.
+`config lower --json` prints version-1 package, target, source, and origin objects; `--trace` adds
+source or generated-result origins to text output. `config format` replaces one valid file with the
+canonical form. `build --target --json` prints the selected target and signed result digest after
+source verification, dependency-output resolution, generator provenance verification, and ordinary
+action execution.
 
 `status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
 stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
