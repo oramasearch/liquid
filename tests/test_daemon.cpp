@@ -249,8 +249,16 @@ TEST(Daemon, idle_capacity_validates_and_reports_graph_divergence) {
 TEST(Daemon, command_starts_on_first_use_and_attaches_to_same_process) {
     temporary_repository location;
     const auto output = location.path() / "status.json";
-    const auto command = std::string{"cd \""} + location.path().string() + "\" && \"" + LIQUID_CLI +
-                         "\" status --json > \"" + output.string() + "\"";
+    auto child_environment = std::string{};
+    const auto temporary_root = std::filesystem::temp_directory_path();
+    if (temporary_root.is_relative()) {
+        const auto absolute_root = std::filesystem::absolute(temporary_root);
+        const auto relative_root = std::filesystem::relative(absolute_root, location.path());
+        child_environment = "TMPDIR=\"" + relative_root.string() + "\" ";
+    }
+    const auto command = std::string{"cd \""} + location.path().string() + "\" && " +
+                         child_environment + "\"" + LIQUID_CLI + "\" status --json > \"" +
+                         output.string() + "\"";
     ASSERT_EQ(std::system(command.c_str()), 0);
 
     auto attached = liquid::runtime::block_on(liquid::daemon::attach(location.path()));
