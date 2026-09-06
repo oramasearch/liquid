@@ -41,6 +41,27 @@ See [`secret-scanning.md`](secret-scanning.md).
 literal line marker are in `scan_config`. `attribution` is present for Phase 2 and remains false;
 foreign build output is governed only by declared exclusions in this phase.
 
+## Write flow control
+
+`repository_options::flow` is persisted as `config.flow`. Its `per_actor`, `per_document`, and
+`per_repository` token buckets each contain `rate_per_s` and `burst`; `actor_overrides` replaces
+the actor bucket for a matching TAAP id. A document key is the containing directory's stable
+`node_id`, and the repository bucket is the local checkout's tenant scope. `max_update_bytes`
+bounds one transaction's operation payload and `max_unacknowledged` bounds work beyond the
+slowest daemon consumer.
+
+Admission happens before a directory-document transaction opens. An exhausted bucket returns
+`errc::busy`; `error::context` names `scope`, `key`, and `retry_after_ms`. An oversized update
+returns `errc::invalid_argument` and names the configured limit. Neither rejection creates a CRDT
+operation or a drip. Callers wait with `runtime::delay(retry_after_ms)` before retrying; elapsed
+monotonic time refills the bucket without a worker thread.
+
+The human-oriented defaults are 10,000 operations per second with a 10,000-operation burst at
+each scope, a 64 MiB update, 4,096 unacknowledged drips, and 2,048/1,024 high/low watermarks. A
+bounded agent session can use actor `{rate_per_s: 10, burst: 10}`, document
+`{rate_per_s: 20, burst: 20}`, repository `{rate_per_s: 100, burst: 100}`, a 1 MiB update,
+128 unacknowledged drips, and 64/32 watermarks.
+
 `reconcile_interval` defaults to two seconds; set it to zero to disable this backstop. A ticker
 on the capture context compares watcher-event counts after each interval. If no watcher hint
 arrived, it adds a reconcile hint to the same queue and wakes the capture loop. A backstop

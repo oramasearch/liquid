@@ -21,6 +21,7 @@
 #include "edit_codec.hpp"
 #include "encoding/cbor.hpp"
 #include "encryption/leaf.hpp"
+#include "flow_control.hpp"
 #include "formats/dotenv.hpp"
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
@@ -101,6 +102,7 @@ struct repository_document {
     agents_config agents;
     policy_config policy;
     retention_config retention{};
+    flow_config flow{};
     std::optional<remote_config> remote;
     std::uint64_t pending_drips{};
 };
@@ -374,6 +376,23 @@ auto encode_repository_document(const repository_document& value)
             },
             configured);
     }
+    const auto bucket_value = [](const token_bucket_config& bucket) {
+        return map(
+            {{"rate_per_s", cbor::value{bucket.rate_per_s}}, {"burst", cbor::value{bucket.burst}}});
+    };
+    auto actor_overrides = cbor::value::array{};
+    for (const auto& [actor, bucket] : value.flow.actor_overrides) {
+        actor_overrides.push_back(
+            map({{"taap_id", cbor::value{actor}}, {"bucket", bucket_value(bucket)}}));
+    }
+    auto flow = map({{"per_actor", bucket_value(value.flow.per_actor)},
+                     {"per_document", bucket_value(value.flow.per_document)},
+                     {"per_repository", bucket_value(value.flow.per_repository)},
+                     {"actor_overrides", cbor::value{std::move(actor_overrides)}},
+                     {"max_update_bytes", cbor::value{value.flow.max_update_bytes}},
+                     {"max_unacknowledged", cbor::value{value.flow.max_unacknowledged}},
+                     {"pause_above", cbor::value{value.flow.pause_above}},
+                     {"resume_below", cbor::value{value.flow.resume_below}}});
     auto remote = cbor::value{cbor::null{}};
     if (value.remote) {
         auto headers = cbor::value::array{};
@@ -418,6 +437,7 @@ auto encode_repository_document(const repository_document& value)
               map({{"approved_builders", cbor::value{std::move(approved_builders)}},
                    {"rules", cbor::value{std::move(policy_rules)}}})},
              {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})},
+             {"flow", std::move(flow)},
              {"remote", std::move(remote)}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"kind", "repository-document"},
@@ -780,6 +800,72 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                         failure(errc::corrupt, "invalid agent actor", "repository document"));
                 }
                 output.agents.actors.push_back(*actor);
+            }
+        }
+        if (const auto* flow = find(*config, "flow")) {
+            const auto decode_bucket = [&](std::string_view name) -> result<token_bucket_config> {
+                const auto* encoded = find(*flow, name);
+                const auto* rate_value = encoded ? find(*encoded, "rate_per_s") : nullptr;
+                const auto* burst_value = encoded ? find(*encoded, "burst") : nullptr;
+                const auto* rate =
+                    rate_value ? std::get_if<std::uint64_t>(&rate_value->data) : nullptr;
+                const auto* burst =
+                    burst_value ? std::get_if<std::uint64_t>(&burst_value->data) : nullptr;
+                if (!rate || !burst) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid flow bucket", "repository document"));
+                }
+                return token_bucket_config{*rate, *burst};
+            };
+            auto per_actor = decode_bucket("per_actor");
+            auto per_document = decode_bucket("per_document");
+            auto per_repository = decode_bucket("per_repository");
+            const auto* overrides_value = find(*flow, "actor_overrides");
+            const auto* max_update_value = find(*flow, "max_update_bytes");
+            const auto* max_unacknowledged_value = find(*flow, "max_unacknowledged");
+            const auto* pause_value = find(*flow, "pause_above");
+            const auto* resume_value = find(*flow, "resume_below");
+            const auto* overrides =
+                overrides_value ? std::get_if<cbor::value::array>(&overrides_value->data) : nullptr;
+            const auto* max_update =
+                max_update_value ? std::get_if<std::uint64_t>(&max_update_value->data) : nullptr;
+            const auto* max_unacknowledged =
+                max_unacknowledged_value
+                    ? std::get_if<std::uint64_t>(&max_unacknowledged_value->data)
+                    : nullptr;
+            const auto* pause =
+                pause_value ? std::get_if<std::uint64_t>(&pause_value->data) : nullptr;
+            const auto* resume =
+                resume_value ? std::get_if<std::uint64_t>(&resume_value->data) : nullptr;
+            if (!per_actor || !per_document || !per_repository || !overrides || !max_update ||
+                !max_unacknowledged || !pause || !resume) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid flow config", "repository document"));
+            }
+            output.flow = {*per_actor,
+                           *per_document,
+                           *per_repository,
+                           {},
+                           *max_update,
+                           *max_unacknowledged,
+                           *pause,
+                           *resume};
+            for (const auto& item : *overrides) {
+                const auto* id_value = find(item, "taap_id");
+                const auto* bucket_value = find(item, "bucket");
+                const auto* id = id_value ? std::get_if<std::string>(&id_value->data) : nullptr;
+                const auto* rate_value = bucket_value ? find(*bucket_value, "rate_per_s") : nullptr;
+                const auto* burst_value = bucket_value ? find(*bucket_value, "burst") : nullptr;
+                const auto* rate =
+                    rate_value ? std::get_if<std::uint64_t>(&rate_value->data) : nullptr;
+                const auto* burst =
+                    burst_value ? std::get_if<std::uint64_t>(&burst_value->data) : nullptr;
+                if (!id || !rate || !burst ||
+                    !output.flow.actor_overrides.emplace(*id, token_bucket_config{*rate, *burst})
+                         .second) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid flow actor override", "repository document"));
+                }
             }
         }
         if (const auto* remote = find(*config, "remote");
@@ -2332,6 +2418,7 @@ struct repository::impl {
     signer signing_key;
     std::shared_ptr<keyring> keys;
     cache_report cache_statistics;
+    std::shared_ptr<flow_detail::controller> flow_limits;
     std::map<std::string, std::pair<cache_status, std::optional<cache_miss>>> cache_lookups;
     impl(std::filesystem::path path,
          std::unique_ptr<store> owned,
@@ -2345,7 +2432,8 @@ struct repository::impl {
         : root_path(std::move(path)), owned_objects(std::move(owned)), objects(value),
           current(std::move(document)), checkpoint_interval(std::max(std::uint64_t{1}, interval)),
           hash_algorithm(algorithm_value), session(session_value), signing_key(std::move(key)),
-          keys(std::move(encryption_keys)) {}
+          keys(std::move(encryption_keys)),
+          flow_limits(flow_detail::shared_controller(root_path.generic_string(), current.flow)) {}
     auto lease_owner(std::string_view kind) const -> std::string {
         constexpr auto digits = std::string_view{"0123456789abcdef"};
         auto output = std::string{"repository:"};
@@ -3171,12 +3259,20 @@ struct repository::impl {
     runtime::task<void> record_blob(std::string path,
                                     ::liquid::blob record,
                                     write_options options,
-                                    std::optional<stale_revalidation> revalidated) {
+                                    std::optional<stale_revalidation> revalidated,
+                                    std::uint64_t update_bytes = 0) {
         if (locked(path))
             co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
         auto parts = split_path(path);
         if (!parts)
             co_return std::unexpected(parts.error());
+        auto* bucket_parent =
+            parent_for(current.root, *parts, false, hash_algorithm).value_or(&current.root);
+        auto admitted = flow_limits->admit(signing_key.identity().taap_id,
+                                           flow_detail::node_key(bucket_parent->node),
+                                           std::max<std::uint64_t>(update_bytes, path.size() + 64));
+        if (!admitted)
+            co_return std::unexpected(admitted.error());
         if (!record.remote)
             record.content = {};
         auto encoded = objects::encode(record);
@@ -3263,6 +3359,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_agents) {
         co_return std::unexpected(valid_agents.error());
     }
+    auto valid_flow = flow_detail::validate(options.flow);
+    if (!valid_flow) {
+        co_return std::unexpected(valid_flow.error());
+    }
     auto prepared = co_await prepare_repository_store(std::move(path), options);
     if (!prepared) {
         co_return std::unexpected(prepared.error());
@@ -3286,6 +3386,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.agents = std::move(options.agents);
     document.policy = std::move(options.policy);
     document.retention = std::move(options.retention);
+    document.flow = std::move(options.flow);
     document.remote = std::move(options.remote);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
@@ -3351,6 +3452,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!valid_agents) {
         co_return std::unexpected(valid_agents.error());
     }
+    auto valid_flow = flow_detail::validate(document->flow);
+    if (!valid_flow) {
+        co_return std::unexpected(valid_flow.error());
+    }
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -3373,6 +3478,13 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
 
 std::optional<remote_config> repository::remote_configuration() const {
     return impl_ ? impl_->current.remote : std::nullopt;
+}
+flow_config repository::flow_configuration() const {
+    return impl_ ? impl_->current.flow : flow_config{};
+}
+
+std::vector<flow_bucket_status> repository::flow_buckets() const {
+    return impl_ ? impl_->flow_limits->status() : std::vector<flow_bucket_status>{};
 }
 runtime::task<::liquid::tree> repository::root() {
     if (!impl_)
@@ -3632,6 +3744,13 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
     }
     if (impl_->locked(path))
         co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+    const auto update_bytes = contents.size();
+    if (update_bytes > impl_->current.flow.max_update_bytes) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument,
+                    "write update exceeds max_update_bytes",
+                    "limit=" + std::to_string(impl_->current.flow.max_update_bytes)));
+    }
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
@@ -3658,7 +3777,7 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
     if (!record)
         co_return std::unexpected(record.error());
     co_return co_await impl_->record_blob(
-        std::move(path), std::move(*record), std::move(options), *revalidated);
+        std::move(path), std::move(*record), std::move(options), *revalidated, update_bytes);
 }
 runtime::task<void>
 repository::write_file(std::string path, std::filesystem::path source, write_options options) {
@@ -4015,6 +4134,11 @@ runtime::task<void> repository::move(std::string from, std::string to, write_opt
         co_return std::unexpected(failure(errc::not_found, "move source does not exist", from));
     if ((*destination_parent)->entries.contains(destination->back()))
         co_return std::unexpected(failure(errc::already_exists, "move destination exists", to));
+    auto admitted = impl_->flow_limits->admit(impl_->signing_key.identity().taap_id,
+                                              flow_detail::node_key((*source_parent)->node),
+                                              from.size() + to.size() + 32);
+    if (!admitted)
+        co_return std::unexpected(admitted.error());
     auto source_document = co_await impl_->directory((*source_parent)->node);
     if (!source_document)
         co_return std::unexpected(source_document.error());
@@ -4082,6 +4206,11 @@ runtime::task<void> repository::remove(std::string path, write_options options) 
     auto found = (*parent)->entries.find(parts->back());
     if (found == (*parent)->entries.end())
         co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
+    auto admitted = impl_->flow_limits->admit(impl_->signing_key.identity().taap_id,
+                                              flow_detail::node_key((*parent)->node),
+                                              path.size() + 32);
+    if (!admitted)
+        co_return std::unexpected(admitted.error());
     auto directory = co_await impl_->directory((*parent)->node);
     if (!directory)
         co_return std::unexpected(directory.error());

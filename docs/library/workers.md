@@ -100,9 +100,9 @@ Each component has a separate HTTP/1 control listener:
 | `GET` | `/v1/openapi.json` | OpenAPI 3.1 description of the control listener. |
 | `POST` | `/mcp` | MCP JSON-RPC discovery response. No mutating tools are registered. |
 
-No shared registry library is present in this repository. `src/workers/control.cpp` is the minimal
-fixed route registry and is deliberately isolated for extraction when the organization has a
-shared registry.
+`src/serve/` owns the bounded HTTP/1.1 parser, asynchronous route table, and Corosio TCP and Unix
+accept loops used by long-running liquid components. `src/workers/control.cpp` registers the fixed
+scheduler and worker handlers in that table; their routes and response bodies are unchanged.
 
 ## Deployment shape
 

@@ -14,6 +14,7 @@
 #include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/flow.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/runtime.hpp"
 
@@ -54,6 +55,7 @@ struct LIQUID_EXPORT daemon_status {
     std::uint64_t graph_memory_ceiling{};
     std::uint64_t graph_validation_backlog{};
     std::optional<graph_validation_record> last_graph_divergence;
+    flow_status flow;
 };
 
 struct LIQUID_EXPORT daemon_options {
@@ -88,6 +90,7 @@ public:
     [[nodiscard]] runtime::task<edit_preview> preview_edit(edit_request request,
                                                            edit_attribution attribution);
     [[nodiscard]] runtime::task<edit_result> apply_edit(edit_preview preview);
+    [[nodiscard]] runtime::task<void> report_consumer_lag(std::string name, std::uint64_t behind);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();
 

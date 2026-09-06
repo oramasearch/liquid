@@ -63,6 +63,10 @@ sbom        { v, kind:"sbom", format:text, document:bytes }
 query-graph { v:1, kind:"query-graph", nodes:[digest(query-node)…] }
 query-node  { v:1, kind:"query-node", key, fingerprint, durability,
               dependencies:[{key,fingerprint}…], value:digest }
+package/1   { v:1, kind:"package", name, versions, variants, dependencies, provides,
+              conflicts, compilers, targets, patches }
+concretised_spec/1 { v:1, kind:"concretised_spec", name, version, variants, compiler?, target,
+                     dependencies:[{name,type,target,virtual}…], patches, reasons }
 ```
 
 The query graph uses its own store directory and atomic text `ROOT`. Query keys and dependency
@@ -98,6 +102,9 @@ readable.
   [`sbom.md`](sbom.md).
 - A `repo` record identifies a repository independently of where it lives; `repo_id` is 16 random
   bytes minted at `create`.
+- Package declarations and complete concretisations use the same canonical-CBOR rules. A
+  concretised spec's digest includes every bound dimension and dependency edge and is its reusable
+  build identity. See [`resolution.md`](resolution.md).
 
 Trees and blobs are values: two repositories with the same content share every record and every
 chunk, because the store is one.
