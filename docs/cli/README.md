@@ -133,7 +133,7 @@ built binary under the build directory before CTest compares it with the committ
 `lock` prints the acquired path and `unlock` prints the released path. Acquisition requires a
 matching `.liquid` lock rule. A conflicting write reports the holder identity, acquisition time,
 and reason; [exclusive checkout locks](../library/locks.md) defines offline and connected authority.
-Commands that use a lower support level print one shared line before the affected result:
+Commands that use a lower support level print one shared line alongside the affected result:
 
 ```text
 tier: <n> (<mechanism>)
@@ -358,7 +358,8 @@ Invalid command usage exits with status 2 and starts with `error: usage:`.
 
 `diff` accepts each side as a ref name or change digest. Without opt-ins it prints one line per
 changed tree entry. `--text` computes line hunks, `--structural` prints moves, semantic edits, and
-format-only source changes from the locked grammar, and `--formats` prints the container path with its
+format-only source changes from the locked grammar, while visibly labelling a grammar fallback, and
+`--formats` prints the container path with its
 codec and observed tier followed by indented added, removed, or modified logical entries. Nested
 containers are indented again. An optional path selects that entry or subtree. `--json` returns an
 array whose entries carry `path`, the shared support `tier`, structural `diff_tier`, `changes`,

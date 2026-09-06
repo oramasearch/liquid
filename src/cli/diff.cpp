@@ -230,46 +230,47 @@ auto print_container(const liquid::container_diff& value, std::size_t indent) ->
     }
 }
 
-auto print_entry(const liquid::tree_diff_entry& entry, bool text) -> void {
+auto print_entry(const liquid::tree_diff_entry& entry, bool text, bool structural) -> void {
     if (entry.structural) {
-        print_tier(2, "syntax tree");
         if (entry.structural->formatting_only) {
             std::println("reformat only {}", entry.path);
-            return;
-        }
-        for (const auto& edit : entry.structural->edits) {
-            auto node_kind = edit.node_kind;
-            if (node_kind.find("function") != std::string::npos) {
-                node_kind = "function";
+        } else {
+            for (const auto& edit : entry.structural->edits) {
+                auto node_kind = edit.node_kind;
+                if (node_kind.find("function") != std::string::npos) {
+                    node_kind = "function";
+                }
+                const auto name = edit.name ? " " + *edit.name : std::string{};
+                if (edit.kind == liquid::structural_edit_kind::moved && edit.old_range &&
+                    edit.new_range) {
+                    std::println("moved {}{}: {}-{} -> {}-{}",
+                                 node_kind,
+                                 name,
+                                 edit.old_range->start.line,
+                                 edit.old_range->end.line,
+                                 edit.new_range->start.line,
+                                 edit.new_range->end.line);
+                } else {
+                    std::println("{} {}{}", structural_kind_name(edit.kind), node_kind, name);
+                }
             }
-            const auto name = edit.name ? " " + *edit.name : std::string{};
-            if (edit.kind == liquid::structural_edit_kind::moved && edit.old_range &&
-                edit.new_range) {
-                std::println("moved {}{}: {}-{} -> {}-{}",
-                             node_kind,
-                             name,
-                             edit.old_range->start.line,
-                             edit.old_range->end.line,
-                             edit.new_range->start.line,
-                             edit.new_range->end.line);
-            } else {
-                std::println("{} {}{}", structural_kind_name(edit.kind), node_kind, name);
-            }
         }
+        print_tier(2, "syntax tree");
         return;
     }
     const auto [level, mechanism] = entry_tier(entry, text);
-    print_tier(level, mechanism);
     if (entry.container) {
         std::println("{} {} tier={}",
                      entry.path,
                      entry.container->codec,
                      static_cast<unsigned>(entry.container->tier));
         print_container(*entry.container, 2);
+        print_tier(level, mechanism);
         return;
     }
-    if (!entry.tier_reason.empty()) {
+    if (structural && !entry.tier_reason.empty()) {
         std::println("{} ({}) {}", tier_name(entry.tier), entry.tier_reason, entry.path);
+        print_tier(level, mechanism);
         return;
     }
     auto changes = std::string{};
@@ -280,6 +281,7 @@ auto print_entry(const liquid::tree_diff_entry& entry, bool text) -> void {
         changes += change_name(change);
     }
     std::println("{} {}", changes, entry.path);
+    print_tier(level, mechanism);
 }
 
 auto resolve_change(std::span<const liquid::ref> refs, std::string_view value)
@@ -382,7 +384,7 @@ auto diff(int argc, char** argv) -> int {
         if (json) {
             std::print("{}{}", emitted == 0 ? "" : ",", entry_json(entry, options.text));
         } else {
-            print_entry(entry, options.text);
+            print_entry(entry, options.text, options.structural);
         }
         ++emitted;
     }
