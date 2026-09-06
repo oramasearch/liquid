@@ -116,6 +116,10 @@ measures a fresh-process repository open for the automerge-cpp adoption comparis
 Focused CRDT cases verify commit metadata, compact checkpoint journal replay, corrupt-sync
 atomicity, and upstream sync convergence; the repository replica case also covers distinct clone
 actors and multi-round sync.
+
+`test_collaboration.cpp` covers speculative agent sessions, delegated publication, semantic leases,
+transient presence, and epoch resynchronization. `crdt/measure_epoch.cpp` records the documented
+compaction workload's bytes and load time.
 The Unix integration case in `test_sync.cpp` exchanges two disk repositories through the public
 server behind a small socket transport dispatched on the shared runtime, measures missing-object
 bytes across repeated pushes, pulls into an empty repository, and rejects a corrupted TAAP
