@@ -150,6 +150,8 @@ proof, an additive interface is tier 3.
 Liquid #205 adds optional concrete syntax to frontend ABI v1 and implemented C/C++ structural
 rename, extract, move, and tree-edit previews and applies through libliquid, the local daemon, and
 `liquid edit`, with attributed grouped undo.
+The frontend C boundary also defines liquify #3's versioned native plugin descriptor for named
+queries, commands, and canonical-CBOR panel view models.
 Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
 approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,

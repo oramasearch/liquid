@@ -292,9 +292,10 @@ in-process:
   there is no second path.
 - **Rendering (decision §15).** The buffer is a retained GPU text layer inside Dear ImGui with a
   per-blob cached line layout; panels and the shell stay ImGui.
-- **The plugin ABI (decision §14).** One C ABI (query kinds registered by name, values as
-  canonical CBOR, callbacks for progress and cancellation) that frontend modules, format codecs and
-  editor plugins share; no VS Code compatibility in this phase.
+- **The plugin ABI (decision §14).** `frontend_abi.h` defines the versioned
+  `liquify_plugin_v1` descriptor: query kinds registered by name, commands with bindings and
+  argument schemas, panels described by canonical CBOR, and the frontend boundary's owned values,
+  progress, and cancellation callbacks. No VS Code compatibility is included in this phase.
 
 ## Waves
 
