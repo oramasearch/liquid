@@ -2,7 +2,11 @@
 
 **What.** liquid is a library first. `liquid::liquid` (`libliquid`) is the product; the `liquid`
 command-line binary, liquify and lake are clients of it. Decided 2026-09-02 (`CLAUDE.md`,
-*Decisions* 7).
+*Decisions* 7). Everything under `include/liquid/` is the public API; `src/main.cpp` only parses
+arguments and calls it. liquify links the same library as a submodule through `add_subdirectory`,
+and lake will link it across the licence boundary, as a library, never the other way round.
+Building the repository itself, running its tests, and the install layout are in
+[`../build/local.md`](../build/local.md).
 
 **Targets.**
 
@@ -12,6 +16,7 @@ command-line binary, liquify and lake are clients of it. Decided 2026-09-02 (`CL
 | `liquid::hot` (`liquid-hot`) | separately versioned C runtime (`LIQUID_HOT_ABI_VERSION` and `SOVERSION 1`) for cooperative entry registration and quiescent replacement |
 | `liquid-cli` → `liquid` | the binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
 | `liquid-frontend-tree-sitter`, `liquid-frontend-clang` | replaceable C/C++ language modules, built by default outside libliquid and disabled with `-DLIQUID_BUILD_FRONTENDS=OFF` |
+| `liquid_forge_double`, `liquid-forge-double` | installable in-memory lake forge target and standalone integration-test server ([`forge-client.md`](forge-client.md)) |
 | `liquid-tests` | GoogleTest; `LIQUID_BUILD_TESTS` defaults to ON only when liquid is the top-level project |
 
 **Public API.** Everything under `include/liquid/`; `liquid/liquid.hpp` is the umbrella. Today:
