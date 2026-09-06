@@ -66,6 +66,8 @@ owning issue in `error::context`.
 | `liquid/asn1.hpp` | #210 | implemented | strict DER element reader with exact encoded spans plus unsigned-integer and object-identifier decoding |
 | `liquid/x509.hpp` | #210 | implemented | certificate parsing, explicit TSA trust anchors, historical path validation, key usage, and critical timestamp-signing purpose |
 | `liquid/cms.hpp` | #210 | implemented | embedded CMS SignedData content, signed-attribute, signer, signature, and historical certificate-path verification |
+| `liquid/transparency.hpp` | #207, #210 | implemented (#210) | RFC 3161 timestamp-token and RFC 4998 evidence-chain verification over checkpoint signature values with explicit TSA trust anchors |
+| `liquid/tuf.hpp` | #186 | implemented | repository-pinned TUF root trust, ordered root rotation, timestamp/snapshot/targets verification, persisted rollback protection, and complete-target acceptance checks |
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/hot_abi.h` | #32 | implemented on macOS arm64 and Linux x86_64; unsupported result on Windows | versioned C runtime ABI for stable entry registration, local patch receipt, explicit quiescence, direct patch application, cleanup, and diagnostics |
 | `liquid/hot_update.hpp` | #32 | implemented | build evidence, tier and outcome values, deterministic classification, canonical patch codecs, signed patch creation and verification, cooperative apply, sandboxed restart, and composition status |

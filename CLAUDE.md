@@ -150,6 +150,9 @@ transparency inclusion verification.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
+Liquid #186 adds repository-pinned TUF root trust, old-root and new-root threshold rotation,
+timestamp/snapshot/targets verification with rollback protection, and complete-target length and
+SHA-256 acceptance checks. `liquid registry trust` pins and displays the root.
 
 Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
 enumeration used by CLI record views.

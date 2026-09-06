@@ -524,6 +524,7 @@ add_library(libliquid
   src/sync/session.cpp
   src/lake_transparency.cpp
   src/transparency.cpp
+  src/tuf.cpp
   src/version.cpp
   src/vfs.cpp
   src/vfs/fuse_fs.cpp
@@ -646,6 +647,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/transparency.cpp
     src/cli/test.cpp
     src/cli/repo.cpp
+    src/cli/registry.cpp
     src/cli/review.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
