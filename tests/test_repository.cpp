@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -94,6 +97,69 @@ auto encrypted_options(const std::shared_ptr<liquid::keyring>& keys) -> liquid::
     return options;
 }
 
+auto wait_for(std::chrono::milliseconds duration) -> liquid::runtime::task<void> {
+    auto [delay_error] = co_await liquid::runtime::delay(duration);
+    if (delay_error) {
+        co_return std::unexpected(
+            liquid::error{liquid::errc::internal, delay_error.message(), "repository test"});
+    }
+    co_return {};
+}
+
+auto retry_after_ms(std::string_view context) -> std::uint64_t {
+    constexpr auto prefix = std::string_view{"retry_after_ms="};
+    const auto start = context.find(prefix);
+    if (start == std::string_view::npos) {
+        return 0;
+    }
+    auto value = std::uint64_t{};
+    const auto number = context.substr(start + prefix.size());
+    const auto end = number.find(' ');
+    const auto selected = number.substr(0, end);
+    const auto parsed = std::from_chars(selected.data(), selected.data() + selected.size(), value);
+    return parsed.ec == std::errc{} ? value : 0;
+}
+
+class scoped_liquid_home {
+public:
+    explicit scoped_liquid_home(const std::filesystem::path& path) {
+        if (const auto* configured = std::getenv("LIQUID_HOME")) {
+            previous_ = configured;
+        }
+        set(path);
+    }
+
+    scoped_liquid_home(const scoped_liquid_home&) = delete;
+    auto operator=(const scoped_liquid_home&) -> scoped_liquid_home& = delete;
+
+    ~scoped_liquid_home() {
+        if (previous_) {
+            static_cast<void>(set_environment(*previous_));
+            return;
+        }
+#ifdef _WIN32
+        static_cast<void>(_putenv_s("LIQUID_HOME", ""));
+#else
+        static_cast<void>(unsetenv("LIQUID_HOME"));
+#endif
+    }
+
+    auto set(const std::filesystem::path& path) -> void {
+        ASSERT_EQ(set_environment(path), 0);
+    }
+
+private:
+    static auto set_environment(const std::filesystem::path& path) -> int {
+#ifdef _WIN32
+        return _putenv_s("LIQUID_HOME", path.string().c_str());
+#else
+        return setenv("LIQUID_HOME", path.string().c_str(), 1);
+#endif
+    }
+
+    std::optional<std::string> previous_;
+};
+
 auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
     auto keys = std::make_shared<liquid::keyring>();
     EXPECT_TRUE(keys->add("repository", std::make_shared<liquid::passphrase_provider>("secret"))
@@ -178,6 +244,76 @@ TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {
     auto store_still_open = liquid::runtime::block_on(shared_store.contains(*expected));
     ASSERT_TRUE(store_still_open);
     EXPECT_TRUE(*store_still_open);
+}
+
+TEST(RepositoryFlow, eleventh_immediate_write_is_rejected_without_an_operation) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.flow.per_actor = {.rate_per_s = 10, .burst = 10};
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created) << (created ? "" : created.error().message);
+    for (auto index = 0; index != 10; ++index) {
+        auto written = liquid::runtime::block_on(
+            created->write("file-" + std::to_string(index), content("value")));
+        ASSERT_TRUE(written) << (written ? "" : written.error().message);
+    }
+    auto refused = liquid::runtime::block_on(created->write("file-10", content("value")));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::busy);
+    EXPECT_NE(refused.error().context.find("scope=actor"), std::string::npos);
+    const auto retry = retry_after_ms(refused.error().context);
+    ASSERT_GT(retry, 0U);
+    auto operations = liquid::runtime::block_on(created->operations());
+    ASSERT_TRUE(operations);
+    EXPECT_EQ(operations->size(), 10U);
+
+    ASSERT_TRUE(liquid::runtime::block_on(wait_for(std::chrono::milliseconds{retry + 5})));
+    EXPECT_TRUE(liquid::runtime::block_on(created->write("file-10", content("value"))));
+}
+
+TEST(RepositoryFlow, oversized_update_is_rejected_before_an_operation) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.flow.max_update_bytes = 4;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created);
+    auto refused = liquid::runtime::block_on(created->write("file", content("12345")));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    EXPECT_NE(refused.error().message.find("max_update_bytes"), std::string::npos);
+    auto operations = liquid::runtime::block_on(created->operations());
+    ASSERT_TRUE(operations);
+    EXPECT_TRUE(operations->empty());
+}
+
+TEST(RepositoryFlow, document_bucket_is_shared_by_actors_and_isolated_by_directory) {
+    temporary_repository location;
+    const auto first_home = location.path().parent_path() / "flow-identity-first";
+    const auto second_home = location.path().parent_path() / "flow-identity-second";
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
+    auto identity_home = scoped_liquid_home{first_home};
+    auto options = liquid::repository_options{};
+    options.flow.per_document = {.rate_per_s = 10, .burst = 1};
+    auto first = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("one/seed", content("seed"))));
+    ASSERT_TRUE(liquid::runtime::block_on(wait_for(std::chrono::milliseconds{1005})));
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("two/seed", content("seed"))));
+
+    identity_home.set(second_home);
+    auto second = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->flow_configuration(), options.flow);
+    ASSERT_TRUE(liquid::runtime::block_on(wait_for(std::chrono::milliseconds{1005})));
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("one/first", content("one"))));
+    auto same_document = liquid::runtime::block_on(second->write("one/second", content("two")));
+    ASSERT_FALSE(same_document);
+    EXPECT_EQ(same_document.error().code, liquid::errc::busy);
+    EXPECT_NE(same_document.error().context.find("scope=document"), std::string::npos);
+    EXPECT_TRUE(liquid::runtime::block_on(second->write("two/second", content("two"))));
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
 }
 
 void expect_sha256(const liquid::digest& value) {

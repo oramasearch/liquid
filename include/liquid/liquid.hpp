@@ -10,6 +10,7 @@
 #include "liquid/drip.hpp"
 #include "liquid/drive.hpp"
 #include "liquid/error.hpp"
+#include "liquid/flow.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/frontend_abi.h"
 #include "liquid/git.hpp"

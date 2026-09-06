@@ -138,6 +138,18 @@ Non-success responses use `Content-Type: application/vnd.liquid.error-v1` and a 
 | 503 | `unavailable` |
 | 500 | `io`, `internal` |
 
+Before metadata import, `sync_server` applies the repository's actor, directory-document, and
+repository buckets to each authored `sync_item`. A refusal returns the existing HTTP 429 mapping;
+the canonical error body also carries `retry_after_ms` and `scope`. The complete metadata batch is
+left unapplied, so a rejected peer operation cannot enter causal history. `max_update_bytes`
+applies to each item's body.
+
+`sync_endpoint::push` projects a flow rejection into `sync_report::retry_after_ms` and
+`exhausted_scope` rather than hiding the peer's retry signal in transport text. `liquid push`
+prints `flow_rejected scope=<scope> retry_after_ms=<value>` and exits unsuccessfully. Object
+uploads may already exist in the content-addressed store, but the repository document, directory
+documents, drips, changes, and refs remain unchanged.
+
 An interrupted request has no success response and is retried from the last acknowledged cursor.
 Servers do not advance that cursor until metadata import and required chunk publication both
 succeed. A successful reply acknowledges the batch even when it reports refusals; refs are exported
