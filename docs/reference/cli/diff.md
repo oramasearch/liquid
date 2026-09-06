@@ -5,16 +5,20 @@
 ## Synopsis
 
 ```text
-liquid diff <old-change> <new-change>
+liquid diff <a> <b> [path] [--text] [--formats] [--json]
 ```
 
 ## Description
 
-Compare two repository changes and report added, removed, modified, moved, mode, and conflict state.
+Compare two changes, optionally limit the result to a path, and inspect supported formats.
 
 ## Options
 
-This command has no command-specific options.
+| Flag | Argument | Description | Default |
+|---|---|---|---|
+| `--text` | — | Include textual line-difference details. | false |
+| `--formats` | — | Inspect supported structured container formats. | false |
+| `--json` | — | Write stable JSON instead of text. | false |
 
 ## Availability
 
@@ -23,7 +27,7 @@ available
 ## Examples
 
 ```sh
-liquid diff blake3:<old-change> blake3:<new-change>
+liquid diff main feature --text --json
 ```
 
 ## Exit status

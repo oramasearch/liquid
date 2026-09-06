@@ -16,7 +16,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`log`](log.md) | show or verify change, signed drip, or timestamp history | available |
 | [`cut`](cut.md) | cut the working change | available |
 | [`refs`](refs.md) | list repository references | available |
-| [`diff`](diff.md) | compare two changes | available |
+| [`diff`](diff.md) | compare changes and supported container formats | available |
 | [`history`](history.md) | show or restore path history | available |
 | [`drive`](drive.md) | synchronize a drive folder | available |
 | [`push`](push.md) | push repository changes and objects | available |

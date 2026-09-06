@@ -354,11 +354,6 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::search},
-    {"diff",
-     "diff <a> <b> [path] [--text] [--formats] [--json]",
-     "compare two repository changes",
-     "available",
-     liquid_cli::diff},
     {"resolve",
      "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
      "<package> <spec>... [--universe <path>] [--reuse] [--json]",
