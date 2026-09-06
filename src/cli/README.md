@@ -10,8 +10,9 @@ and explicit embedded-prefix waiver; enforcement remains in the library publicat
 through the public observability API. Text and Chrome trace projections include the recorded
 execution decision and every cost-model input. `why.cpp` implements `liquid why` and `liquid cache
 stats` through the public build API, including scheduling fields, policy-refusal causes, and their
-JSON forms. `wrap.cpp` also
-parses `--target`, prints the probe-start count, and exposes foreign-target errors from the library.
+JSON forms. `wrap.cpp` also parses `--target` and `--session`, prints the probe-start count, and
+exposes foreign-target errors from the library. A session wrap resolves configured
+application-database branch URLs before the library computes action identity.
 `facts.cpp` implements list, show, and bundle export entirely through public build APIs. The commands
 never read the private action cache directly.
 
@@ -28,6 +29,10 @@ through the public repository API, runs an optional test filter, and prints each
 policy parsing through public repository APIs. Status projects persisted agent policy, and
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
+
+`data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
+prints live branch URLs but never prints configured base URLs. An omitted branch session is a new
+random identifier; callers can pass the same explicit session to `wrap --session`.
 
 `anchor.cpp` parses `<path>:<line>@<change> --to <change>`, calls the public text-anchor mapper,
 and prints the target coordinate plus moved, approximate, and deleted state. It does not inspect

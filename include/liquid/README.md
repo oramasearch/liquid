@@ -4,6 +4,8 @@ Installed C++ headers in this directory define libliquid's supported API. `liqui
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.
 
+`data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
+per-session branch lifecycle. Database client and server implementation types remain private.
 `sync.hpp` includes metadata-only tree receipt for node-store and other lazy-hydration clients.
 It records remote blob locations without fetching content chunks and exposes the endpoint operation
 used by drive clients to import metadata before an on-demand read.

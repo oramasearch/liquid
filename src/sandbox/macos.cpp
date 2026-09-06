@@ -47,8 +47,21 @@ auto write_wrap_profile(const wrap_launch_request& request, const std::filesyste
     if (!output)
         return std::unexpected(
             error{errc::io, "cannot create wrap sandbox profile", path.string()});
-    output << "(version 1)\n(deny default)\n(allow process*)\n(deny network*)\n";
+    output << "(version 1)\n(deny default)\n(allow process*)\n";
+    output << (request.network ? "(allow network*)\n" : "(deny network*)\n");
+    if (request.network) {
+        output << "(allow sysctl-read)\n(allow ipc-posix-shm-read-data)\n"
+                  "(allow mach-lookup)\n";
+        output << "(allow file-read* (literal \"/\") (literal \"/etc\") "
+                  "(literal \"/opt\") (literal \"/private\") "
+                  "(subpath \"/private/etc\") (subpath \"/Library/Preferences\") "
+                  "(literal \"/dev/dtracehelper\"))\n";
+    }
     output << "(allow file-read* (subpath \"" << escaped(request.input_mount.string()) << "\"))\n";
+    if (!request.toolchain_mount.empty()) {
+        output << "(allow file-read* (subpath \"" << escaped(request.toolchain_mount.string())
+               << "\"))\n";
+    }
     output << "(allow file-read* (literal \"" << escaped(request.hook.string()) << "\") (literal \""
            << escaped(request.plan.string()) << "\"))\n";
     output << "(allow file-read* (subpath \"/System\") (subpath \"/usr\") "

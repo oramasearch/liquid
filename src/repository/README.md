@@ -74,6 +74,10 @@ scheduler backend, TLS trust and client-key paths, request headers, deadline, ba
 read-only-by-default publication. The public
 accessor lets later wrap runs reuse the configuration without exposing document internals.
 
+The document also persists `config.data.databases` and private live branch state. Public status
+projects only branch IDs, sessions, declared names, branch URLs, mechanisms, and creation times;
+the configured base URL and branch-point fingerprint remain private. The data adapter checkpoints
+record addition or removal only after the corresponding PostgreSQL lifecycle step succeeds.
 The repository document also persists `config.hot_update`: the sandboxed restart-hook argument
 vector and the build-target/local-endpoint pairs consumed by the daemon. Creation and open reject
 empty hook arguments, duplicate target names, empty endpoints, or configured targets without a

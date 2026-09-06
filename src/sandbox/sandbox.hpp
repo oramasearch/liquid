@@ -42,6 +42,7 @@ struct launch_result {
 struct wrap_launch_request {
     std::filesystem::path sandbox_root;
     std::filesystem::path input_mount;
+    std::filesystem::path toolchain_mount;
     std::filesystem::path hook;
     std::filesystem::path trace;
     std::filesystem::path plan;
@@ -50,6 +51,7 @@ struct wrap_launch_request {
     std::string cwd{"/liquid/work"};
     std::vector<std::string> command;
     std::map<std::string, std::string> environment;
+    bool network{};
 };
 
 [[nodiscard]] auto launch(const launch_request& request) -> result<launch_result>;
