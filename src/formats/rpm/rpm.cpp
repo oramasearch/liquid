@@ -167,8 +167,8 @@ auto parse_header(std::span<const std::byte> bytes,
     return data + data_size;
 }
 
-auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<std::string>> {
-    auto output = std::vector<std::string>{};
+auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<package::file>> {
+    auto output = std::vector<package::file>{};
     auto offset = std::size_t{};
     while (offset + 110 <= bytes.size()) {
         if (std::string_view{reinterpret_cast<const char*>(bytes.data() + offset), 6} != "070701") {
@@ -200,7 +200,10 @@ auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<std::str
         if (name == "TRAILER!!!") {
             return output;
         }
-        output.push_back(std::move(name));
+        output.push_back({std::move(name),
+                          {bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+                           bytes.begin() + static_cast<std::ptrdiff_t>(offset + size)},
+                          0644});
         offset = (offset + size + 3) & ~std::size_t{3};
     }
     return std::unexpected(error{errc::corrupt, "cpio trailer is absent", "rpm"});
@@ -376,7 +379,12 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
     if (!files) {
         return std::unexpected(files.error());
     }
-    return archive{tags[1000], tags[1001], std::move(*files)};
+    auto output =
+        archive{.name = tags[1000], .version = tags[1001], .data_files = std::move(*files)};
+    for (const auto& file : output.data_files) {
+        output.files.push_back(file.path);
+    }
+    return output;
 }
 
 } // namespace liquid::formats::rpm

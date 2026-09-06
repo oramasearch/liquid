@@ -95,6 +95,15 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #77 adds deterministic Homebrew bottles and Arch recipes; pinned-runtime AppImages;
+Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and detached
+`projection/1`, provenance, and SBOM attestations.
+Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
+digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
+images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
+Liquid #70 adds Tier 2 registry views for linked binaries, PDF objects, Jupyter cells, OOXML and
+ODF XML parts, package payloads, wheels, JARs, safetensors tensors, and non-executing pickle
+opcodes.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
@@ -108,6 +117,11 @@ provenance all derive from that lock.
 Liquid #68 adds the graph-owned canonical parse shared by build units, symbols, and source diff;
 GumTree-style matching and ordered structural edits; formatting-only and comment reporting;
 explicit structural, text, and binary tiers; and `liquid diff --structural` with labelled fallback.
+Liquid #71 adds a pure public support matrix projected from the process-global frontend registry,
+the live format registry, and declared platform wrapper backends. Duplicate language registrations
+select the stronger compiler frontend while preserving grammar extensions. `liquid tiers` renders
+stable text, JSON, and generated feature tables; degraded diff, symbols, search, and wrap output
+names its actual tier and mechanism.
 Liquid #201 adds the public lake forge review client, edit-surviving comment advancement, polling
 review events, the `liquid review` command group, and an installable in-memory forge double over
 the shared private HTTP/1.1 client.
@@ -117,11 +131,25 @@ Liquid #74 adds the typed declarative `.liquid` configuration language, exact so
 diagnostics, canonical formatting and package/target/source lowering, repository-local includes,
 digest-verified source fetch, action-backed generators with provenance, and configured target CLI.
 Configured target results must pass the relocation publication check before they are returned.
+Liquid #42 adds configured exclusive checkout path patterns, holder/time/reason lock records,
+holder-aware write refusal and release, signed offline reconciliation through conflict values,
+connected lake authorization callbacks, daemon lock snapshots, and `liquid lock`/`unlock`.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+local-intent operation and session undo reports, operation-log CLI output, and historical refs,
+exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
+transient presence, compaction epochs, and delegation-attributed publication. Directory
+Liquid #75 adds the provenance-linked Spack exporter, public `import_spack` task, formatter-backed
+package documents and canonical universe records, digest pinning for patches, explicit loss reports,
+the 500-package resolution fixture, and the opt-in Linux build subset. Spack is the first importer;
+nixpkgs and conda-forge remain later options.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
 locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
-transient presence, compaction epochs, and delegation-attributed publication. Directory
+transient presence, compaction epochs, and delegation-attributed publication. Liquid #248 adds
+stable-node per-line attribution through the repository and daemon APIs, `liquid blame`, and
+versioned presence, lease, and attribution callbacks for native plugins. Directory
 Liquid #59 configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
 `liquid wrap`, retains configured CMake inputs, requires a fully cached second run, and compares
 the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI transport and
@@ -136,9 +164,12 @@ repository sync server and the `serve sync` HTTP adapter; liquid #177 adds per-c
 change-graph-derived reference authorization; liquid #189 adds per-reference accepted/refused
 outcomes and opt-in atomic pushes. Liquid #195 adds persisted three-tree folder reconciliation,
 named conflict values, resumed transfer, reference refusal reporting, path history and restore,
-`liquid drive`, and the daemon drive target. Liquid #235 adds persisted per-path device state,
+`liquid drive`, and the daemon drive target. Liquid #258 binds imported active directory documents
+to each destination repository's actor so concurrent offline clients keep both named histories.
+Liquid #235 adds persisted per-path device state,
 pinning, policy-driven hydration, offline read and write status, FUSE xattrs, and Linux desktop
-badges. Full materialisation works on
+badges. Liquid #247 adds `liquid clone` through the drive client, with persisted remote
+configuration and a fully materialised plain checkout. Full materialisation works on
 every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
@@ -153,6 +184,9 @@ transparency inclusion verification.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
+Liquid #186 adds repository-pinned TUF root trust, old-root and new-root threshold rotation,
+timestamp/snapshot/targets verification with rollback protection, and complete-target length and
+SHA-256 acceptance checks. `liquid registry trust` pins and displays the root.
 
 Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
 enumeration used by CLI record views.
@@ -173,6 +207,12 @@ Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and re
 approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
 line-hunk stale reports, and signed disjoint or forced re-validation records.
+Liquid #82 adds the typed CLI command and flag table, generated Markdown, stable JSON and man-page
+reference, executable user guides, and the documentation-site CI artifact. `liquid diff` exposes
+the existing public change-diff API for the first-repository guide.
+Liquid #54 adds the `liquid-offline` CTest suite, which reruns every CLI test in the macOS or Linux
+sandbox with networking denied and verifies the only intentional network requirements before a
+handler starts.
 Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
 3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
 anchors and historical certificate validation.
@@ -211,6 +251,10 @@ docs/build/<topic>.md
     local and continuous-integration build verification
 docs/standards/
     external standards liquid depends on, vendored
+docs/reference/cli/
+    generated command and flag reference; edit the CLI table, not these pages
+docs/guides/
+    executable user workflows whose marked shell blocks run in CTest
 ```
 
 ### `sources.md` is evidence
@@ -276,7 +320,7 @@ print("broken links:",len(bad)); [print(" ",b) for b in bad]
 PY
 ```
 
-**Keep counts accurate.** `README.md` states topic and feature counts. Recount, never
+**Keep counts accurate.** `docs/README.md` states topic and feature counts. Recount, never
 estimate:
 
 ```sh
@@ -299,15 +343,20 @@ skipped. Treat them as the same checklist, not as an afterthought.
 2. **Count sync** (above) — recount, never estimate.
 3. **Indexes.** A new research topic adds a row to `docs/research/README.md`; a new
    feature doc adds a row to `docs/features/README.md`. Tables — add the row now.
-4. **Root `README.md` and this file.** Any change to what liquid *is*, what it *does*, a
-   new top-level directory, or a new convention updates **both**. A new `docs/`
-   subdirectory that appears in neither is a bug.
+4. **The status record, the docs index, and this file.** Any change to what liquid *is* or
+   what it *does* updates `docs/features/README.md`, the implementation status in
+   `docs/library/status.md`, and this file. A new top-level directory or a new convention
+   updates the root `README.md` and this file. The root `README.md` is a front door: a
+   one-paragraph statement, a short status, build commands, and links; feature and status
+   detail lives under `docs/`. A new `docs/` subdirectory that is not in `docs/README.md`
+   is a bug.
 5. **CI changes.** Run the local proof command before pushing, then wait for every platform
    and sanitizer check and record their results in the pull request.
 
 **This last one has already been missed.** `docs/standards/` existed in the tree before
 it appeared in either file, and TAAP was the security model before this file mentioned
-it. If a change is worth a feature doc, it is worth a line in the README.
+it. If a change is worth a feature doc, it is worth a row in `docs/README.md` and a line in
+`docs/library/status.md`.
 
 **Correct the record when research contradicts a spec.** This has already happened
 twice and both corrections improved the design. Say what changed and why, in the doc.

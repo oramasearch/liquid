@@ -451,7 +451,7 @@ auto frontend_module::language_details() const -> std::vector<frontend_language>
     output.reserve(descriptor->language_count);
     for (std::size_t index = 0; index < descriptor->language_count; ++index) {
         const auto& registered = descriptor->languages[index];
-        auto value = frontend_language{.language = registered.name};
+        auto value = frontend_language{.language = registered.name, .module = descriptor->name};
         value.extensions.reserve(registered.extension_count);
         for (std::size_t extension = 0; extension < registered.extension_count; ++extension) {
             value.extensions.emplace_back(registered.extensions[extension]);
@@ -728,18 +728,22 @@ frontend_registry::~frontend_registry() = default;
 frontend_registry::frontend_registry(frontend_registry&&) noexcept = default;
 auto frontend_registry::operator=(frontend_registry&&) noexcept -> frontend_registry& = default;
 
+auto frontend_registry::global() -> frontend_registry& {
+    static auto value = frontend_registry{};
+    return value;
+}
+
 auto frontend_registry::add(frontend_module module) -> result<void> {
     if (module.name().empty()) {
         return std::unexpected(frontend_error(
             errc::invalid_argument, "frontend module is empty", "frontend registry"));
     }
-    for (const auto& language : module.languages()) {
-        for (const auto& registered : impl_->modules) {
-            if (registered.supports(language)) {
-                return std::unexpected(frontend_error(
-                    errc::already_exists, "frontend language is already registered", language));
-            }
-        }
+    const auto duplicate = std::ranges::find_if(
+        impl_->modules, [&](const auto& registered) { return registered.name() == module.name(); });
+    if (duplicate != impl_->modules.end()) {
+        return std::unexpected(frontend_error(errc::already_exists,
+                                              "frontend module is already registered",
+                                              std::string{module.name()}));
     }
     impl_->modules.push_back(std::move(module));
     return {};
@@ -754,22 +758,52 @@ auto frontend_registry::load(std::filesystem::path shared_object) -> result<void
 }
 
 auto frontend_registry::find(std::string_view language) const -> result<const frontend_module*> {
-    const auto found = std::ranges::find_if(
-        impl_->modules, [&](const auto& module) { return module.supports(language); });
-    if (found == impl_->modules.end()) {
+    const auto* found = static_cast<const frontend_module*>(nullptr);
+    auto found_tier = frontend_tier_mechanism::grammar;
+    for (const auto& module : impl_->modules) {
+        const auto details = module.language_details();
+        const auto detail = std::ranges::find(details, language, &frontend_language::language);
+        if (detail == details.end()) {
+            continue;
+        }
+        if (!found || detail->tier_mechanism == frontend_tier_mechanism::frontend) {
+            found = &module;
+            found_tier = detail->tier_mechanism;
+        }
+        if (found_tier == frontend_tier_mechanism::frontend) {
+            break;
+        }
+    }
+    if (!found) {
         return std::unexpected(frontend_error(
             errc::not_found, "no frontend is registered for the language", std::string{language}));
     }
-    return &*found;
+    return found;
 }
 
 auto frontend_registry::languages() const -> std::vector<frontend_language> {
     auto output = std::vector<frontend_language>{};
     for (const auto& module : impl_->modules) {
         auto registered = module.language_details();
-        output.insert(output.end(),
-                      std::make_move_iterator(registered.begin()),
-                      std::make_move_iterator(registered.end()));
+        for (auto& language : registered) {
+            auto current =
+                std::ranges::find(output, language.language, &frontend_language::language);
+            if (current == output.end()) {
+                output.push_back(std::move(language));
+                continue;
+            }
+            current->extensions.insert(
+                current->extensions.end(), language.extensions.begin(), language.extensions.end());
+            std::ranges::sort(current->extensions);
+            current->extensions.erase(
+                std::unique(current->extensions.begin(), current->extensions.end()),
+                current->extensions.end());
+            if (language.tier_mechanism == frontend_tier_mechanism::frontend) {
+                current->tier_mechanism = language.tier_mechanism;
+                current->grammar_digest = std::move(language.grammar_digest);
+                current->module = std::move(language.module);
+            }
+        }
     }
     std::ranges::sort(output, {}, &frontend_language::language);
     return output;

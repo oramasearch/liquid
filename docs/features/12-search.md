@@ -8,8 +8,8 @@
 named-reference search with content-addressed BM25F, verified positional trigrams, a parallel
 current-blob scan, measured cost planning, atomic publication, daemon drip updates, public result
 and plan APIs, and `liquid search --explain`. See
-[`docs/library/search.md`](../library/search.md). Packaged-artifact search waits for the Phase 5
-format registry; symbols remain #66.
+[`docs/library/search.md`](../library/search.md). The Phase 5 format registry supplies decoded
+archive, package, document, and model-file entries to artifact search; symbols remain #66.
 
 ## Three executors, one query planner
 

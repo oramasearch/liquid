@@ -61,9 +61,10 @@ reformat only source.cpp
 text (no grammar for .abc) notes.abc
 ```
 
-With `--json`, every selected entry includes `tier`, `tier_reason`, and either a `structural`
-object or `null`. Structural objects contain `language`, `grammar`, `formatting_only`, and an
-ordered `edits` array. Ranges contain byte, line, and column positions.
+With `--json`, every selected entry includes the shared support `tier`, structural `diff_tier`,
+`tier_reason`, and either a `structural` object or `null`. Structural objects contain `language`,
+`grammar`, `formatting_only`, and an ordered `edits` array. Ranges contain byte, line, and column
+positions.
 
 ## Verification and measurement
 

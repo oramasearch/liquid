@@ -44,7 +44,7 @@ if(NOT json_result EQUAL 0)
 endif()
 string(JSON json_entries LENGTH "${json_output}")
 string(JSON json_path GET "${json_output}" 0 path)
-string(JSON json_tier GET "${json_output}" 0 tier)
+string(JSON json_tier GET "${json_output}" 0 diff_tier)
 string(JSON json_language GET "${json_output}" 0 structural language)
 string(JSON json_edit GET "${json_output}" 0 structural edits 0 kind)
 if(NOT json_entries EQUAL 1 OR NOT json_path STREQUAL "functions.c" OR

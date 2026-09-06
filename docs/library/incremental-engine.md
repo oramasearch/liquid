@@ -84,6 +84,12 @@ Unlike ordered `daemon_delivery`, this transient callback has no cursor, retry b
 file entry. Repository sync separately forwards the same value to peers. Liquify can therefore
 render current actor ranges without turning cursor motion into repository history.
 
+Exclusive checkout uses `lock` and `unlock` requests on the same connection. After a successful
+repository operation, every target receives the complete current `exclusive_lock` list through
+`daemon_target::deliver_locks`. Like presence, this state snapshot does not advance a persisted
+drip cursor. The repository still writes signed lock drips for persistence and peer sync; see
+[locks.md](locks.md).
+
 Structural editing uses `edit_preview` and `edit_apply` operations on that same framed connection.
 Their payload is the canonical public request or preview record; their response is the canonical
 preview or result record. The daemon calls repository tasks against its checkout, preserving graph

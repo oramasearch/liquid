@@ -10,6 +10,10 @@ errors, progress, and cancellation types while registering queries, commands, an
 Its optional `parse` tail returns the compact canonical syntax value shared by build, symbol, and
 source-diff queries. `frontend.hpp` exposes that value and its digest-keyed graph query;
 `repository.hpp` exposes structural edits and explicit structural, text, or binary diff tiers.
+`tiers.hpp` defines the pure support matrix projected from the process-global frontend registry,
+the built-in format registry, and the declared platform backends.
+errors, progress, and cancellation types while registering queries, commands, panels, and a
+versioned presence, lease, and attribution event table.
 
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.
@@ -25,13 +29,24 @@ and live local-byte accounting for long-running node stores.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
+claims, exclusive checkout rules and records, transient presence, and epoch compaction reports.
+`repository.hpp` exposes lock acquisition, holder-only release, configuration, enumeration, and
+the optional connected authorization callback. `daemon.hpp` exposes lock requests and complete
+lock-set delivery to local targets.
 claims, transient presence, and epoch compaction reports.
+claims, transient presence, epoch compaction reports, and per-line actor/session/change
+attribution records used by the repository and daemon APIs.
+`tuf.hpp` defines the repository-backed trusted-root bootstrap, ordered metadata update verifier,
+and complete target-byte verification gate used by registry and drive clients.
 
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
 `build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
 install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
+`projection.hpp` exposes deterministic package, OCI, Helm, OSTree, and bootc targets. OSTree and
+bootc sources carry optional relative mount paths, options select the ref and repository mode, and
+the report returns the OSTree commit independently of an OCI image digest.
 
 `admission.hpp` defines the versioned image-admission policy and CBOR/JSON decision record,
 rule-attributed review results, injected attestation-source and transparency-log interfaces, the
@@ -43,6 +58,8 @@ engine and its clause encoding stay private.
 `configuration.hpp` defines the `.liquid` AST, exact diagnostics, synchronous check/lower/format
 operations, canonical target/source codecs, asynchronous source fetch, action-backed generators,
 and configured target execution.
+`import.hpp` defines Spack import reports and loss categories, stable text and JSON report codecs,
+offline patch-byte injection, optional target toolchain binding, and the coroutine import task.
 `deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
 status calls for an operator-owned control plane. Its interim image input is an OCI reference
 pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.

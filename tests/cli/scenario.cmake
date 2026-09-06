@@ -17,6 +17,18 @@ function(run_liquid output error result directory)
   set("${result}" "${command_result}" PARENT_SCOPE)
 endfunction()
 
+function(run_liquid_as output error result directory identity)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "LIQUID_HOME=${identity}" "${LIQUID_CLI}" ${ARGN}
+    WORKING_DIRECTORY "${directory}"
+    RESULT_VARIABLE command_result
+    OUTPUT_VARIABLE command_output
+    ERROR_VARIABLE command_error)
+  set("${output}" "${command_output}" PARENT_SCOPE)
+  set("${error}" "${command_error}" PARENT_SCOPE)
+  set("${result}" "${command_result}" PARENT_SCOPE)
+endfunction()
+
 function(require_success result output error)
   if(NOT ${result} EQUAL 0)
     message(FATAL_ERROR "liquid failed with ${${result}}:\n${${output}}${${error}}")
@@ -29,6 +41,8 @@ file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/workspace/notes")
 file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/other")
 file(WRITE "${LIQUID_CLI_ROOT}/workspace/first.txt" "first\n")
 file(WRITE "${LIQUID_CLI_ROOT}/workspace/notes/second.txt" "second\n")
+file(WRITE "${LIQUID_CLI_ROOT}/workspace/liquid.liquid"
+  "lock nested { paths: [path \"nested\"] }\n")
 file(WRITE "${LIQUID_CLI_ROOT}/other/child.txt" "child\n")
 
 set(workspace "${LIQUID_CLI_ROOT}/workspace")
@@ -42,10 +56,13 @@ run_liquid(search_plan_output search_plan_error search_plan_result "${workspace}
   search --explain "\"first\"")
 require_success(search_plan_result search_plan_output search_plan_error)
 string(JSON search_executor GET "${search_plan_output}" executor)
+string(JSON search_tier GET "${search_plan_output}" tier level)
+string(JSON search_mechanism GET "${search_plan_output}" tier mechanism)
 string(JSON search_kind GET "${search_plan_output}" query_kind)
 string(JSON search_alternatives LENGTH "${search_plan_output}" alternatives)
 string(JSON search_drips GET "${search_plan_output}" inputs drips_since_index_update)
-if(NOT search_executor STREQUAL "scan" OR NOT search_kind STREQUAL "literal" OR
+if(NOT search_tier EQUAL 0 OR NOT search_mechanism STREQUAL "chunking" OR
+   NOT search_executor STREQUAL "scan" OR NOT search_kind STREQUAL "literal" OR
    NOT search_alternatives EQUAL 3 OR NOT search_drips EQUAL 0)
   message(FATAL_ERROR "search explain JSON changed: ${search_plan_output}")
 endif()
@@ -186,7 +203,8 @@ if(NOT session_applied)
 endif()
 run_liquid(lock_output lock_error lock_result "${workspace}" lock nested)
 require_success(lock_result lock_output lock_error)
-run_liquid(locked_output locked_error locked_result "${workspace}" rm nested)
+run_liquid_as(locked_output locked_error locked_result "${workspace}"
+  "${LIQUID_CLI_ROOT}/writer-identity" rm nested)
 if(locked_result EQUAL 0)
   message(FATAL_ERROR "locked mutation unexpectedly succeeded")
 endif()

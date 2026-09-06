@@ -142,7 +142,8 @@ result<oci_descriptor> oci_manifest(std::filesystem::path root,
                                     const oci_descriptor& config,
                                     std::span<const oci_descriptor> layers,
                                     std::optional<oci_descriptor> subject,
-                                    std::string artifact_type) {
+                                    std::string artifact_type,
+                                    std::map<std::string, std::string> annotations) {
     auto json = std::string{"{\"schemaVersion\":2,\"mediaType\":"} +
                 quote("application/vnd.oci.image.manifest.v1+json");
     if (!artifact_type.empty()) {
@@ -158,7 +159,20 @@ result<oci_descriptor> oci_manifest(std::filesystem::path root,
         }
         json += descriptor_json(layers[index]);
     }
-    json += "]}";
+    json.push_back(']');
+    if (!annotations.empty()) {
+        json += ",\"annotations\":{";
+        auto first = true;
+        for (const auto& [name, value] : annotations) {
+            if (!first) {
+                json.push_back(',');
+            }
+            first = false;
+            json += quote(name) + ":" + quote(value);
+        }
+        json.push_back('}');
+    }
+    json.push_back('}');
     auto descriptor = oci_blob(
         root, formats::package::text_bytes(json), "application/vnd.oci.image.manifest.v1+json");
     if (descriptor) {
@@ -298,8 +312,7 @@ result<void> write_oci_index(std::filesystem::path root,
 runtime::task<projection_report> project_oci(repository& source, prepared_projection prepared) {
     auto built = co_await runtime::offload(
         [prepared]() mutable
-            -> result<
-                std::tuple<std::filesystem::path, oci_descriptor, std::vector<oci_descriptor>>> {
+        -> result<std::tuple<std::filesystem::path, oci_descriptor, std::vector<oci_descriptor>>> {
             const auto root = prepared.options.output_directory /
                               (prepared.metadata.name + "-" + prepared.metadata.version + ".oci");
             auto groups = std::array<std::vector<formats::package::file>, 3>{};

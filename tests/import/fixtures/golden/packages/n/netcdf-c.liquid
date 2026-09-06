@@ -1,0 +1,24 @@
+source netcdf-c-1.15.0 {
+    digest: sha256:69c7bac593ba9537d2b7a28303b0da629c547642a82ee7f8a2db4922629e271a
+    kind: archive
+    url: "https://example.invalid/netcdf-c-1.15.0.tar.gz"
+}
+
+package netcdf-c {
+    versions: [1.15.0]
+    depends_on hdf5 {
+        type: link
+    }
+    depends_on zlib {
+        type: link
+    }
+}
+
+build netcdf-c {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/69c7bac593ba9537d2b7a28303b0da629c547642a82ee7f8a2db4922629e271a -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["netcdf-c-1.15.0"]
+    install {
+        layout: prefix
+    }
+}

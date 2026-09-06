@@ -35,6 +35,19 @@ auto deb_dependency(std::string_view soname) -> std::string {
     return found == packages.end() ? lower(std::string{soname}) : std::string{found->second};
 }
 
+auto arch_dependency(std::string_view soname) -> std::string {
+    static const auto packages =
+        std::map<std::string_view, std::string_view>{{"libc.so.6", "glibc"},
+                                                     {"libdl.so.2", "glibc"},
+                                                     {"libm.so.6", "glibc"},
+                                                     {"libpthread.so.0", "glibc"},
+                                                     {"librt.so.1", "glibc"},
+                                                     {"libstdc++.so.6", "gcc-libs"},
+                                                     {"libgcc_s.so.1", "gcc-libs"}};
+    const auto found = packages.find(soname);
+    return found == packages.end() ? lower(std::string{soname}) : std::string{found->second};
+}
+
 auto unique(std::vector<std::string> values) -> std::vector<std::string> {
     std::ranges::sort(values);
     values.erase(std::unique(values.begin(), values.end()), values.end());
@@ -87,6 +100,9 @@ std::vector<std::string> dependencies(const prepared_projection& prepared,
             break;
         case projection_target::apk:
             output.push_back("so:" + soname);
+            break;
+        case projection_target::pkgbuild:
+            output.push_back(arch_dependency(soname));
             break;
         default:
             break;

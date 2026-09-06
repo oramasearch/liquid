@@ -5,7 +5,8 @@ and size policy, extended-attribute mappings, and runtime queue latency. The mou
 when a FUSE backend and device are available and otherwise reports a skip with the platform
 diagnosis. On Linux it also sets, gets, and lists the drive attributes through the mounted path.
 An unavailable remote fixture verifies that an unhydrated read returns `EAGAIN` and persists the
-path-specific offline reason.
+path-specific offline reason. The mount uses a second TAAP identity for its locked-file write so
+the expected `EACCES` exercises another holder's configured exclusive checkout.
 See [`docs/library/vfs.md`](../../docs/library/vfs.md) for the complete scenario.
 
 Tree and mount fixtures allocate their named directories beneath the unique process root specified

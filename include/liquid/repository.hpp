@@ -153,8 +153,10 @@ struct LIQUID_EXPORT repository_options {
     flow_config flow{};
     std::optional<remote_config> remote;
     data_config data{};
+    lock_config locks{};
     std::optional<session_id> session;
     lease_authorizer authorize_lease;
+    lock_authorizer authorize_lock;
     epoch_acknowledger acknowledge_epoch;
     bool defer_tree_load{};
 };
@@ -544,6 +546,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
     map_anchors(std::span<const text_anchor> anchors, change_id target);
     [[nodiscard]] runtime::task<std::vector<path_history_entry>> history(std::string path);
+    [[nodiscard]] runtime::task<std::vector<line_attribution>> attribution(std::string path,
+                                                                           change_id change);
     [[nodiscard]] runtime::task<void> restore(std::string path, change_id change);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
     [[nodiscard]] runtime::task<action_input> action(digest id);
@@ -568,8 +572,12 @@ public:
                                                           undo_options options = {});
     [[nodiscard]] runtime::task<session> fork_session(session_options options);
     [[nodiscard]] runtime::task<session> open_session(session_id id);
-    [[nodiscard]] runtime::task<void> lock(std::string path);
+    [[nodiscard]] runtime::task<void> lock(std::string path,
+                                           std::string reason = "exclusive checkout");
     [[nodiscard]] runtime::task<void> unlock(std::string path);
+    [[nodiscard]] runtime::task<std::vector<exclusive_lock>> locks();
+    [[nodiscard]] runtime::task<void> set_lock_configuration(lock_config configuration);
+    [[nodiscard]] lock_config lock_configuration() const;
     [[nodiscard]] runtime::task<void> lease(lease_claim claim, std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<void> release(lease_claim claim);
     [[nodiscard]] runtime::task<std::vector<semantic_lease>> leases();

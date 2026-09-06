@@ -16,6 +16,7 @@
 #include "liquid/hash.hpp"
 #include "liquid/resolve.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/session.hpp"
 
 namespace liquid {
 
@@ -154,6 +155,7 @@ struct LIQUID_EXPORT lowered_configuration {
     std::vector<target> targets;
     std::vector<source> sources;
     std::vector<configuration_generator> generators;
+    lock_config locks;
 };
 
 [[nodiscard]] LIQUID_EXPORT result<configuration_document>
