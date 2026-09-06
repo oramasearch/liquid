@@ -26,6 +26,9 @@ The main test binary compiles the private signature translation unit directly so
 runs when libliquid's internal symbols are hidden by a shared build.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
+`test_tuf.cpp` verifies Lake-produced root, targets, snapshot, and timestamp metadata; unique-key
+thresholds; expiry and persisted rollback checks; exact metadata bindings; root-key recovery; full
+target hashing; and the `registry trust` CLI.
 
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on

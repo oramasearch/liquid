@@ -122,6 +122,10 @@ offline reasons; `pin` and `unpin` resolve the containing drive and call the pub
 long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
 restores one as an ordinary repository drip through the public repository API.
 
+`registry.cpp` implements `registry trust pin` and `registry trust show` through the public TUF
+client. It stores the exact trusted-root bytes and their SHA-256 pin in repository configuration;
+it does not implement artifact transport.
+
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 

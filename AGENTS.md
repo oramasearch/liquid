@@ -7,7 +7,8 @@ Non-negotiables, restated from `CLAUDE.md` and the org conventions in
 [`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge):
 
 - Every change documents itself in `docs/<topic>/*.md` **in the same commit**, and updates the
-  status lines in `README.md` and `CLAUDE.md` when they stop being true.
+  status in `docs/library/status.md` and the status lines in `CLAUDE.md` when they stop being
+  true. The root `README.md` is a front door and carries only a short status.
 - **No AI attribution anywhere.** No `Co-Authored-By`, no "Generated with", no session or
   model trailers, in commits or pull requests.
 - No time estimates. The word "seam" is banned.
