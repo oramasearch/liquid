@@ -1294,6 +1294,7 @@ runtime::task<checkpoint_trust> trust_checkpoint(repository& destination,
 
 struct log_client::impl {
     log_source* source{};
+    std::vector<tile> tile_cache;
 };
 
 log_client::log_client(log_source& source) : impl_(std::make_unique<impl>(impl{&source})) {}
@@ -1319,7 +1320,43 @@ runtime::task<checkpoint> log_client::current_checkpoint() {
 
 namespace {
 
-auto checked_entries(log_source& source, const checkpoint& value)
+auto tile_name(std::uint32_t level, std::uint64_t index, std::uint64_t width) -> std::string {
+    return "tile level=" + std::to_string(level) + " index=" + std::to_string(index) +
+           " width=" + std::to_string(width);
+}
+
+auto tile_failure(error cause, std::uint32_t level, std::uint64_t index, std::uint64_t width)
+    -> error {
+    cause.message = tile_name(level, index, width) + ": " + cause.message;
+    return cause;
+}
+
+auto load_tile(log_source& source,
+               std::span<const tile> cache,
+               std::vector<tile>& pending,
+               std::uint32_t level,
+               std::uint64_t index,
+               std::uint64_t width) -> runtime::task<tile> {
+    const auto matches = [=](const tile& candidate) {
+        return candidate.level == level && candidate.index == index && candidate.width == width;
+    };
+    if (const auto cached = std::ranges::find_if(cache, matches); cached != cache.end()) {
+        pending.push_back(*cached);
+        co_return *cached;
+    }
+    auto received = co_await source.get_tile(level, index, width);
+    if (!received) {
+        co_return std::unexpected(tile_failure(received.error(), level, index, width));
+    }
+    if (!matches(*received)) {
+        co_return std::unexpected(tile_failure(
+            failure(errc::corrupt, "metadata does not match request"), level, index, width));
+    }
+    pending.push_back(*received);
+    co_return std::move(*received);
+}
+
+auto checked_entries(log_source& source, const checkpoint& value, std::vector<tile>& cache)
     -> runtime::task<std::vector<std::vector<std::byte>>> {
     if (value.tree_size == 0) {
         auto root = sha256({});
@@ -1329,22 +1366,19 @@ auto checked_entries(log_source& source, const checkpoint& value)
         }
         co_return std::vector<std::vector<std::byte>>{};
     }
+    auto pending = std::vector<tile>{};
     auto entries = std::vector<std::vector<std::byte>>{};
     entries.reserve(static_cast<std::size_t>(value.tree_size));
     for (auto start = std::uint64_t{}; start < value.tree_size; start += tile_width) {
         const auto width = std::min<std::uint64_t>(tile_width, value.tree_size - start);
-        auto received = co_await source.get_tile(0, start / tile_width, width);
+        const auto index = start / tile_width;
+        auto received = co_await load_tile(source, cache, pending, 0, index, width);
         if (!received) {
             co_return std::unexpected(received.error());
         }
-        if (received->level != 0 || received->index != start / tile_width ||
-            received->width != width) {
-            co_return std::unexpected(
-                failure(errc::corrupt, "entry tile metadata does not match request"));
-        }
         auto decoded = received->entries();
         if (!decoded) {
-            co_return std::unexpected(decoded.error());
+            co_return std::unexpected(tile_failure(decoded.error(), 0, index, width));
         }
         entries.insert(entries.end(),
                        std::make_move_iterator(decoded->begin()),
@@ -1371,22 +1405,19 @@ auto checked_entries(log_source& source, const checkpoint& value)
         }
         for (auto start = std::uint64_t{}; start < expected.size(); start += tile_width) {
             const auto width = std::min<std::uint64_t>(tile_width, expected.size() - start);
-            auto received = co_await source.get_tile(level, start / tile_width, width);
+            const auto index = start / tile_width;
+            auto received = co_await load_tile(source, cache, pending, level, index, width);
             if (!received) {
                 co_return std::unexpected(received.error());
             }
-            if (received->level != level || received->index != start / tile_width ||
-                received->width != width) {
-                co_return std::unexpected(
-                    failure(errc::corrupt, "hash tile metadata does not match request"));
-            }
             auto decoded = received->hashes();
             if (!decoded) {
-                co_return std::unexpected(decoded.error());
+                co_return std::unexpected(tile_failure(decoded.error(), level, index, width));
             }
             if (!std::ranges::equal(*decoded, std::span{expected}.subspan(start, width))) {
                 co_return std::unexpected(
-                    failure(errc::corrupt, "parent hash tile does not match children"));
+                    failure(errc::corrupt,
+                            tile_name(level, index, width) + " does not match its child hashes"));
             }
         }
         level_values = std::move(expected);
@@ -1396,13 +1427,14 @@ auto checked_entries(log_source& source, const checkpoint& value)
         co_return std::unexpected(
             failure(errc::corrupt, "entry and parent tiles do not reach checkpoint root"));
     }
+    cache = std::move(pending);
     co_return entries;
 }
 
 } // namespace
 
 runtime::task<void> log_client::verify_tiles(checkpoint value) {
-    auto entries = co_await checked_entries(*impl_->source, value);
+    auto entries = co_await checked_entries(*impl_->source, value, impl_->tile_cache);
     if (!entries) {
         co_return std::unexpected(entries.error());
     }
@@ -1420,7 +1452,7 @@ runtime::task<checkpoint_trust> log_client::verify_inclusion(repository& destina
     if (!selected) {
         co_return std::unexpected(selected.error());
     }
-    auto entries = co_await checked_entries(*impl_->source, *selected);
+    auto entries = co_await checked_entries(*impl_->source, *selected, impl_->tile_cache);
     if (!entries) {
         co_return std::unexpected(entries.error());
     }
@@ -1447,6 +1479,10 @@ runtime::task<checkpoint_trust> log_client::verify_consistency(repository& desti
     auto selected = co_await current_checkpoint();
     if (!selected) {
         co_return std::unexpected(selected.error());
+    }
+    auto entries = co_await checked_entries(*impl_->source, *selected, impl_->tile_cache);
+    if (!entries) {
+        co_return std::unexpected(entries.error());
     }
     auto previous = co_await trusted_checkpoint(destination, impl_->source->name());
     if (!previous) {
@@ -1481,7 +1517,7 @@ runtime::task<identity_scan> log_client::scan(std::string identity) {
     if (!selected) {
         co_return std::unexpected(selected.error());
     }
-    auto entries = co_await checked_entries(*impl_->source, *selected);
+    auto entries = co_await checked_entries(*impl_->source, *selected, impl_->tile_cache);
     if (!entries) {
         co_return std::unexpected(entries.error());
     }

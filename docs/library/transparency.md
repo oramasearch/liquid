@@ -94,13 +94,24 @@ met`.
 Entry tiles use `LAKE-TILE-1\n` followed by nonzero big-endian lengths and canonical TAAP
 attestations. Hash tiles use `LAKE-HASH-TILE-1\n` followed by 32-byte hashes. Every tile hash is
 validated, every leaf is recomputed as `SHA256(0x00 || entry)`, and every parent as
-`SHA256(0x01 || left || right)`. The verifier fetches and compares available parent tiles before
-calculating the split-tree root, refusing an altered parent even if its leaf tile is valid.
+`SHA256(0x01 || left || right)`. The verifier requests the exact full or partial tile at level zero,
+then every non-empty parent level through the checkpoint. Each received parent value is compared
+with the child pair that produced it before the split-tree root is compared with the checkpoint.
+An error names the level, index, and width of the missing, malformed, or mismatched tile.
+
+`log_client` keeps a per-client cache keyed by that exact coordinate. The cache stores immutable
+tile bytes, never a trusted verdict. Every use decodes the cached bytes again, recomputes every leaf
+and parent, and authenticates the complete walk to the selected checkpoint. A failed walk does not
+add newly received tiles to the cache. A successful walk replaces the cache with the exact tile set
+for that checkpoint, which drops superseded partial widths instead of retaining one version per log
+append.
 
 An inclusion proof must bind the supplied exact canonical TAAP bytes, leaf index, tree size, root,
-and checkpoint. A consistency proof must bind both the stored and new checkpoints and prove an
-append-only extension. Identity scans validate all tiles to the current checkpoint and return every
-canonical TAAP attestation naming the requested identity.
+and checkpoint. Before a consistency proof is requested or a bootstrap checkpoint is stored, the
+same complete tile walk authenticates the selected checkpoint. The consistency proof then binds
+both the stored and new checkpoints and proves an append-only extension. Identity scans validate
+all tiles to the current checkpoint and return every canonical TAAP attestation naming the
+requested identity.
 
 The most recent accepted checkpoint is a canonical-CBOR repository metadata record under a
 SHA-256-derived log name, not a separate database. On first use, operators can pin a checkpoint
@@ -114,4 +125,28 @@ timestamps <log-url>` and `liquid log verify --timestamps` retain the RFC 3161/R
 
 `tests/fixtures/transparency/fixture.json` is copied from Lake commit `cb60ed4` and is generated
 by Lake's `tests/fixtures/transparency/regenerate.py`. The tests use its checkpoint, tiles, and
-proofs and cover modified, missing, reordered, substituted, forged, and parent-only corrupt data.
+proofs and cover modified, missing, reordered, substituted, forged, cached, and parent-only corrupt
+data. The consistency regression removes the middle hash level and proves that verification fails
+before requesting its otherwise valid proof.
+
+## Tile-walk measurement
+
+`liquid-transparency-measure` constructs a 65,536-leaf (`2^16`) log in memory before timing, then
+verifies it once from its source and once from the client's byte cache. The timed region includes
+tile lookup and copies, decoding, SHA-256 of every tile, leaf, parent, and split-tree root, and all
+parent comparisons. It excludes construction of the synthetic log, checkpoint signatures, network
+transport, and inclusion or consistency proof verification.
+
+Run a Release build with:
+
+```sh
+cmake --build build-issue83-measure --target liquid-transparency-measure
+build-issue83-measure/tests/liquid-transparency-measure
+```
+
+Five runs on 2026-09-06 used an Apple M3 Max with 64 GiB, macOS 14.6.1, and Homebrew Clang 22.1.8.
+The median cold walk was 148,012 microseconds and the median cached walk was 149,409 microseconds.
+Each cold walk read 137 exact tiles and 2,885,561 encoded bytes; each cached walk made zero source
+reads but repeated the full parent and checkpoint authentication. Host load was
+`198.13 201.58 132.04`, so these numbers record the accepted work and cache behavior rather than an
+idle-host throughput baseline.
