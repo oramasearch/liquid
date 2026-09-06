@@ -42,7 +42,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`mount`](mount.md) | mount a lazy working tree | available where FUSE is available |
 | [`materialise`](materialise.md) | write a full working tree | available |
 | [`gc`](gc.md) | checkpoint and collect a repository | available |
-| [`import`](import.md) | import a local tree or Git repository | available |
+| [`import`](import.md) | import a local tree, Git repository, or Spack package universe | available |
 | [`export`](export.md) | export as a Git repository | available |
 | [`retain`](retain.md) | explain retention for an object | available |
 | [`identity`](identity.md) | show or rotate the device identity | available |
