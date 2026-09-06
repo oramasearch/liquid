@@ -1,0 +1,596 @@
+[New LWP 57]
+[New LWP 56]
+[New LWP 55]
+[New LWP 54]
+[New LWP 53]
+[New LWP 52]
+[New LWP 51]
+[New LWP 50]
+[New LWP 49]
+[New LWP 48]
+[New LWP 47]
+[New LWP 46]
+[New LWP 45]
+[New LWP 44]
+[New LWP 43]
+[New LWP 42]
+[New LWP 41]
+[New LWP 40]
+[New LWP 39]
+[New LWP 38]
+[New LWP 37]
+[New LWP 36]
+[New LWP 35]
+[New LWP 34]
+[New LWP 33]
+[New LWP 32]
+[New LWP 31]
+[New LWP 30]
+[New LWP 29]
+[New LWP 28]
+[New LWP 27]
+[New LWP 26]
+[New LWP 25]
+[New LWP 24]
+[New LWP 23]
+[New LWP 22]
+[New LWP 21]
+[New LWP 20]
+[New LWP 19]
+[New LWP 18]
+[New LWP 17]
+[New LWP 16]
+[New LWP 15]
+[New LWP 14]
+[New LWP 13]
+[New LWP 12]
+[New LWP 11]
+
+warning: 57	./nptl/futex-internal.c: No such file or directory
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/aarch64-linux-gnu/libthread_db.so.1".
+0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+
+Thread 48 (Thread 0xffffaa80ee00 (LWP 11) "tpool-svc-1"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bd94c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bd94c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bd94c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bd8f0, cond=0xaaaae80bd920) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bd920, mutex=0xaaaae80bd8f0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 47 (Thread 0xffffa9e0ee00 (LWP 12) "tpool-svc-2"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bd94c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bd94c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bd94c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bd8f0, cond=0xaaaae80bd920) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bd920, mutex=0xaaaae80bd8f0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 46 (Thread 0xffffa940ee00 (LWP 13) "tpool-svc-3"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bd94c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bd94c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bd94c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bd8f0, cond=0xaaaae80bd920) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bd920, mutex=0xaaaae80bd8f0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 45 (Thread 0xffffa8a0ee00 (LWP 14) "tpool-svc-4"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bd948) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bd948) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bd948, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bd8f0, cond=0xaaaae80bd920) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bd920, mutex=0xaaaae80bd8f0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 44 (Thread 0xffffa800ee00 (LWP 15) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 43 (Thread 0xffffa760ee00 (LWP 16) "liquid"):
+#0  0x0000ffffaa92bd34 in __GI_epoll_pwait (epfd=3, events=0xaaaae80be060, maxevents=128, timeout=-1, set=0x0) at ../sysdeps/unix/sysv/linux/epoll_pwait.c:40
+#1  0x0000aaaae32e3d38 in boost::corosio::detail::epoll_scheduler::run_task(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, boost::corosio::detail::reactor_scheduler_context*, long) ()
+#2  0x0000aaaae32e6338 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#3  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#4  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#5  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#6  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 42 (Thread 0xffffa6c0ee00 (LWP 17) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 41 (Thread 0xffffa620ee00 (LWP 18) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 40 (Thread 0xffffa580ee00 (LWP 19) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 39 (Thread 0xffffa4e0ee00 (LWP 20) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 38 (Thread 0xffff9fe0ee00 (LWP 21) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfc8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfc8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfc8, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 37 (Thread 0xffff9f40ee00 (LWP 22) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 36 (Thread 0xffff9ea0ee00 (LWP 23) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfc8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfc8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfc8, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 35 (Thread 0xffff9e00ee00 (LWP 24) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 34 (Thread 0xffff9d60ee00 (LWP 25) "liquid"):
+#0  0x0000aaaae2f7a3d8 in liquid::(anonymous namespace)::graph_builder::collect_repositories(liquid::(anonymous namespace)::sbom_model&, liquid::digest, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::vector<liquid::digest, std::allocator<liquid::digest> >&) [clone .resume] ()
+#1  0x0000aaaae32e64cc in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#2  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#3  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#4  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#5  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 33 (Thread 0xffff9cc0ee00 (LWP 26) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 32 (Thread 0xffff9c20ee00 (LWP 27) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 31 (Thread 0xffff9b80ee00 (LWP 28) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 30 (Thread 0xffff9ae0ee00 (LWP 29) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfc8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfc8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfc8, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffaaf5e760) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 29 (Thread 0xffff99a0ee00 (LWP 30) "liquid-0"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 28 (Thread 0xffff9900ee00 (LWP 31) "liquid-1"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 27 (Thread 0xffff93e0ee00 (LWP 32) "liquid-2"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 26 (Thread 0xffff9340ee00 (LWP 33) "liquid-3"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 25 (Thread 0xffff92a0ee00 (LWP 34) "liquid-4"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 24 (Thread 0xffff9200ee00 (LWP 35) "liquid-5"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 23 (Thread 0xffff9160ee00 (LWP 36) "liquid-6"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 22 (Thread 0xffff90c0ee00 (LWP 37) "liquid-7"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 21 (Thread 0xffff87e0ee00 (LWP 38) "liquid-8"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 20 (Thread 0xffff8740ee00 (LWP 39) "liquid-9"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 19 (Thread 0xffff86a0ee00 (LWP 40) "liquid-10"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 18 (Thread 0xffff8600ee00 (LWP 41) "liquid-11"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 17 (Thread 0xffff8560ee00 (LWP 42) "liquid-12"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 16 (Thread 0xffff84c0ee00 (LWP 43) "liquid-13"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 15 (Thread 0xffff7be0ee00 (LWP 44) "liquid-14"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 14 (Thread 0xffff7b40ee00 (LWP 45) "liquid-15"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffffa1d30258) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffffa1d30258, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffffa1d30200, cond=0xffffa1d30230) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffffa1d30230, mutex=0xffffa1d30200) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae333d2d4 in boost::capy::thread_pool::impl::run(unsigned long) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa4e0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 13 (Thread 0xffff7aa0ee00 (LWP 46) "tpool-svc-1"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff945feccc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff945fec70, cond=0xffff945feca0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff945feca0, mutex=0xffff945fec70) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 12 (Thread 0xffff7a00ee00 (LWP 47) "tpool-svc-2"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff945feccc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff945fec70, cond=0xffff945feca0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff945feca0, mutex=0xffff945fec70) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 11 (Thread 0xffff7960ee00 (LWP 48) "tpool-svc-3"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff945feccc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff945fec70, cond=0xffff945feca0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff945feca0, mutex=0xffff945fec70) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 10 (Thread 0xffff78c0ee00 (LWP 49) "tpool-svc-4"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff945feccc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff945feccc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff945fec70, cond=0xffff945feca0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff945feca0, mutex=0xffff945fec70) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e60e4 in boost::corosio::detail::thread_pool::worker_loop(unsigned int) ()
+#6  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#7  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#8  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 9 (Thread 0xffff6fe0ee00 (LWP 50) "liquid"):
+#0  0x0000ffffaa92bd34 in __GI_epoll_pwait (epfd=6, events=0xffff94027d80, maxevents=128, timeout=-1, set=0x0) at ../sysdeps/unix/sysv/linux/epoll_pwait.c:40
+#1  0x0000aaaae32e3d38 in boost::corosio::detail::epoll_scheduler::run_task(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, boost::corosio::detail::reactor_scheduler_context*, long) ()
+#2  0x0000aaaae32e6338 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#3  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#4  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#5  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#6  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 8 (Thread 0xffff6f40ee00 (LWP 51) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff94424f3c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff94424ed8, cond=0xffff94424f10) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff94424f10, mutex=0xffff94424ed8) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 7 (Thread 0xffff6ea0ee00 (LWP 52) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff94424f38) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff94424f38) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff94424f38, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff94424ed8, cond=0xffff94424f10) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff94424f10, mutex=0xffff94424ed8) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 6 (Thread 0xffff6e00ee00 (LWP 53) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff94424f3c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff94424ed8, cond=0xffff94424f10) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff94424f10, mutex=0xffff94424ed8) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 5 (Thread 0xffff6d60ee00 (LWP 54) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff94424f3c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff94424ed8, cond=0xffff94424f10) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff94424f10, mutex=0xffff94424ed8) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 4 (Thread 0xffff6cc0ee00 (LWP 55) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff94424f3c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff94424ed8, cond=0xffff94424f10) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff94424f10, mutex=0xffff94424ed8) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 3 (Thread 0xffff63e0ee00 (LWP 56) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff94424f3c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff94424ed8, cond=0xffff94424f10) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff94424f10, mutex=0xffff94424ed8) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 2 (Thread 0xffff6340ee00 (LWP 57) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xffff94424f3c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xffff94424f3c, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xffff94424ed8, cond=0xffff94424f10) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xffff94424f10, mutex=0xffff94424ed8) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000ffffaaae1ae0 in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000ffffaa8c582c [PAC] in start_thread (arg=0xffffa6c0f540) at ./nptl/pthread_create.c:447
+#9  0x0000ffffaa92ba0c in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone3.S:76
+
+Thread 1 (Thread 0xffffaaf5e020 (LWP 9) "liquid"):
+#0  0x0000ffffaa8c1d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xaaaae80bdfcc) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xaaaae80bdfcc, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000ffffaa8c49f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xaaaae80bdf68, cond=0xaaaae80bdfa0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xaaaae80bdfa0, mutex=0xaaaae80bdf68) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000aaaae32e6428 in boost::corosio::detail::reactor_scheduler::do_one(boost::corosio::detail::conditionally_enabled_mutex::scoped_lock&, long, boost::corosio::detail::reactor_scheduler_context*) ()
+#6  0x0000aaaae32e0a10 in boost::corosio::detail::reactor_scheduler::run() ()
+#7  0x0000aaaae314c5f4 in liquid::runtime::context::run(boost::capy::task<void>) ()
+#8  0x0000aaaae2ed63c4 in std::expected<liquid::wrap_report, liquid::error> liquid::runtime::block_on<liquid::wrap_report>(boost::capy::task<std::expected<liquid::wrap_report, liquid::error> >) ()
+#9  0x0000aaaae2ed45b0 in liquid_cli::wrap(int, char**) ()
+#10 0x0000aaaae2e8246c in main ()
+[Inferior 1 (process 9) detached]

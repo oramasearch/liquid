@@ -175,3 +175,78 @@ jobs:
       - name: Test
         shell: bash
         run: ctest --test-dir build --output-on-failure
+
+  self-host:
+    name: Linux self-host
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
+
+      - name: Install toolchain
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ca-certificates gpg software-properties-common wget
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
+            sudo gpg --dearmor --yes --output /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | \
+            sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install --yes autoconf automake clang-19 clang-format-19 cmake fuse3 libfuse3-dev libstdc++-14-dev ninja-build
+
+      - name: Configure at the fixed build root
+        shell: bash
+        run: |
+          sudo mkdir -p /liquid/work
+          sudo mount --bind "$GITHUB_WORKSPACE" /liquid/work
+          test -c /dev/fuse
+          cmake -S /liquid/work -B /liquid/work/.liquid-build/cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIQUID_BUILD_TESTS=OFF \
+            -DLIQUID_SELF_HOST=ON
+          cmake -S /liquid/work -B /liquid/work/build-wrapped -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIQUID_BUILD_TESTS=OFF \
+            -DLIQUID_SELF_HOST=ON
+
+      - name: Build the CMake bootstrap
+        shell: bash
+        working-directory: /liquid/work
+        run: cmake --build .liquid-build/cmake -- -j2
+
+      - name: Build liquid with liquid twice
+        shell: bash
+        working-directory: /liquid/work
+        run: |
+          export LIQUID_WRAP_CACHE=/liquid/work/.liquid-build/self-host-cache
+          ./.liquid-build/cmake/liquid wrap --no-verify \
+            cmake --build build-wrapped -- -j2 | tee "$RUNNER_TEMP/self-host-first.txt"
+          ./.liquid-build/cmake/liquid wrap --no-verify \
+            cmake --build build-wrapped -- -j2 | tee "$RUNNER_TEMP/self-host-second.txt"
+          grep -Eq '^actions=[1-9][0-9]* hits=[1-9][0-9]* misses=0 processes_started=0 probes_started=0 outer=hit$' \
+            "$RUNNER_TEMP/self-host-second.txt"
+          grep -Eq '^disk_hit_rate=100\.00% ' "$RUNNER_TEMP/self-host-second.txt"
+
+      - name: Compare bootstrap outputs
+        shell: bash
+        working-directory: /liquid/work
+        run: |
+          test "$(./.liquid-build/cmake/liquid version)" = \
+            "$(./build-wrapped/liquid version)"
+          cmp .liquid-build/cmake/libliquid.a build-wrapped/libliquid.a
+          cmp .liquid-build/cmake/liquid build-wrapped/liquid
+
+      - name: Build shared libliquid
+        shell: bash
+        working-directory: /liquid/work
+        run: |
+          cmake -S . -B .liquid-build/shared -G Ninja \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIQUID_BUILD_TESTS=OFF
+          cmake --build .liquid-build/shared -- -j2
+          ./.liquid-build/shared/liquid version
