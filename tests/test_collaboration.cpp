@@ -201,6 +201,74 @@ TEST(Collaboration, speculative_writes_are_private_and_publish_is_attributed_and
     EXPECT_TRUE(liquid::runtime::block_on(restricted_session.discard()));
 }
 
+TEST(Collaboration, line_attribution_follows_changes_sessions_agents_and_moves) {
+    collaboration_directory directory;
+    auto human_session = liquid::parse_session_id("11111111111111111111111111111111");
+    ASSERT_TRUE(human_session);
+    auto options = liquid::repository_options{};
+    options.session = *human_session;
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create(directory.path() / "attribution", options));
+    ASSERT_TRUE(created);
+    auto shared = std::move(*created);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(shared.write("src/value.cpp", bytes("first\nsecond\nthird\n"))));
+    auto initial = liquid::runtime::block_on(shared.cut("initial"));
+    ASSERT_TRUE(initial);
+
+    const auto agent = current_actor();
+    auto authority = delegation(agent, {"src/**"});
+    ASSERT_TRUE(authority);
+    auto forked =
+        liquid::runtime::block_on(shared.fork_session({.actor = agent, .delegation = *authority}));
+    ASSERT_TRUE(forked);
+    auto agent_session = std::move(*forked);
+    const auto agent_id = agent_session.id();
+    ASSERT_TRUE(liquid::runtime::block_on(
+        agent_session.write("src/value.cpp", bytes("first\nchanged\nthird\n"))));
+    auto published =
+        liquid::runtime::block_on(agent_session.publish({.message = "agent line", .atomic = true}));
+    ASSERT_TRUE(published);
+    ASSERT_TRUE(published->change);
+
+    auto attributed =
+        liquid::runtime::block_on(shared.attribution("src/value.cpp", *published->change));
+    ASSERT_TRUE(attributed) << attributed.error().message;
+    ASSERT_EQ(attributed->size(), 3U);
+    EXPECT_EQ(attributed->at(0).text, "first");
+    EXPECT_EQ(attributed->at(0).session, *human_session);
+    EXPECT_EQ(liquid::to_string(attributed->at(0).change.value), liquid::to_string(initial->value));
+    EXPECT_FALSE(attributed->at(0).agent);
+    EXPECT_EQ(attributed->at(1).text, "changed");
+    EXPECT_EQ(attributed->at(1).session, agent_id);
+    EXPECT_EQ(liquid::to_string(attributed->at(1).change.value),
+              liquid::to_string(published->change->value));
+    EXPECT_TRUE(attributed->at(1).agent);
+    EXPECT_EQ(attributed->at(2).session, *human_session);
+
+    auto reopened =
+        liquid::runtime::block_on(liquid::repository::open(directory.path() / "attribution"));
+    ASSERT_TRUE(reopened);
+    auto persisted =
+        liquid::runtime::block_on(reopened->attribution("src/value.cpp", *published->change));
+    ASSERT_TRUE(persisted) << persisted.error().message;
+    ASSERT_EQ(persisted->size(), attributed->size());
+    EXPECT_EQ(persisted->at(1).session, agent_id);
+    EXPECT_TRUE(persisted->at(1).agent);
+
+    ASSERT_TRUE(liquid::runtime::block_on(shared.move("src/value.cpp", "src/renamed.cpp")));
+    auto moved = liquid::runtime::block_on(shared.cut("rename"));
+    ASSERT_TRUE(moved);
+    auto after_move = liquid::runtime::block_on(shared.attribution("src/renamed.cpp", *moved));
+    ASSERT_TRUE(after_move) << after_move.error().message;
+    ASSERT_EQ(after_move->size(), attributed->size());
+    for (auto index = std::size_t{}; index < attributed->size(); ++index) {
+        EXPECT_EQ(after_move->at(index).session, attributed->at(index).session);
+        EXPECT_EQ(liquid::to_string(after_move->at(index).change.value),
+                  liquid::to_string(attributed->at(index).change.value));
+    }
+}
+
 TEST(Collaboration, symbol_leases_refuse_intersections_allow_other_ranges_and_expire) {
     collaboration_directory directory;
     auto shared = create_repository(directory.path() / "shared");

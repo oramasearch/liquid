@@ -122,6 +122,8 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
         }
         output.payload.push_back({entry.path, entry.bytes, mode});
     }
+    output.control_entries = std::move(control_tree->entries);
+    output.data_entries = std::move(data_tree->entries);
     return output;
 }
 

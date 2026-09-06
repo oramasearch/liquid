@@ -1,0 +1,18 @@
+source openblas-1.16.0 {
+    digest: sha256:1cde5e3b71a521c4b03fb71dc9d37e37f29160f7131c4b2ec7feec29bbfd2668
+    kind: archive
+    url: "https://example.invalid/openblas-1.16.0.tar.gz"
+}
+
+package openblas {
+    versions: [1.16.0]
+}
+
+build openblas {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/1cde5e3b71a521c4b03fb71dc9d37e37f29160f7131c4b2ec7feec29bbfd2668 -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["openblas-1.16.0"]
+    install {
+        layout: prefix
+    }
+}

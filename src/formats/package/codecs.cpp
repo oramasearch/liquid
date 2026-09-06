@@ -1,6 +1,8 @@
 #include "formats/builtin.hpp"
 
+#include <algorithm>
 #include <array>
+#include <ranges>
 
 #include "formats/apk/apk.hpp"
 #include "formats/deb/deb.hpp"
@@ -44,6 +46,9 @@ public:
         auto metadata = std::string{};
         auto files = std::vector<std::string>{};
         auto scripts = std::optional<generated_maintainer_scripts>{};
+        auto control_entries = std::vector<format_entry>{};
+        auto data_entries = std::vector<format_entry>{};
+        auto data_files = std::vector<package::file>{};
         if (kind_ == package_kind::deb) {
             auto value = deb::read(blob, limits.byte_budget);
             if (!value) {
@@ -52,6 +57,8 @@ public:
             metadata = std::move(value->control);
             files = std::move(value->files);
             scripts = std::move(value->scripts);
+            control_entries = std::move(value->control_entries);
+            data_entries = std::move(value->data_entries);
         } else if (kind_ == package_kind::rpm) {
             auto value = rpm::read(blob, limits.byte_budget);
             if (!value) {
@@ -60,6 +67,7 @@ public:
             metadata = "Name: " + value->name + "\nVersion: " + value->version + "\n";
             files = std::move(value->files);
             scripts = std::move(value->scripts);
+            data_files = std::move(value->data_files);
         } else {
             auto value = apk::read(blob, limits.byte_budget);
             if (!value) {
@@ -68,10 +76,14 @@ public:
             metadata = std::move(value->pkginfo);
             files = std::move(value->files);
             scripts = std::move(value->scripts);
+            control_entries = std::move(value->control_entries);
+            data_entries = std::move(value->data_entries);
         }
-        const auto generated_entries = scripts ? std::size_t{5} : std::size_t{1};
-        if (generated_entries > limits.maximum_entries ||
-            files.size() > limits.maximum_entries - generated_entries) {
+        const auto decoded_entries =
+            control_entries.size() + data_entries.size() + data_files.size();
+        const auto output_entries = decoded_entries == 0 ? files.size() : decoded_entries;
+        const auto script_entries = scripts ? std::size_t{4} : std::size_t{};
+        if (output_entries + 1 + script_entries > limits.maximum_entries) {
             return std::unexpected(
                 error{errc::unsupported, "package entry limit exceeded", output.codec});
         }
@@ -81,7 +93,29 @@ public:
             return std::unexpected(metadata_entry.error());
         }
         output.entries.push_back(std::move(*metadata_entry));
+        const auto has_payload_entries = !data_entries.empty() || !data_files.empty();
+        for (auto& item : control_entries) {
+            item.path = "control/" + item.path;
+            item.nested.reset();
+            output.entries.push_back(std::move(item));
+        }
+        for (auto& item : data_entries) {
+            item.path = "data/" + item.path;
+            item.nested.reset();
+            output.entries.push_back(std::move(item));
+        }
+        for (auto& file : data_files) {
+            auto entry = make_entry(
+                "data/" + std::move(file.path), format_entry_kind::member, std::move(file.bytes));
+            if (!entry) {
+                return std::unexpected(entry.error());
+            }
+            output.entries.push_back(std::move(*entry));
+        }
         for (auto& path : files) {
+            if (has_payload_entries) {
+                continue;
+            }
             auto entry = make_entry(std::move(path), format_entry_kind::member, {});
             if (!entry) {
                 return std::unexpected(entry.error());
@@ -110,6 +144,7 @@ public:
                 output.entries.push_back(std::move(*entry));
             }
         }
+        std::ranges::sort(output.entries, {}, &format_entry::path);
         return output;
     }
 

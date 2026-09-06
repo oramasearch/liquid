@@ -16,6 +16,7 @@ struct archive {
     std::vector<std::string> files;
     std::vector<package::file> payload;
     std::optional<generated_maintainer_scripts> scripts;
+    std::vector<package::file> data_files;
 };
 
 [[nodiscard]] auto write(const package_metadata& metadata,

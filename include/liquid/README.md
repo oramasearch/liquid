@@ -9,6 +9,8 @@ descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, o
 errors, progress, and cancellation types while registering queries, commands, and panels.
 `tiers.hpp` defines the pure support matrix projected from the process-global frontend registry,
 the built-in format registry, and the declared platform backends.
+errors, progress, and cancellation types while registering queries, commands, panels, and a
+versioned presence, lease, and attribution event table.
 
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.
@@ -24,7 +26,8 @@ and live local-byte accounting for long-running node stores.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
-claims, transient presence, and epoch compaction reports.
+claims, transient presence, epoch compaction reports, and per-line actor/session/change
+attribution records used by the repository and daemon APIs.
 `tuf.hpp` defines the repository-backed trusted-root bootstrap, ordered metadata update verifier,
 and complete target-byte verification gate used by registry and drive clients.
 
@@ -50,6 +53,9 @@ configured target execution, and lowered install intents. `install.hpp` defines 
 `install_intent/1` values and codecs plus atomic generation install, list, and rollback tasks.
 `projection.hpp` accepts those intents, exposes fixed lifecycle-script generation, checks package
 ownership in batches or against installed inventories, and reports derived replacements.
+and configured target execution.
+`import.hpp` defines Spack import reports and loss categories, stable text and JSON report codecs,
+offline patch-byte injection, optional target toolchain binding, and the coroutine import task.
 `deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
 status calls for an operator-owned control plane. Its interim image input is an OCI reference
 pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.

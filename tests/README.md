@@ -55,6 +55,9 @@ explanations, optimisation, CLI output, and the generated scale workload live in
 Configuration-language coverage lives in `config/`: twenty exact diagnostics, typed lowering,
 conditional dependencies, canonical target/source records, generator provenance, digest-verified
 source fetch, and formatter idempotence.
+Spack export/import coverage lives in `import/`: twenty formatter goldens, the exact 500-package
+resolution and conflict workload, a pinned 560-package Spack export, digest-less patch pinning, and
+the opt-in Linux build subset.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
@@ -129,8 +132,11 @@ atomicity, and upstream sync convergence; the repository replica case also cover
 actors and multi-round sync.
 
 `test_collaboration.cpp` covers speculative agent sessions, delegated publication, semantic leases,
-transient presence, and epoch resynchronization. `crdt/measure_epoch.cpp` records the documented
-compaction workload's bytes and load time.
+transient presence, epoch resynchronization, and line attribution across human and agent changes
+and a path move. `test_daemon.cpp` checks that the same attribution crosses the local wire, while
+`test_plugin_abi.c` is a real C plugin descriptor whose presence, lease, and attribution callbacks
+are driven by `test_plugin_abi.cpp`. `attribution_measure.cpp` records the 10,000-line query cost.
+`crdt/measure_epoch.cpp` records the documented compaction workload's bytes and load time.
 The Unix integration case in `test_sync.cpp` exchanges two disk repositories through the public
 server behind a small socket transport dispatched on the shared runtime, measures missing-object
 bytes across repeated pushes, pulls into an empty repository, and rejects a corrupted TAAP
@@ -144,6 +150,12 @@ unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
+The clone cases pull through an HTTP sync endpoint, force full hydration of a file above the
+ordinary drive threshold, confirm the persisted remote and stable JSON, and configure and build a
+small CMake project inside the checkout. A second clone resolves that checkout as a configured
+drive-folder source. Separate calls pin optional destination naming, `LIQUID_TOKEN` authentication,
+and the `already_exists`, `unauthorized`, and `not_found` refusal names while confirming failed
+clones leave no partial target.
 
 Drive coverage persists policy and per-path state across reopen, checks folder inheritance and
 explicit overrides, retains lazy placeholders, records peer failure reasons, queues repository

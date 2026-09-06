@@ -396,6 +396,7 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
     for (const auto& file : output.payload) {
         output.files.push_back(file.path);
     }
+    output.data_files = output.payload;
     if (tags.contains(1023) || tags.contains(1024) || tags.contains(1025) || tags.contains(1026)) {
         output.scripts =
             generated_maintainer_scripts{tags[1023], tags[1024], tags[1025], tags[1026]};

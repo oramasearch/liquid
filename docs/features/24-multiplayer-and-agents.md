@@ -23,8 +23,10 @@ matter.
 
 **Implementation status:** liquid #30 implements private same-store speculative replicas,
 scope-checked atomic publication, semantic file/symbol/range leases, transient local and peer
-presence, compaction epochs, and `delegation/1` attribution. Lake-side authoritative lease policy
-and the liquify surface remain in their own repositories.
+presence, compaction epochs, and `delegation/1` attribution. Liquid #248 implements the stable-node
+per-line attribution query, daemon transport, `liquid blame`, and native plugin event subscriptions
+for presence, leases, and attribution. Lake-side authoritative lease policy and the liquify surface
+remain in their own repositories.
 
 **But isolation does not solve the problem — it defers it.** The research is direct
 about this: isolation prevents silent filesystem overwrites, and overlapping work then

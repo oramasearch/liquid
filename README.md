@@ -20,13 +20,17 @@ action plan.
 ## Status
 
 The Phase 1 store exit criterion is met: the chunk store, repositories, capture, identity,
-encryption, Git import and export, sync, drive and the macOS/Linux checkout daemon are implemented
+encryption, Git import and export, sync, clone, drive and the macOS/Linux checkout daemon are implemented
 inside libliquid. The Phase 2 build wrapper, cache, verification and provenance, the Phase 3
+encryption, Git import and export, sync, drive and the macOS/Linux checkout daemon are implemented
+inside libliquid, including private sessions, presence, leases, and per-line attribution. The
+Phase 2 build wrapper, cache, verification and provenance, the Phase 3
 remote blobs, replay and delta delivery, the Phase 4 query graph, daemon, search and structural
 edits, and the Phase 5 formats, projection, resolution and `.liquid` configuration are implemented
 as recorded in [`docs/library/status.md`](docs/library/status.md), which also lists the known
-limits. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client
-of it.
+limits. Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
+files. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client of
+it.
 
 ## Build and run
 
@@ -224,6 +228,12 @@ of it.
 > generators executed with signed provenance. `liquid config` checks, lowers, traces, and formats;
 > `liquid build --target` executes a lowered target through the existing action path and refuses
 > outputs that fail relocation publication.
+> **Phase 5 package-universe import is implemented for Spack.** A pinned Spack checkout exports
+> package metadata through Spack's API into one provenance-linked JSON document. `liquid import
+> spack` writes formatter-canonical `.liquid` documents and `package/1` records, pins digest-less
+> patches, and records translated fields and explicit losses in `import-report/1`. The committed
+> 500-package universe resolves the documented roots and explains an introduced HDF5 conflict;
+> ten imported targets exercise source-digest, configured-build, and relocation paths on Linux.
 
 ## Where this sits
 
@@ -300,6 +310,8 @@ and Zetta's.
 - [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 - [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, install-intent lowering, source verification, generators, and trace origins.
+- [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, lowering, source verification, generators, and trace origins.
+- [`docs/library/import-spack.md`](docs/library/import-spack.md) — pinned Spack export, field mapping, explicit translation losses, the imported universe, and build subset.
 
 | | |
 |---|---|

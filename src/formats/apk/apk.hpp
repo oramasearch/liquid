@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "formats/package/common.hpp"
+#include "liquid/format.hpp"
 #include "liquid/projection.hpp"
 
 namespace liquid::formats::apk {
@@ -15,6 +16,8 @@ struct archive {
     std::vector<std::string> files;
     std::vector<package::file> payload;
     std::optional<generated_maintainer_scripts> scripts;
+    std::vector<format_entry> control_entries;
+    std::vector<format_entry> data_entries;
 };
 
 [[nodiscard]] auto write(const package_metadata& metadata,

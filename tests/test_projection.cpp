@@ -260,8 +260,8 @@ TEST(Projection, package_writers_round_trip_and_are_byte_identical) {
         ASSERT_TRUE(unpacked) << unpacked.error().message;
         EXPECT_EQ(unpacked->codec, liquid::to_string(target));
         const auto expected_path = target == liquid::projection_target::rpm
-                                       ? "./usr/bin/liquid-fixture"
-                                       : "usr/bin/liquid-fixture";
+                                       ? "data/./usr/bin/liquid-fixture"
+                                       : "data/usr/bin/liquid-fixture";
         EXPECT_TRUE(
             std::ranges::contains(unpacked->entries, expected_path, &liquid::format_entry::path));
     }

@@ -510,6 +510,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
     map_anchors(std::span<const text_anchor> anchors, change_id target);
     [[nodiscard]] runtime::task<std::vector<path_history_entry>> history(std::string path);
+    [[nodiscard]] runtime::task<std::vector<line_attribution>> attribution(std::string path,
+                                                                           change_id change);
     [[nodiscard]] runtime::task<void> restore(std::string path, change_id change);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
     [[nodiscard]] runtime::task<action_input> action(digest id);
