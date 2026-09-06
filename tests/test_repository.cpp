@@ -871,6 +871,54 @@ TEST(Repository, diff_surfaces_recorded_conflict_values) {
     EXPECT_EQ(same->new_conflicts.size(), 2U);
 }
 
+TEST(Repository, path_history_follows_moves_and_restore_appends_a_drip) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("notes.txt", content("first"), {.mode = 0100755})));
+    auto first = liquid::runtime::block_on(repository.cut("first version"));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("notes.txt", content("second"))));
+    auto second = liquid::runtime::block_on(repository.cut("second version"));
+    ASSERT_TRUE(second);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("notes.txt", "renamed.txt")));
+    auto moved = liquid::runtime::block_on(repository.cut("rename notes"));
+    ASSERT_TRUE(moved);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.remove("renamed.txt")));
+    auto removed = liquid::runtime::block_on(repository.cut("remove notes"));
+    ASSERT_TRUE(removed);
+
+    auto history = liquid::runtime::block_on(repository.history("renamed.txt"));
+    ASSERT_TRUE(history) << history.error().message;
+    ASSERT_EQ(history->size(), 4U);
+    EXPECT_TRUE(history->at(0).deleted);
+    EXPECT_EQ(liquid::to_string(history->at(0).change.value), liquid::to_string(removed->value));
+    EXPECT_EQ(history->at(1).path, "renamed.txt");
+    EXPECT_EQ(liquid::to_string(history->at(1).change.value), liquid::to_string(moved->value));
+    EXPECT_EQ(history->at(2).path, "notes.txt");
+    EXPECT_EQ(liquid::to_string(history->at(2).change.value), liquid::to_string(second->value));
+    EXPECT_EQ(liquid::to_string(history->at(3).change.value), liquid::to_string(first->value));
+
+    const auto drips_before = repository.status()->pending_drips;
+    auto restored = liquid::runtime::block_on(repository.restore("renamed.txt", *first));
+    ASSERT_TRUE(restored) << restored.error().message;
+    auto contents = liquid::runtime::block_on(repository.read("renamed.txt"));
+    ASSERT_TRUE(contents);
+    EXPECT_EQ(text(*contents), "first");
+    auto root = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(root);
+    const auto restored_entry =
+        std::ranges::find(root->entries, "renamed.txt", &liquid::tree_entry::name);
+    ASSERT_NE(restored_entry, root->entries.end());
+    EXPECT_EQ(restored_entry->mode, 0100755U);
+    EXPECT_EQ(repository.status()->pending_drips, drips_before + 1);
+    auto log = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(log);
+    EXPECT_EQ(liquid::to_string(log->front().id.value), liquid::to_string(removed->value));
+}
+
 TEST(Repository, write_modes_and_nested_references_are_preserved) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
@@ -1556,6 +1604,13 @@ TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_val
     ASSERT_TRUE(history);
     ASSERT_FALSE(history->empty());
     EXPECT_EQ(history->front().conflicts.size(), 1U);
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(left_path.path()));
+    ASSERT_TRUE(reopened);
+    auto reopened_conflicts = liquid::runtime::block_on(reopened->conflicts());
+    ASSERT_TRUE(reopened_conflicts);
+    ASSERT_EQ(reopened_conflicts->size(), 1U);
+    EXPECT_EQ(reopened_conflicts->front().path, "a.txt");
+    EXPECT_EQ(reopened_conflicts->front().refs.size(), 3U);
     ASSERT_TRUE(liquid::runtime::block_on(left->write("a.txt", content("resolved"))));
     ASSERT_TRUE(liquid::runtime::block_on(left->cut("resolve conflict")));
     auto resolved = liquid::runtime::block_on(left->conflicts());

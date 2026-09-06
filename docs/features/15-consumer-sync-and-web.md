@@ -5,6 +5,11 @@
 > **Requirement:** a Dropbox/Google Drive-style interface so regular people can use
 > liquid, on the web and locally.
 
+> **Status:** liquid #195 implements the cross-platform drive client: persisted remote, local,
+> and base trees; deterministic reconciliation; named conflict values; resumed sync transfer;
+> path history and restore; CLI one-shot and daemon-hosted watch modes. Native desktop shells,
+> placeholders, pinning, and lake's web drive remain consumer work in lake #45 and #43.
+
 ## Why this is nearly free
 
 Dropbox's architecture is structurally what liquid already is:
@@ -30,7 +35,7 @@ it, because a shared namespace is a concurrently-edited structured document.
 
 - **Remote tree** — server state.
 - **Local tree** — observed disk state.
-- **Synced tree** — last mutually synchronised state, acting as a per-node merge base.
+- **Base tree** — last mutually synchronised state, acting as a per-node merge base.
 
 Comparing all three reveals whether a path changed locally, remotely, on both sides,
 or merely moved.

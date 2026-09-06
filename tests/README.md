@@ -26,6 +26,8 @@ stability, unique child creation, cleanup, and the failure diagnostic.
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
+Spec parsing, canonical package records, universe loading, solver dimensions, cancellation,
+explanations, optimisation, CLI output, and the generated scale workload live in `resolve/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
@@ -137,6 +139,9 @@ complete graph pass and requires zero query divergences.
 Portable build
 diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
 statistics, recorded scheduling decisions and inputs, and the JSON forms of `why` and `cache stats`.
+They also cover canonical output normalisation, signed input/output claims, named dependency-tree
+folding, cross-project cascade termination, and an opt-in pinned zlib/libpng/program chain that
+records process counts and load average.
 Mount-backed observability coverage constructs a two-action sleeping dependency chain and verifies
 result timing, durable trace edges, critical-path queries, scheduling metadata, and Chrome
 trace-event JSON. Distribution coverage uses a second store to materialise source and toolchain

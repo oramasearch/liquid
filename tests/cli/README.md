@@ -15,6 +15,8 @@ The help/documentation comparison also pins the `scheduler` and `worker` command
 The scenario also pins `remote_bytes` in the status JSON contract.
 It maps an anchor from the imported change through a later rename and checks the returned path and
 flags.
+It lists history through that rename, restores the imported version as a new drip, and cuts the
+restoration without changing an earlier change.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 

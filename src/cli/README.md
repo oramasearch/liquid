@@ -1,10 +1,10 @@
 # Command-line implementation
 
 Each source file maps one command group to public libliquid calls. `wrap.cpp` parses build-wrapper
-options, calls `liquid::build::wrap`, prints action and cache counts, per-tier action and byte
-counts, phase attribution, the critical path, and record-derived miss details for `--explain`.
-It also prints incompatible library reports and applies `--fail-on-abi-break` after a successful
-build.
+options and repeatable named result/tree inputs, calls `liquid::build::wrap`, and prints the
+canonical output tree, action and cache counts, per-tier action and byte counts, phase attribution,
+the critical path, record-derived miss details for `--explain`, and incompatible library reports.
+It applies `--fail-on-abi-break` after a successful build.
 `trace.cpp` implements profiled build invocation, Chrome trace export, and `why-slow` entirely
 through the public observability API. Text and Chrome trace projections include the recorded
 execution decision and every cost-model input. `why.cpp` implements `liquid why` and `liquid cache
@@ -59,6 +59,10 @@ fetch can hydrate a patch or target registered with the store's configured remot
 optional score and located path coordinates. Explain mode prints stable JSON with chosen and
 alternative costs plus every planner input. It does not read the index files directly.
 
+`resolve.cpp` parses root specs and universe, reuse, explanation, and JSON selectors. It calls only
+the public package-universe loader, resolver, and explanation projections. Text graphs are indented
+by dependency; conflict and package-choice explanations use the stable library formats.
+
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
@@ -66,6 +70,11 @@ byte, cursor, and per-ref outcome lines, and returns failure when any ref is ref
 `oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
+
+`drive.cpp` configures or reopens a public `drive_client`, prints the persisted three-tree and
+per-reference state, and attaches `--watch` to the checkout daemon after the first successful
+one-shot reconciliation. `history.cpp` lists node-following path versions and restores one as an
+ordinary repository drip through the public repository API.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
