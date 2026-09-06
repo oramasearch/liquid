@@ -1,18 +1,24 @@
 # Package and image projection
 
-Issue #28 implements Tier A projection from a result's checked install tree, or from an explicit
-install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, and Helm charts. Projection
-does not convert one ecosystem package into another: every writer consumes the same canonical
-file tree and metadata request.
+Issues #28 and #78 implement projection from checked trees into `.deb`, `.rpm`, `.apk`, OCI image
+layouts, Helm charts, OSTree commits, and bootc images. Projection does not convert one ecosystem
+package into another: every writer consumes content-addressed trees and an explicit metadata
+request.
 
 ## Public contract
 
 `liquid/projection.hpp` defines `projection_request`, `package_metadata`, service values, target
 options (including OCI entrypoint and command vectors), and
-`project(repository&, projection_request)`. Sources are result IDs or install-tree
-digests. A bare tree requires an explicit architecture because no producing action exists to
-supply it. A result supplies its action platform, output tree, source attestations, completion
+`project(repository&, projection_request)`. Sources are result IDs or tree digests. Package, OCI,
+and bootc targets require an architecture because no producing action exists to supply one for a
+bare tree. A result supplies its action platform, output tree, source attestations, completion
 epoch, and ABI verdicts.
+
+OSTree and bootc requests treat the first source as the base root filesystem. Later sources are
+overlays, mounted at each `projection_source::path`; later files replace the corresponding base
+paths. The signed `projection/1` statement records the base digest and ordered overlay digests.
+OSTree requests also select a ref and `archive-z2` or `bare-user` repository mode. Reports expose
+the commit checksum separately from the projected artifact digest.
 
 The report returns artifact paths and SHA-256 digests, all source and projection attestation
 digests, immutable image pins, derived and declared dependency labels, and whether an incompatible
@@ -88,6 +94,45 @@ Each is an OCI 1.1 artifact manifest with the image manifest as `subject`, and e
 listed in `index.json`. Registries without the referrers API can use the deterministic
 `sha256-<manifest-hex>.<profile>` annotation as a fallback tag.
 
+## OSTree repositories
+
+`src/formats/ostree/` owns the writer; no OSTree or GLib library is linked. It serialises the fixed
+OSTree GVariant schemas directly:
+
+- file headers use `(uuuusa(ayay))`, with big-endian uid, gid, mode, an empty xattr array, and the
+  symbolic-link target when present; the `.file` checksum covers the aligned length-prefixed
+  header and regular-file content;
+- `.dirtree` uses `(a(say)a(sayay))`, `.dirmeta` uses `(uuua(ayay))`, and `.commit` uses
+  `(a{sv}aya(say)sstayay)` with the selected ref in `ostree.ref-binding`;
+- `summary` uses `(a(s(taya{sv}))a{sv})` and points the selected ref at the commit.
+
+Names and objects are sorted, uid and gid are zero, xattrs are empty, and the commit timestamp is
+`SOURCE_DATE_EPOCH`. Regular-file and symbolic-link mode bits are retained. `archive-z2` writes
+length-prefixed archive headers and deterministic raw DEFLATE payloads as `.filez`; `bare-user`
+writes content plus `user.ostreemeta`. Both modes use `objects/xx/...`, `refs/heads/<ref>`,
+`config`, and `summary`.
+
+The committed fixture checksum
+`01b3c73af4e373360c6fbb04258c53ed526ba89056c321e4f144a07edbec04b4` was calculated independently
+with GLib's GVariant encoder and is pinned in the macOS and Linux tests.
+
+## bootc images
+
+The bootc target embeds the same commit in an OCI image using OSTree's `bare-split-xattrs` tar
+layout below `sysroot/ostree/repo`. Content objects and their checked-out paths share a component
+layer through tar hard links; symbolic links retain their targets. The metadata layer carries the
+commit, dirtrees, dirmetas, repository configuration, and `ostree.encapsulated=true`. The base and
+each overlay form independently compressed component layers named by `ostree.components`, so an
+overlay change does not rewrite unrelated layers.
+
+The config and manifest carry `containers.bootc=1`, `ostree.bootable=true`, `ostree.commit`,
+`ostree.final-diffid`, and the component annotations defined by ostree-ext. Here, “bootable” means
+the input tree claims a bootc-compatible userspace and the image contains a verifiable OSTree
+commit. Kernel, initramfs, bootloader, signing beyond attached attestations, and actually booting a
+k0s node remain their later phase work. The OCI manifest digest, including its commit and computed
+layers, is the node image identity; `projection/1` and source evidence are attached with OCI 1.1
+`subject` without changing it.
+
 ## Helm
 
 Helm projection writes both a chart directory and an OCI chart artifact. A fixed template set
@@ -103,7 +148,9 @@ attestation manifests. The full deployment graph remains Phase 7.
 The committed install-tree fixture pins each target's digest in `tests/test_projection.cpp` and is
 run by both static and shared suites on macOS and by the Linux proof lane. Tests cover the package
 readers, format-registry recognition, deterministic gzip, repeated projection, OCI referrers,
-signed `projection/1`, digest-only Helm values, and native `helm lint` where Helm is installed.
+signed `projection/1`, both OSTree repository modes, symbolic links, overlay paths, the independent
+GVariant checksum, the bootc image digest, digest-only Helm values, and native `helm lint` where
+Helm is installed.
 
 `tools/projection-peers/run-projection-interop.sh` is the distribution-tool proof for `dpkg`,
 `rpm`, `apk`, OCI import, and Helm/k0s. Its images are digest-pinned. The script exits with an

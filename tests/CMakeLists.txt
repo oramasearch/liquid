@@ -94,6 +94,7 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/content.cpp
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/ostree/ostree.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
     ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
@@ -101,6 +102,7 @@ if(BUILD_SHARED_LIBS)
   if(APPLE)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
   endif()
+  target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
