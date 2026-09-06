@@ -1,0 +1,24 @@
+source boost-1.19.0 {
+    digest: sha256:47554ac6ef006405a9632b02927336a54a1ae724ff69583496dcf16263d2555a
+    kind: archive
+    url: "https://example.invalid/boost-1.19.0.tar.gz"
+}
+
+package boost {
+    versions: [1.19.0]
+    depends_on zlib {
+        type: link
+    }
+    depends_on bzip2 {
+        type: link
+    }
+}
+
+build boost {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/47554ac6ef006405a9632b02927336a54a1ae724ff69583496dcf16263d2555a -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["boost-1.19.0"]
+    install {
+        layout: prefix
+    }
+}

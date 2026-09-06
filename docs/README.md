@@ -51,7 +51,7 @@ for what is implemented today.
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
-| [`library/drive.md`](library/drive.md) | Issues #195 and #235's persisted three-tree reconciliation, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
+| [`library/drive.md`](library/drive.md) | Issues #195, #235, and #258's persisted three-tree reconciliation, per-repository CRDT actors, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/forge-client.md`](library/forge-client.md) | Lake review records, coroutine calls, anchor advancement, polling events, error mapping, and the installable forge double. |
 | [`library/transparency.md`](library/transparency.md) | Lake checkpoint, tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 evidence verification; trust bootstrap and policy, CLI, failures, implementation notes, and fixture regeneration. |
@@ -114,6 +114,42 @@ for what is implemented today.
 | [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
 | [`library/resolution.md`](library/resolution.md) | Package and concretised records, spec grammar, universe layout, solver model, explanations, optimisation, and scale measurements. |
 | [`library/configuration-language.md`](library/configuration-language.md) | The typed `.liquid` grammar, exact diagnostics, package/target/source lowering, repository-local includes, verified source fetch, generators, and trace origins. |
+| [`library/import-spack.md`](library/import-spack.md) | Pinned Spack export, package-field mapping, import reports and losses, the 500-package universe, and the Linux build subset. |
+| [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10's local executor: fixed environment, observed-mount manifest, Linux namespace enforcement, and platform limits. |
+| [`library/api-map.md`](library/api-map.md) | The implemented and declared public headers of libliquid, including flow configuration and status, the rules every one obeys, dependency provenance, what is deliberately internal, and the ABI policy. |
+| [`library/hash-agility.md`](library/hash-agility.md) | Digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits. |
+| [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
+| [`library/http2.md`](library/http2.md) | Private Corosio HTTP/2 framing, HPACK, gRPC envelopes, and h2c/TLS ALPN interoperability proof. |
+| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
+| [`library/deploy.md`](library/deploy.md) | Operator control-plane deployment client, digest-pinned interim images, rollback, status, and the provisional OpenAPI contract. |
+| [`library/transparency.md`](library/transparency.md) | RFC 3161 timestamp and RFC 4998 evidence verification design, trust policy, and implementation notes. |
+| [`library/tuf.md`](library/tuf.md) | TUF root bootstrap, ordered metadata verification, rollback state, target acceptance gate, and fixture provenance. |
+| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
+| [`library/forge-client.md`](library/forge-client.md) | Lake review records, coroutine calls, anchor advancement, polling events, error mapping, and the installable forge double. |
+| [`library/drive.md`](library/drive.md) | Issue #195's persisted three-tree folder reconciliation, named conflict values, resumable sync transfer, path history and restore, daemon watcher, and bounded scan state. |
+| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
+| [`library/drive.md`](library/drive.md) | Issues #195 and #235's persisted three-tree reconciliation, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
+| [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
+| [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
+| [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
+| [`library/store.md`](library/store.md) | Content-defined local and caller-owned shared stores, pre-pack write-through, remote-registered local eviction, on-disk formats, integrity checks, index, tuning, and rebuild. |
+| [`library/gc.md`](library/gc.md) | Repository-scoped leased roots, typed retention rules, cost-aware result eviction, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
+| [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, versioned data-key rotation and revocation, readability reports, key custody, on-disk envelopes, and failure behavior. |
+| [`library/sealed-secrets.md`](library/sealed-secrets.md) | The X25519 and XChaCha20-Poly1305 Lake envelope, canonical CBOR, exact scope binding, Go mapping, key custody, and interoperability fixture. |
+| [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
+| [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
+| [`library/identity.md`](library/identity.md) | TAAP/1 identity documents, public canonical-CBOR codecs, rotation, signatures, and verification. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
+| [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
+| [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
+| [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
+| [`library/admission.md`](library/admission.md) | Image provenance statements, atomically reloaded named policy sets, fail-closed evaluation, evidence sources, transparency behavior, TLS serving, structured decisions, and bounded replay. |
+| [`api/admission.md`](api/admission.md) | Named Kubernetes webhook, decision stream, control, metrics, REST, OpenAPI, and MCP routes. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync, path history, flow status and retry output, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, drive sync and pin state, path history, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, named build inputs, retention explanations, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, flow status and retry output, retention explanations, capture, examples, and verification. |
 
 ## Command line
 

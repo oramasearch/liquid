@@ -1,0 +1,18 @@
+source sqlite-1.8.0 {
+    digest: sha256:f90321f49f8c8c3565e89f8330a5e00497d8f78c8f1749ce9ee4cb5249cce8b7
+    kind: archive
+    url: "https://example.invalid/sqlite-1.8.0.tar.gz"
+}
+
+package sqlite {
+    versions: [1.8.0]
+}
+
+build sqlite {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/f90321f49f8c8c3565e89f8330a5e00497d8f78c8f1749ce9ee4cb5249cce8b7 -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["sqlite-1.8.0"]
+    install {
+        layout: prefix
+    }
+}

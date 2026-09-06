@@ -1,0 +1,18 @@
+source cmake-1.11.0 {
+    digest: sha256:4c8ea24b12ff9655a220d3df3f0c3ae66dbad1ac1d3dd10de9b992fd2db06476
+    kind: archive
+    url: "https://example.invalid/cmake-1.11.0.tar.gz"
+}
+
+package cmake {
+    versions: [1.11.0]
+}
+
+build cmake {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/4c8ea24b12ff9655a220d3df3f0c3ae66dbad1ac1d3dd10de9b992fd2db06476 -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["cmake-1.11.0"]
+    install {
+        layout: prefix
+    }
+}

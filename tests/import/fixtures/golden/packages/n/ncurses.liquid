@@ -1,0 +1,18 @@
+source ncurses-1.9.0 {
+    digest: sha256:fa08855913a3dd4d6020f42b839d547e9c7d2e6f2f877313c991f0565b7fa0a8
+    kind: archive
+    url: "https://example.invalid/ncurses-1.9.0.tar.gz"
+}
+
+package ncurses {
+    versions: [1.9.0]
+}
+
+build ncurses {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/fa08855913a3dd4d6020f42b839d547e9c7d2e6f2f877313c991f0565b7fa0a8 -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["ncurses-1.9.0"]
+    install {
+        layout: prefix
+    }
+}

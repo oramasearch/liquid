@@ -1132,6 +1132,64 @@ TEST(Drive, seeded_reconciliation_covers_every_case_and_converges_through_sync_s
     EXPECT_LT(overflow_recovery->status.state_bytes, 256ULL * 1024ULL * 1024ULL);
 }
 
+TEST(Drive, concurrent_offline_edits_from_two_clients_keep_both_named_versions) {
+    temporary_directory first_folder;
+    temporary_directory second_folder;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    auto server = liquid::sync_server{*server_repository};
+    sync_http_server http{server};
+
+    write_drive_file(first_folder.path() / "shared.txt", "initial");
+    auto first = liquid::runtime::block_on(
+        liquid::drive_client::open(first_folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    auto initial_upload = liquid::runtime::block_on(first->sync());
+    ASSERT_TRUE(initial_upload) << initial_upload.error().message << ": "
+                                << initial_upload.error().context;
+
+    auto second = liquid::runtime::block_on(
+        liquid::drive_client::open(second_folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(second) << second.error().message << ": " << second.error().context;
+    auto initial_download = liquid::runtime::block_on(second->sync());
+    ASSERT_TRUE(initial_download) << initial_download.error().message << ": "
+                                  << initial_download.error().context;
+    ASSERT_EQ(read_drive_file(second_folder.path() / "shared.txt"), "initial");
+
+    write_drive_file(first_folder.path() / "shared.txt", "first offline edit");
+    write_drive_file(second_folder.path() / "shared.txt", "second offline edit");
+    auto first_upload = liquid::runtime::block_on(first->sync());
+    ASSERT_TRUE(first_upload) << first_upload.error().message << ": "
+                              << first_upload.error().context;
+    auto second_upload = liquid::runtime::block_on(second->sync());
+    ASSERT_TRUE(second_upload) << second_upload.error().message << ": "
+                               << second_upload.error().context;
+
+    EXPECT_EQ(read_drive_file(second_folder.path() / "shared.txt"), "second offline edit");
+    EXPECT_EQ(read_drive_file(second_folder.path() / "shared (remote conflict).txt"),
+              "first offline edit");
+    ASSERT_EQ(second_upload->status.conflicts.size(), 1U);
+    EXPECT_EQ(second_upload->status.conflicts.front().path, "shared.txt");
+    EXPECT_EQ(second_upload->status.conflicts.front().refs.size(), 3U);
+
+    auto original = liquid::runtime::block_on(server_repository->read("shared.txt"));
+    ASSERT_TRUE(original) << original.error().message;
+    EXPECT_EQ(text(*original), "second offline edit");
+    auto conflict =
+        liquid::runtime::block_on(server_repository->read("shared (remote conflict).txt"));
+    ASSERT_TRUE(conflict) << conflict.error().message;
+    EXPECT_EQ(text(*conflict), "first offline edit");
+    auto original_history = liquid::runtime::block_on(server_repository->history("shared.txt"));
+    ASSERT_TRUE(original_history) << original_history.error().message;
+    auto conflict_history =
+        liquid::runtime::block_on(server_repository->history("shared (remote conflict).txt"));
+    ASSERT_TRUE(conflict_history) << conflict_history.error().message;
+    EXPECT_FALSE(original_history->empty());
+    EXPECT_FALSE(conflict_history->empty());
+}
+
 TEST(Drive, state_memory_ceiling_refuses_an_unbounded_walk) {
     constexpr auto file_count = 4096;
     constexpr auto state_ceiling = std::uint64_t{256} * 1024U;

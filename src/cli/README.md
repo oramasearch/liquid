@@ -145,6 +145,9 @@ The public command table, replay output contract, and user-facing examples live 
 `configuration.cpp` implements `config check`, `config lower`, `config format`, and the
 configuration-backed `build --target` path entirely through the public configuration and repository
 APIs. Generator execution remains an ordinary library build action.
+`git.cpp` also implements `import spack`: it parses the export, destination, report, and JSON
+selectors, calls the public import task, and can render a previously saved report without repeating
+the import.
 
 `history.cpp` implements `ops` through the public operation-log API. Its JSON form includes the
 operation session. `repo.cpp` implements `log --ops` through the signed drip API. Undo accepts one
