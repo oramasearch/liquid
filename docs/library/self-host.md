@@ -65,9 +65,10 @@ test executable finds it in its parent build directory, and an installed CLI fin
 
 ## Verification record
 
-The Linux two-run action counts, hit rates, critical path, largest rebuilt outputs, and bootstrap
-comparisons are recorded here after the privileged mount-backed proof. macOS builds static and
-shared libliquid normally; a wrapped macOS build requires macFUSE.
+Linux proof deferred (decision 33). The Linux two-run action counts, hit rates, critical path,
+largest rebuilt outputs, and bootstrap comparisons remain the privileged mount-backed proof.
+Native macOS static and shared suites verify the portable repository and wrapper behavior; a
+wrapped macOS build requires macFUSE.
 
 ## Bounded restoration
 
