@@ -12,8 +12,10 @@
 #endif
 
 #include "build/cache.hpp"
+#include "build/content.hpp"
 #include "build/executor.hpp"
 #include "build/materialise.hpp"
+#include "build/normalise.hpp"
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
@@ -217,13 +219,22 @@ collect_outputs(repository& source, const action_input& input, const run_paths& 
             files.push_back(path);
         }
         for (const auto& file : files) {
+            auto normalised =
+                co_await runtime::offload([file] { return build_detail::normalise_file(file); });
+            if (!normalised) {
+                co_return std::unexpected(normalised.error());
+            }
+            if (!*normalised) {
+                co_return std::unexpected(normalised->error());
+            }
             auto stored = co_await repository_detail::build_access::put_file(source, file);
             if (!stored)
                 co_return std::unexpected(stored.error());
             const auto status = std::filesystem::status(file, code);
             if (code)
                 co_return std::unexpected(failure(errc::io, code.message(), file.string()));
-            const auto mode = static_cast<std::uint32_t>(status.permissions()) & 0777U;
+            const auto mode = build_detail::normalised_output_mode(
+                static_cast<std::uint32_t>(status.permissions()) & 0777U);
             output.push_back(
                 {std::filesystem::relative(file, paths.outputs).generic_string(), mode, *stored});
         }
@@ -420,16 +431,23 @@ prepare_action(repository& source, action_input input, bool lookup_cache) {
     if (!valid) {
         co_return std::unexpected(valid.error());
     }
+    auto source_time = co_await repository_detail::build_access::change_time(source, input.inputs);
+    if (!source_time) {
+        co_return std::unexpected(source_time.error());
+    }
+    auto folded = co_await build_detail::fold_dependency_inputs(
+        source, input.inputs, input.dependency_inputs);
+    if (!folded) {
+        co_return std::unexpected(folded.error());
+    }
+    input.inputs = *folded;
+    input.dependency_inputs.clear();
     auto policy = co_await build_detail::enforce_policy(source, input);
     if (!policy) {
         co_return std::unexpected(policy.error());
     }
     if (!policy->allowed) {
         co_return std::unexpected(build_detail::policy_refusal(*policy));
-    }
-    auto source_time = co_await repository_detail::build_access::change_time(source, input.inputs);
-    if (!source_time) {
-        co_return std::unexpected(source_time.error());
     }
     auto sandbox = sandbox_detail::definition(input.platform);
     if (!sandbox) {
@@ -586,6 +604,9 @@ runtime::task<bool> query_result_present(repository& source, result_id id) {
     if (value->provenance) {
         references.push_back(*value->provenance);
     }
+    if (value->output_tree) {
+        references.push_back(*value->output_tree);
+    }
     references.insert(references.end(), value->sboms.begin(), value->sboms.end());
     for (const auto& output : value->outputs) {
         references.push_back(output.blob);
@@ -696,6 +717,13 @@ record_remote_result(repository& source, action_input input, action_result value
     if (!valid) {
         co_return std::unexpected(valid.error());
     }
+    auto folded = co_await build_detail::fold_dependency_inputs(
+        source, input.inputs, input.dependency_inputs);
+    if (!folded) {
+        co_return std::unexpected(folded.error());
+    }
+    input.inputs = *folded;
+    input.dependency_inputs.clear();
     for (const auto& output : value.outputs) {
         auto bytes = co_await repository_detail::build_access::get(source, output.blob);
         if (!bytes) {

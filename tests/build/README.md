@@ -7,6 +7,11 @@ rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA p
 and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
 SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages over public
 results, attestations, traces, and result-scoped SBOMs.
+`test_content.cpp` covers canonical output-tree paths and modes plus read-only named dependency
+folding. `test_normalise.cpp` proves two `ar` headers with different owner, group, mode, and time
+normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root
+binary and text kinds are unchanged, and tree modes preserve only portable executability. The
+provenance tests also enumerate the stored signed input/output claim.
 
 `test_abi.cpp` decodes digest-pinned ELF, Mach-O, and PE fixtures; extracts native shared-library
 exports; checks compatible additions, removals, changed signatures, object sizes, GNU symbol
@@ -108,6 +113,15 @@ one compiler while preserving the object and link result, then make a semantic e
 compiler and linker and change the link result.
 The fixture registers a labelled smoke test, and the wrap scenario verifies its public target
 metadata.
+Its cross-project case compiles an upstream object twice across a comment-only source edit, imports
+both signed result claims into a downstream project, and asserts that the identical output tree
+causes zero downstream processes and a named unchanged-input explanation.
+
+`content-addressed-chain.cmake` is the opt-in `realworld` fixture. It fetches zlib 1.3.1 and libpng
+1.6.44 through pinned SHA-256 archives, builds zlib, builds libpng from zlib's named output tree,
+and links a small program from libpng's named output tree. It asserts the zero-process downstream
+comment-only rebuild and the changed-object link path, then prints all process counts and host load
+average.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.
