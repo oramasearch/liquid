@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <ranges>
 #include <set>
@@ -42,6 +43,8 @@ struct sbom_model {
     std::vector<sbom_component> components;
     std::vector<sbom_relationship> relationships;
     std::vector<std::string> evidence;
+    std::map<std::string, std::string> component_ids;
+    std::set<std::string> relationship_ids;
 };
 
 auto same_digest(const digest& left, const digest& right) -> bool {
@@ -152,31 +155,37 @@ auto component_id(std::size_t index) -> std::string {
     return "component-" + std::to_string(index + 1);
 }
 
+auto component_key(const sbom_component& component) -> std::string {
+    auto output = component.name + "\n" + component.kind + "\n";
+    if (component.content) {
+        output += to_string(*component.content);
+    }
+    output += "\n";
+    if (component.repository_id) {
+        output += *component.repository_id;
+    }
+    output += "\n";
+    if (component.pinned_change) {
+        output += to_string(*component.pinned_change);
+    }
+    return output;
+}
+
 auto add_component(sbom_model& model, sbom_component component) -> std::string {
-    const auto found = std::ranges::find_if(model.components, [&](const auto& existing) {
-        const auto content_matches = (!existing.content && !component.content) ||
-                                     (existing.content && component.content &&
-                                      same_digest(*existing.content, *component.content));
-        const auto pin_matches = (!existing.pinned_change && !component.pinned_change) ||
-                                 (existing.pinned_change && component.pinned_change &&
-                                  same_digest(*existing.pinned_change, *component.pinned_change));
-        return existing.name == component.name && existing.kind == component.kind &&
-               content_matches && existing.repository_id == component.repository_id && pin_matches;
-    });
-    if (found != model.components.end()) {
-        return found->id;
+    const auto key = component_key(component);
+    if (const auto found = model.component_ids.find(key); found != model.component_ids.end()) {
+        return found->second;
     }
     component.id = component_id(model.components.size());
     const auto id = component.id;
     model.components.push_back(std::move(component));
+    model.component_ids.emplace(key, id);
     return id;
 }
 
 void add_relationship(sbom_model& model, std::string from, std::string to, std::string kind) {
-    const auto present = std::ranges::any_of(model.relationships, [&](const auto& item) {
-        return item.from == from && item.to == to && item.kind == kind;
-    });
-    if (!present) {
+    const auto key = from + "\n" + to + "\n" + kind;
+    if (model.relationship_ids.insert(key).second) {
         model.relationships.push_back({std::move(from), std::move(to), std::move(kind)});
     }
 }
@@ -190,6 +199,12 @@ public:
                const action_result& value,
                const action_output& target,
                std::optional<digest> current_result) -> runtime::task<sbom_model> {
+        tool_components_.clear();
+        repository_components_.clear();
+        auto indexed = co_await index_producers();
+        if (!indexed) {
+            co_return std::unexpected(indexed.error());
+        }
         auto model = sbom_model{.subject = target.blob,
                                 .name = target.path,
                                 .created = value.finished_at.value_or(value.observed_at),
@@ -229,35 +244,59 @@ private:
     };
 
     auto load_action(digest id) -> runtime::task<objects::action_record> {
+        const auto key = to_string(id);
+        if (const auto found = actions_.find(key); found != actions_.end()) {
+            co_return found->second;
+        }
         auto bytes = co_await repository_detail::build_access::get(source_, id);
         if (!bytes) {
             co_return std::unexpected(bytes.error());
         }
-        co_return objects::decode_action(*bytes);
+        auto decoded = objects::decode_action(*bytes);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        const auto [stored, inserted] = actions_.emplace(key, std::move(*decoded));
+        static_cast<void>(inserted);
+        co_return stored->second;
+    }
+
+    auto index_producers() -> runtime::task<void> {
+        if (producers_indexed_) {
+            co_return result<void>{};
+        }
+        for (const auto& entry : entries_) {
+            if (entry.sequence == 0 || entry.divergent) {
+                continue;
+            }
+            for (const auto& output : entry.value.outputs) {
+                producers_[to_string(output.blob)].push_back(
+                    producer{entry.id.value, entry.sequence, entry.value, output});
+            }
+        }
+        producers_indexed_ = true;
+        co_return result<void>{};
     }
 
     auto find_producer(digest content,
                        std::span<const digest> visited,
-                       std::uint64_t before_sequence) -> runtime::task<std::optional<producer>> {
-        auto newest = std::optional<producer>{};
-        auto sequence = std::uint64_t{};
-        for (const auto& entry : entries_) {
-            if (entry.sequence == 0 || entry.divergent || entry.sequence >= before_sequence ||
+                       std::uint64_t before_sequence) const -> std::optional<producer> {
+        const auto found = producers_.find(to_string(content));
+        if (found == producers_.end()) {
+            return std::nullopt;
+        }
+        const auto* newest = static_cast<const producer*>(nullptr);
+        for (const auto& candidate : found->second) {
+            if (candidate.sequence >= before_sequence ||
                 std::ranges::any_of(
-                    visited, [&](const auto& id) { return same_digest(id, entry.id.value); })) {
+                    visited, [&](const auto& id) { return same_digest(id, candidate.id); })) {
                 continue;
             }
-            auto value = entry.value;
-            const auto output = std::ranges::find_if(
-                value.outputs, [&](const auto& item) { return same_digest(item.blob, content); });
-            if (output != value.outputs.end() && entry.sequence >= sequence) {
-                sequence = entry.sequence;
-                auto selected_output = *output;
-                newest = producer{
-                    entry.id.value, entry.sequence, std::move(value), std::move(selected_output)};
+            if (!newest || candidate.sequence > newest->sequence) {
+                newest = &candidate;
             }
         }
-        co_return newest;
+        return newest ? std::optional<producer>{*newest} : std::nullopt;
     }
 
     auto collect_toolchain(sbom_model& model,
@@ -265,6 +304,10 @@ private:
                            std::string prefix,
                            std::vector<digest>& visited)
         -> runtime::task<std::vector<std::string>> {
+        const auto cache_key = to_string(root) + "\n" + prefix;
+        if (const auto found = tool_components_.find(cache_key); found != tool_components_.end()) {
+            co_return found->second;
+        }
         if (std::ranges::any_of(visited,
                                 [&](const auto& value) { return same_digest(value, root); })) {
             co_return std::vector<std::string>{};
@@ -298,6 +341,7 @@ private:
             output.push_back(add_component(
                 model, {.name = path, .kind = "tool", .content = entry.ref, .inferred = false}));
         }
+        tool_components_.emplace(cache_key, output);
         co_return output;
     }
 
@@ -306,6 +350,11 @@ private:
                               std::string prefix,
                               std::vector<digest>& visited)
         -> runtime::task<std::vector<std::string>> {
+        const auto cache_key = to_string(root) + "\n" + prefix;
+        if (const auto found = repository_components_.find(cache_key);
+            found != repository_components_.end()) {
+            co_return found->second;
+        }
         if (std::ranges::any_of(visited,
                                 [&](const auto& value) { return same_digest(value, root); })) {
             co_return std::vector<std::string>{};
@@ -342,6 +391,7 @@ private:
                                             .pinned_change = entry.ref,
                                             .inferred = false}));
         }
+        repository_components_.emplace(cache_key, output);
         co_return output;
     }
 
@@ -369,11 +419,8 @@ private:
             add_relationship(model, artifact, repository, "generated_from");
         }
         for (const auto& input : value.manifest) {
-            auto producer = co_await find_producer(input.content, visited, before_sequence);
+            auto producer = find_producer(input.content, visited, before_sequence);
             if (!producer) {
-                co_return std::unexpected(producer.error());
-            }
-            if (!*producer) {
                 const auto component = add_component(model,
                                                      {.name = input.path,
                                                       .kind = "input",
@@ -383,22 +430,18 @@ private:
                 continue;
             }
             const auto component = add_component(model,
-                                                 {.name = (*producer)->output.path,
+                                                 {.name = producer->output.path,
                                                   .kind = "artifact",
-                                                  .content = (*producer)->output.blob,
+                                                  .content = producer->output.blob,
                                                   .inferred = false});
             add_relationship(model, artifact, component, "generated_from");
-            visited.push_back((*producer)->id);
-            auto action_value = co_await load_action((*producer)->value.action);
+            visited.push_back(producer->id);
+            auto action_value = co_await load_action(producer->value.action);
             if (!action_value) {
                 co_return std::unexpected(action_value.error());
             }
-            auto expanded = co_await visit_action(model,
-                                                  *action_value,
-                                                  (*producer)->value,
-                                                  component,
-                                                  visited,
-                                                  (*producer)->sequence);
+            auto expanded = co_await visit_action(
+                model, *action_value, producer->value, component, visited, producer->sequence);
             if (!expanded) {
                 co_return std::unexpected(expanded.error());
             }
@@ -408,7 +451,21 @@ private:
 
     repository& source_;
     std::vector<repository_result> entries_;
+    bool producers_indexed_{};
+    std::map<std::string, std::vector<producer>> producers_;
+    std::map<std::string, objects::action_record> actions_;
+    std::map<std::string, std::vector<std::string>> tool_components_;
+    std::map<std::string, std::vector<std::string>> repository_components_;
 };
+
+void retarget_model(sbom_model& model, const action_output& target) {
+    model.subject = target.blob;
+    model.name = target.path;
+    if (!model.components.empty()) {
+        model.components.front().name = target.path;
+        model.components.front().content = target.blob;
+    }
+}
 
 auto spdx_id(std::string_view id) -> std::string {
     auto output = std::string{"SPDXRef-"};
@@ -969,11 +1026,15 @@ runtime::task<void> store_derived_sboms(repository& source,
                                         const objects::action_record& action,
                                         action_result& value) {
     value.sboms.clear();
+    if (value.outputs.empty()) {
+        co_return result<void>{};
+    }
+    auto model = co_await model_for(source, action, value, value.outputs.front(), std::nullopt);
+    if (!model) {
+        co_return std::unexpected(model.error());
+    }
     for (const auto& output : value.outputs) {
-        auto model = co_await model_for(source, action, value, output, std::nullopt);
-        if (!model) {
-            co_return std::unexpected(model.error());
-        }
+        retarget_model(*model, output);
         for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
             auto record = encode_record(*model, format);
             if (!record) {
@@ -1003,6 +1064,64 @@ runtime::task<void> store_derived_sboms(repository& source,
         }
     }
     co_return result<void>{};
+}
+
+auto index_sbom_statements(repository& source, const std::vector<digest>& statement_ids)
+    -> runtime::task<std::optional<std::map<std::string, digest>>> {
+    auto output = std::map<std::string, digest>{};
+    for (const auto id : statement_ids) {
+        auto records = co_await source.attestations({.id = id});
+        if (!records || records->records.empty()) {
+            co_return std::nullopt;
+        }
+        const auto& statement = records->records.front().value;
+        if (statement.profile != "sbom/1") {
+            co_return std::nullopt;
+        }
+        const auto* format = text_attribute(statement, "format");
+        const auto* path = text_attribute(statement, "output");
+        if (!format || !path || !output.emplace(*path + "\n" + *format, id).second) {
+            co_return std::nullopt;
+        }
+    }
+    co_return output;
+}
+
+runtime::task<bool>
+validate_derived_sboms(repository& source, result_id id, const action_result& value) {
+    if (value.sboms.size() != value.outputs.size() * 2) {
+        co_return false;
+    }
+    if (value.outputs.empty()) {
+        co_return true;
+    }
+    auto action = co_await load_action(source, value.action);
+    if (!action) {
+        co_return std::unexpected(action.error());
+    }
+    auto model = co_await model_for(source, *action, value, value.outputs.front(), id.value);
+    if (!model) {
+        co_return std::unexpected(model.error());
+    }
+    auto statements = co_await index_sbom_statements(source, value.sboms);
+    if (!statements || !*statements) {
+        co_return false;
+    }
+    for (const auto& output : value.outputs) {
+        retarget_model(*model, output);
+        for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
+            const auto key = output.path + "\n" + std::string{format_name(format)};
+            const auto found = (*statements)->find(key);
+            if (found == (*statements)->end()) {
+                co_return false;
+            }
+            auto report = co_await build::generate_sbom(source, id, output.path, format);
+            if (!report || !report->verified || !same_digest(report->attestation, found->second)) {
+                co_return false;
+            }
+        }
+    }
+    co_return true;
 }
 
 } // namespace build_detail

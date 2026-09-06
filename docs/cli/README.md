@@ -6,7 +6,7 @@ tree into its project cache. One-shot commands run library operations through `r
 `serve sync` awaits them on its listener executor. The CLI does not read repository storage directly.
 
 `init` imports regular files already present in its target directory through
-`repository::write_file`. `status`, `pause`, and `resume` attach to the checkout daemon, starting
+`repository::import_tree`; the local-tree form of `import` uses the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
 it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
 its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
 available, but daemon attachment returns the documented unsupported result because the current
@@ -51,7 +51,7 @@ that the table and `liquid --help` name the same commands.
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
-| `import` | `import git <path>` | Import a local Git repository. | available |
+| `import` | `import <path>` or `import git <path>` | Import a local tree or Git repository. | available |
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
@@ -280,7 +280,9 @@ executor, estimates, actual cost, inputs, and all alternatives. Ranked plans sta
 equivalent result set.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
-number of uncached feature probes observed, plus the outer action's status. `--explain`
+number of uncached feature probes observed, plus the outer action's status. Its final timing line
+includes `peak_rss_bytes`, the process high-water mark normalized to bytes: Linux reports
+`getrusage(RUSAGE_SELF).ru_maxrss` in KiB and macOS reports it in bytes. `--explain`
 adds one `miss:` line for each changed manifest path. `--jobs`
 sets driver parallelism and the compilation-database seed width; `--no-cache` executes and records
 the observation without publishing or serving cache entries. The persistent project cache defaults
@@ -459,6 +461,7 @@ liquid unlock src/main.cpp
 liquid mount /tmp/liquid-mount --read-only
 liquid materialise /tmp/liquid-checkout src
 liquid gc --dry-run .
+liquid import ../source-tree
 liquid import git ../source-repository
 liquid export git ../exported-repository main
 liquid retain explain blake3:<object-digest>

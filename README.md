@@ -50,8 +50,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and removals, change cuts, references, snapshots, historical document state, composition,
 > conflict values, operation- and session-scoped local-intent undo, advisory
 > locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
-> one-drip streaming file writes, and caller-stated write bases with stale-reasoning refusal,
-> disjoint re-validation, and forced re-planning records are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
+> one-drip streaming file writes and tree imports, and caller-stated write bases with
+> stale-reasoning refusal, disjoint re-validation, and forced re-planning records are implemented.
+> TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
 > Directory CRDT checkpoints prefer compact bytes with checked full-history fallback and reopen as
 > sync-capable documents; remote changes are observed through patches, and every automerge apply,
@@ -155,6 +156,11 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > a physical size cap evicts the lowest execution-cost-per-byte results, and `liquid retain explain`
 > names the responsible rule and lease. The action-result memory cache tier remains separate work; macOS needs
 > macFUSE and Windows returns its documented unsupported result.
+
+> **Build: liquid builds liquid.** Linux CI configures FetchContent dependencies outside the
+> sandbox, builds the static library and CLI under `liquid wrap` twice, requires a 100% disk hit rate
+> on the second run, and compares both outputs byte for byte with the CMake bootstrap. Static and
+> shared libliquid builds remain covered.
 
 > **Phase 3 build-without-bytes is implemented behind a transport-neutral remote blob source.**
 > Remote result records retain source and instance locations without fetching outputs. Store reads,
@@ -272,6 +278,7 @@ and Zetta's.
 - [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.
 - [`docs/library/reapi-codec.md`](docs/library/reapi-codec.md) — the dependency-free protobuf codec, REAPI v2.3 message structs, native record conversion, digest selection, and pinned fixtures.
 - [`docs/library/reapi.md`](docs/library/reapi.md) — the REAPI client, remote cache tier, CAS/ActionCache server, configuration, CLI, API map, and peer proof.
+- [`docs/library/self-host.md`](docs/library/self-host.md) — how liquid configures with CMake, builds itself under `liquid wrap`, and compares bootstrap outputs.
 - [`docs/library/provenance.md`](docs/library/provenance.md) — automatic signed SLSA provenance, its exact record mapping, verification, and DSSE export.
 - [`docs/library/policy.md`](docs/library/policy.md) — build-input attestation rules, approved-builder quorums, failure behavior, CLI inspection, and policy-bound cache keys.
 - [`docs/cli/build-events.md`](docs/cli/build-events.md) — the stable build-event JSON-lines schema and ordering.

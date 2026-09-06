@@ -21,7 +21,7 @@ liquid #111's identity-key rotation and chain verification, and signed drips and
 trust-domain encrypted objects, liquid #51's pluggable local, recipient, cloud KMS, lake transit,
 and threshold-share KEK custody, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
-deterministic crash simulator, liquid #116's bounded-memory file and repository streaming, liquid
+deterministic crash simulator, liquid #116's bounded-memory file, repository, and tree-import streaming, liquid
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
 verified redaction, liquid #52's JSON/`.env` leaf encryption with structural key diff, and liquid
 #43's local Git import/export with identity mapping are implemented;
@@ -97,6 +97,12 @@ The repository object model, internal CRDT metadata document, canonical CBOR cod
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
 locks, and nested pointers. Directory
+Liquid #59 configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
+`liquid wrap`, retains configured CMake inputs, requires a fully cached second run, and compares
+the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI transport and
+scheduling policy remain later Phase 3 work. The repository object model, internal CRDT metadata
+document, canonical CBOR codec, and drip journal are implemented. Directory
+documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 documents use checked compact-or-full checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Repositories can use a caller-owned shared store with independent
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,

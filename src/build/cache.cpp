@@ -10,6 +10,7 @@
 #include <system_error>
 
 #include "build/repository_access.hpp"
+#include "build/sbom.hpp"
 #include "build/why.hpp"
 #include "identity/taap.hpp"
 #include "store/pack.hpp"
@@ -251,18 +252,7 @@ auto cache_pack_bytes(const std::filesystem::path& directory) -> result<std::uin
 
 auto sboms_are_valid(repository& source, result_id id, const action_result& value)
     -> runtime::task<bool> {
-    if (value.sboms.size() != value.outputs.size() * 2) {
-        co_return false;
-    }
-    for (const auto& output : value.outputs) {
-        for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
-            auto report = co_await build::generate_sbom(source, id, output.path, format);
-            if (!report || !report->verified) {
-                co_return false;
-            }
-        }
-    }
-    co_return true;
+    co_return co_await build_detail::validate_derived_sboms(source, id, value);
 }
 
 auto abi_verdict_name(abi_verdict value) -> std::string_view {
