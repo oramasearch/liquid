@@ -18,6 +18,7 @@ auto set_executable(std::filesystem::path path) -> void;
 auto frontend_module_path(bool compiler) -> std::filesystem::path;
 
 auto repo_init(int argc, char** argv) -> int;
+auto clone(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
 auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
@@ -75,6 +76,7 @@ auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto secret(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto inspect(int argc, char** argv) -> int;
 auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
@@ -86,6 +88,7 @@ auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
 auto tiers(int argc, char** argv) -> int;
 auto registry(int argc, char** argv) -> int;
+auto blame(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -432,6 +435,18 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_init},
+    {"clone",
+     "clone <url|drive-folder> [<dir>] [--json]",
+     "clone and materialize a repository",
+     "available",
+     flag_json,
+     "Create a repository from a sync endpoint or configured drive folder, persist its remote, "
+     "and materialize every file.",
+     "liquid clone https://lake.example.invalid/repositories/example ./example --json",
+     "0 on success, 1 when authorization, repository lookup, target validation, or transfer "
+     "fails, and 2 for invalid usage.",
+     argument_policy::ordinary,
+     liquid_cli::clone},
     {"status",
      "status [--json]",
      "show repository status",
@@ -572,6 +587,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::path_history},
+    {"blame",
+     "blame <path> [--json]",
+     "show the session and change that last wrote each line",
+     "available on macOS and Linux",
+     flag_json,
+     "Show per-line operation attribution for a path at the current change.",
+     "liquid blame src/main.cpp --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::blame},
     {"drive",
      "drive <sync <folder> <remote> [--watch]|status [folder]|pin <path>|unpin <path>>",
      "synchronize a drive folder",
@@ -928,6 +953,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::abi},
+    {"inspect",
+     "inspect <path|digest> [--json]",
+     "explain a recognised artifact",
+     "available",
+     flag_json,
+     "Show the codec, fidelity tier, and decoded entry tree for an artifact path or stored blob.",
+     "liquid inspect artifact.whl --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::inspect},
     {"symbols",
      "symbols <path>",
      "show compiler or syntactic symbols for a source path",

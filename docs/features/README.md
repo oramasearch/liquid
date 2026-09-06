@@ -149,7 +149,7 @@ specifies it.
 | [21](21-liquify-ide.md) | **liquify** | The IDE. No language server, because the editor and the build are one graph. |
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 | [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
-| [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Agent/document/repository write buckets and daemon flow watermarks are implemented; private replicas, presence, and semantic conflict work remain. |
+| [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Write flow control, private replicas, presence, leases, epochs, and per-line attribution are implemented; suspicious-region detection remains. |
 | [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, and the append-only log with optional public anchoring. |
 
 ## Status
