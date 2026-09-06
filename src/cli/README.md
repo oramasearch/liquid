@@ -81,7 +81,8 @@ path.
 
 Repository status includes bytes still remote in both text and JSON. Build explanation renderers
 also name the non-hermetic-read reason and its path for remote-eligibility diagnostics.
-Status also projects daemon graph-validation backlog and the last divergence in text and JSON.
+Status also projects daemon graph-validation backlog, flow watermarks and buckets, and the last
+divergence in text and JSON. Push prints the peer's exhausted scope and retry delay on HTTP 429.
 Wrap output includes its graph backlog and last divergence record.
 
 `symbols.cpp` detects the language from the public registry's extension table, uses the compiler

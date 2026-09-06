@@ -13,6 +13,11 @@ optional disjoint or forced result; the reader retains version 1 support. Stale 
 the shared text-hunk implementation against historical and current blob records and appends no
 drip.
 
+The repository document persists `config.flow`. Process-shared controllers enforce actor,
+containing-directory, and repository buckets immediately before a CRDT transaction opens;
+oversized updates and exhausted buckets return without an operation or drip. Live balances and
+rejection counters are not persisted.
+
 Public tree comparison flattens immutable tree records into repository-relative paths, matches
 entries by `node_id`, and reports moves independently from mode and content changes. Change-level
 comparison also attaches the conflict values stored on each change. Text hunk generation reads

@@ -389,6 +389,8 @@ private:
         } else if (error.code == liquid::errc::conflict ||
                    error.code == liquid::errc::already_exists) {
             status = 409;
+        } else if (error.code == liquid::errc::busy) {
+            status = 429;
         }
         auto body = liquid::sync_server::encode_error(error);
         respond(connection,
@@ -545,6 +547,34 @@ TEST(Sync, exchanges_disk_repositories_and_only_new_objects) {
     ASSERT_TRUE(two);
     EXPECT_EQ(text(*one), "one");
     EXPECT_EQ(text(*two), "two");
+}
+
+TEST(Sync, peer_bucket_returns_retry_report_and_leaves_repository_unchanged) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    auto options = liquid::repository_options{};
+    options.flow.per_actor = {.rate_per_s = 1, .burst = 1};
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path(), options));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(destination);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+
+    auto server = liquid::sync_server{*destination};
+    sync_http_server http{server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+    ASSERT_TRUE(pushed) << (pushed ? "" : pushed.error().message);
+    EXPECT_GT(pushed->retry_after_ms, 0U);
+    EXPECT_EQ(pushed->exhausted_scope, "actor");
+    auto root = liquid::runtime::block_on(destination->root());
+    ASSERT_TRUE(root);
+    EXPECT_TRUE(root->entries.empty());
+    auto head = liquid::runtime::block_on(destination->head());
+    EXPECT_FALSE(head);
+    EXPECT_EQ(head.error().code, liquid::errc::not_found);
 }
 
 TEST(Sync, ChangeRefusalProducesAReferenceOutcome) {
