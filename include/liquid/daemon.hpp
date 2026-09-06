@@ -13,6 +13,7 @@
 #include "liquid/drip.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/flow.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/runtime.hpp"
 
@@ -53,6 +54,7 @@ struct LIQUID_EXPORT daemon_status {
     std::uint64_t graph_memory_ceiling{};
     std::uint64_t graph_validation_backlog{};
     std::optional<graph_validation_record> last_graph_divergence;
+    flow_status flow;
 };
 
 struct LIQUID_EXPORT daemon_options {
@@ -63,6 +65,7 @@ struct LIQUID_EXPORT daemon_options {
     query_registry graph_queries{};
     capture_options capture{};
     std::vector<std::shared_ptr<daemon_target>> targets;
+    std::string drive_bearer_token;
 };
 
 class LIQUID_EXPORT daemon {
@@ -84,6 +87,7 @@ public:
     build_plan(build_target target = {});
     [[nodiscard]] runtime::task<build_handle> build(build_target target);
     [[nodiscard]] runtime::task<build_handle> build(action_input input);
+    [[nodiscard]] runtime::task<void> report_consumer_lag(std::string name, std::uint64_t behind);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();
 

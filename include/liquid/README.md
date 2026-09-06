@@ -6,7 +6,17 @@ inventory is maintained in `docs/library/api-map.md`.
 
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.
+`sync.hpp` includes metadata-only tree receipt for node-store and other lazy-hydration clients.
+It records remote blob locations without fetching content chunks.
+`store.hpp` exposes runtime remote-source registration, hydration and remote-access observation,
+and live local-byte accounting for long-running node stores.
+`node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
+values.
 
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
+
+`resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
+codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
+engine and its clause encoding stay private.

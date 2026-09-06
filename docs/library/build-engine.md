@@ -16,7 +16,7 @@ The cache key then covers exactly what was read, and a miss can name the input t
 changed.
 
 **Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
-#23, #193, and #200 implement
+#23, #26, #193, and #200 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -57,6 +57,11 @@ Commands, declared outputs,
 environment, toolchain, platform, timeout, and remote eligibility remain the recorded values. A
 repository without wrapper configuration returns `errc::not_configured` and tells the caller to
 run `liquid wrap <command>` first. An unknown nonempty target returns `errc::not_found`.
+
+When the recorded action uses #26 named upstream inputs, planning refreshes the project root while
+retaining the recorded read-only `deps/` subtree. The plan therefore observes current project files
+and the same content-addressed upstream output trees; it neither drops those inputs nor folds them
+into the mutable project root.
 
 `repository::build(build_target)` starts the selected graph on the existing `build_handle` stream.
 Actions run in dependency order. Before each action, the planner refreshes the current root and
@@ -178,6 +183,7 @@ result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, 
           stdout: digest, stderr: digest, manifest: [ { path, digest } … ],   # everything the action read, with content hashes
           timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
           started_at: time, finished_at: time, provenance: digest(attestation),
+          output_tree: digest(tree),
           sboms: [ digest(attestation) … ],
           abis: [ digest(abi/1) … ], abi_compatibility: [ digest(attestation) … ],
           schedule: { decision, history, size_class, input_bytes, remote_state_queried,
@@ -191,11 +197,16 @@ build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outpu
 
 New result records use version 4. Its phase durations are non-overlapping and their sum is the
 recorded action duration: queue wait, sandbox preparation, tool execution, result analysis and
-hashing, then local-store writes. Version 4 adds descriptor and compatibility-attestation
-references for shared-library outputs. Version 3 added the immutable scheduling decision and every
-cost model input without changing the five timing phases. The decoder continues to accept versions
-1 through 3 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded
-into local store time; absent bytes and the transfer estimate are explicit schedule fields.
+hashing, then local-store writes. Version 4 adds optional `output_tree`, the canonical tree containing
+all locally collected result outputs, plus descriptor and compatibility-attestation references for
+shared-library outputs. A REAPI metadata bridge may use version 4 before a local output tree is
+available. When present, the signed result is the producer's claim that the action input tree produced
+those content-addressed bytes. `build::known_outputs(repository&)` returns the distinct `{input_tree,
+output_tree}` pairs from signature-valid results without adding another record kind. Version 3 added
+the immutable scheduling decision and every cost model input without changing the five timing phases.
+The decoder continues to accept versions 1 through 3 and maps version 1's `upload_ms` value to the
+store phase. Remote transfer is not folded into local store time; absent bytes and the transfer
+estimate are explicit schedule fields.
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
   materialised into the sandbox from the store and addressed by content; the `toolchain`
@@ -209,6 +220,68 @@ into local store time; absent bytes and the transfer estimate are explicit sched
   provenance record (#14 wraps it in a `slsa_provenance/1` attestation).
 - `outputs` in the action are the paths the action may write; the result lists what it did
   write. A write outside the declared outputs is a sandbox violation, reported with the path.
+
+### Named upstream outputs
+
+`wrap_options::inputs` and repeatable `liquid wrap --input <name>=<result-or-tree-digest>` add a
+producer's canonical output tree below `deps/<name>/`. The mount exposes the same tree read-only at
+`/liquid/work/<action-id>/deps/<name>/`. A result digest is accepted only when its result signature
+is valid and it carries a version-4 `output_tree`; a tree digest is used directly. Wrapper caches
+share these records through their common cache parent, so the downstream cache imports the signed
+result and its referenced object graph before planning.
+
+Direct execution uses `action_input::dependency_inputs` with the same `named_input` values. Before
+policy and cache lookup, direct and wrapped builds fold the named trees into the ordinary input-tree
+record and clear the request-only list. The action and its manifest therefore use one input tree,
+including observed reads such as `deps/zlib/include/zlib.h`. The candidate key keeps its existing
+shape because it already omits the input tree and validates observed paths against the current
+tree.
+
+### Output normalisation
+
+Collection classifies each output before hashing and storing. CPU-only rewriting runs through
+`runtime::offload`. The versioned rule names are fields of the sandbox-definition record, so
+machines with different implementations have different sandbox digests and cannot share entries.
+
+| Artifact kind | Canonical rule before storage |
+|---|---|
+| Directory tree | Tree records contain no mtimes. File modes become `0644` or `0755` according to whether any execute bit was set; directories are `0755`, and named dependency directories are read-only `0555`. |
+| Unix `ar` archive | GNU deterministic-mode headers: member uid, gid, and mtime are zero; modes become `0644` or `0755`. The fixed environment also sets `ZERO_AR_DATE=1`. |
+| ELF object or executable | No byte rewrite. The fixed virtual root already removes checkout paths, so `-ffile-prefix-map` is unnecessary. Toolchains that embed time must be configured for reproducible output. |
+| Mach-O object or executable | No byte rewrite for the same fixed-root reason. `ZERO_AR_DATE=1` covers archive member dates. |
+| PE/COFF object or executable | No byte rewrite. MSVC-compatible toolchains must use `/Brepro` when they would otherwise emit time-dependent bytes. |
+| Text (`.pc`, CMake configuration, generated header) | No byte rewrite. The deterministic `SOURCE_DATE_EPOCH` fixes generators that honor the reproducible-build convention; wrap uses zero and direct actions use the recorded source epoch. |
+| Python `.pyc` | Convert the 16-byte header to unchecked hash-based form and derive its eight-byte hash from the bytecode payload, eliminating timestamp and source-size identity. |
+| ZIP, JAR, wheel, and other codec archives | Deferred to #29's `canonicalise`; this implementation does not add a second ZIP reader. |
+| Other bytes | Stored unchanged. Reproducibility verification detects any remaining producer variance. |
+
+The static and shared-library proof configurations run the same normaliser tests. In the shared
+configuration, the test target compiles the private normaliser and sandbox-definition helpers
+directly so those implementation details stay outside the public library ABI.
+
+### Measured cascade cutoff
+
+The privileged Linux `content-addressed-build-chain` fixture downloads SHA-256-pinned zlib 1.3.1
+and libpng 1.6.44 sources, builds representative real translation units and deterministic archives,
+and links a program that calls zlib through libpng's exported dependency tree. Each downstream
+project uses `--input` on the preceding normalized output tree. One recorded run reported:
+
+```text
+CHAIN initial zlib=6 libpng=9 program=2
+CHAIN comment zlib=2 libpng=0 program=0
+CHAIN semantic zlib=2 libpng=2 program=1
+CHAIN load_average=36.86 30.04 26.84 14/761 2004
+```
+
+The comment-only zlib edit executed its compiler path but reproduced the same complete output-tree
+digest, including the normalized archive, so neither downstream project started a process. The
+function-body edit changed the zlib object; libpng reran only the consumers of changed bytes and the
+program link reran. The load-average line is captured with the process counts so the measurement is
+interpretable under concurrent local container load.
+
+The outer signed result claims the complete output tree accumulated across hit and miss children.
+Its ordinary `outputs` list still contains only paths written by the current driver run, preserving
+per-process output lookup and allowing an unchanged child result to remain the newest producer.
 
 ## The sandbox: observation by the mount, enforcement by the platform
 
@@ -233,7 +306,7 @@ read, so a large input tree costs nothing to set up (features/06: data movement 
 
 Environment inside the sandbox is fixed and minimal (`PATH` to the toolchain tree, `HOME`
 and `TMPDIR` to sandbox-private directories, `LANG=C.UTF-8`, `TZ=UTC`, `SOURCE_DATE_EPOCH`
-from the change's time, nothing inherited). The sandbox definition (the mount layout, the
+from the recorded source epoch, `ZERO_AR_DATE=1`, nothing inherited). The sandbox definition (the mount layout, the
 environment, the enforcement profile) is itself a record and its digest is in the action, so
 two machines with different sandbox definitions never share a cache entry by accident.
 When `wrap_options::session` names a session, the wrapper opens the working-tree repository and

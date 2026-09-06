@@ -22,6 +22,7 @@ enum class operation_kind : std::uint8_t { write = 1, move = 2, remove = 3 };
 struct operation {
     node_id id{};
     operation_kind kind{operation_kind::write};
+    std::string value_kind{"blob"};
     std::string path;
     std::string to;
     std::string ref;
@@ -53,6 +54,8 @@ public:
                       std::int64_t time) -> result<void>;
     static auto inspect(const automerge_cpp::Document& document, std::string_view path)
         -> result<std::optional<entry>>;
+    static auto entry_names(const automerge_cpp::Document& document)
+        -> result<std::vector<std::string>>;
     static auto entries(const automerge_cpp::Document& document) -> result<std::vector<entry>>;
     static auto operations(const automerge_cpp::Document& document)
         -> result<std::vector<operation>>;

@@ -32,6 +32,11 @@ struct LIQUID_EXPORT platform {
     std::string arch;
 };
 
+struct LIQUID_EXPORT named_input {
+    std::string name;
+    digest source;
+};
+
 struct LIQUID_EXPORT action_input {
     std::vector<std::string> command;
     std::string cwd;
@@ -42,6 +47,7 @@ struct LIQUID_EXPORT action_input {
     liquid::platform platform;
     std::optional<std::chrono::seconds> timeout;
     bool remote_eligible{};
+    std::vector<named_input> dependency_inputs;
 };
 
 struct LIQUID_EXPORT result_id {
@@ -262,6 +268,7 @@ struct LIQUID_EXPORT action_result {
     std::vector<digest> abis;
     std::vector<digest> abi_compatibility;
     std::optional<execution_schedule> schedule;
+    std::optional<digest> output_tree;
 };
 
 struct LIQUID_EXPORT provenance_report {
@@ -315,6 +322,7 @@ struct LIQUID_EXPORT wrap_options {
     std::optional<std::filesystem::path> fact_directory;
     std::optional<remote_config> remote;
     std::optional<session_id> session;
+    std::vector<named_input> inputs;
 };
 
 struct LIQUID_EXPORT critical_action {
@@ -469,12 +477,18 @@ struct LIQUID_EXPORT wrap_report {
     std::uint64_t probes_started{};
     std::uint64_t graph_validation_backlog{};
     std::optional<graph_validation_record> last_graph_divergence;
+    std::optional<digest> output_tree;
     struct abi_break {
         std::string output;
         digest previous;
         abi_report report;
     };
     std::vector<abi_break> abi_breaks;
+};
+
+struct LIQUID_EXPORT known_output {
+    digest input_tree;
+    digest output_tree;
 };
 
 struct LIQUID_EXPORT why_slow_report {
@@ -592,6 +606,8 @@ execute(repository& source, action_input input, remote_executor& remote);
 [[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<result_id>>
 execute_batch(repository& source, std::vector<action_input> inputs, remote_executor& remote);
 [[nodiscard]] LIQUID_EXPORT runtime::task<action_result> result(repository& source, result_id id);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<known_output>>
+known_outputs(repository& source);
 [[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report> verify_provenance(repository& source,
                                                                                result_id id);
 [[nodiscard]] LIQUID_EXPORT runtime::task<provenance_report>

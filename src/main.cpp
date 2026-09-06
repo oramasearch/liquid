@@ -30,6 +30,7 @@ auto capture_resume(int argc, char** argv) -> int;
 auto capture_watch(int argc, char** argv) -> int;
 auto history_undo(int argc, char** argv) -> int;
 auto history_operations(int argc, char** argv) -> int;
+auto path_history(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
@@ -58,11 +59,14 @@ auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
 auto data(int argc, char** argv) -> int;
+auto drive(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
+auto node_store(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto resolve(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -107,11 +111,27 @@ constexpr auto commands = std::to_array<command>({
      "search paths and contents",
      "available",
      liquid_cli::search},
+    {"resolve",
+     "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
+     "<package> <spec>... [--universe <path>] [--reuse] [--json]",
+     "concretise package specifications",
+     "available",
+     liquid_cli::resolve},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps",
      "show or verify change, signed drip, or timestamp history",
      "available",
      liquid_cli::repo_log},
+    {"history",
+     "history <path> [--restore <change>]",
+     "show or restore path history",
+     "available",
+     liquid_cli::path_history},
+    {"drive",
+     "drive <sync <folder> <remote> [--watch]|status [folder]>",
+     "synchronize a drive folder",
+     "available",
+     liquid_cli::drive},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
     {"push",
@@ -244,7 +264,8 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::symbols},
     {"wrap",
-     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
+     "wrap [--jobs <count>] [--target <triple>] [--input <name>=<result|tree>] "
+     "[--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "
      "[--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> "
      "[args...]",
@@ -298,6 +319,11 @@ constexpr auto commands = std::to_array<command>({
      "run a remote-execution worker",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::worker},
+    {"node-store",
+     "node-store <serve|status|mount|unmount|prefetch> [options]",
+     "run or control the runtime node chunk store",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::node_store},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},

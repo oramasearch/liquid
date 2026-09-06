@@ -12,6 +12,7 @@
 #include <string_view>
 
 #include "build/cache.hpp"
+#include "build/content.hpp"
 #include "build/events.hpp"
 #include "build/repository_access.hpp"
 #include "liquid/repository.hpp"
@@ -213,7 +214,12 @@ auto create_plan(repository& source, build_target target)
         }
         auto& action = (*actions)[index];
         auto input = action.record.input;
-        input.inputs = *root;
+        auto refreshed =
+            co_await build_detail::refresh_dependency_input_tree(source, *root, input.inputs);
+        if (!refreshed) {
+            co_return std::unexpected(refreshed.error());
+        }
+        input.inputs = *refreshed;
         auto lookup = co_await cache.lookup(input, action.record.sandbox);
         if (!lookup) {
             co_return std::unexpected(lookup.error());
