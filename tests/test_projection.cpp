@@ -12,8 +12,8 @@
 
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
-#include "formats/squashfs/squashfs.hpp"
 #include "formats/ostree/ostree.hpp"
+#include "formats/squashfs/squashfs.hpp"
 #if !defined(LIQUID_SHARED_TEST_BUILD)
 #include "formats/tar/writer.hpp"
 #endif
@@ -39,6 +39,44 @@ auto read_bytes(const std::filesystem::path& path) -> std::vector<std::byte> {
 auto read_text(const std::filesystem::path& path) -> std::string {
     auto input = std::ifstream{path, std::ios::binary};
     return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
+
+auto install_intent_fixture() -> liquid::install_intent {
+    return {
+        .services = {{"liquid_agent",
+                      "/usr/bin/liquid-agent",
+                      "liquid_agent",
+                      {"network_online"},
+                      liquid::service_restart::always}},
+        .users = {{"liquid_agent", true, "/var/lib/liquid-agent"}},
+        .groups = {{"liquid_agent", true}},
+        .directories = {{"/var/lib/liquid-agent", 0750, "liquid_agent"}},
+        .symlinks = {{"/usr/bin/liquid-agent-current", "/usr/lib/liquid/agent"}},
+        .caches = {liquid::install_cache::ldconfig, liquid::install_cache::systemd_daemon_reload},
+        .alternatives = {{"liquid-tool", "/usr/lib/liquid/tool", 40}}};
+}
+
+auto expect_packaged_scripts(const liquid::format_tree& archive,
+                             liquid::projection_target target,
+                             const liquid::generated_maintainer_scripts& expected) -> void {
+    auto names = std::array<std::string_view, 4>{};
+    if (target == liquid::projection_target::deb) {
+        names = {"preinst", "postinst", "prerm", "postrm"};
+    } else if (target == liquid::projection_target::rpm) {
+        names = {"%pre", "%post", "%preun", "%postun"};
+    } else {
+        names = {".pre-install", ".post-install", ".pre-deinstall", ".post-deinstall"};
+    }
+    const auto values = std::array<std::string_view, 4>{
+        expected.pre_install, expected.post_install, expected.pre_remove, expected.post_remove};
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        const auto path = ".scripts/" + std::string{names[index]};
+        const auto found = std::ranges::find(archive.entries, path, &liquid::format_entry::path);
+        ASSERT_NE(found, archive.entries.end()) << path;
+        EXPECT_EQ(
+            std::string(reinterpret_cast<const char*>(found->bytes.data()), found->bytes.size()),
+            values[index]);
+    }
 }
 
 class projection_fixture final {
@@ -238,6 +276,252 @@ TEST(Projection, package_writers_round_trip_and_are_byte_identical) {
     }
 }
 
+TEST(Projection, one_intent_has_golden_scripts_for_all_package_formats) {
+    const auto intent = install_intent_fixture();
+    struct script_names {
+        liquid::projection_target target;
+        std::string_view directory;
+        std::array<std::string_view, 4> names;
+    };
+    const auto cases = std::array{
+        script_names{
+            liquid::projection_target::deb, "deb", {"preinst", "postinst", "prerm", "postrm"}},
+        script_names{liquid::projection_target::rpm, "rpm", {"pre", "post", "preun", "postun"}},
+        script_names{liquid::projection_target::apk,
+                     "apk",
+                     {"pre-install", "post-install", "pre-deinstall", "post-deinstall"}}};
+    for (const auto& item : cases) {
+        auto scripts = liquid::generate_maintainer_scripts(item.target, intent);
+        ASSERT_TRUE(scripts) << scripts.error().message;
+        const auto root =
+            std::filesystem::path{LIQUID_PROJECTION_FIXTURES} / "scripts" / item.directory;
+        EXPECT_EQ(scripts->pre_install, read_text(root / item.names[0]));
+        EXPECT_EQ(scripts->post_install, read_text(root / item.names[1]));
+        EXPECT_EQ(scripts->pre_remove, read_text(root / item.names[2]));
+        EXPECT_EQ(scripts->post_remove, read_text(root / item.names[3]));
+    }
+}
+
+TEST(Projection, generated_values_cannot_change_shell_structure) {
+    const auto baseline = liquid::generate_maintainer_scripts(liquid::projection_target::deb,
+                                                              install_intent_fixture());
+    ASSERT_TRUE(baseline) << baseline.error().message;
+    const auto line_count = [](const liquid::generated_maintainer_scripts& scripts) {
+        return std::ranges::count(scripts.pre_install, '\n') +
+               std::ranges::count(scripts.post_install, '\n') +
+               std::ranges::count(scripts.pre_remove, '\n') +
+               std::ranges::count(scripts.post_remove, '\n');
+    };
+    const auto expected_lines = line_count(*baseline);
+    for (auto index = 0; index < 100; ++index) {
+        auto intent = install_intent_fixture();
+        const auto name = "service_" + std::to_string(index) + "-x";
+        intent.services.front().name = name;
+        intent.services.front().executable = "/usr/lib/" + name;
+        intent.services.front().after = {"network_" + std::to_string(index)};
+        auto scripts = liquid::generate_maintainer_scripts(liquid::projection_target::deb, intent);
+        ASSERT_TRUE(scripts) << scripts.error().message;
+        EXPECT_EQ(line_count(*scripts), expected_lines);
+    }
+    for (const auto value : {"bad;name",
+                             "bad$name",
+                             "bad`name",
+                             "bad name",
+                             "bad\nname",
+                             "bad'name",
+                             "bad&name",
+                             "bad|name",
+                             "bad(name"}) {
+        auto intent = install_intent_fixture();
+        intent.services.front().name = value;
+        auto refused = liquid::generate_maintainer_scripts(liquid::projection_target::deb, intent);
+        ASSERT_FALSE(refused) << value;
+        EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    }
+    for (const auto value : {"/usr/bin/tool;rm",
+                             "/usr/bin/$tool",
+                             "/usr/bin/../tool",
+                             "relative/tool",
+                             "/usr//bin/tool"}) {
+        auto intent = install_intent_fixture();
+        intent.services.front().executable = value;
+        auto refused = liquid::generate_maintainer_scripts(liquid::projection_target::deb, intent);
+        ASSERT_FALSE(refused) << value;
+        EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    }
+}
+
+TEST(Projection, generated_debian_postinst_succeeds_twice) {
+    const auto workspace = liquid::test::fixture_path("liquid-projection-postinst");
+    auto intent = liquid::install_intent{};
+    intent.symlinks.push_back({workspace / "current", workspace / "target"});
+    auto scripts = liquid::generate_maintainer_scripts(liquid::projection_target::deb, intent);
+    ASSERT_TRUE(scripts) << scripts.error().message;
+    const auto path = workspace / "postinst";
+    auto code = std::error_code{};
+    std::filesystem::create_directories(workspace, code);
+    ASSERT_FALSE(code) << code.message();
+    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+    output << scripts->post_install;
+    output.close();
+    ASSERT_TRUE(output);
+    const auto command = "/bin/sh '" + path.string() + "' configure";
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(std::filesystem::read_symlink(workspace / "current"), workspace / "target");
+}
+
+TEST(Projection, generated_scripts_are_packaged_and_bound_to_attestations) {
+    auto fixture = projection_fixture{};
+    const auto intent = install_intent_fixture();
+    for (const auto target : {liquid::projection_target::deb,
+                              liquid::projection_target::rpm,
+                              liquid::projection_target::apk}) {
+        auto request = fixture.request(target, "scripts-" + std::string{liquid::to_string(target)});
+        request.metadata.declared_dependencies.clear();
+        request.install = intent;
+        auto report = fixture.project(std::move(request));
+        ASSERT_EQ(report.attestations.size(), 2U);
+        auto expected = liquid::generate_maintainer_scripts(target, intent);
+        ASSERT_TRUE(expected) << expected.error().message;
+        const auto bytes = read_bytes(report.artifacts.front().path);
+        auto archive = liquid::format_registry::global().unpack(
+            bytes, report.artifacts.front().path.filename().string());
+        ASSERT_TRUE(archive) << archive.error().message;
+        expect_packaged_scripts(*archive, target, *expected);
+        auto projection_statement = liquid::runtime::block_on(
+            fixture.repository().attestations({.id = report.attestations.front()}));
+        ASSERT_TRUE(projection_statement) << projection_statement.error().message;
+        ASSERT_EQ(projection_statement->records.size(), 1U);
+        EXPECT_EQ(projection_statement->records.front().value.profile, "projection/1");
+        EXPECT_TRUE(std::ranges::contains(projection_statement->records.front().value.attributes,
+                                          "scripts",
+                                          &liquid::attestation_attribute::name));
+        auto sbom_statement = liquid::runtime::block_on(
+            fixture.repository().attestations({.id = report.attestations.back()}));
+        ASSERT_TRUE(sbom_statement) << sbom_statement.error().message;
+        ASSERT_EQ(sbom_statement->records.size(), 1U);
+        EXPECT_EQ(sbom_statement->records.front().value.profile, "sbom/1");
+    }
+}
+
+TEST(Projection, batch_conflicts_name_both_packages_and_every_path) {
+    auto fixture = projection_fixture{};
+    auto first = fixture.request(liquid::projection_target::deb, "conflict-first");
+    auto second = fixture.request(liquid::projection_target::deb, "conflict-second");
+    first.metadata.name = "package-a";
+    second.metadata.name = "package-b";
+    auto refused = liquid::runtime::block_on(
+        liquid::project(fixture.repository(), std::vector{first, second}));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::conflict);
+    EXPECT_NE(refused.error().message.find("package-a"), std::string::npos);
+    EXPECT_NE(refused.error().message.find("package-b"), std::string::npos);
+    EXPECT_NE(refused.error().message.find("/usr/bin/liquid-fixture"), std::string::npos);
+    EXPECT_NE(refused.error().message.find("/usr/etc/liquid-projection.conf"), std::string::npos);
+
+    second.metadata.replaces.push_back("package-a");
+    auto replaced = liquid::runtime::block_on(
+        liquid::project(fixture.repository(), std::vector{first, second}));
+    ASSERT_TRUE(replaced) << replaced.error().message;
+    ASSERT_EQ(replaced->size(), 2U);
+    ASSERT_EQ(replaced->back().replacements.size(), 1U);
+    EXPECT_EQ(replaced->back().replacements.front().package, "package-a");
+    EXPECT_TRUE(std::ranges::contains(replaced->back().replacements.front().paths,
+                                      "/usr/bin/liquid-fixture"));
+}
+
+TEST(Projection, against_package_directory_detects_existing_ownership) {
+    auto fixture = projection_fixture{};
+    auto first = fixture.request(liquid::projection_target::deb, "against");
+    first.metadata.name = "installed-package";
+    auto installed = fixture.project(std::move(first));
+    auto second = fixture.request(liquid::projection_target::deb, "against-new");
+    second.metadata.name = "new-package";
+    second.options.against = installed.artifacts.front().path.parent_path();
+    auto refused =
+        liquid::runtime::block_on(liquid::project(fixture.repository(), std::move(second)));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::conflict);
+    EXPECT_NE(refused.error().message.find("installed-package"), std::string::npos);
+    EXPECT_NE(refused.error().message.find("new-package"), std::string::npos);
+}
+
+TEST(Projection, against_dpkg_status_and_rpm_dump_detects_owned_paths) {
+    auto fixture = projection_fixture{};
+    const auto workspace = liquid::test::fixture_path("liquid-projection-inventory");
+    auto code = std::error_code{};
+    std::filesystem::create_directories(workspace / "dpkg/info", code);
+    ASSERT_FALSE(code) << code.message();
+    {
+        auto status = std::ofstream{workspace / "dpkg/status"};
+        status << "Package: installed-deb\nStatus: install ok installed\n";
+        auto paths = std::ofstream{workspace / "dpkg/info/installed-deb.list"};
+        paths << "/usr/bin/liquid-fixture\n";
+    }
+    {
+        auto request = fixture.request(liquid::projection_target::deb, "against-dpkg");
+        request.metadata.name = "incoming-deb";
+        request.options.against = workspace / "dpkg/status";
+        auto refused =
+            liquid::runtime::block_on(liquid::project(fixture.repository(), std::move(request)));
+        ASSERT_FALSE(refused);
+        EXPECT_EQ(refused.error().code, liquid::errc::conflict);
+        EXPECT_NE(refused.error().message.find("installed-deb"), std::string::npos);
+        EXPECT_NE(refused.error().message.find("incoming-deb"), std::string::npos);
+    }
+    {
+        auto dump = std::ofstream{workspace / "rpm.dump"};
+        dump << "installed-rpm /usr/bin/liquid-fixture\n";
+    }
+    {
+        auto request = fixture.request(liquid::projection_target::rpm, "against-rpm");
+        request.metadata.name = "incoming-rpm";
+        request.options.against = workspace / "rpm.dump";
+        auto refused =
+            liquid::runtime::block_on(liquid::project(fixture.repository(), std::move(request)));
+        ASSERT_FALSE(refused);
+        EXPECT_EQ(refused.error().code, liquid::errc::conflict);
+        EXPECT_NE(refused.error().message.find("installed-rpm"), std::string::npos);
+        EXPECT_NE(refused.error().message.find("incoming-rpm"), std::string::npos);
+    }
+}
+
+TEST(Projection, replacement_converts_against_conflict_to_package_relationships) {
+    auto fixture = projection_fixture{};
+    const auto workspace = liquid::test::fixture_path("liquid-projection-replaces");
+    auto code = std::error_code{};
+    std::filesystem::create_directories(workspace / "info", code);
+    ASSERT_FALSE(code) << code.message();
+    {
+        auto status = std::ofstream{workspace / "status"};
+        status << "Package: old-package\nStatus: install ok installed\n";
+        auto paths = std::ofstream{workspace / "info/old-package.list"};
+        paths << "/usr/bin/liquid-fixture\n";
+    }
+    auto request = fixture.request(liquid::projection_target::deb, "replaces-dpkg");
+    request.metadata.name = "new-package";
+    request.metadata.replaces.push_back("old-package");
+    request.options.against = workspace / "status";
+    auto report = fixture.project(std::move(request));
+    ASSERT_EQ(report.replacements.size(), 1U);
+    EXPECT_EQ(report.replacements.front().package, "old-package");
+    EXPECT_TRUE(
+        std::ranges::contains(report.replacements.front().paths, "/usr/bin/liquid-fixture"));
+    auto archive =
+        liquid::format_registry::global().unpack(read_bytes(report.artifacts.front().path),
+                                                 report.artifacts.front().path.filename().string());
+    ASSERT_TRUE(archive) << archive.error().message;
+    const auto metadata = std::ranges::find(
+        archive->entries, std::string_view{".metadata"}, &liquid::format_entry::path);
+    ASSERT_NE(metadata, archive->entries.end());
+    const auto control =
+        std::string{reinterpret_cast<const char*>(metadata->bytes.data()), metadata->bytes.size()};
+    EXPECT_NE(control.find("Conflicts: liquid-fixture-old, old-package"), std::string::npos)
+        << control;
+    EXPECT_NE(control.find("Replaces: liquid-fixture-preview, old-package"), std::string::npos)
+        << control;
+}
 TEST(Projection, squashfs_writer_is_deterministic_and_rejects_unsafe_paths) {
     const auto files = std::vector<liquid::formats::package::file>{
         {"bin/fixture", {std::byte{'o'}, std::byte{'k'}, std::byte{'\n'}}, 0755},
@@ -801,6 +1085,7 @@ TEST(Projection, emit_peer_artifacts_when_requested) {
                               liquid::projection_target::apk}) {
         auto request = fixture.request(target, (root / liquid::to_string(target)).string());
         request.metadata.declared_dependencies.clear();
+        request.install = install_intent_fixture();
         auto report = fixture.project(std::move(request));
         std::cout << liquid::to_string(target) << '=' << report.artifacts.front().path << ' '
                   << liquid::to_string(report.artifacts.front().digest) << '\n';

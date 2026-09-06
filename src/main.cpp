@@ -84,6 +84,8 @@ auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
 auto config(int argc, char** argv) -> int;
 auto project(int argc, char** argv) -> int;
+auto install(int argc, char** argv) -> int;
+auto rollback(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
@@ -166,6 +168,14 @@ constexpr auto flags_project = std::to_array<flag>({
     {"--arch", "<arch>", "Set the target architecture.", "source architecture"},
     {"--out", "<dir>", "Write projected artifacts below this directory.", "projection"},
     {"--depends", "<dependency>", "Declare a package dependency; repeatable.", "none"},
+    {"--against",
+     "<path>",
+     "Check file ownership against packages or an installed database.",
+     "none"},
+    {"--replaces",
+     "<package>",
+     "Permit owned paths by deriving replacement relationships.",
+     "none"},
     {"--service", "<value>", "Add a Helm service declaration; repeatable.", "none"},
     {"--ref", "<name>", "Set the OSTree ref.", "required for OS targets"},
     {"--overlay",
@@ -176,6 +186,13 @@ constexpr auto flags_project = std::to_array<flag>({
     {"--compat-gzip", {}, "Use gzip-compatible package compression.", "false"},
     {"--allow-abi-break", {}, "Permit an incompatible ABI projection.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_install = std::to_array<flag>({
+    {"--root", "<dir>", "Select the generation root.", "required"},
+    {"--list", {}, "List complete generations instead of installing.", "false"},
+});
+constexpr auto flags_rollback = std::to_array<flag>({
+    {"--root", "<dir>", "Select the generation root.", "required"},
 });
 constexpr auto flags_data = std::to_array<flag>({
     {"--session",
@@ -539,7 +556,8 @@ constexpr auto commands = std::to_array<command>({
      "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
      "<result|tree> [--overlay [path=]<tree>] "
      "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
-     "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
+     "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] "
+     "[--replaces <package>] [--service <value>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
      "project a build into an installable package, commit, image, or chart",
      "available",
@@ -550,6 +568,26 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::project},
+    {"install",
+     "install <package|install-tree> --root <dir> | install --list --root <dir>",
+     "install or list atomic generations",
+     "available",
+     flags_install,
+     "Stage a projected tree, apply its declarative intents, and atomically select it.",
+     "liquid install example.deb --root /srv/example",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::install},
+    {"rollback",
+     "rollback --root <dir>",
+     "select the previous installed generation",
+     "available",
+     flags_rollback,
+     "Atomically select the generation preceding the current one.",
+     "liquid rollback --root /srv/example",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::rollback},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
      "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "

@@ -259,6 +259,11 @@ recipes, AppImage, Flatpak, Snap, adjacent DSSE collections, relocation refusal,
 lint when the tool is installed. It round-trips the owned SquashFS through `unsquashfs` when that
 tool is installed. The pinned target digests are the macOS/Linux byte-identity contract.
 attestation referrers, signed `projection/1`, digest-only Helm values, and native Helm lint when
+the tool is installed. It also pins twelve generated lifecycle scripts, quoting/refusal behavior,
+script attestation and SBOM binding, batch and installed-inventory ownership conflicts, and derived
+replacements. `test_install.cpp` covers intent application, generation listing and rollback, and a
+subprocess `SIGKILL` after every staged file and at the selection switch. The pinned target digests
+are the macOS/Linux byte-identity contract.
 the tool is installed. It also pins a GLib-derived OSTree commit checksum and bootc manifest digest,
 exercises base and overlay paths, writes `archive-z2` and `bare-user`, and checks symbolic-link
 objects. The pinned target digests are the macOS/Linux byte-identity contract.

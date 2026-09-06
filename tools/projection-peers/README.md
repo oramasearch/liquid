@@ -7,7 +7,9 @@ committed fixture as Debian, RPM, Alpine, OCI image, Helm, OSTree, and bootc out
 distribution checks prove:
 
 - `dpkg -i`, `rpm -i`, and `apk add --allow-untrusted`, followed by executing the installed static
-  fixture;
+  fixture; packages emitted with an install intent also expose their four native lifecycle script
+  names, create their declared system user, carry their generated systemd unit, and issue the
+  guarded unit-enable operation through an isolated systemctl probe;
 - native `helm lint`;
 - OCI layout import into k0s, Helm installation, and a `Ready` pod.
 - `makepkg`, `pacman -U`, and execution of the Arch package;
@@ -35,6 +37,9 @@ unavailable.
 
 The package fixture runs and exits with no arguments. Its OCI config adds `serve`, which keeps the
 same static executable alive in the pod without adding a base image or runtime dependency.
+The portable suite separately runs the generated Debian `postinst` twice and pins all twelve script
+files byte for byte. The peer is the distribution-tool proof for user creation, unit installation,
+package removal, and native package-manager acceptance.
 
 On the Linux and Fedora peer lanes, the emitted `ostree/` repository and `bootc/` OCI layout add
 these native checks:

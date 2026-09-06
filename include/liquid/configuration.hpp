@@ -14,6 +14,7 @@
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/install.hpp"
 #include "liquid/resolve.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/session.hpp"
@@ -133,6 +134,7 @@ struct LIQUID_EXPORT target {
     std::vector<target_dependency> dependencies;
     std::vector<std::string> outputs;
     std::string install_layout{"prefix"};
+    std::optional<install_intent> install;
     std::optional<digest> inputs;
     std::optional<digest> toolchain;
     configuration_record_origin origin;
