@@ -21,6 +21,7 @@
 #include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "repository/store_access.hpp"
 #include "store/chunker.hpp"
 #include "store/faults.hpp"
 #include "temporary_directory.hpp"
@@ -108,6 +109,12 @@ auto pack_bytes(const std::filesystem::path& root) -> std::uint64_t {
         }
     }
     return total;
+}
+
+auto put_scoped(liquid::store& store, std::vector<std::byte> input)
+    -> liquid::result<liquid::digest> {
+    return liquid::runtime::block_on(
+        liquid::repository_detail::store_access::put_plain(store, std::move(input), "fixture"));
 }
 
 auto has_delta_frame(const std::filesystem::path& root) -> bool {
@@ -714,8 +721,8 @@ TEST(Store, SimilarChunksRoundTripThroughDeltaFramesAndReopen) {
     for (auto index = std::size_t{1000}; index != 1040; ++index) {
         target[index] ^= std::byte{0x5a};
     }
-    const auto base_id = liquid::runtime::block_on(store.put(base));
-    const auto target_id = liquid::runtime::block_on(store.put(target));
+    const auto base_id = put_scoped(store, base);
+    const auto target_id = put_scoped(store, target);
     ASSERT_TRUE(base_id.has_value()) << base_id.error().message;
     ASSERT_TRUE(target_id.has_value()) << target_id.error().message;
     EXPECT_NE(liquid::to_string(*base_id), liquid::to_string(*target_id));
@@ -736,14 +743,14 @@ TEST(Store, InterruptedDeltaAppendRecoversAsAValidatedOrphan) {
     for (auto index = std::size_t{2000}; index != 2040; ++index) {
         target[index] ^= std::byte{0xa5};
     }
-    const auto base_id = liquid::runtime::block_on(store.put(base));
+    const auto base_id = put_scoped(store, base);
     ASSERT_TRUE(base_id.has_value()) << base_id.error().message;
     const auto target_id = liquid::hash(liquid::algorithm::blake3, target);
     ASSERT_TRUE(target_id.has_value()) << target_id.error().message;
     fail_after_pack_write injector;
     {
         fault_guard guard(&injector);
-        const auto interrupted = liquid::runtime::block_on(store.put(target));
+        const auto interrupted = put_scoped(store, target);
         EXPECT_FALSE(interrupted.has_value());
     }
     EXPECT_TRUE(has_delta_frame(temporary.path()));

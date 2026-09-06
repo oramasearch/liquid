@@ -16,8 +16,15 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
+#include "repository/store_access.hpp"
 
 namespace {
+
+auto put_scoped(liquid::store& store, std::vector<std::byte> input)
+    -> liquid::result<liquid::digest> {
+    return liquid::runtime::block_on(
+        liquid::repository_detail::store_access::put_plain(store, std::move(input), "fixture"));
+}
 
 class temporary_store {
 public:
@@ -350,8 +357,8 @@ TEST(GarbageCollection, DeltaBasesStayLiveWithTheirRetainedTargets) {
     for (auto index = std::size_t{1500}; index != 1540; ++index) {
         target[index] ^= std::byte{0x6d};
     }
-    const auto base_id = liquid::runtime::block_on(store.put(base));
-    const auto target_id = liquid::runtime::block_on(store.put(target));
+    const auto base_id = put_scoped(store, base);
+    const auto target_id = put_scoped(store, target);
     ASSERT_TRUE(base_id.has_value()) << base_id.error().message;
     ASSERT_TRUE(target_id.has_value()) << target_id.error().message;
     auto root = liquid::runtime::block_on(store.lease_root(*target_id, std::chrono::hours{1}));
@@ -379,7 +386,7 @@ TEST(GarbageCollection, RepackRebasesDeltaChainsAndSurvivesReopen) {
         if (version != 0) {
             contents[1000 + version] ^= std::byte{static_cast<unsigned char>(version)};
         }
-        const auto id = liquid::runtime::block_on(store.put(contents));
+        const auto id = put_scoped(store, contents);
         ASSERT_TRUE(id.has_value()) << id.error().message;
         ids.push_back(*id);
     }

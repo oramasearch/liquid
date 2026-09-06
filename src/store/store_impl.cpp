@@ -841,7 +841,7 @@ store_backend::store_chunk(digest id,
     if (!present)
         co_return std::unexpected(present.error());
     if (*present) {
-        if (!encryption) {
+        if (!encryption && !delta_scope.empty()) {
             remember_delta_candidate(delta_scope, resemblance, id, raw);
         }
         auto entry = pack_entry{id, **present, static_cast<std::uint32_t>(raw.size())};
@@ -852,7 +852,7 @@ store_backend::store_chunk(digest id,
         co_return entry;
     }
     auto candidates = std::vector<delta_dictionary>{};
-    if (!encryption) {
+    if (!encryption && !delta_scope.empty()) {
         const auto scoped = delta_candidates_.find(std::string{delta_scope});
         if (scoped != delta_candidates_.end()) {
             const auto candidate = scoped->second.find(resemblance);
@@ -880,7 +880,7 @@ store_backend::store_chunk(digest id,
     const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
     auto& destination = packs_.at(current_pack_);
     auto candidate_bytes = std::vector<std::byte>{};
-    if (!encryption) {
+    if (!encryption && !delta_scope.empty()) {
         candidate_bytes = raw;
     }
     auto written = co_await append_pack_entry(
@@ -899,7 +899,7 @@ store_backend::store_chunk(digest id,
     } else {
         chunk_bases_.erase(to_string(id));
     }
-    if (!encryption) {
+    if (!encryption && !delta_scope.empty()) {
         remember_delta_candidate(delta_scope, resemblance, id, candidate_bytes);
     }
     destination.entries.push_back(*written);

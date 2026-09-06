@@ -106,14 +106,14 @@ scheme tags.
 ### Near-duplicate chunk compression
 
 Plaintext chunks also receive a 64-bit resemblance hash: the minimum mixed value of their rolling
-32-byte buzhash windows. Importers that know a source path pass it as the candidate scope; ordinary
-store callers use one shared scope. The store retains at most 256 recent candidates and 16 MiB of
-candidate bytes across all scopes. Before writing a different chunk with the same value in that
-scope, it compares ordinary zstd against zstd using those retained bytes as a dictionary. It does
-not read, decode, or re-hash a base on the write path. It writes a delta only when the result,
-including the 33-byte base identity, is at least 64 bytes smaller. Encrypted chunks do not
-participate because cross-object plaintext comparison would cross the trust-domain boundary. Delta
-chains are bounded at eight links.
+32-byte buzhash windows. Importers that know a source path pass it as the candidate scope;
+unscoped store writes keep no candidates, preserving their independent retention lifecycle. The
+store retains at most 256 recent candidates and 16 MiB of candidate bytes across all scopes. Before
+writing a different chunk with the same value in that scope, it compares ordinary zstd against zstd
+using those retained bytes as a dictionary. It does not read, decode, or re-hash a base on the write
+path. It writes a delta only when the result, including the 33-byte base identity, is at least 64
+bytes smaller. Encrypted chunks do not participate because cross-object plaintext comparison would
+cross the trust-domain boundary. Delta chains are bounded at eight links.
 
 The design choice was measured over all 950 unique versions of
 `single_include/nlohmann/json.hpp` in the vendored nlohmann/json history at commit
@@ -129,11 +129,10 @@ The design choice was measured over all 950 unique versions of
 | Rolling-shingle resemblance selection | 244,535,197 | 9,191,259 |
 
 The path-and-ordinal result is a useful lower bound but requires the repository importer to expose
-versioned path identity to the content store, and it does not help tree, change, descriptor, build,
-or package objects. The smaller-chunk option more than doubles frame and index entries for this
-history and remains over twice the size of resemblance selection. The resemblance hash was chosen
-because it remains behind the existing chunk interface, finds candidates for every plaintext
-object kind, and approaches the path-aware lower bound without storing repository paths.
+versioned path identity to the content store. The smaller-chunk option more than doubles frame and
+index entries for this history and remains over twice the size of resemblance selection. The
+resemblance hash was chosen because it remains behind the existing chunk interface and approaches
+the path-aware lower bound without persisting repository paths.
 
 Readers resolve a base digest recursively through the same pack index, decompress the target with
 that verified base, and verify the reconstructed target digest. The base is therefore an ordinary
