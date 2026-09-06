@@ -55,6 +55,7 @@ that the table and `liquid --help` name the same commands.
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
@@ -74,6 +75,7 @@ that the table and `liquid --help` name the same commands.
 | `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
+| `serve` | `serve admission --policy <file> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>]` | Serve image admission and its control API. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -150,6 +152,13 @@ pattern; `*` matches any sequence and `?` one character. Supplying the flag refu
 all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
 there is no built-in authentication policy, so the default is appropriate for local use; network
 services embed the public server with their own authorization callback.
+`serve admission` loads the JSON policy documented in
+[`../library/admission.md`](../library/admission.md). Its admission listener defaults to
+`0.0.0.0:8443`, its control listener to `127.0.0.1:8083`, and TLS is required unless tests select
+`--insecure-http`. The environment forms are `LIQUID_ADMISSION_POLICY`,
+`LIQUID_ADMISSION_LISTEN`, `LIQUID_CONTROL_LISTEN`, `LIQUID_ADMISSION_TLS_CERT`,
+`LIQUID_ADMISSION_TLS_KEY`, `LIQUID_ADMISSION_ATTESTATION_SOURCE`, and
+`LIQUID_ADMISSION_LOG_CACHE`; flags win.
 `version --json` is also available for scripts and returns
 `{"version":"0.0.1","grammar":"sha256:<canonical-lock-digest>"}`. Text output is line-oriented
 and stable. A library
@@ -415,6 +424,7 @@ liquid retain explain blake3:<object-digest>
 liquid identity rotate
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
+liquid attest image registry.example/app@sha256:<image-digest> --tree blake3:<tree-digest> --result blake3:<result-digest>
 liquid delta create release-1.tar release-2.tar
 liquid delta apply blake3:<delta-record> release-1.tar release-2.tar
 liquid delta fetch blake3:<target> release-1.tar release-2.tar

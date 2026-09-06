@@ -17,6 +17,8 @@ values.
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
 
+`admission.hpp` defines the versioned image-admission policy, injected attestation-source and
+transparency-log interfaces, the one-image review operation, and the long-running admission server.
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
 engine and its clause encoding stay private.

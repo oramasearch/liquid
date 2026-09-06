@@ -15,6 +15,10 @@ application-database branch URLs before the library computes action identity.
 `facts.cpp` implements list, show, and bundle export entirely through public build APIs. The commands
 never read the private action cache directly.
 
+`attestation.cpp` also parses `attest image`, delegates statement minting to libliquid, and prints
+the stored digest. `serve.cpp` parses admission policy, listener, TLS, source, and cache settings;
+the long-running webhook remains a public library operation.
+
 `trace.cpp` also prints the configured public plan for `build --plan`, starts `build [target]`
 through the daemon, and consumes `build_handle` for both repository and `build --events` streams,
 printing the stable JSON projection one event per line. `test.cpp` opens the wrapped build repository
@@ -76,6 +80,9 @@ byte, cursor, and per-ref outcome lines, and returns failure when any ref is ref
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
 
+The same file maps `serve admission` flags and environment variables to the public admission
+options. The library owns policy loading, TLS, review decisions, control routes, and metrics; the
+CLI only prints listener state and the explicit insecure-HTTP warning.
 `drive.cpp` configures or reopens a public `drive_client`, prints the persisted three-tree and
 per-reference state, and attaches `--watch` to the checkout daemon after the first successful
 one-shot reconciliation. `history.cpp` lists node-following path versions and restores one as an

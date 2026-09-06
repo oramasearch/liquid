@@ -57,6 +57,8 @@ portable suite.
 
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
+Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
+Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.

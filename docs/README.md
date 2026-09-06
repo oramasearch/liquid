@@ -54,6 +54,9 @@ notes so that each claim has a clear role.
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
+| [`library/admission.md`](library/admission.md) | Image provenance statements, fail-closed admission policy, evidence sources, transparency behavior, TLS serving, and stable decisions. |
+| [`api/admission.md`](api/admission.md) | Kubernetes webhook, control, metrics, REST, OpenAPI, and MCP routes. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, drive sync, path history, examples, and verification. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, named build inputs, retention explanations, output, capture, examples, and verification. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, flow status and retry output, retention explanations, capture, examples, and verification. |
