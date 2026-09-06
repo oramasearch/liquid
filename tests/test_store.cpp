@@ -365,9 +365,15 @@ TEST(Store, EvictsRemoteRegisteredContentAndHydratesItAgain) {
     ASSERT_GE(remote.chunks.size(), 3U);
     const auto registered = liquid::runtime::block_on(store.register_remote(remote));
     ASSERT_TRUE(registered) << registered.error().message;
+    const auto bytes_before = liquid::runtime::block_on(store.local_bytes());
+    ASSERT_TRUE(bytes_before) << bytes_before.error().message;
+    ASSERT_GE(*bytes_before, source.size());
 
     const auto evicted = liquid::runtime::block_on(store.evict(*stored));
     ASSERT_TRUE(evicted) << evicted.error().message;
+    const auto bytes_after = liquid::runtime::block_on(store.local_bytes());
+    ASSERT_TRUE(bytes_after) << bytes_after.error().message;
+    EXPECT_EQ(*bytes_after, 0U);
     const auto remote_only = liquid::runtime::block_on(store.has(*stored));
     ASSERT_TRUE(remote_only) << remote_only.error().message;
     EXPECT_EQ(*remote_only, liquid::blob_availability::remote);
@@ -376,7 +382,27 @@ TEST(Store, EvictsRemoteRegisteredContentAndHydratesItAgain) {
     EXPECT_GT(collected->packs_deleted, 0U);
 
     store = {};
+    auto hydrated_chunks = std::uint64_t{};
+    auto hydrated_bytes = std::uint64_t{};
+    auto remote_accesses = std::uint64_t{};
+    options.remote_sources.clear();
+    options.on_hydration = [&](liquid::digest content,
+                               liquid::digest,
+                               std::uint64_t count,
+                               bool) -> liquid::runtime::task<void> {
+        EXPECT_EQ(liquid::to_string(content), liquid::to_string(*stored));
+        ++hydrated_chunks;
+        hydrated_bytes += count;
+        co_return liquid::result<void>{};
+    };
+    options.on_remote_access = [&](liquid::digest content) {
+        EXPECT_EQ(liquid::to_string(content), liquid::to_string(*stored));
+        ++remote_accesses;
+    };
     store = open_store(temporary.path(), options);
+    const auto added_source =
+        liquid::runtime::block_on(store.register_remote_source("memory", service));
+    ASSERT_TRUE(added_source) << added_source.error().message;
     const auto after_reopen = liquid::runtime::block_on(store.has(*stored));
     ASSERT_TRUE(after_reopen) << after_reopen.error().message;
     EXPECT_EQ(*after_reopen, liquid::blob_availability::remote);
@@ -389,12 +415,23 @@ TEST(Store, EvictsRemoteRegisteredContentAndHydratesItAgain) {
         range,
         std::vector<std::byte>(source.begin() + static_cast<std::size_t>(offset),
                                source.begin() + static_cast<std::size_t>(offset) + range.size()));
+    const auto range_chunks = hydrated_chunks;
+    const auto range_bytes = hydrated_bytes;
+    EXPECT_GE(range_chunks, 3U);
+    EXPECT_EQ(remote_accesses, 1U);
+
+    const auto local_read = liquid::runtime::block_on(store.read(*stored, offset, range));
+    ASSERT_TRUE(local_read) << local_read.error().message;
+    EXPECT_EQ(remote_accesses, 2U);
 
     const auto evicted_again = liquid::runtime::block_on(store.evict(*stored));
     ASSERT_TRUE(evicted_again) << evicted_again.error().message;
     const auto hydrated = liquid::runtime::block_on(store.get(*stored));
     ASSERT_TRUE(hydrated) << hydrated.error().message;
     EXPECT_EQ(*hydrated, source);
+    EXPECT_EQ(hydrated_chunks, range_chunks + remote.chunks.size());
+    EXPECT_EQ(hydrated_bytes, range_bytes + source.size());
+    EXPECT_EQ(remote_accesses, 3U);
 }
 
 liquid::runtime::task<void> delayed_evict(liquid::store* subject, liquid::digest id) {

@@ -121,6 +121,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > bounded requeue after worker loss, size-class placement from #18's recorded decision, REAPI
 > Execution and ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces.
 > Measured transfer timing remains Phase 3 work.
+> The per-node runtime chunk store is implemented with metadata-only image receipt,
+> reference-counted read-only VFS mounts, shared-chunk reuse counters, logical byte-budget
+> eviction, a local snapshotter listener, TCP health/metrics/REST/OpenAPI/MCP control, and the
+> `liquid node-store` CLI. The containerd proxy snapshotter remains in k0s #14.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
