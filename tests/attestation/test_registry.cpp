@@ -28,8 +28,12 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.attributes = {{"organization", "liquid"}, {"role", "maintainer"}};
     } else if (profile == "delegation/1") {
         value.subject_kind = liquid::attestation_subject_kind::actor;
-        value.attributes = {{"principal", "taap:1:ed25519:principal"},
-                            {"scopes", std::vector<std::string>{"build"}}};
+        value.attributes = {{"scopes", std::vector<std::string>{"src/**"}},
+                            {"may_publish", true},
+                            {"may_lease", true},
+                            {"depth_remaining", std::uint64_t{2}},
+                            {"model", "liquid-agent"},
+                            {"dispatcher", "taap:1:ed25519:dispatcher"}};
     } else if (profile == "authorship/1") {
         value.subject_kind = liquid::attestation_subject_kind::drip;
         value.attributes = {{"author", "taap:1:ed25519:author"}};
@@ -89,6 +93,11 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.attributes = {{"image", "registry.example/liquid@sha256:image"},
                             {"tree", "blake3:tree"},
                             {"result", "blake3:result"}};
+    } else if (profile == "projection/1") {
+        value.attributes = {{"target", "oci"},
+                            {"source_result", std::vector<std::string>{"blake3:result"}},
+                            {"normalisation", "epoch,uid=0,gid=0,modes,sorted"},
+                            {"tool", "liquid/test"}};
     }
     return value;
 }
@@ -123,7 +132,7 @@ auto sign_unknown_profile(liquid::attestation value) -> liquid::attestation {
 
 TEST(AttestationRegistry, all_profiles_accept_examples_and_reject_missing_required_fields) {
     const auto& registry = liquid::attestation_profile_registry::global();
-    ASSERT_EQ(registry.profiles().size(), 13U);
+    ASSERT_EQ(registry.profiles().size(), 14U);
     for (const auto& profile : registry.profiles()) {
         auto accepted = registry.validate(example(profile.name));
         ASSERT_TRUE(accepted) << profile.name << ": " << accepted.error().message;
@@ -154,6 +163,26 @@ TEST(AttestationRegistry, rejects_unknown_profiles) {
     ASSERT_TRUE(verified) << verified.error().message;
     EXPECT_FALSE(verified->verified);
     EXPECT_EQ(verified->reason, "unknown attestation profile: unregistered/1");
+}
+
+TEST(AttestationRegistry, delegation_chains_only_attenuate_authority) {
+    auto parent = example("delegation/1");
+    auto child = parent;
+    child.attributes = {{"scopes", std::vector<std::string>{"src/library/**"}},
+                        {"may_publish", false},
+                        {"may_lease", true},
+                        {"depth_remaining", std::uint64_t{1}},
+                        {"dispatcher", "taap:1:ed25519:dispatcher"}};
+    EXPECT_TRUE(liquid::validate_delegation(child, &parent));
+
+    auto broad = child;
+    broad.attributes[0].value = std::vector<std::string>{"docs/**"};
+    EXPECT_FALSE(liquid::validate_delegation(broad, &parent));
+
+    auto publishing = child;
+    publishing.attributes[1].value = true;
+    parent.attributes[1].value = false;
+    EXPECT_FALSE(liquid::validate_delegation(publishing, &parent));
 }
 
 TEST(AttestationRegistry, applies_maximum_age_freshness) {

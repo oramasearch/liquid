@@ -4,6 +4,12 @@ set(LIQUID_HTTP2_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/http2/grpc.cpp
   ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
 
+find_program(LIQUID_PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
+add_test(NAME docs-links
+  COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/check-links.py
+    ${PROJECT_SOURCE_DIR})
+
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
   test_asn1.cpp
@@ -20,10 +26,15 @@ add_executable(liquid-tests
   test_identity.cpp
   test_node_store.cpp
   test_object.cpp
+  test_projection.cpp
+  test_plugin_abi.c
+  test_plugin_abi.cpp
   test_remote.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  config/test_configuration.cpp
+  import/test_spack.cpp
   resolve/test_resolution.cpp
   workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
@@ -33,12 +44,16 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
   test_repository.cpp
+  test_collaboration.cpp
   test_stale_reasoning.cpp
   test_runtime.cpp
   test_secret.cpp
   test_store.cpp
+  test_tiers.cpp
   test_temporary_directory.cpp
+  test_lake_transparency.cpp
   test_transparency.cpp
+  test_tuf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
   admission/test_review.cpp
@@ -82,12 +97,19 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/content.cpp
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/package/common.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/squashfs/squashfs.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/tar/writer.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/ostree/ostree.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
     ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
   if(APPLE)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
   endif()
+  target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB)
+  target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
@@ -105,12 +127,13 @@ target_link_libraries(liquid-tests PRIVATE
   Boost::corosio_openssl)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
+  ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
   ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
-gtest_discover_tests(liquid-tests)
+gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME desktop-nautilus-badge-mapping
@@ -164,6 +187,7 @@ endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
   LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_PROJECTION_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/projection"
   LIQUID_ABI_FIXTURE_V1="$<TARGET_FILE:liquid-abi-fixture-v1>"
   LIQUID_ABI_FIXTURE_ADDED="$<TARGET_FILE:liquid-abi-fixture-added>"
   LIQUID_ABI_FIXTURE_BREAK="$<TARGET_FILE:liquid-abi-fixture-break>"
@@ -172,6 +196,16 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+find_program(LIQUID_HELM_EXECUTABLE helm)
+if(LIQUID_HELM_EXECUTABLE)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_HELM_EXECUTABLE="${LIQUID_HELM_EXECUTABLE}")
+endif()
+find_program(LIQUID_UNSQUASHFS_EXECUTABLE unsquashfs)
+if(LIQUID_UNSQUASHFS_EXECUTABLE)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_UNSQUASHFS_EXECUTABLE="${LIQUID_UNSQUASHFS_EXECUTABLE}")
+endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"
@@ -183,7 +217,9 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
   LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
 target_compile_definitions(liquid-tests PRIVATE
-  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
+  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures"
+  LIQUID_TRANSPARENCY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/transparency/fixture.json"
+  LIQUID_TUF_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tuf")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
@@ -244,12 +280,17 @@ if(UNIX)
     liquid-hot-demo
     liquid-hot-demo-patch
     liquid-hot-demo-restart-hook)
-  gtest_discover_tests(liquid-hot-demo-tests)
+  gtest_discover_tests(liquid-hot-demo-tests DISCOVERY_TIMEOUT 120)
 endif()
 
 if(LIQUID_BUILD_CLI)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")
   add_dependencies(liquid-tests liquid-cli)
+  add_test(NAME inspect-cli-json
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_INSPECT_FIXTURE=${PROJECT_SOURCE_DIR}/tests/fixtures/formats/stored.zip
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/inspect.cmake)
   if(NOT APPLE)
   set(LIQUID_SYMBOLS_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/symbols-cli-repository)
   add_test(NAME symbols-cli-clean
@@ -328,8 +369,61 @@ if(LIQUID_BUILD_CLI)
   add_test(NAME cli-help-docs
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
-      -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
+      -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/reference/cli/README.md
+      -DLIQUID_CLI_REFERENCE=${PROJECT_SOURCE_DIR}/docs/reference/cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-reference-docs
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_REFERENCE_SOURCE=${PROJECT_SOURCE_DIR}/docs/reference/cli
+      -DLIQUID_REFERENCE_OUTPUT=${PROJECT_BINARY_DIR}/reference/cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/reference-docs.cmake)
+  add_test(NAME cli-docs-json
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format json)
+  set_tests_properties(cli-docs-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "^\\{\"schema_version\":1,\"commands\":\\[")
+  add_test(NAME cli-man-pages
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_MAN_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/cli-man-pages
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/man-pages.cmake)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME guides-run
+      COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/guides/run.py
+        --liquid $<TARGET_FILE:liquid-cli>
+        --guides ${PROJECT_SOURCE_DIR}/docs/guides
+        --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/build/wrap
+        --work ${CMAKE_CURRENT_BINARY_DIR}/guides-run)
+    set_tests_properties(guides-run PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  endif()
+  if(LIQUID_BUILD_FRONTENDS)
+    add_test(NAME tiers-docs
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_UNIVERSALITY_DOC=${PROJECT_SOURCE_DIR}/docs/features/16-universality.md
+        -DLIQUID_FORMATS_DOC=${PROJECT_SOURCE_DIR}/docs/features/03-diff-and-merge.md
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/tiers-docs.cmake)
+    add_test(NAME cli-tiers-json
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/tiers-json.cmake)
+  endif()
+  add_test(NAME cli-wrap-tier
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_WRAP_TIER_ROOT=${CMAKE_CURRENT_BINARY_DIR}/wrap-tier
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/wrap-tier.cmake)
+  add_test(NAME cli-configuration
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONFIG_ROOT=${CMAKE_CURRENT_BINARY_DIR}/configuration-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/configuration.cmake)
+  add_test(NAME cli-locks
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_LOCK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lock-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/locks.cmake)
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -339,6 +433,16 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_DELTA_ROOT=${CMAKE_CURRENT_BINARY_DIR}/delta-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/delta.cmake)
+  add_test(NAME cli-diff
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_DIFF_ROOT=${CMAKE_CURRENT_BINARY_DIR}/diff-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/diff.cmake)
+  add_test(NAME cli-blame
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_BLAME_ROOT=${CMAKE_CURRENT_BINARY_DIR}/blame-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/blame.cmake)
   add_test(NAME cli-secret
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -404,6 +508,74 @@ if(LIQUID_BUILD_CLI)
       --json)
   set_tests_properties(cli-abi-diff-json PROPERTIES
     PASS_REGULAR_EXPRESSION "\"verdict\":\"compatible_additions\"[^\n]*\"liquid_abi_added\"")
+  set(LIQUID_CLI_TESTS
+    cli-scenario
+    cli-help-docs
+    cli-reference-docs
+    cli-docs-json
+    cli-man-pages
+    cli-configuration
+    cli-transparency-configuration
+    cli-delta
+    cli-diff
+    cli-secret
+    cli-format-diff
+    cli-why-json
+    cli-cache-stats-json
+    cli-public-includes
+    cli-identity-codec
+    cli-keys
+    cli-sbom-spdx
+    cli-sbom-cyclonedx
+    cli-abi-show-json
+    cli-abi-diff-json
+    retain-cli-explain
+    gc-cli-setup
+    gc-cli-explain
+    gc-cli-compact
+    gc-cli-clean)
+  if(NOT APPLE)
+    list(APPEND LIQUID_CLI_TESTS
+      symbols-cli-clean
+      symbols-cli-setup
+      symbols-cli-init
+      symbols-cli-build
+      symbols-cli)
+  endif()
+  if(LIQUID_BUILD_FRONTENDS)
+    list(APPEND LIQUID_CLI_TESTS symbols-cli-python)
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND LIQUID_CLI_TESTS guides-run)
+  endif()
+  set_tests_properties(${LIQUID_CLI_TESTS} PROPERTIES LABELS liquid-cli)
+
+  if(UNIX)
+    add_executable(liquid-offline-runner cli/offline_runner.cpp)
+    target_include_directories(liquid-offline-runner PRIVATE
+      ${PROJECT_SOURCE_DIR}/include
+      ${PROJECT_BINARY_DIR}/include
+      ${PROJECT_SOURCE_DIR}/src)
+    target_compile_features(liquid-offline-runner PRIVATE cxx_std_26)
+    if(APPLE)
+      target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
+    else()
+      target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/linux.cpp)
+    endif()
+    add_test(NAME cli-offline
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_OFFLINE_RUNNER=$<TARGET_FILE:liquid-offline-runner>
+        -DLIQUID_OFFLINE_SANDBOX=${CMAKE_CURRENT_BINARY_DIR}/cli-offline-sandbox
+        -DLIQUID_SOURCE_ROOT=${PROJECT_SOURCE_DIR}
+        -DLIQUID_BUILD_ROOT=${PROJECT_BINARY_DIR}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_CTEST=${CMAKE_CTEST_COMMAND}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/offline.cmake)
+    set_tests_properties(cli-offline PROPERTIES
+      LABELS "liquid-cli;liquid-offline"
+      RUN_SERIAL TRUE
+      TIMEOUT 1200)
+  endif()
 endif()
 
 add_executable(liquid-vfs-queue-tests
@@ -411,7 +583,7 @@ add_executable(liquid-vfs-queue-tests
   ${PROJECT_SOURCE_DIR}/src/vfs/request_queue.cpp)
 target_include_directories(liquid-vfs-queue-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-vfs-queue-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-vfs-queue-tests)
+gtest_discover_tests(liquid-vfs-queue-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -450,7 +622,7 @@ endif()
 add_executable(liquid-store-large-tests test_store_large.cpp)
 target_include_directories(liquid-store-large-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large)
+gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large DISCOVERY_TIMEOUT 120)
 
 # The 40 GiB run takes about ten minutes and 40 GiB of disk: it is registered only when
 # LIQUID_LARGE_TESTS=ON (configure with it, then `ctest -L large-40g`).
@@ -459,7 +631,7 @@ if(LIQUID_LARGE_TESTS)
   add_executable(liquid-store-40g-tests test_store_40g.cpp)
   target_include_directories(liquid-store-40g-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(liquid-store-40g-tests PRIVATE liquid::liquid GTest::gtest_main)
-  gtest_discover_tests(liquid-store-40g-tests PROPERTIES LABELS large-40g)
+  gtest_discover_tests(liquid-store-40g-tests PROPERTIES LABELS large-40g DISCOVERY_TIMEOUT 120)
 endif()
 
 # The index is private implementation code.  Compile its two private sources
@@ -477,7 +649,7 @@ target_include_directories(liquid-index-tests PRIVATE
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
 target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main Boost::corosio libzstd_static)
-gtest_discover_tests(liquid-index-tests)
+gtest_discover_tests(liquid-index-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-crypto-tests
   crypto/test_aead.cpp
@@ -489,7 +661,7 @@ target_include_directories(liquid-crypto-tests PRIVATE
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
 target_link_libraries(liquid-crypto-tests PRIVATE liquid_blake3 liquid_monocypher GTest::gtest_main)
-gtest_discover_tests(liquid-crypto-tests)
+gtest_discover_tests(liquid-crypto-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-store-sim-tests
   store/test_gc_sim_regression.cpp
@@ -499,13 +671,14 @@ target_include_directories(liquid-store-sim-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/store
   ${CMAKE_CURRENT_SOURCE_DIR}/sim)
 target_link_libraries(liquid-store-sim-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
+gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-header-tests
   headers/abi.cpp
   headers/admission.cpp
   headers/attestation.cpp
   headers/build.cpp
+  headers/configuration.cpp
   headers/daemon.cpp
   headers/drip.cpp
   headers/edit.cpp
@@ -521,16 +694,21 @@ add_executable(liquid-header-tests
   headers/hash.cpp
   headers/hot_update.cpp
   headers/identity.cpp
+  headers/import.cpp
   headers/liquid.cpp
   headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp
+  headers/projection.cpp
   headers/remote.cpp
   headers/repository.cpp
   headers/resolve.cpp
   headers/runtime.cpp
+  headers/session.cpp
   headers/store.cpp
   headers/sync.cpp
+  headers/tiers.cpp
+  headers/tuf.cpp
   headers/version.cpp
   headers/vfs.cpp
   headers/workers.cpp)
@@ -555,7 +733,7 @@ target_compile_definitions(liquid-cbor-tests PRIVATE
   LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-cbor-tests PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp GTest::gtest_main)
-gtest_discover_tests(liquid-cbor-tests)
+gtest_discover_tests(liquid-cbor-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-format-tests
   formats/test_dotenv.cpp
@@ -571,7 +749,7 @@ target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_ma
 add_library(liquid-format-test-module MODULE formats/module.c)
 target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_dependencies(liquid-format-tests liquid-format-test-module)
-gtest_discover_tests(liquid-format-tests)
+gtest_discover_tests(liquid-format-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-encryption-tests
   encryption/test_custody.cpp
@@ -595,14 +773,14 @@ target_compile_definitions(liquid-encryption-tests PRIVATE
   LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-encryption-tests PRIVATE
   liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main)
-gtest_discover_tests(liquid-encryption-tests)
+gtest_discover_tests(liquid-encryption-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-crdt-tests crdt/test_document.cpp crdt/test_journal.cpp)
 target_sources(liquid-crdt-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 target_include_directories(liquid-crdt-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-crdt-tests PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp GTest::gtest_main)
-gtest_discover_tests(liquid-crdt-tests)
+gtest_discover_tests(liquid-crdt-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-crdt-measure EXCLUDE_FROM_ALL crdt/measure_document.cpp)
 target_sources(liquid-crdt-measure PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
@@ -610,8 +788,17 @@ target_include_directories(liquid-crdt-measure PRIVATE ${PROJECT_SOURCE_DIR}/src
 target_link_libraries(liquid-crdt-measure PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp)
 
+add_executable(liquid-epoch-measure EXCLUDE_FROM_ALL crdt/measure_epoch.cpp)
+target_sources(liquid-epoch-measure PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
+target_include_directories(liquid-epoch-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-epoch-measure PRIVATE
+  liquid::liquid automerge-cpp::automerge-cpp)
+
 add_executable(liquid-repository-open-measure EXCLUDE_FROM_ALL repository/measure_open.cpp)
 target_link_libraries(liquid-repository-open-measure PRIVATE liquid::liquid)
+
+add_executable(liquid-attribution-measure EXCLUDE_FROM_ALL attribution_measure.cpp)
+target_link_libraries(liquid-attribution-measure PRIVATE liquid::liquid)
 
 add_executable(
   liquid-search-measure EXCLUDE_FROM_ALL search/measure_index.cpp
@@ -629,7 +816,7 @@ target_include_directories(liquid-record-tests PRIVATE ${PROJECT_SOURCE_DIR}/src
 target_compile_definitions(liquid-record-tests PRIVATE
   LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-record-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-record-tests)
+gtest_discover_tests(liquid-record-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-git-tests
   git/test_object_store.cpp
@@ -637,7 +824,7 @@ add_executable(liquid-git-tests
   ${PROJECT_SOURCE_DIR}/src/git/sha1.cpp)
 target_include_directories(liquid-git-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-git-tests PRIVATE liquid::liquid GTest::gtest_main ZLIB::ZLIB)
-gtest_discover_tests(liquid-git-tests)
+gtest_discover_tests(liquid-git-tests DISCOVERY_TIMEOUT 120)
 
 option(LIQUID_REALWORLD_TESTS "Register the opt-in real-world Git interoperability check" OFF)
 set(LIQUID_REALWORLD_GIT_DIRECTORY "" CACHE PATH "Checkout to import in the real-world Git check")
@@ -663,6 +850,36 @@ if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
   set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
 endif()
 
+find_program(LIQUID_FLATPAK_EXECUTABLE flatpak)
+find_program(LIQUID_FLATPAK_BUILDER_EXECUTABLE flatpak-builder)
+if(LIQUID_FLATPAK_EXECUTABLE AND LIQUID_FLATPAK_BUILDER_EXECUTABLE AND UNIX)
+  add_test(NAME projection-flatpak-realworld
+    COMMAND ${PROJECT_SOURCE_DIR}/tools/projection-peers/run-flatpak-interop.sh
+      $<TARGET_FILE:liquid-tests>
+      ${CMAKE_CURRENT_BINARY_DIR}/projection-flatpak-realworld)
+  set_tests_properties(projection-flatpak-realworld PROPERTIES
+    LABELS realworld
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1200)
+endif()
+
+option(LIQUID_SPACK_REALWORLD_TESTS "Register the opt-in imported-package build subset" OFF)
+if(LIQUID_SPACK_REALWORLD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(liquid-spack-realworld import/realworld.cpp)
+  target_include_directories(liquid-spack-realworld PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(liquid-spack-realworld PRIVATE
+    LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+    LIQUID_SOURCE_ROOT="${PROJECT_SOURCE_DIR}")
+  target_link_libraries(liquid-spack-realworld PRIVATE liquid::liquid)
+  add_dependencies(liquid-spack-realworld liquid-build-fixture)
+  add_test(NAME spack-import-build-subset
+    COMMAND liquid-spack-realworld ${CMAKE_CURRENT_BINARY_DIR}/spack-import-build-subset)
+  set_tests_properties(spack-import-build-subset PROPERTIES LABELS realworld TIMEOUT 600)
+endif()
+
+add_executable(liquid-spack-write-goldens EXCLUDE_FROM_ALL import/write_goldens.cpp)
+target_link_libraries(liquid-spack-write-goldens PRIVATE liquid::liquid)
+
 add_executable(liquid-repository-scenario repository/scenario.cpp)
 target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)
@@ -676,4 +893,5 @@ add_test(NAME consumer-project-build
     -DLIQUID_CONSUMER_GENERATOR=${CMAKE_GENERATOR}
     -DLIQUID_CONSUMER_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     -DLIQUID_CONSUMER_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    -DLIQUID_CONSUMER_HAS_CLI=${LIQUID_BUILD_CLI}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/consumer/run.cmake)

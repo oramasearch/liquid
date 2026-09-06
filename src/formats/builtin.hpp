@@ -71,5 +71,19 @@ int repack_operation(void* module_context,
 [[nodiscard]] auto hdf5_module() -> const liquid_format_module_v1*;
 [[nodiscard]] auto parquet_module() -> const liquid_format_module_v1*;
 [[nodiscard]] auto sqlite_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto deb_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto rpm_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto apk_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto elf_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto macho_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto pe_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto jupyter_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto safetensors_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto pickle_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto pdf_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto ooxml_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto odf_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto wheel_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto jar_module() -> const liquid_format_module_v1*;
 
 } // namespace liquid::formats::detail

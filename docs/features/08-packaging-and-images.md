@@ -3,9 +3,13 @@
 > Research: [10-os-packaging](../research/10-os-packaging/) ·
 > [11-container-images](../research/11-container-images/)
 >
-> **Status:** the `abi/1` input and compatibility verdict required by package projection are
-> implemented in issue #27. Issue #73 supplies checked, position-independent install trees.
-> Package-format projection and dependency metadata remain issue #28.
+> **Status:** Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm projection is implemented in issue
+> #28, including derived dependencies, ABI refusal, deterministic compression, and attached
+> attestations. Issue #77 adds Homebrew bottles, Arch binary-package recipes, AppImage, Flatpak, and
+> Snap, including the owned SquashFS writer and detached attestations. Issue #78 adds deterministic
+> `archive-z2` and `bare-user` OSTree commits plus bootc OCI encapsulation from a digest-pinned base
+> tree and overlays. Maintainer scripts and conflict
+> transactions remain issue #80; Tier B remains #79.
 
 ## Projection, not translation
 
@@ -35,13 +39,13 @@ valuable, and a later goal.
 | **`.deb` / apt** | `ar` + `control.tar` + `data.tar`. Full relationship field support — `Depends`, `Pre-Depends`, `Recommends`, `Conflicts`, `Breaks`, `Replaces`, `Provides`. `Breaks` vs `Conflicts` reflects dpkg's two-phase install; `Provides` is virtual packages. |
 | **`.rpm` / dnf** | Spec generation, `%files` with ownership and permissions, automatic `SONAME`-derived dependencies. |
 | **Alpine `apk`** | The simplest correct target; the natural first implementation. |
-| **Arch `PKGBUILD`** | |
-| **Homebrew** | Formulae and bottles, with relocation. |
+| **Arch `PKGBUILD`** | Implemented as a deterministic binary-package source archive, `PKGBUILD`, and `.SRCINFO`, with derived ELF dependencies. |
+| **Homebrew** | Formulae and stable-gzip bottles implemented with relocation refusal and `:any_skip_relocation`. |
 | **Windows** | MSI / MSIX / winget, with Authenticode signing. |
 | **macOS** | `pkg` / `dmg`, with **codesigning and notarisation** — a hard gate, not polish. |
-| **Flatpak / Snap / AppImage** | Bundled runtimes. |
+| **Flatpak / Snap / AppImage** | Implemented manifests, pack-ready trees, pinned AppImage runtimes, and owned SquashFS output. External runtime/store publication remains separate. |
 | **OCI images** | See below. |
-| **ostree / bootc commits** | The image-based-OS target, and the closest fit to liquid's model. |
+| **ostree / bootc commits** | Implemented in #78: a supplied root tree plus path-mounted overlays becomes a reproducible OSTree commit and a component-layered bootc OCI layout. Booting it is Phase 7. |
 | **Helm charts** | The Kubernetes packaging standard — see below. |
 
 ## Helm charts

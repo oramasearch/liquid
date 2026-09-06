@@ -14,8 +14,9 @@
 validation in #23, per-definition frontend granularity in #65, local search index in #22, symbol
 records in #66, measured search planner in #67, public build/test streams in #193, the configured
 drive target in #195, public configured-build plans plus one-call repository builds in #200, and
-structural editing in #205 are
-implemented, including persisted red-green validation,
+structural editing in #205 are implemented. Liquid #30 adds the transient presence target and
+daemon request used by local clients; presence delivery does not advance a persisted drip cursor.
+The implemented graph includes persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
 bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
 atomic per-drip search publication, current mapped scanning, cost explanations, and stale-index
@@ -76,6 +77,18 @@ version-1 framed CBOR connection. Each server session owns its repository, handl
 until `build_finished`; an attached in-process consumer receives decoded public `build_event`
 values rather than protocol types. This is the interface liquify uses for inline build and test
 results.
+
+Presence uses the same attached daemon connection with a `presence` request. The daemon decodes
+the public presence value and calls `daemon_target::deliver_presence` for every local target.
+Unlike ordered `daemon_delivery`, this transient callback has no cursor, retry backlog, or state
+file entry. Repository sync separately forwards the same value to peers. Liquify can therefore
+render current actor ranges without turning cursor motion into repository history.
+
+Exclusive checkout uses `lock` and `unlock` requests on the same connection. After a successful
+repository operation, every target receives the complete current `exclusive_lock` list through
+`daemon_target::deliver_locks`. Like presence, this state snapshot does not advance a persisted
+drip cursor. The repository still writes signed lock drips for persistence and peer sync; see
+[locks.md](locks.md).
 
 Structural editing uses `edit_preview` and `edit_apply` operations on that same framed connection.
 Their payload is the canonical public request or preview record; their response is the canonical

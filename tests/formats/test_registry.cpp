@@ -50,16 +50,89 @@ auto file_entry(std::string path, std::vector<std::byte> bytes) -> liquid::forma
             .bytes = std::move(bytes)};
 }
 
-TEST(FormatRegistry, PublishesTheFiveLaunchCodecs) {
+TEST(FormatRegistry, PublishesBuiltInCodecs) {
     const auto codecs = liquid::format_registry::global().codecs();
     auto names = std::vector<std::string>{};
     for (const auto* value : codecs) {
         names.push_back(value->descriptor().name);
     }
     std::ranges::sort(names);
-    EXPECT_EQ(names, (std::vector<std::string>{"hdf5", "parquet", "sqlite", "tar", "zip"}));
+    EXPECT_EQ(names,
+              (std::vector<std::string>{"apk",
+                                        "deb",
+                                        "elf",
+                                        "hdf5",
+                                        "jar",
+                                        "jupyter",
+                                        "macho",
+                                        "odf",
+                                        "ooxml",
+                                        "parquet",
+                                        "pdf",
+                                        "pe",
+                                        "pickle",
+                                        "rpm",
+                                        "safetensors",
+                                        "sqlite",
+                                        "tar",
+                                        "wheel",
+                                        "zip"}));
     EXPECT_EQ(liquid::format_registry::global().find_by_extension("ARCHIVE.ZIP").size(), 1);
     EXPECT_EQ(liquid::format_registry::global().find_by_extension("data.parquet").size(), 1);
+}
+
+TEST(FormatRegistry, UnpacksNotebookTensorAndPickleContent) {
+    const auto notebook_text =
+        std::string{"{\"cells\":[{\"cell_type\":\"code\",\"execution_count\":7,\"outputs\":[{}],"
+                    "\"source\":[\"print(1)\\n\"]}],\"nbformat\":4}"};
+    const auto notebook = std::vector<std::byte>{
+        reinterpret_cast<const std::byte*>(notebook_text.data()),
+        reinterpret_cast<const std::byte*>(notebook_text.data() + notebook_text.size())};
+    auto notebook_tree = liquid::format_registry::global().unpack(notebook, "sample.ipynb");
+    ASSERT_TRUE(notebook_tree) << notebook_tree.error().message;
+    EXPECT_EQ(notebook_tree->codec, "jupyter");
+    ASSERT_NE(entry(*notebook_tree, "cells/0"), nullptr);
+
+    const auto header =
+        std::string{"{\"weight\":{\"data_offsets\":[0,2],\"dtype\":\"U8\",\"shape\":[2]}}"};
+    auto tensors = std::vector<std::byte>(8 + header.size() + 2);
+    for (auto index = std::size_t{}; index < 8; ++index) {
+        tensors[index] = static_cast<std::byte>((header.size() >> (index * 8U)) & 0xffU);
+    }
+    std::copy(header.begin(), header.end(), reinterpret_cast<char*>(tensors.data() + 8));
+    tensors[tensors.size() - 2] = std::byte{1};
+    tensors[tensors.size() - 1] = std::byte{2};
+    auto tensor_tree = liquid::format_registry::global().unpack(tensors, "sample.safetensors");
+    ASSERT_TRUE(tensor_tree) << tensor_tree.error().message;
+    const auto* tensor = entry(*tensor_tree, "tensors/weight");
+    ASSERT_NE(tensor, nullptr);
+    EXPECT_EQ(tensor->bytes.size(), 2U);
+
+    const auto pickle_text = std::string{"cos\nsystem\n."};
+    const auto pickle = std::vector<std::byte>{
+        reinterpret_cast<const std::byte*>(pickle_text.data()),
+        reinterpret_cast<const std::byte*>(pickle_text.data() + pickle_text.size())};
+    auto pickle_tree = liquid::format_registry::global().unpack(pickle, "checkpoint.pkl");
+    ASSERT_TRUE(pickle_tree) << pickle_tree.error().message;
+    EXPECT_NE(entry(*pickle_tree, "globals/os.system"), nullptr);
+}
+
+TEST(FormatRegistry, UnpacksPdfObjectsAndExtractedText) {
+    const auto source_text =
+        std::string{"%PDF-1.4\n1 0 obj\n<< /Producer (builder) >>\nendobj\n2 0 obj\n"
+                    "<< >>\nstream\nBT (hello) Tj ET\nendstream\nendobj\n%%EOF\n"};
+    const auto source = std::vector<std::byte>{
+        reinterpret_cast<const std::byte*>(source_text.data()),
+        reinterpret_cast<const std::byte*>(source_text.data() + source_text.size())};
+    auto tree = liquid::format_registry::global().unpack(source, "sample.pdf");
+    ASSERT_TRUE(tree) << tree.error().message;
+    EXPECT_EQ(tree->codec, "pdf");
+    EXPECT_NE(entry(*tree, "objects/1 0"), nullptr);
+    const auto* extracted = entry(*tree, "text/2 0");
+    ASSERT_NE(extracted, nullptr);
+    const auto extracted_text = std::string_view{
+        reinterpret_cast<const char*>(extracted->bytes.data()), extracted->bytes.size()};
+    EXPECT_EQ(extracted_text, "hello\n");
 }
 
 TEST(FormatRegistry, LoadsSharedObjectsAcrossTheCAbi) {

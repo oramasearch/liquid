@@ -26,6 +26,9 @@ endif()
 if(NOT diff_output MATCHES "archive\\.zip zip tier=2")
   message(FATAL_ERROR "zip container line is absent: ${diff_output}")
 endif()
+if(NOT diff_output MATCHES "tier: 2 \\(format\\(zip\\)\\)")
+  message(FATAL_ERROR "zip tier line is absent: ${diff_output}")
+endif()
 if(NOT diff_output MATCHES "modified deflated\\.txt")
   message(FATAL_ERROR "zip member line is absent: ${diff_output}")
 endif()
@@ -48,8 +51,32 @@ if(NOT json_result EQUAL 0)
 endif()
 string(JSON json_entries LENGTH "${json_output}")
 string(JSON json_path GET "${json_output}" 0 path)
+string(JSON json_tier GET "${json_output}" 0 tier level)
+string(JSON json_mechanism GET "${json_output}" 0 tier mechanism)
 string(JSON json_codec GET "${json_output}" 0 container codec)
 if(NOT json_entries EQUAL 1 OR NOT json_path STREQUAL "archive.zip" OR
+   NOT json_tier EQUAL 2 OR NOT json_mechanism STREQUAL "format(zip)" OR
    NOT json_codec STREQUAL "zip")
   message(FATAL_ERROR "liquid diff JSON changed: ${json_output}")
+endif()
+
+execute_process(
+  COMMAND "${LIQUID_CLI}" diff before after --text
+  WORKING_DIRECTORY "${LIQUID_FORMAT_DIFF_ROOT}"
+  RESULT_VARIABLE text_result
+  OUTPUT_VARIABLE text_output
+  ERROR_VARIABLE text_error)
+if(NOT text_result EQUAL 0 OR NOT text_output MATCHES "tier: 0 \\(text\\)")
+  message(FATAL_ERROR "text diff omitted its degraded tier: ${text_output}${text_error}")
+endif()
+
+execute_process(
+  COMMAND "${LIQUID_CLI}" search changed
+  WORKING_DIRECTORY "${LIQUID_FORMAT_DIFF_ROOT}"
+  RESULT_VARIABLE search_result
+  OUTPUT_VARIABLE search_output
+  ERROR_VARIABLE search_error)
+if(NOT search_result EQUAL 0 OR
+   NOT search_output MATCHES "tier: 3 \\(format\\(opaque\\)\\)")
+  message(FATAL_ERROR "opaque archive search omitted its tier: ${search_output}${search_error}")
 endif()

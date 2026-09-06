@@ -6,6 +6,7 @@
 #include <cctype>
 #include <charconv>
 #include <chrono>
+#include <format>
 #include <fstream>
 #include <functional>
 #include <limits>
@@ -85,6 +86,7 @@ struct stored_operation {
     session_id session;
     actor by;
     std::chrono::sys_seconds at;
+    bool agent{};
 };
 struct persisted_drip {
     actor author;
@@ -99,7 +101,9 @@ struct repository_document {
     std::map<node_id, digest> dirs;
     std::optional<change_id> head;
     std::vector<stored_operation> operations;
-    std::vector<std::string> locks;
+    std::vector<exclusive_lock> locks;
+    std::vector<semantic_lease> leases;
+    std::vector<epoch> epochs;
     std::vector<conflict_reference> conflict_values;
     std::vector<conflict_resolution> pending_resolutions;
     std::vector<persisted_drip> drips;
@@ -114,6 +118,7 @@ struct repository_document {
     flow_config flow{};
     std::optional<remote_config> remote;
     data_config data;
+    lock_config lock_rules;
     std::vector<repository_detail::stored_data_branch> data_branches;
     std::uint64_t pending_drips{};
     bool root_is_paged{};
@@ -213,6 +218,14 @@ auto actor_value(const actor& value) -> cbor::value {
                 {"public_key", bytes(value.public_key)},
                 {"key_fingerprint", cbor::value{value.key_fingerprint}}});
 }
+auto position_value(const frontend_source_position& value) -> cbor::value {
+    return map({{"byte", cbor::value{value.byte}},
+                {"line", cbor::value{value.line}},
+                {"column", cbor::value{value.column}}});
+}
+auto range_value(const frontend_source_range& value) -> cbor::value {
+    return map({{"start", position_value(value.start)}, {"end", position_value(value.end)}});
+}
 auto find(const cbor::value& value, std::string_view key) -> const cbor::value* {
     const auto* fields = std::get_if<cbor::value::map>(&value.data);
     if (!fields)
@@ -257,6 +270,194 @@ auto decode_actor(const cbor::value& value) -> result<actor> {
                  *fingerprint_text,
                  *public_key_bytes,
                  *key_fingerprint_text};
+}
+
+auto decode_seconds(const cbor::value& value) -> std::optional<std::int64_t> {
+    if (const auto* signed_value = std::get_if<std::int64_t>(&value.data)) {
+        return *signed_value;
+    }
+    const auto* unsigned_value = std::get_if<std::uint64_t>(&value.data);
+    if (unsigned_value &&
+        *unsigned_value <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        return static_cast<std::int64_t>(*unsigned_value);
+    }
+    return std::nullopt;
+}
+
+auto lock_value(const exclusive_lock& value) -> cbor::value {
+    return map({{"path", cbor::value{value.path}},
+                {"holder", actor_value(value.holder)},
+                {"since", cbor::value{value.since.time_since_epoch().count()}},
+                {"reason", cbor::value{value.reason}},
+                {"authority",
+                 cbor::value{value.authority == lock_authority::lake ? "lake" : "advisory"}}});
+}
+
+auto decode_lock(const cbor::value& value) -> result<exclusive_lock> {
+    const auto* path_value = find(value, "path");
+    const auto* holder_value = find(value, "holder");
+    const auto* since_value = find(value, "since");
+    const auto* reason_value = find(value, "reason");
+    const auto* authority_value = find(value, "authority");
+    const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+    const auto* reason = reason_value ? std::get_if<std::string>(&reason_value->data) : nullptr;
+    const auto* authority =
+        authority_value ? std::get_if<std::string>(&authority_value->data) : nullptr;
+    auto holder =
+        holder_value
+            ? decode_actor(*holder_value)
+            : result<actor>{std::unexpected(failure(errc::corrupt, "lock holder is missing"))};
+    const auto seconds = since_value ? decode_seconds(*since_value) : std::nullopt;
+    if (!path || path->empty() || !holder || !seconds || !reason || reason->empty() || !authority ||
+        (*authority != "advisory" && *authority != "lake")) {
+        return std::unexpected(failure(errc::corrupt, "invalid exclusive lock"));
+    }
+    return exclusive_lock{.path = *path,
+                          .holder = std::move(*holder),
+                          .since = std::chrono::sys_seconds{std::chrono::seconds{*seconds}},
+                          .reason = *reason,
+                          .authority = *authority == "lake" ? lock_authority::lake
+                                                            : lock_authority::advisory};
+}
+
+auto lock_config_value(const lock_config& value) -> cbor::value {
+    auto rules = cbor::value::array{};
+    for (const auto& rule : value.rules) {
+        auto paths = cbor::value::array{};
+        for (const auto& path : rule.paths) {
+            paths.push_back(cbor::value{path});
+        }
+        rules.push_back(
+            map({{"name", cbor::value{rule.name}}, {"paths", cbor::value{std::move(paths)}}}));
+    }
+    return map({{"rules", cbor::value{std::move(rules)}}});
+}
+
+auto decode_lock_config(const cbor::value& value) -> result<lock_config> {
+    const auto* rules_value = find(value, "rules");
+    const auto* rules = rules_value ? std::get_if<cbor::value::array>(&rules_value->data) : nullptr;
+    if (!rules) {
+        return std::unexpected(failure(errc::corrupt, "invalid lock config"));
+    }
+    auto output = lock_config{};
+    for (const auto& item : *rules) {
+        const auto* name_value = find(item, "name");
+        const auto* paths_value = find(item, "paths");
+        const auto* name = name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+        const auto* paths =
+            paths_value ? std::get_if<cbor::value::array>(&paths_value->data) : nullptr;
+        if (!name || name->empty() || !paths || paths->empty()) {
+            return std::unexpected(failure(errc::corrupt, "invalid lock rule"));
+        }
+        auto rule = lock_rule{.name = *name};
+        for (const auto& path_value : *paths) {
+            const auto* path = std::get_if<std::string>(&path_value.data);
+            if (!path || path->empty()) {
+                return std::unexpected(failure(errc::corrupt, "invalid lock rule path"));
+            }
+            rule.paths.push_back(*path);
+        }
+        output.rules.push_back(std::move(rule));
+    }
+    return output;
+}
+auto decode_position(const cbor::value& value) -> result<frontend_source_position> {
+    const auto* byte_value = find(value, "byte");
+    const auto* line_value = find(value, "line");
+    const auto* column_value = find(value, "column");
+    const auto* byte = byte_value ? std::get_if<std::uint64_t>(&byte_value->data) : nullptr;
+    const auto* line = line_value ? std::get_if<std::uint64_t>(&line_value->data) : nullptr;
+    const auto* column = column_value ? std::get_if<std::uint64_t>(&column_value->data) : nullptr;
+    if (!byte || !line || !column) {
+        return std::unexpected(
+            failure(errc::corrupt, "invalid source position", "repository document"));
+    }
+    return frontend_source_position{*byte, *line, *column};
+}
+auto decode_range(const cbor::value& value) -> result<frontend_source_range> {
+    const auto* start_value = find(value, "start");
+    const auto* end_value = find(value, "end");
+    if (!start_value || !end_value) {
+        return std::unexpected(
+            failure(errc::corrupt, "invalid source range", "repository document"));
+    }
+    auto start = decode_position(*start_value);
+    auto end = decode_position(*end_value);
+    if (!start || !end || start->byte > end->byte) {
+        return std::unexpected(
+            !start ? start.error()
+            : !end ? end.error()
+                   : failure(errc::corrupt, "source range is reversed", "repository document"));
+    }
+    return frontend_source_range{*start, *end};
+}
+auto encode_presence_body(const liquid::presence& value) -> result<std::vector<std::byte>> {
+    return cbor::encode(
+        map({{"v", cbor::value{std::uint64_t{1}}},
+             {"actor", actor_value(value.actor)},
+             {"session", bytes(value.session.bytes)},
+             {"path", cbor::value{value.path}},
+             {"range", value.range ? range_value(*value.range) : cbor::value{cbor::null{}}},
+             {"activity",
+              cbor::value{value.activity == presence_activity::editing   ? "editing"
+                          : value.activity == presence_activity::reading ? "reading"
+                                                                         : "idle"}},
+             {"at", cbor::value{value.at.time_since_epoch().count()}}}));
+}
+auto decode_presence_body(std::span<const std::byte> input) -> result<liquid::presence> {
+    auto decoded = cbor::decode(input);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto* version_value = find(*decoded, "v");
+    const auto* actor_encoded = find(*decoded, "actor");
+    const auto* session_value = find(*decoded, "session");
+    const auto* path_value = find(*decoded, "path");
+    const auto* range_encoded = find(*decoded, "range");
+    const auto* activity_value = find(*decoded, "activity");
+    const auto* at_value = find(*decoded, "at");
+    const auto* version =
+        version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
+    const auto* session =
+        session_value ? std::get_if<cbor::value::bytes>(&session_value->data) : nullptr;
+    const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+    const auto* activity =
+        activity_value ? std::get_if<std::string>(&activity_value->data) : nullptr;
+    auto seconds = std::optional<std::int64_t>{};
+    if (at_value) {
+        if (const auto* signed_value = std::get_if<std::int64_t>(&at_value->data)) {
+            seconds = *signed_value;
+        } else if (const auto* unsigned_value = std::get_if<std::uint64_t>(&at_value->data);
+                   unsigned_value &&
+                   *unsigned_value <=
+                       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            seconds = static_cast<std::int64_t>(*unsigned_value);
+        }
+    }
+    if (!version || *version != 1 || !actor_encoded || !session ||
+        session->size() != session_id{}.bytes.size() || !path || !activity ||
+        (*activity != "editing" && *activity != "reading" && *activity != "idle") || !seconds) {
+        return std::unexpected(failure(errc::corrupt, "invalid presence frame"));
+    }
+    auto decoded_actor = decode_actor(*actor_encoded);
+    if (!decoded_actor) {
+        return std::unexpected(decoded_actor.error());
+    }
+    auto output = liquid::presence{.actor = std::move(*decoded_actor),
+                                   .path = *path,
+                                   .activity = *activity == "editing"   ? presence_activity::editing
+                                               : *activity == "reading" ? presence_activity::reading
+                                                                        : presence_activity::idle,
+                                   .at = std::chrono::sys_seconds{std::chrono::seconds{*seconds}}};
+    std::ranges::copy(*session, output.session.bytes.begin());
+    if (range_encoded && !std::holds_alternative<cbor::null>(range_encoded->data)) {
+        auto range = decode_range(*range_encoded);
+        if (!range) {
+            return std::unexpected(range.error());
+        }
+        output.range = *range;
+    }
+    return output;
 }
 auto encode_entry(const working_entry& entry) -> cbor::value {
     auto children = cbor::value::array{};
@@ -383,6 +584,7 @@ auto encode_repository_document(const repository_document& value)
                  {"node", bytes(operation.node)},
                  {"by", actor_value(operation.by)},
                  {"at", cbor::value{operation.at.time_since_epoch().count()}},
+                 {"agent", cbor::value{operation.agent}},
                  {"session", bytes(operation.session.bytes)},
                  {"prior",
                   operation.prior ? encode_entry(*operation.prior) : cbor::value{cbor::null{}}},
@@ -397,8 +599,46 @@ auto encode_repository_document(const repository_document& value)
                                        : cbor::value{cbor::null{}}}}));
     }
     auto locks = cbor::value::array{};
-    for (const auto& lock : value.locks)
-        locks.push_back(cbor::value{lock});
+    for (const auto& lock : value.locks) {
+        locks.push_back(lock_value(lock));
+    }
+    auto leases = cbor::value::array{};
+    for (const auto& lease : value.leases) {
+        auto fields = cbor::value::map{
+            {"path", cbor::value{lease.claim.path}},
+            {"kind",
+             cbor::value{lease.claim.kind == lease_kind::file     ? "file"
+                         : lease.claim.kind == lease_kind::symbol ? "symbol"
+                                                                  : "range"}},
+            {"symbol",
+             lease.claim.symbol ? cbor::value{*lease.claim.symbol} : cbor::value{cbor::null{}}},
+            {"range",
+             lease.claim.range ? range_value(*lease.claim.range) : cbor::value{cbor::null{}}},
+            {"by", actor_value(lease.by)},
+            {"session", bytes(lease.session.bytes)},
+            {"since", cbor::value{lease.since.time_since_epoch().count()}},
+            {"expires", cbor::value{lease.expires.time_since_epoch().count()}},
+            {"authority",
+             cbor::value{lease.authority == lease_authority::lake ? "lake" : "advisory"}},
+        };
+        leases.emplace_back(cbor::value{std::move(fields)});
+    }
+    auto epochs = cbor::value::array{};
+    for (const auto& epoch : value.epochs) {
+        auto heads = cbor::value::array{};
+        for (const auto& document : epoch.heads) {
+            auto values = cbor::value::array{};
+            for (const auto& head : document.values) {
+                values.push_back(bytes(head));
+            }
+            heads.push_back(map({{"directory", bytes(document.directory)},
+                                 {"values", cbor::value{std::move(values)}}}));
+        }
+        epochs.push_back(map({{"n", cbor::value{epoch.n}},
+                              {"heads", cbor::value{std::move(heads)}},
+                              {"at", cbor::value{epoch.at.time_since_epoch().count()}},
+                              {"document_bytes", cbor::value{epoch.document_bytes}}}));
+    }
     auto conflicts = cbor::value::array{};
     for (const auto& conflict : value.conflict_values) {
         if (conflict.id.alg != algorithm{}) {
@@ -591,6 +831,7 @@ auto encode_repository_document(const repository_document& value)
               cbor::value{value.deploy.on_push == deploy_on_push::preview ? "preview" : "none"}}});
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
+             {"locks", lock_config_value(value.lock_rules)},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
              {"verify", map({{"rate", cbor::value{std::uint64_t{value.verification_rate}}}})},
              {"agents",
@@ -628,6 +869,8 @@ auto encode_repository_document(const repository_document& value)
                              {"ops", cbor::value{std::move(ops)}},
                              {"head", std::move(head)},
                              {"locks", cbor::value{std::move(locks)}},
+                             {"leases", cbor::value{std::move(leases)}},
+                             {"epochs", cbor::value{std::move(epochs)}},
                              {"conflicts", cbor::value{std::move(conflicts)}},
                              {"config", std::move(config)},
                              {"drips", cbor::value{std::move(drips)}},
@@ -651,6 +894,8 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     const auto* ops = find(*decoded, "ops");
     const auto* head = find(*decoded, "head");
     const auto* locks = find(*decoded, "locks");
+    const auto* leases = find(*decoded, "leases");
+    const auto* epochs = find(*decoded, "epochs");
     const auto* conflicts = find(*decoded, "conflicts");
     const auto* config = find(*decoded, "config");
     const auto* drip_values = find(*decoded, "drips");
@@ -768,6 +1013,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         const auto* node = find(item, "node");
         const auto* by = find(item, "by");
         const auto* at = find(item, "at");
+        const auto* agent = find(item, "agent");
         const auto* prior = find(item, "prior");
         const auto* session = find(item, "session");
         const auto* entry_effects = find(item, "entries");
@@ -836,6 +1082,14 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         decoded_operation.prior = std::move(previous);
         decoded_operation.by = std::move(operation_actor);
         decoded_operation.at = operation_time;
+        if (agent) {
+            const auto* marked = std::get_if<bool>(&agent->data);
+            if (!marked) {
+                return std::unexpected(failure(
+                    errc::corrupt, "invalid operation agent marker", "repository document"));
+            }
+            decoded_operation.agent = *marked;
+        }
         if (session) {
             const auto* raw = std::get_if<cbor::value::bytes>(&session->data);
             if (!raw || raw->size() != decoded_operation.session.bytes.size()) {
@@ -960,10 +1214,145 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         output.head = change_id{*digest};
     }
     for (const auto& item : *lock_values) {
-        const auto* text = std::get_if<std::string>(&item.data);
-        if (!text)
-            return std::unexpected(failure(errc::corrupt, "invalid lock", "repository document"));
-        output.locks.push_back(*text);
+        if (const auto* legacy = std::get_if<std::string>(&item.data)) {
+            output.locks.push_back({.path = *legacy,
+                                    .reason = "legacy advisory lock",
+                                    .authority = lock_authority::advisory});
+            continue;
+        }
+        auto decoded_lock = decode_lock(item);
+        if (!decoded_lock) {
+            return std::unexpected(decoded_lock.error());
+        }
+        output.locks.push_back(std::move(*decoded_lock));
+    }
+    const auto decode_seconds = [](const cbor::value& value) -> std::optional<std::int64_t> {
+        if (const auto* signed_value = std::get_if<std::int64_t>(&value.data)) {
+            return *signed_value;
+        }
+        const auto* unsigned_value = std::get_if<std::uint64_t>(&value.data);
+        if (unsigned_value && *unsigned_value <= static_cast<std::uint64_t>(
+                                                     std::numeric_limits<std::int64_t>::max())) {
+            return static_cast<std::int64_t>(*unsigned_value);
+        }
+        return std::nullopt;
+    };
+    if (leases) {
+        const auto* values = std::get_if<cbor::value::array>(&leases->data);
+        if (!values) {
+            return std::unexpected(failure(errc::corrupt, "invalid leases", "repository document"));
+        }
+        for (const auto& item : *values) {
+            const auto* path_value = find(item, "path");
+            const auto* kind_value = find(item, "kind");
+            const auto* symbol_value = find(item, "symbol");
+            const auto* range_encoded = find(item, "range");
+            const auto* by_value = find(item, "by");
+            const auto* session_value = find(item, "session");
+            const auto* since_value = find(item, "since");
+            const auto* expires_value = find(item, "expires");
+            const auto* authority_value = find(item, "authority");
+            const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+            const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
+            const auto* session =
+                session_value ? std::get_if<cbor::value::bytes>(&session_value->data) : nullptr;
+            const auto* authority =
+                authority_value ? std::get_if<std::string>(&authority_value->data) : nullptr;
+            const auto since = since_value ? decode_seconds(*since_value) : std::nullopt;
+            const auto expires = expires_value ? decode_seconds(*expires_value) : std::nullopt;
+            if (!path || path->empty() || !kind ||
+                (*kind != "file" && *kind != "symbol" && *kind != "range") || !by_value ||
+                !session || session->size() != session_id{}.bytes.size() || !since || !expires ||
+                !authority || (*authority != "advisory" && *authority != "lake")) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid lease", "repository document"));
+            }
+            auto decoded_actor = decode_actor(*by_value);
+            if (!decoded_actor) {
+                return std::unexpected(decoded_actor.error());
+            }
+            auto value = semantic_lease{
+                .claim = {.path = *path,
+                          .kind = *kind == "file"     ? lease_kind::file
+                                  : *kind == "symbol" ? lease_kind::symbol
+                                                      : lease_kind::range},
+                .by = std::move(*decoded_actor),
+                .since = std::chrono::sys_seconds{std::chrono::seconds{*since}},
+                .expires = std::chrono::sys_seconds{std::chrono::seconds{*expires}},
+                .authority =
+                    *authority == "lake" ? lease_authority::lake : lease_authority::advisory,
+            };
+            std::ranges::copy(*session, value.session.bytes.begin());
+            if (symbol_value && !std::holds_alternative<cbor::null>(symbol_value->data)) {
+                const auto* symbol = std::get_if<std::string>(&symbol_value->data);
+                if (!symbol || symbol->empty()) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid lease symbol", "repository document"));
+                }
+                value.claim.symbol = *symbol;
+            }
+            if (range_encoded && !std::holds_alternative<cbor::null>(range_encoded->data)) {
+                auto range = decode_range(*range_encoded);
+                if (!range) {
+                    return std::unexpected(range.error());
+                }
+                value.claim.range = *range;
+            }
+            output.leases.push_back(std::move(value));
+        }
+    }
+    if (epochs) {
+        const auto* values = std::get_if<cbor::value::array>(&epochs->data);
+        if (!values) {
+            return std::unexpected(failure(errc::corrupt, "invalid epochs", "repository document"));
+        }
+        for (const auto& item : *values) {
+            const auto* number_value = find(item, "n");
+            const auto* heads_value = find(item, "heads");
+            const auto* at_value = find(item, "at");
+            const auto* bytes_value = find(item, "document_bytes");
+            const auto* number =
+                number_value ? std::get_if<std::uint64_t>(&number_value->data) : nullptr;
+            const auto* heads =
+                heads_value ? std::get_if<cbor::value::array>(&heads_value->data) : nullptr;
+            const auto at = at_value ? decode_seconds(*at_value) : std::nullopt;
+            const auto* document_bytes =
+                bytes_value ? std::get_if<std::uint64_t>(&bytes_value->data) : nullptr;
+            if (!number || !heads || !at || !document_bytes) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid epoch", "repository document"));
+            }
+            auto value = epoch{.n = *number,
+                               .at = std::chrono::sys_seconds{std::chrono::seconds{*at}},
+                               .document_bytes = *document_bytes};
+            for (const auto& head_value : *heads) {
+                const auto* directory_value = find(head_value, "directory");
+                const auto* values_value = find(head_value, "values");
+                const auto* directory =
+                    directory_value ? std::get_if<cbor::value::bytes>(&directory_value->data)
+                                    : nullptr;
+                const auto* head_values =
+                    values_value ? std::get_if<cbor::value::array>(&values_value->data) : nullptr;
+                if (!directory || directory->size() != node_id{}.size() || !head_values) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid epoch document heads", "repository document"));
+                }
+                auto document = document_heads{};
+                std::ranges::copy(*directory, document.directory.begin());
+                for (const auto& head : *head_values) {
+                    const auto* raw = std::get_if<cbor::value::bytes>(&head.data);
+                    if (!raw || raw->size() != 32) {
+                        return std::unexpected(
+                            failure(errc::corrupt, "invalid epoch head", "repository document"));
+                    }
+                    auto decoded_head = std::array<std::byte, 32>{};
+                    std::ranges::copy(*raw, decoded_head.begin());
+                    document.values.push_back(decoded_head);
+                }
+                value.heads.push_back(std::move(document));
+            }
+            output.epochs.push_back(std::move(value));
+        }
     }
     if (conflicts && !conflict_values) {
         return std::unexpected(
@@ -1056,6 +1445,13 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                  *key_text,
                  *mode_text == "leaf" ? encryption_mode::leaf : encryption_mode::file,
                  *regex_text});
+        }
+        if (const auto* locks_config = find(*config, "locks")) {
+            auto decoded_locks = decode_lock_config(*locks_config);
+            if (!decoded_locks) {
+                return std::unexpected(decoded_locks.error());
+            }
+            output.lock_rules = std::move(*decoded_locks);
         }
         if (const auto* cache = find(*config, "cache")) {
             const auto* publish = find(*cache, "publish");
@@ -1830,7 +2226,9 @@ void append_nested_pointers(const working_entry& entry,
 auto public_document_state(const repository_document& source) -> document_state {
     auto output = document_state{};
     output.refs = source.refs;
-    output.locks = source.locks;
+    for (const auto& lock : source.locks) {
+        output.locks.push_back(lock.path);
+    }
     append_nested_pointers(source.root, {}, output.nested);
     return output;
 }
@@ -1986,8 +2384,9 @@ auto plan_lock_inverses(repository_document& candidate,
         if (!selected_path(effect.path, options)) {
             continue;
         }
-        const auto current =
-            std::ranges::find(candidate.locks, effect.path) != candidate.locks.end();
+        const auto existing =
+            std::ranges::find(candidate.locks, effect.path, &exclusive_lock::path);
+        const auto current = existing != candidate.locks.end();
         if (current != effect.after) {
             append_inverse_skip(
                 report, source, effect.path, "current lock no longer reflects the operation");
@@ -1995,10 +2394,15 @@ auto plan_lock_inverses(repository_document& candidate,
         }
         if (effect.before) {
             if (!current) {
-                candidate.locks.push_back(effect.path);
+                candidate.locks.push_back({.path = effect.path,
+                                           .holder = inverse.by,
+                                           .since = inverse.at,
+                                           .reason = "restored by undo",
+                                           .authority = lock_authority::advisory});
             }
         } else {
-            std::erase(candidate.locks, effect.path);
+            std::erase_if(candidate.locks,
+                          [&](const auto& value) { return value.path == effect.path; });
         }
         inverse.locks.push_back({effect.path, effect.after, effect.before});
         applied = true;
@@ -2055,6 +2459,10 @@ struct decoded_drip_body {
     std::vector<std::string> paths;
     std::optional<write_base> reasoned_from;
     std::optional<stale_revalidation> revalidated;
+    std::optional<digest> delegation;
+    std::optional<actor> agent;
+    std::optional<exclusive_lock> lock;
+    std::optional<lock_config> lock_rules;
     std::string operation;
     std::int64_t at{};
 };
@@ -2073,7 +2481,8 @@ auto decode_repository_drip(std::span<const std::byte> input) -> result<decoded_
     const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
     const auto* operation =
         operation_value ? std::get_if<std::string>(&operation_value->data) : nullptr;
-    if (!version || (*version != 1 && *version != 2) || !kind || !at_value) {
+    if (!version || (*version != 1 && *version != 2 && *version != 3 && *version != 4) || !kind ||
+        !at_value) {
         return std::unexpected(failure(errc::corrupt, "invalid signed drip body"));
     }
     auto output = decoded_drip_body{};
@@ -2149,6 +2558,44 @@ auto decode_repository_drip(std::span<const std::byte> input) -> result<decoded_
         }
         output.revalidated =
             *revalidated == "disjoint" ? stale_revalidation::disjoint : stale_revalidation::forced;
+    }
+    if (*version == 3) {
+        const auto* delegation_value = find(*decoded, "delegation");
+        const auto* agent_value = find(*decoded, "agent");
+        if (!delegation_value || !agent_value) {
+            return std::unexpected(failure(errc::corrupt, "invalid version 3 drip body"));
+        }
+        auto delegation = decode_digest(*delegation_value);
+        auto agent = decode_actor(*agent_value);
+        if (!delegation || !agent) {
+            return std::unexpected(delegation ? agent.error() : delegation.error());
+        }
+        output.delegation = *delegation;
+        output.agent = std::move(*agent);
+    }
+    if (*version == 4) {
+        if (const auto* lock_encoded = find(*decoded, "lock");
+            lock_encoded && !std::holds_alternative<cbor::null>(lock_encoded->data)) {
+            auto lock = decode_lock(*lock_encoded);
+            if (!lock) {
+                return std::unexpected(lock.error());
+            }
+            output.lock = std::move(*lock);
+        }
+        if (const auto* rules_encoded = find(*decoded, "lock_rules");
+            rules_encoded && !std::holds_alternative<cbor::null>(rules_encoded->data)) {
+            auto rules = decode_lock_config(*rules_encoded);
+            if (!rules) {
+                return std::unexpected(rules.error());
+            }
+            output.lock_rules = std::move(*rules);
+        }
+        const auto valid_lock_operation =
+            (output.operation == "lock" || output.operation == "unlock") && output.lock;
+        const auto valid_config_operation = output.operation == "lock_config" && output.lock_rules;
+        if (!valid_lock_operation && !valid_config_operation) {
+            return std::unexpected(failure(errc::corrupt, "invalid version 4 drip body"));
+        }
     }
     return output;
 }
@@ -2276,11 +2723,18 @@ auto merge_operation(const repository_document& before,
             output.refs.push_back({name, old, replacement});
         }
     }
-    auto lock_names = std::set<std::string>{before.locks.begin(), before.locks.end()};
-    lock_names.insert(after.locks.begin(), after.locks.end());
+    auto lock_names = std::set<std::string>{};
+    for (const auto& lock : before.locks) {
+        lock_names.insert(lock.path);
+    }
+    for (const auto& lock : after.locks) {
+        lock_names.insert(lock.path);
+    }
     for (const auto& path : lock_names) {
-        const auto old = std::ranges::find(before.locks, path) != before.locks.end();
-        const auto replacement = std::ranges::find(after.locks, path) != after.locks.end();
+        const auto old =
+            std::ranges::find(before.locks, path, &exclusive_lock::path) != before.locks.end();
+        const auto replacement =
+            std::ranges::find(after.locks, path, &exclusive_lock::path) != after.locks.end();
         if (old != replacement) {
             output.locks.push_back({path, old, replacement});
         }
@@ -2567,14 +3021,14 @@ import_synced_change(store& objects, algorithm hash_algorithm, const sync_item& 
 auto import_synced_directory(const node_id& repository,
                              std::map<node_id, crdt::directory_document>& candidate_documents,
                              std::map<node_id, std::unique_ptr<crdt::sync_state>>& directory_states,
+                             std::string_view device_id,
                              const sync_item& item) -> result<void> {
     if (item.repository != repository) {
         return std::unexpected(failure(errc::conflict, "directory repository identity differs"));
     }
     auto found = candidate_documents.find(item.directory);
     if (found == candidate_documents.end()) {
-        auto created =
-            crdt::directory_document::create_sync_receiver("sync-peer", "repository-sync-receiver");
+        auto created = crdt::directory_document::create_sync_receiver("local", device_id);
         if (!created) {
             return std::unexpected(created.error());
         }
@@ -2604,6 +3058,7 @@ struct sync_import_state {
     std::map<node_id, std::unique_ptr<crdt::sync_state>>& directory_states;
     std::vector<persisted_drip>& imported_drips;
     std::vector<std::pair<std::string, change_id>>& imported_refs;
+    std::string device_id;
 };
 
 runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& item) {
@@ -2613,14 +3068,20 @@ runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& 
     case sync_item_kind::change:
         co_return co_await import_synced_change(state.objects, state.hash_algorithm, item);
     case sync_item_kind::directory:
-        co_return import_synced_directory(
-            state.candidate.repository, state.candidate_documents, state.directory_states, item);
+        co_return import_synced_directory(state.candidate.repository,
+                                          state.candidate_documents,
+                                          state.directory_states,
+                                          state.device_id,
+                                          item);
     case sync_item_kind::reference:
         if (item.name.empty()) {
             co_return std::unexpected(failure(errc::invalid_argument, "reference name is empty"));
         }
         state.imported_refs.emplace_back(item.name, item.reference);
         co_return result<void>{};
+    case sync_item_kind::presence:
+        co_return std::unexpected(
+            failure(errc::corrupt, "presence reached the persistent sync importer"));
     }
     co_return std::unexpected(failure(errc::corrupt, "unknown sync item kind"));
 }
@@ -2725,9 +3186,127 @@ apply_synced_refs(store& objects,
     }
     co_return result<void>{};
 }
+
 auto same_path_or_descendant(std::string_view path, std::string_view root) -> bool {
     return path == root ||
            (path.size() > root.size() && path.starts_with(root) && path[root.size()] == '/');
+}
+
+auto locks_overlap(std::string_view left, std::string_view right) -> bool {
+    return same_path_or_descendant(left, right) || same_path_or_descendant(right, left);
+}
+
+auto encode_lock_record(const exclusive_lock& value) -> result<std::vector<std::byte>> {
+    return cbor::encode(map(
+        {{"v", cbor::value{std::uint64_t{1}}}, {"kind", "lock"}, {"value", lock_value(value)}}));
+}
+
+auto validate_lock_config(const lock_config& config) -> result<void>;
+
+runtime::task<void> reconcile_lock_drips(repository_document& candidate,
+                                         std::span<const persisted_drip> drips,
+                                         store& objects) {
+    for (const auto& saved : drips) {
+        auto decoded = decode_repository_drip(saved.body);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        if (decoded->lock_rules) {
+            auto valid = validate_lock_config(*decoded->lock_rules);
+            if (!valid) {
+                co_return std::unexpected(valid.error());
+            }
+            candidate.lock_rules = std::move(*decoded->lock_rules);
+        }
+        if (!decoded->lock) {
+            continue;
+        }
+        if (decoded->lock->holder.taap_id != saved.author.taap_id) {
+            co_return std::unexpected(failure(errc::unauthorized,
+                                              "signed lock holder does not match its author",
+                                              decoded->lock->path));
+        }
+        auto existing =
+            decoded->operation == "lock"
+                ? std::ranges::find_if(candidate.locks,
+                                       [&](const auto& value) {
+                                           return locks_overlap(value.path, decoded->lock->path);
+                                       })
+                : std::ranges::find(candidate.locks, decoded->lock->path, &exclusive_lock::path);
+        if (decoded->operation == "lock") {
+            if (existing == candidate.locks.end()) {
+                candidate.locks.push_back(std::move(*decoded->lock));
+                continue;
+            }
+            if (existing->holder.taap_id == decoded->lock->holder.taap_id) {
+                continue;
+            }
+        } else if (decoded->operation == "unlock") {
+            if (existing == candidate.locks.end()) {
+                continue;
+            }
+            if (existing->holder.taap_id == decoded->lock->holder.taap_id) {
+                candidate.locks.erase(existing);
+                continue;
+            }
+        } else {
+            continue;
+        }
+        auto local_record = encode_lock_record(*existing);
+        auto remote_record = encode_lock_record(*decoded->lock);
+        if (!local_record || !remote_record) {
+            co_return std::unexpected(local_record ? remote_record.error() : local_record.error());
+        }
+        auto local_id =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*local_record));
+        auto remote_id =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*remote_record));
+        if (!local_id || !remote_id) {
+            co_return std::unexpected(local_id ? remote_id.error() : local_id.error());
+        }
+        const auto duplicate =
+            std::ranges::any_of(candidate.conflict_values, [&](const auto& value) {
+                return value.path == decoded->lock->path;
+            });
+        if (!duplicate) {
+            auto parts = split_path(decoded->lock->path);
+            if (!parts) {
+                co_return std::unexpected(parts.error());
+            }
+            const auto* selected = lookup(candidate.root, *parts);
+            if (!selected) {
+                co_return std::unexpected(
+                    failure(errc::corrupt, "lock conflict path is absent", decoded->lock->path));
+            }
+            auto value =
+                conflict{.base = *local_id,
+                         .left = *local_id,
+                         .right = *remote_id,
+                         .region = {.path = decoded->lock->path, .bytes = conflict_byte_range{}},
+                         .kind = conflict_kind::crdt_suspicious,
+                         .explanation = "concurrent lock claims disagree"};
+            auto encoded = objects::encode(value);
+            if (!encoded) {
+                co_return std::unexpected(encoded.error());
+            }
+            auto id =
+                co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+            if (!id) {
+                co_return std::unexpected(id.error());
+            }
+            auto selected_kind = node_kind::blob;
+            if (selected->kind == entry_kind::directory) {
+                selected_kind = node_kind::tree;
+            } else if (selected->kind == entry_kind::nested_repository) {
+                selected_kind = node_kind::repo;
+            }
+            candidate.conflict_values.push_back({.path = decoded->lock->path,
+                                                 .id = *id,
+                                                 .selected = selected->object,
+                                                 .selected_kind = selected_kind});
+        }
+    }
+    co_return result<void>{};
 }
 
 auto glob_matches(std::string_view pattern, std::string_view path) -> bool {
@@ -2757,6 +3336,24 @@ auto glob_matches(std::string_view pattern, std::string_view path) -> bool {
         previous = std::move(current);
     }
     return previous[path.size()];
+}
+
+auto validate_lock_config(const lock_config& config) -> result<void> {
+    auto names = std::set<std::string>{};
+    for (const auto& rule : config.rules) {
+        if (rule.name.empty() || !names.insert(rule.name).second || rule.paths.empty()) {
+            return std::unexpected(
+                failure(errc::invalid_argument, "invalid or duplicate lock rule", rule.name));
+        }
+        for (const auto& path : rule.paths) {
+            if (path.empty() || path.front() == '/' || path.back() == '/' ||
+                path.find("../") != std::string::npos || path == "..") {
+                return std::unexpected(
+                    failure(errc::invalid_argument, "invalid lock path pattern", path));
+            }
+        }
+    }
+    return {};
 }
 
 auto validate_encryption_rules(const std::vector<encryption_path_rule>& rules) -> result<void> {
@@ -3021,7 +3618,7 @@ result<session_id> parse_session_id(std::string_view text) {
 struct repository::impl {
     struct retained_lease {
         digest id;
-        lease value;
+        ::liquid::lease value;
     };
 
     static constexpr auto lease_ttl = std::chrono::days{30};
@@ -3044,6 +3641,15 @@ struct repository::impl {
     std::shared_ptr<keyring> keys;
     cache_report cache_statistics;
     std::shared_ptr<flow_detail::controller> flow_limits;
+    std::optional<actor> acting_actor;
+    std::optional<digest> acting_delegation;
+    lease_authorizer authorize_lease;
+    lock_authorizer authorize_lock;
+    epoch_acknowledger acknowledge_epoch;
+    bool defer_persistence{};
+    bool suppress_drips{};
+    std::uint64_t suppressed_drips{};
+    std::vector<liquid::presence> transient_presence;
     std::map<std::string, std::pair<cache_status, std::optional<cache_miss>>> cache_lookups;
     impl(std::filesystem::path path,
          std::unique_ptr<store> owned,
@@ -3499,6 +4105,9 @@ struct repository::impl {
         co_return result<void>{};
     }
     runtime::task<void> checkpoint_or_journal() {
+        if (defer_persistence) {
+            co_return result<void>{};
+        }
         if (current.pending_drips >= checkpoint_interval ||
             journal_bytes >= build_detail::repository_journal_byte_budget) {
             co_return co_await checkpoint();
@@ -3526,12 +4135,16 @@ struct repository::impl {
                                     std::vector<std::string> paths = {},
                                     const write_options& options = {},
                                     std::optional<stale_revalidation> revalidated = std::nullopt) {
+        if (suppress_drips) {
+            ++suppressed_drips;
+            co_return result<void>{};
+        }
         auto path_values = cbor::value::array{};
         for (auto& path : paths) {
             path_values.push_back(cbor::value{std::move(path)});
         }
         auto fields = cbor::value::map{
-            {"v", cbor::value{std::uint64_t{2}}},
+            {"v", cbor::value{std::uint64_t{acting_delegation ? 3U : 2U}}},
             {"kind", "drip"},
             {"author", cbor::value{signing_key.identity().taap_id}},
             {"at", cbor::value{at.time_since_epoch().count()}},
@@ -3553,7 +4166,53 @@ struct repository::impl {
                 "revalidated",
                 cbor::value{*revalidated == stale_revalidation::disjoint ? "disjoint" : "forced"});
         }
+        if (acting_delegation) {
+            fields.emplace_back("delegation", digest_value(*acting_delegation));
+            fields.emplace_back("agent", actor_value(current_actor()));
+        }
         auto body = cbor::encode(cbor::value{std::move(fields)});
+        if (!body) {
+            co_return std::unexpected(body.error());
+        }
+        auto signed_value = co_await signing_key.sign("drip", *body);
+        if (!signed_value) {
+            co_return std::unexpected(signed_value.error());
+        }
+        auto encoded_signature = identity_detail::canonical_signature(*signed_value);
+        if (!encoded_signature) {
+            co_return std::unexpected(encoded_signature.error());
+        }
+        current.drips.push_back(
+            {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        journal_bytes += current.drips.back().body.size();
+        journal_bytes += current.drips.back().signature.size();
+        co_return result<void>{};
+    }
+    runtime::task<void> append_lock_drip(std::string operation,
+                                         std::optional<exclusive_lock> value,
+                                         std::optional<lock_config> rules = std::nullopt) {
+        if (suppress_drips) {
+            ++suppressed_drips;
+            co_return result<void>{};
+        }
+        const auto at =
+            value ? value->since
+                  : std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        auto paths = cbor::value::array{};
+        if (value) {
+            paths.push_back(cbor::value{value->path});
+        }
+        auto body = cbor::encode(map(
+            {{"v", cbor::value{std::uint64_t{4}}},
+             {"kind", "drip"},
+             {"author", cbor::value{signing_key.identity().taap_id}},
+             {"at", cbor::value{at.time_since_epoch().count()}},
+             {"node", bytes(current.root.node)},
+             {"operation", cbor::value{std::move(operation)}},
+             {"base", current.head ? digest_value(current.head->value) : cbor::value{cbor::null{}}},
+             {"paths", cbor::value{std::move(paths)}},
+             {"lock", value ? lock_value(*value) : cbor::value{cbor::null{}}},
+             {"lock_rules", rules ? lock_config_value(*rules) : cbor::value{cbor::null{}}}}));
         if (!body) {
             co_return std::unexpected(body.error());
         }
@@ -3610,8 +4269,9 @@ struct repository::impl {
         operation.node = node;
         operation.prior = prior;
         operation.session = session;
-        operation.by = signing_key.identity();
+        operation.by = current_actor();
         operation.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        operation.agent = acting_delegation.has_value();
         if (operation.kind == "write" || operation.kind == "mkdir") {
             auto parts = split_path(operation.from);
             auto* after = parts ? lookup(current.root, *parts) : nullptr;
@@ -3633,6 +4293,7 @@ struct repository::impl {
         operation.session = session;
         operation.by = signing_key.identity();
         operation.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        operation.agent = acting_delegation.has_value();
         current.operations.push_back(std::move(operation));
     }
     runtime::task<undo_report> apply_undo(std::vector<stored_operation> operations,
@@ -3687,6 +4348,33 @@ struct repository::impl {
             }
             current = std::move(previous);
         };
+        auto lock_drips = std::size_t{};
+        auto lock_paths = std::set<std::string>{};
+        for (const auto& value : previous.locks) {
+            lock_paths.insert(value.path);
+        }
+        for (const auto& value : current.locks) {
+            lock_paths.insert(value.path);
+        }
+        for (const auto& path : lock_paths) {
+            const auto before = std::ranges::find(previous.locks, path, &exclusive_lock::path);
+            const auto after = std::ranges::find(current.locks, path, &exclusive_lock::path);
+            if (before != previous.locks.end() && after == current.locks.end()) {
+                auto drip = co_await append_lock_drip("unlock", *before);
+                if (!drip) {
+                    rollback();
+                    co_return std::unexpected(drip.error());
+                }
+                ++lock_drips;
+            } else if (before == previous.locks.end() && after != current.locks.end()) {
+                auto drip = co_await append_lock_drip("lock", *after);
+                if (!drip) {
+                    rollback();
+                    co_return std::unexpected(drip.error());
+                }
+                ++lock_drips;
+            }
+        }
         for (const auto& applied_id : planned->report.applied) {
             const auto source = std::ranges::find_if(operations, [&](const auto& operation) {
                 return operation_matches(operation.id, applied_id);
@@ -3698,7 +4386,7 @@ struct repository::impl {
                 co_return std::unexpected(drip.error());
             }
         }
-        current.pending_drips += planned->report.applied.size();
+        current.pending_drips += planned->report.applied.size() + lock_drips;
         auto saved = co_await checkpoint_or_journal();
         if (!saved) {
             rollback();
@@ -4043,10 +4731,111 @@ struct repository::impl {
         co_return std::unexpected(
             failure(errc::unsupported, "leaf encryption supports JSON and .env", path));
     }
-    auto locked(std::string_view path) const -> bool {
-        return std::ranges::any_of(current.locks, [&](const auto& pattern) {
-            return same_path_or_descendant(path, pattern);
+    auto current_actor() const -> actor {
+        return acting_actor ? *acting_actor : signing_key.identity();
+    }
+    auto matching_lock(std::string_view path) const -> const exclusive_lock* {
+        const auto found = std::ranges::find_if(current.locks, [&](const auto& value) {
+            return same_path_or_descendant(path, value.path);
         });
+        return found == current.locks.end() ? nullptr : &*found;
+    }
+    auto conflicting_lock(std::string_view path) const -> const exclusive_lock* {
+        const auto actor = current_actor();
+        const auto found = std::ranges::find_if(current.locks, [&](const auto& value) {
+            return locks_overlap(path, value.path) && value.holder.taap_id != actor.taap_id;
+        });
+        return found == current.locks.end() ? nullptr : &*found;
+    }
+    auto lock_rule_matches(std::string_view path) const -> bool {
+        return std::ranges::any_of(current.lock_rules.rules, [&](const auto& rule) {
+            return std::ranges::any_of(
+                rule.paths, [&](const auto& pattern) { return glob_matches(pattern, path); });
+        });
+    }
+    auto validate_lock_write(std::string_view path) const -> result<void> {
+        const auto* held = matching_lock(path);
+        if (!held ||
+            (!held->holder.taap_id.empty() && held->holder.taap_id == current_actor().taap_id)) {
+            return {};
+        }
+        const auto holder = held->holder.taap_id.empty() ? "unknown holder" : held->holder.taap_id;
+        return std::unexpected(failure(errc::locked,
+                                       std::format("path is locked by {} since {}: {}",
+                                                   holder,
+                                                   held->since.time_since_epoch().count(),
+                                                   held->reason),
+                                       held->path));
+    }
+    auto validate_lock_acquire(std::string_view path) const -> result<void> {
+        const auto* held = conflicting_lock(path);
+        if (!held) {
+            return {};
+        }
+        const auto holder = held->holder.taap_id.empty() ? "unknown holder" : held->holder.taap_id;
+        return std::unexpected(failure(errc::locked,
+                                       std::format("path is locked by {} since {}: {}",
+                                                   holder,
+                                                   held->since.time_since_epoch().count(),
+                                                   held->reason),
+                                       held->path));
+    }
+    static auto ranges_overlap(const frontend_source_range& left,
+                               const frontend_source_range& right) -> bool {
+        return left.start.byte < right.end.byte && right.start.byte < left.end.byte;
+    }
+    static auto same_claim(const lease_claim& left, const lease_claim& right) -> bool {
+        if (left.path != right.path || left.kind != right.kind || left.symbol != right.symbol ||
+            left.range.has_value() != right.range.has_value()) {
+            return false;
+        }
+        if (!left.range) {
+            return true;
+        }
+        return left.range->start.byte == right.range->start.byte &&
+               left.range->end.byte == right.range->end.byte;
+    }
+    auto lease_conflict(const lease_claim& requested, const semantic_lease& held) const -> bool {
+        if (requested.path != held.claim.path) {
+            return false;
+        }
+        if (requested.kind == lease_kind::file || held.claim.kind == lease_kind::file) {
+            return true;
+        }
+        if (requested.kind == lease_kind::symbol && held.claim.kind == lease_kind::symbol &&
+            requested.symbol && held.claim.symbol && *requested.symbol == *held.claim.symbol) {
+            return true;
+        }
+        if (!requested.range || !held.claim.range) {
+            return true;
+        }
+        return ranges_overlap(*requested.range, *held.claim.range);
+    }
+    auto lease_holder(const lease_claim& requested) const -> const semantic_lease* {
+        const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        const auto& writer = current_actor();
+        const auto found = std::ranges::find_if(current.leases, [&](const auto& held) {
+            const auto owned = held.by.taap_id == writer.taap_id && held.session == session;
+            return held.expires > now && !owned && lease_conflict(requested, held);
+        });
+        return found == current.leases.end() ? nullptr : &*found;
+    }
+    auto validate_lease_write(std::string_view path, const write_options& options) const
+        -> result<void> {
+        auto requested = lease_claim{.path = std::string{path},
+                                     .kind = options.symbol  ? lease_kind::symbol
+                                             : options.range ? lease_kind::range
+                                                             : lease_kind::file,
+                                     .symbol = options.symbol,
+                                     .range = options.range};
+        const auto* holder = lease_holder(requested);
+        if (!holder) {
+            return {};
+        }
+        return std::unexpected(
+            failure(errc::locked,
+                    "write intersects a semantic lease held by " + holder->by.taap_id,
+                    holder->claim.path));
     }
     auto base_cursor(const write_base& base) const -> result<std::size_t> {
         if (base.cursor) {
@@ -4084,14 +4873,20 @@ struct repository::impl {
                                     std::optional<stale_revalidation> revalidated,
                                     std::optional<node_id> requested_node = std::nullopt,
                                     std::uint64_t update_bytes = 0) {
-        if (locked(path))
-            co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+        auto leased = validate_lease_write(path, options);
+        if (!leased) {
+            co_return std::unexpected(leased.error());
+        }
+        auto lock_allowed = validate_lock_write(path);
+        if (!lock_allowed) {
+            co_return std::unexpected(lock_allowed.error());
+        }
         auto parts = split_path(path);
         if (!parts)
             co_return std::unexpected(parts.error());
         auto* bucket_parent =
             parent_for(current.root, *parts, false, hash_algorithm).value_or(&current.root);
-        auto admitted = flow_limits->admit(signing_key.identity().taap_id,
+        auto admitted = flow_limits->admit(current_actor().taap_id,
                                            flow_detail::node_key(bucket_parent->node),
                                            std::max<std::uint64_t>(update_bytes, path.size() + 64));
         if (!admitted)
@@ -4527,6 +5322,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_flow) {
         co_return std::unexpected(valid_flow.error());
     }
+    auto valid_locks = validate_lock_config(options.locks);
+    if (!valid_locks) {
+        co_return std::unexpected(valid_locks.error());
+    }
     auto prepared = co_await prepare_repository_store(std::move(path), options);
     if (!prepared) {
         co_return std::unexpected(prepared.error());
@@ -4555,6 +5354,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.flow = std::move(options.flow);
     document.remote = std::move(options.remote);
     document.data = std::move(options.data);
+    document.lock_rules = std::move(options.locks);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -4569,6 +5369,17 @@ runtime::task<repository> repository::create(std::filesystem::path path,
                                           options.checkpoint_interval,
                                           hash_algorithm,
                                           options.session.value_or(session_id{random_id()}));
+    output.impl_->authorize_lease = std::move(options.authorize_lease);
+    output.impl_->authorize_lock = std::move(options.authorize_lock);
+    output.impl_->acknowledge_epoch = std::move(options.acknowledge_epoch);
+    if (!output.impl_->current.lock_rules.rules.empty()) {
+        auto configured = co_await output.impl_->append_lock_drip(
+            "lock_config", std::nullopt, output.impl_->current.lock_rules);
+        if (!configured) {
+            co_return std::unexpected(configured.error());
+        }
+        ++output.impl_->current.pending_drips;
+    }
     auto saved = co_await output.impl_->checkpoint();
     if (!saved)
         co_return std::unexpected(saved.error());
@@ -4648,6 +5459,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!valid_flow) {
         co_return std::unexpected(valid_flow.error());
     }
+    auto valid_locks = validate_lock_config(document->lock_rules);
+    if (!valid_locks) {
+        co_return std::unexpected(valid_locks.error());
+    }
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -4662,6 +5477,9 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
                                           options.checkpoint_interval,
                                           hash_algorithm,
                                           options.session.value_or(session_id{random_id()}));
+    output.impl_->authorize_lease = std::move(options.authorize_lease);
+    output.impl_->authorize_lock = std::move(options.authorize_lock);
+    output.impl_->acknowledge_epoch = std::move(options.acknowledge_epoch);
     if (output.impl_->current.root_is_paged && !options.defer_tree_load) {
         auto restored = co_await output.impl_->load_paged_root();
         if (!restored) {
@@ -4864,11 +5682,12 @@ runtime::task<std::vector<drip>> repository::drips() {
         }
         auto value = drip{.id = {*id},
                           .base = decoded->base.value_or(change_id{{impl_->hash_algorithm, {}}}),
-                          .by = saved.author,
+                          .by = decoded->agent.value_or(saved.author),
                           .signature = saved.signature,
                           .at = std::chrono::sys_seconds{std::chrono::seconds{decoded->at}},
                           .reasoned_from = decoded->reasoned_from,
-                          .revalidated = decoded->revalidated};
+                          .revalidated = decoded->revalidated,
+                          .delegation = decoded->delegation};
         for (auto& path : decoded->paths) {
             value.ops.push_back({std::move(path)});
         }
@@ -4960,12 +5779,18 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U)
         co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
+    auto lease = impl_->validate_lease_write(path, options);
+    if (!lease) {
+        co_return std::unexpected(lease.error());
+    }
     auto revalidated = co_await validate_write(options, {path});
     if (!revalidated) {
         co_return std::unexpected(revalidated.error());
     }
-    if (impl_->locked(path))
-        co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+    auto lock_allowed = impl_->validate_lock_write(path);
+    if (!lock_allowed) {
+        co_return std::unexpected(lock_allowed.error());
+    }
     const auto update_bytes = contents.size();
     if (update_bytes > impl_->current.flow.max_update_bytes) {
         co_return std::unexpected(
@@ -5020,6 +5845,10 @@ repository::write_file(std::string path, std::filesystem::path source, write_opt
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U) {
         co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
+    }
+    auto lease = impl_->validate_lease_write(path, options);
+    if (!lease) {
+        co_return std::unexpected(lease.error());
     }
     auto revalidated = co_await validate_write(options, {path});
     if (!revalidated) {
@@ -5171,6 +6000,10 @@ repository::write_remote(std::string path, ::liquid::blob value, write_options o
     }
     if ((options.mode & 0170000U) != 0100000U && options.mode != 0120000U) {
         co_return std::unexpected(failure(errc::invalid_argument, "invalid file mode", path));
+    }
+    auto lease = impl_->validate_lease_write(path, options);
+    if (!lease) {
+        co_return std::unexpected(lease.error());
     }
     auto revalidated = co_await validate_write(options, {path});
     if (!revalidated) {
@@ -5454,8 +6287,16 @@ runtime::task<void> repository::move(std::string from, std::string to, write_opt
     if (!revalidated) {
         co_return std::unexpected(revalidated.error());
     }
-    if (impl_->locked(from) || impl_->locked(to))
-        co_return std::unexpected(failure(errc::locked, "path is advisory locked", from));
+    auto source_lock = impl_->validate_lock_write(from);
+    auto destination_lock = impl_->validate_lock_write(to);
+    if (!source_lock || !destination_lock) {
+        co_return std::unexpected(source_lock ? destination_lock.error() : source_lock.error());
+    }
+    auto source_lease = impl_->validate_lease_write(from, options);
+    auto destination_lease = impl_->validate_lease_write(to, options);
+    if (!source_lease || !destination_lease) {
+        co_return std::unexpected(!source_lease ? source_lease.error() : destination_lease.error());
+    }
     auto source = split_path(from);
     auto destination = split_path(to);
     if (!source)
@@ -5475,7 +6316,7 @@ runtime::task<void> repository::move(std::string from, std::string to, write_opt
         co_return std::unexpected(failure(errc::not_found, "move source does not exist", from));
     if ((*destination_parent)->entries.contains(destination->back()))
         co_return std::unexpected(failure(errc::already_exists, "move destination exists", to));
-    auto admitted = impl_->flow_limits->admit(impl_->signing_key.identity().taap_id,
+    auto admitted = impl_->flow_limits->admit(impl_->current_actor().taap_id,
                                               flow_detail::node_key((*source_parent)->node),
                                               from.size() + to.size() + 32);
     if (!admitted)
@@ -5536,8 +6377,14 @@ runtime::task<void> repository::remove(std::string path, write_options options) 
     if (!revalidated) {
         co_return std::unexpected(revalidated.error());
     }
-    if (impl_->locked(path))
-        co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+    auto lock_allowed = impl_->validate_lock_write(path);
+    if (!lock_allowed) {
+        co_return std::unexpected(lock_allowed.error());
+    }
+    auto lease = impl_->validate_lease_write(path, options);
+    if (!lease) {
+        co_return std::unexpected(lease.error());
+    }
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());
@@ -5547,9 +6394,8 @@ runtime::task<void> repository::remove(std::string path, write_options options) 
     auto found = (*parent)->entries.find(parts->back());
     if (found == (*parent)->entries.end())
         co_return std::unexpected(failure(errc::not_found, "path does not exist", path));
-    auto admitted = impl_->flow_limits->admit(impl_->signing_key.identity().taap_id,
-                                              flow_detail::node_key((*parent)->node),
-                                              path.size() + 32);
+    auto admitted = impl_->flow_limits->admit(
+        impl_->current_actor().taap_id, flow_detail::node_key((*parent)->node), path.size() + 32);
     if (!admitted)
         co_return std::unexpected(admitted.error());
     auto directory = co_await impl_->directory((*parent)->node);
@@ -6421,6 +7267,257 @@ runtime::task<std::vector<operation_record>> repository::operations(log_options)
     }
     co_return output;
 }
+
+namespace {
+
+struct attribution_operation_group {
+    std::vector<const stored_operation*> operations;
+    const stored_operation* record{};
+};
+
+struct attribution_source {
+    actor by;
+    session_id session;
+    bool agent{};
+};
+
+auto attribution_groups(const repository_document& document)
+    -> std::map<std::string, attribution_operation_group> {
+    auto output = std::map<std::string, attribution_operation_group>{};
+    auto pending = std::vector<const stored_operation*>{};
+    for (const auto& operation : document.operations) {
+        if (operation.kind != "record" || !operation.head_after) {
+            pending.push_back(&operation);
+            continue;
+        }
+        output.insert_or_assign(to_string(operation.head_after->value),
+                                attribution_operation_group{pending, &operation});
+        pending.clear();
+    }
+    return output;
+}
+
+auto operation_affects(const stored_operation& operation,
+                       const node_id& node,
+                       std::string_view old_path,
+                       std::string_view new_path) -> bool {
+    if (operation.node == node || operation.from == old_path || operation.from == new_path ||
+        operation.to == old_path || operation.to == new_path) {
+        return true;
+    }
+    return std::ranges::any_of(operation.entries, [&](const stored_entry_effect& effect) {
+        const auto same_node = [&](const std::optional<working_entry>& entry) {
+            return entry && entry->node == node;
+        };
+        return effect.path == old_path || effect.path == new_path || same_node(effect.before) ||
+               same_node(effect.after);
+    });
+}
+
+auto content_operation(const stored_operation& operation) -> bool {
+    return !operation.entries.empty() || operation.kind == "write" || operation.kind == "import" ||
+           operation.kind == "structural_edit" || operation.kind == "undo" ||
+           operation.kind == "redaction";
+}
+
+auto source_for_change(const std::map<std::string, attribution_operation_group>& groups,
+                       const change& value,
+                       const node_id& node,
+                       std::string_view old_path,
+                       std::string_view new_path) -> attribution_source {
+    const auto found = groups.find(to_string(value.id.value));
+    if (found == groups.end()) {
+        return {.by = value.author};
+    }
+    const auto& operations = found->second.operations;
+    auto selected = static_cast<const stored_operation*>(nullptr);
+    for (auto operation = operations.rbegin(); operation != operations.rend(); ++operation) {
+        if (content_operation(**operation) &&
+            operation_affects(**operation, node, old_path, new_path)) {
+            selected = *operation;
+            break;
+        }
+    }
+    if (!selected) {
+        for (auto operation = operations.rbegin(); operation != operations.rend(); ++operation) {
+            if (content_operation(**operation)) {
+                selected = *operation;
+                break;
+            }
+        }
+    }
+    selected = selected ? selected : found->second.record;
+    return selected ? attribution_source{selected->by, selected->session, selected->agent}
+                    : attribution_source{.by = value.author};
+}
+
+auto text_lines(std::span<const std::byte> bytes) -> std::vector<std::string> {
+    const auto source = std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    auto output = std::vector<std::string>{};
+    for (auto offset = std::size_t{}; offset < source.size();) {
+        const auto newline = source.find('\n', offset);
+        const auto end = newline == std::string_view::npos ? source.size() : newline;
+        output.emplace_back(source.substr(offset, end - offset));
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        offset = newline + 1;
+    }
+    return output;
+}
+
+auto apply_attribution_hunks(std::span<const line_attribution> previous,
+                             std::span<const std::string> lines,
+                             std::span<const line_change> hunks,
+                             const attribution_source& source,
+                             const change_id& change_value)
+    -> result<std::vector<line_attribution>> {
+    auto output = std::vector<line_attribution>{};
+    output.reserve(lines.size());
+    auto old_offset = std::size_t{};
+    auto new_offset = std::size_t{};
+    for (const auto& hunk : hunks) {
+        if (hunk.old_line == 0 || hunk.new_line == 0) {
+            return std::unexpected(failure(errc::corrupt, "invalid attribution line hunk"));
+        }
+        const auto old_start = static_cast<std::size_t>(hunk.old_line - 1);
+        const auto new_start = static_cast<std::size_t>(hunk.new_line - 1);
+        if (old_start < old_offset || new_start < new_offset || old_start > previous.size() ||
+            new_start > lines.size() || old_start - old_offset != new_start - new_offset ||
+            hunk.old_count > previous.size() - old_start ||
+            hunk.new_count > lines.size() - new_start) {
+            return std::unexpected(failure(errc::corrupt, "inconsistent attribution line hunk"));
+        }
+        output.insert(output.end(),
+                      previous.begin() + static_cast<std::ptrdiff_t>(old_offset),
+                      previous.begin() + static_cast<std::ptrdiff_t>(old_start));
+        for (auto index = std::size_t{}; index < hunk.new_count; ++index) {
+            output.push_back({.text = lines[new_start + index],
+                              .by = source.by,
+                              .session = source.session,
+                              .change = change_value,
+                              .agent = source.agent});
+        }
+        old_offset = old_start + static_cast<std::size_t>(hunk.old_count);
+        new_offset = new_start + static_cast<std::size_t>(hunk.new_count);
+    }
+    output.insert(
+        output.end(), previous.begin() + static_cast<std::ptrdiff_t>(old_offset), previous.end());
+    if (output.size() != lines.size()) {
+        return std::unexpected(failure(errc::corrupt, "attribution line count does not match"));
+    }
+    for (auto index = std::size_t{}; index < output.size(); ++index) {
+        output[index].line = index + 1;
+        output[index].text = lines[index];
+    }
+    return output;
+}
+
+auto snapshot_entry(repository& source, liquid::tree current, std::span<const std::string> path)
+    -> runtime::task<tree_entry> {
+    for (auto index = std::size_t{}; index < path.size(); ++index) {
+        const auto found = std::ranges::find(current.entries, path[index], &tree_entry::name);
+        if (found == current.entries.end()) {
+            co_return std::unexpected(failure(errc::not_found, "path does not exist", path[index]));
+        }
+        if (index + 1 == path.size()) {
+            if (found->kind != node_kind::blob) {
+                co_return std::unexpected(
+                    failure(errc::invalid_argument, "attribution path is not a file", found->name));
+            }
+            co_return *found;
+        }
+        if (found->kind != node_kind::tree) {
+            co_return std::unexpected(failure(errc::not_found, "path does not exist", path[index]));
+        }
+        auto child = co_await source.tree(found->ref);
+        if (!child) {
+            co_return std::unexpected(child.error());
+        }
+        current = std::move(*child);
+    }
+    co_return std::unexpected(failure(errc::invalid_argument, "attribution path is empty"));
+}
+
+} // namespace
+
+runtime::task<std::vector<line_attribution>> repository::attribution(std::string path,
+                                                                     change_id change_value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    auto target = co_await at(change_value);
+    if (!target) {
+        co_return std::unexpected(target.error());
+    }
+    auto target_entry = co_await snapshot_entry(*this, target->root, *parts);
+    if (!target_entry) {
+        co_return std::unexpected(target_entry.error());
+    }
+    auto history = co_await log({.from = change_value, .first_parent = true});
+    if (!history) {
+        co_return std::unexpected(history.error());
+    }
+    std::ranges::reverse(*history);
+    const auto groups = attribution_groups(impl_->current);
+    auto output = std::vector<line_attribution>{};
+    auto previous = std::optional<change_id>{};
+    for (const auto& revision : *history) {
+        auto differences = result<std::vector<tree_diff_entry>>{};
+        if (previous) {
+            differences = co_await diff(*previous, revision.id, {.text = true});
+        } else {
+            auto snapshot = co_await at(revision.id);
+            if (!snapshot) {
+                co_return std::unexpected(snapshot.error());
+            }
+            differences = co_await diff(liquid::tree{}, std::move(snapshot->root), {.text = true});
+        }
+        if (!differences) {
+            co_return std::unexpected(differences.error());
+        }
+        previous = revision.id;
+        const auto changed =
+            std::ranges::find(*differences, target_entry->node, &tree_diff_entry::node);
+        if (changed == differences->end()) {
+            continue;
+        }
+        if (!changed->new_blob) {
+            output.clear();
+            continue;
+        }
+        if (!changed->line_hunks) {
+            if (changed->old_blob && changed->new_blob &&
+                same_digest(*changed->old_blob, *changed->new_blob)) {
+                continue;
+            }
+            co_return std::unexpected(
+                failure(errc::unsupported, "attribution requires UTF-8 text", changed->path));
+        }
+        auto contents = co_await blob(*changed->new_blob);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        auto lines = text_lines(*contents);
+        const auto source = source_for_change(groups,
+                                              revision,
+                                              target_entry->node,
+                                              changed->old_path.value_or(changed->path),
+                                              changed->path);
+        auto attributed =
+            apply_attribution_hunks(output, lines, *changed->line_hunks, source, revision.id);
+        if (!attributed) {
+            co_return std::unexpected(attributed.error());
+        }
+        output = std::move(*attributed);
+    }
+    co_return output;
+}
+
 runtime::task<undo_report> repository::undo(op_id operation) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -6452,17 +7549,762 @@ runtime::task<undo_report> repository::undo_session(session_id session, undo_opt
     }
     co_return co_await impl_->apply_undo(std::move(selected), std::move(options));
 }
-runtime::task<void> repository::lock(std::string path) {
-    if (!impl_)
-        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    auto parts = split_path(path);
-    if (!parts)
-        co_return std::unexpected(parts.error());
-    const auto present =
-        std::ranges::find(impl_->current.locks, path) != impl_->current.locks.end();
-    if (!present) {
-        impl_->current.locks.push_back(path);
+
+struct session::impl {
+    repository* shared{};
+    repository private_replica;
+    digest base_tree{};
+    change_id base_change{};
+    journal_cursor base_cursor;
+    actor agent;
+    attestation delegation;
+    digest delegation_id{};
+    std::vector<std::string> scopes;
+    bool may_publish{};
+    bool may_lease{};
+    bool active{true};
+};
+
+namespace {
+
+struct stored_session {
+    actor agent;
+    attestation delegation;
+    digest base_tree{};
+    change_id base_change{};
+    journal_cursor base_cursor;
+};
+
+auto encode_stored_session(const stored_session& value) -> result<std::vector<std::byte>> {
+    auto delegation = encode_attestation(value.delegation);
+    if (!delegation) {
+        return std::unexpected(delegation.error());
     }
+    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+                             {"agent", actor_value(value.agent)},
+                             {"delegation", bytes(*delegation)},
+                             {"base_tree", digest_value(value.base_tree)},
+                             {"base_change", digest_value(value.base_change.value)},
+                             {"base_cursor", cbor::value{value.base_cursor.token}}}));
+}
+
+auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_session> {
+    auto value = cbor::decode(encoded);
+    const auto* version_value = value ? find(*value, "v") : nullptr;
+    const auto* agent_value = value ? find(*value, "agent") : nullptr;
+    const auto* delegation_value = value ? find(*value, "delegation") : nullptr;
+    const auto* tree_value = value ? find(*value, "base_tree") : nullptr;
+    const auto* change_value = value ? find(*value, "base_change") : nullptr;
+    const auto* cursor_value = value ? find(*value, "base_cursor") : nullptr;
+    const auto* version =
+        version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
+    const auto* delegation_bytes =
+        delegation_value ? std::get_if<cbor::value::bytes>(&delegation_value->data) : nullptr;
+    const auto* cursor = cursor_value ? std::get_if<std::string>(&cursor_value->data) : nullptr;
+    if (!value || !version || *version != 1 || !agent_value || !delegation_bytes || !tree_value ||
+        !change_value || !cursor) {
+        return std::unexpected(failure(errc::corrupt, "invalid session metadata"));
+    }
+    auto agent = decode_actor(*agent_value);
+    auto delegation = decode_attestation(*delegation_bytes);
+    auto tree = decode_digest(*tree_value);
+    auto change = decode_digest(*change_value);
+    if (!agent || !delegation || !tree || !change) {
+        return std::unexpected(!agent        ? agent.error()
+                               : !delegation ? delegation.error()
+                               : !tree       ? tree.error()
+                                             : change.error());
+    }
+    return stored_session{.agent = std::move(*agent),
+                          .delegation = std::move(*delegation),
+                          .base_tree = *tree,
+                          .base_change = change_id{*change},
+                          .base_cursor = journal_cursor{*cursor}};
+}
+
+auto delegation_attribute(const attestation& value, std::string_view name)
+    -> const attestation_value* {
+    const auto found = std::ranges::find(value.attributes, name, &attestation_attribute::name);
+    return found == value.attributes.end() ? nullptr : &found->value;
+}
+
+auto session_path_allowed(std::span<const std::string> scopes, std::string_view path) -> bool {
+    return std::ranges::any_of(scopes,
+                               [&](const auto& scope) { return glob_matches(scope, path); });
+}
+
+} // namespace
+
+runtime::task<session> repository::fork_session(session_options options) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (!impl_->current.head) {
+        co_return std::unexpected(
+            failure(errc::not_found, "a session requires a recorded fork point"));
+    }
+    auto delegation_valid = validate_delegation(options.delegation);
+    if (!delegation_valid) {
+        co_return std::unexpected(delegation_valid.error());
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    auto verified = verify_attestation(
+        options.delegation,
+        {.now = now, .status = attestation_status{.revoked = false, .checked_at = now}});
+    if (!verified || !verified->verified) {
+        co_return std::unexpected(failure(errc::unauthorized,
+                                          verified ? verified->reason : verified.error().message,
+                                          "delegation/1"));
+    }
+    if (options.delegation.issuer.taap_id != impl_->signing_key.identity().taap_id) {
+        co_return std::unexpected(
+            failure(errc::unauthorized, "delegation was not issued by this principal"));
+    }
+    const auto* scopes =
+        std::get_if<std::vector<std::string>>(delegation_attribute(options.delegation, "scopes"));
+    const auto* may_publish =
+        std::get_if<bool>(delegation_attribute(options.delegation, "may_publish"));
+    const auto* may_lease =
+        std::get_if<bool>(delegation_attribute(options.delegation, "may_lease"));
+    if (!scopes || scopes->empty() || !may_publish || !may_lease) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "delegation has no usable authority"));
+    }
+    const auto delegated_scopes = *scopes;
+    const auto delegated_publish = *may_publish;
+    const auto delegated_lease = *may_lease;
+    auto encoded_delegation = encode_attestation(options.delegation);
+    if (!encoded_delegation) {
+        co_return std::unexpected(encoded_delegation.error());
+    }
+    auto delegation_id = co_await repository_detail::store_access::put_plain(
+        impl_->objects, std::move(*encoded_delegation));
+    if (!delegation_id) {
+        co_return std::unexpected(delegation_id.error());
+    }
+    auto encoded = encode_repository_document(impl_->current);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto document = decode_repository_document(*encoded);
+    if (!document) {
+        co_return std::unexpected(document.error());
+    }
+    document->operations.clear();
+    document->drips.clear();
+    document->leases.clear();
+    document->pending_drips = 0;
+    const auto id = session_id{random_id()};
+    auto private_path = impl_->root_path / "sessions" / to_string(id);
+    auto code = std::error_code{};
+    std::filesystem::create_directories(private_path, code);
+    if (code) {
+        co_return std::unexpected(failure(errc::io, code.message(), private_path.string()));
+    }
+    auto signing_key = co_await identity_detail::local_signer();
+    if (!signing_key) {
+        co_return std::unexpected(signing_key.error());
+    }
+    auto private_repository = repository{};
+    private_repository.impl_ = std::make_unique<repository::impl>(private_path,
+                                                                  nullptr,
+                                                                  impl_->objects,
+                                                                  std::move(*document),
+                                                                  std::move(*signing_key),
+                                                                  impl_->keys,
+                                                                  impl_->checkpoint_interval,
+                                                                  impl_->hash_algorithm,
+                                                                  id);
+    if (private_repository.impl_->current.root_is_paged) {
+        auto restored = co_await private_repository.impl_->load_paged_root();
+        if (!restored) {
+            co_return std::unexpected(restored.error());
+        }
+    }
+    private_repository.impl_->acting_actor = options.actor;
+    private_repository.impl_->acting_delegation = *delegation_id;
+    auto checkpointed = co_await private_repository.impl_->checkpoint();
+    if (!checkpointed) {
+        co_return std::unexpected(checkpointed.error());
+    }
+    auto base_tree = co_await root_digest();
+    if (!base_tree) {
+        co_return std::unexpected(base_tree.error());
+    }
+    auto implementation = std::make_unique<session::impl>();
+    implementation->shared = this;
+    implementation->private_replica = std::move(private_repository);
+    implementation->base_tree = *base_tree;
+    implementation->base_change = *impl_->current.head;
+    implementation->base_cursor = journal_cursor{std::to_string(impl_->current.drips.size())};
+    implementation->agent = std::move(options.actor);
+    implementation->delegation = std::move(options.delegation);
+    implementation->delegation_id = *delegation_id;
+    implementation->scopes = delegated_scopes;
+    implementation->may_publish = delegated_publish;
+    implementation->may_lease = delegated_lease;
+    auto metadata = encode_stored_session({.agent = implementation->agent,
+                                           .delegation = implementation->delegation,
+                                           .base_tree = implementation->base_tree,
+                                           .base_change = implementation->base_change,
+                                           .base_cursor = implementation->base_cursor});
+    if (!metadata) {
+        co_return std::unexpected(metadata.error());
+    }
+    auto metadata_written =
+        co_await store_detail::write_file(private_path / "LIQUID_SESSION", std::move(*metadata));
+    if (!metadata_written) {
+        co_return std::unexpected(metadata_written.error());
+    }
+    co_return session{std::move(implementation)};
+}
+
+runtime::task<session> repository::open_session(session_id id) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto private_path = impl_->root_path / "sessions" / to_string(id);
+    auto metadata_bytes = co_await store_detail::read_file(private_path / "LIQUID_SESSION");
+    if (!metadata_bytes) {
+        co_return std::unexpected(metadata_bytes.error());
+    }
+    auto metadata = decode_stored_session(*metadata_bytes);
+    if (!metadata) {
+        co_return std::unexpected(metadata.error());
+    }
+    auto marker = co_await store_detail::read_file(private_path / "LIQUID_REPO");
+    if (!marker) {
+        co_return std::unexpected(marker.error());
+    }
+    auto marker_text = std::string{reinterpret_cast<const char*>(marker->data()), marker->size()};
+    if (const auto newline = marker_text.find('\n'); newline != std::string::npos) {
+        marker_text.resize(newline);
+    }
+    auto document_id = parse_digest(marker_text);
+    if (!document_id) {
+        co_return std::unexpected(document_id.error());
+    }
+    auto saved = co_await impl_->objects.get(*document_id);
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    auto document = decode_repository_document(*saved);
+    if (!document) {
+        co_return std::unexpected(document.error());
+    }
+    if (std::filesystem::exists(private_path / "LIQUID_JOURNAL")) {
+        auto journal = co_await store_detail::read_file(private_path / "LIQUID_JOURNAL");
+        if (!journal) {
+            co_return std::unexpected(journal.error());
+        }
+        auto journal_text =
+            std::string{reinterpret_cast<const char*>(journal->data()), journal->size()};
+        if (journal_text.starts_with(journal_pointer_prefix)) {
+            journal_text.erase(0, journal_pointer_prefix.size());
+            if (const auto newline = journal_text.find('\n'); newline != std::string::npos) {
+                journal_text.resize(newline);
+            }
+            auto journal_id = parse_digest(journal_text);
+            if (!journal_id) {
+                co_return std::unexpected(journal_id.error());
+            }
+            journal = co_await impl_->objects.get(*journal_id);
+            if (!journal) {
+                co_return std::unexpected(journal.error());
+            }
+        }
+        auto replayed = decode_repository_document(*journal);
+        if (!replayed) {
+            co_return std::unexpected(replayed.error());
+        }
+        document = std::move(replayed);
+    }
+    auto signing_key = co_await identity_detail::local_signer();
+    if (!signing_key) {
+        co_return std::unexpected(signing_key.error());
+    }
+    auto private_repository = repository{};
+    private_repository.impl_ = std::make_unique<repository::impl>(private_path,
+                                                                  nullptr,
+                                                                  impl_->objects,
+                                                                  std::move(*document),
+                                                                  std::move(*signing_key),
+                                                                  impl_->keys,
+                                                                  impl_->checkpoint_interval,
+                                                                  impl_->hash_algorithm,
+                                                                  id);
+    if (private_repository.impl_->current.root_is_paged) {
+        auto restored = co_await private_repository.impl_->load_paged_root();
+        if (!restored) {
+            co_return std::unexpected(restored.error());
+        }
+    }
+    private_repository.impl_->acting_actor = metadata->agent;
+    auto encoded_delegation = encode_attestation(metadata->delegation);
+    if (!encoded_delegation) {
+        co_return std::unexpected(encoded_delegation.error());
+    }
+    auto delegation_id = co_await repository_detail::store_access::put_plain(
+        impl_->objects, std::move(*encoded_delegation));
+    if (!delegation_id) {
+        co_return std::unexpected(delegation_id.error());
+    }
+    private_repository.impl_->acting_delegation = *delegation_id;
+    const auto* scopes =
+        std::get_if<std::vector<std::string>>(delegation_attribute(metadata->delegation, "scopes"));
+    const auto* may_publish =
+        std::get_if<bool>(delegation_attribute(metadata->delegation, "may_publish"));
+    const auto* may_lease =
+        std::get_if<bool>(delegation_attribute(metadata->delegation, "may_lease"));
+    if (!scopes || !may_publish || !may_lease) {
+        co_return std::unexpected(failure(errc::corrupt, "session authority is incomplete"));
+    }
+    const auto delegated_scopes = *scopes;
+    const auto delegated_publish = *may_publish;
+    const auto delegated_lease = *may_lease;
+    auto implementation = std::make_unique<session::impl>();
+    implementation->shared = this;
+    implementation->private_replica = std::move(private_repository);
+    implementation->base_tree = metadata->base_tree;
+    implementation->base_change = metadata->base_change;
+    implementation->base_cursor = metadata->base_cursor;
+    implementation->agent = std::move(metadata->agent);
+    implementation->delegation = std::move(metadata->delegation);
+    implementation->delegation_id = *delegation_id;
+    implementation->scopes = delegated_scopes;
+    implementation->may_publish = delegated_publish;
+    implementation->may_lease = delegated_lease;
+    co_return session{std::move(implementation)};
+}
+
+session::session() noexcept = default;
+session::~session() = default;
+session::session(session&&) noexcept = default;
+auto session::operator=(session&&) noexcept -> session& = default;
+session::session(std::unique_ptr<impl> implementation) noexcept
+    : impl_(std::move(implementation)) {}
+
+session_id session::id() const noexcept {
+    return impl_ ? impl_->private_replica.impl_->session : session_id{};
+}
+
+runtime::task<std::vector<std::byte>> session::read(std::string path) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    co_return co_await impl_->private_replica.read(std::move(path));
+}
+
+runtime::task<void> session::write(std::string path, std::vector<std::byte> contents) {
+    co_return co_await write(std::move(path), std::move(contents), {});
+}
+
+runtime::task<void>
+session::write(std::string path, std::vector<std::byte> contents, write_options options) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    options.base.reset();
+    co_return co_await impl_->private_replica.write(
+        std::move(path), std::move(contents), std::move(options));
+}
+
+runtime::task<void>
+session::write_file(std::string path, std::filesystem::path source, write_options options) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    options.base.reset();
+    co_return co_await impl_->private_replica.write_file(
+        std::move(path), std::move(source), std::move(options));
+}
+
+runtime::task<void> session::move(std::string from, std::string to, write_options options) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    options.base.reset();
+    co_return co_await impl_->private_replica.move(
+        std::move(from), std::move(to), std::move(options));
+}
+
+runtime::task<void> session::remove(std::string path, write_options options) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    options.base.reset();
+    co_return co_await impl_->private_replica.remove(std::move(path), std::move(options));
+}
+
+runtime::task<void> session::lease(lease_claim claim, std::chrono::seconds ttl) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    if (!impl_->may_lease) {
+        co_return std::unexpected(
+            failure(errc::unauthorized, "delegation does not permit leases", claim.path));
+    }
+    if (!session_path_allowed(impl_->scopes, claim.path)) {
+        co_return std::unexpected(
+            failure(errc::unauthorized, "lease is outside delegation scopes", claim.path));
+    }
+    auto& shared = *impl_->shared->impl_;
+    const auto saved_session = shared.session;
+    shared.session = id();
+    shared.acting_actor = impl_->agent;
+    shared.acting_delegation = impl_->delegation_id;
+    auto claimed = co_await impl_->shared->lease(std::move(claim), ttl);
+    shared.acting_delegation.reset();
+    shared.acting_actor.reset();
+    shared.session = saved_session;
+    co_return claimed;
+}
+
+runtime::task<void> session::release(lease_claim claim) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    auto& shared = *impl_->shared->impl_;
+    const auto saved_session = shared.session;
+    shared.session = id();
+    shared.acting_actor = impl_->agent;
+    shared.acting_delegation = impl_->delegation_id;
+    auto released = co_await impl_->shared->release(std::move(claim));
+    shared.acting_delegation.reset();
+    shared.acting_actor.reset();
+    shared.session = saved_session;
+    co_return released;
+}
+
+runtime::task<void> session::report_presence(liquid::presence value) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    value.actor = impl_->agent;
+    value.session = id();
+    co_return co_await impl_->shared->report_presence(std::move(value));
+}
+
+runtime::task<publish_report> session::publish(publish_options options) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    if (!impl_->may_publish) {
+        co_return std::unexpected(
+            failure(errc::unauthorized, "delegation does not permit publishing"));
+    }
+    auto private_tree = co_await impl_->private_replica.root_digest();
+    if (!private_tree) {
+        co_return std::unexpected(private_tree.error());
+    }
+    auto differences = co_await impl_->shared->diff(impl_->base_tree, *private_tree);
+    if (!differences) {
+        co_return std::unexpected(differences.error());
+    }
+    auto paths = std::vector<std::string>{};
+    for (const auto& entry : *differences) {
+        if (entry.kind != node_kind::blob) {
+            continue;
+        }
+        if (entry.old_path) {
+            paths.push_back(*entry.old_path);
+        }
+        paths.push_back(entry.path);
+    }
+    std::ranges::sort(paths);
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    for (const auto& path : paths) {
+        if (!session_path_allowed(impl_->scopes, path)) {
+            co_return std::unexpected(
+                failure(errc::unauthorized, "publish is outside delegation scopes", path));
+        }
+    }
+    auto base_options = write_options{.base = write_base{impl_->base_change, impl_->base_cursor}};
+    auto& shared = *impl_->shared->impl_;
+    const auto saved_session = shared.session;
+    shared.session = id();
+    shared.acting_actor = impl_->agent;
+    shared.acting_delegation = impl_->delegation_id;
+    auto base_valid = co_await impl_->shared->validate_write(base_options, paths);
+    if (!base_valid) {
+        shared.acting_delegation.reset();
+        shared.acting_actor.reset();
+        shared.session = saved_session;
+        co_return std::unexpected(base_valid.error());
+    }
+    for (const auto& path : paths) {
+        auto lease_valid = shared.validate_lease_write(path, {});
+        if (!lease_valid) {
+            shared.acting_delegation.reset();
+            shared.acting_actor.reset();
+            shared.session = saved_session;
+            co_return std::unexpected(lease_valid.error());
+        }
+    }
+    auto backup_bytes = encode_repository_document(shared.current);
+    if (!backup_bytes) {
+        shared.acting_delegation.reset();
+        shared.acting_actor.reset();
+        shared.session = saved_session;
+        co_return std::unexpected(backup_bytes.error());
+    }
+    auto document_backups = std::map<node_id, std::vector<std::byte>>{};
+    for (auto& [node, document] : shared.directory_cache) {
+        auto saved = document.save_full();
+        if (!saved) {
+            shared.acting_delegation.reset();
+            shared.acting_actor.reset();
+            shared.session = saved_session;
+            co_return std::unexpected(saved.error());
+        }
+        document_backups.emplace(node, std::move(*saved));
+    }
+    const auto restore_shared = [&]() -> result<void> {
+        auto restored = decode_repository_document(*backup_bytes);
+        if (!restored) {
+            return std::unexpected(restored.error());
+        }
+        shared.current = std::move(*restored);
+        shared.directory_cache.clear();
+        for (const auto& [node, saved] : document_backups) {
+            auto loaded = crdt::directory_document::load_sync(
+                saved, "local", shared.root_path.generic_string());
+            if (!loaded) {
+                return std::unexpected(loaded.error());
+            }
+            shared.directory_cache.emplace(node, std::move(*loaded));
+        }
+        return {};
+    };
+    const auto reset_publish_state = [&]() {
+        shared.defer_persistence = false;
+        shared.suppress_drips = false;
+        shared.suppressed_drips = 0;
+        shared.acting_delegation.reset();
+        shared.acting_actor.reset();
+        shared.session = saved_session;
+    };
+    auto report = publish_report{.session = id()};
+    auto touched_directories = std::set<std::string>{};
+    auto directory_paths = std::map<std::string, std::vector<std::string>>{};
+    shared.defer_persistence = true;
+    shared.suppress_drips = true;
+    shared.suppressed_drips = 0;
+    for (const auto& entry : *differences) {
+        if (entry.kind != node_kind::blob) {
+            continue;
+        }
+        const auto slash = entry.path.rfind('/');
+        const auto directory =
+            slash == std::string::npos ? std::string{} : entry.path.substr(0, slash);
+        touched_directories.insert(directory);
+        auto applied = result<void>{};
+        if (entry.old_path && *entry.old_path != entry.path) {
+            applied = co_await impl_->shared->remove(*entry.old_path);
+        }
+        auto contents = co_await impl_->private_replica.read(entry.path);
+        if (applied && contents) {
+            auto write = write_options{};
+            write.mode = entry.new_mode.value_or(0100644);
+            applied = co_await impl_->shared->write(entry.path, std::move(*contents), write);
+        } else if (applied && contents.error().code == errc::not_found) {
+            applied = co_await impl_->shared->remove(entry.path);
+        } else if (applied) {
+            applied = std::unexpected(contents.error());
+        }
+        report.paths.push_back({.path = entry.path,
+                                .applied = applied.has_value(),
+                                .reason = applied ? "" : applied.error().message});
+        if (applied) {
+            if (entry.old_path && *entry.old_path != entry.path) {
+                const auto old_slash = entry.old_path->rfind('/');
+                const auto old_directory = old_slash == std::string::npos
+                                               ? std::string{}
+                                               : entry.old_path->substr(0, old_slash);
+                touched_directories.insert(old_directory);
+                directory_paths[old_directory].push_back(*entry.old_path);
+            }
+            directory_paths[directory].push_back(entry.path);
+        }
+        if (!applied && options.atomic) {
+            auto restored = restore_shared();
+            if (!restored) {
+                reset_publish_state();
+                co_return std::unexpected(restored.error());
+            }
+            auto checkpointed = co_await shared.checkpoint();
+            reset_publish_state();
+            if (!checkpointed) {
+                co_return std::unexpected(checkpointed.error());
+            }
+            co_return std::unexpected(applied.error());
+        }
+    }
+    shared.defer_persistence = false;
+    shared.suppress_drips = false;
+    if (shared.current.pending_drips >= shared.suppressed_drips) {
+        shared.current.pending_drips -= shared.suppressed_drips;
+    }
+    shared.suppressed_drips = 0;
+    const auto publish_time =
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    for (auto& [directory, changed_paths] : directory_paths) {
+        auto parts = split_path(changed_paths.front());
+        if (!parts) {
+            auto restored = restore_shared();
+            auto checkpointed = restored ? co_await shared.checkpoint() : result<void>{};
+            reset_publish_state();
+            if (!restored) {
+                co_return std::unexpected(restored.error());
+            }
+            if (!checkpointed) {
+                co_return std::unexpected(checkpointed.error());
+            }
+            co_return std::unexpected(parts.error());
+        }
+        auto* parent = parent_for(shared.current.root, *parts, false, shared.hash_algorithm)
+                           .value_or(&shared.current.root);
+        std::ranges::sort(changed_paths);
+        changed_paths.erase(std::unique(changed_paths.begin(), changed_paths.end()),
+                            changed_paths.end());
+        auto appended = co_await shared.append_drip(
+            "publish", parent->node, publish_time, std::move(changed_paths), {}, std::nullopt);
+        if (!appended) {
+            auto restored = restore_shared();
+            auto checkpointed = restored ? co_await shared.checkpoint() : result<void>{};
+            reset_publish_state();
+            if (!restored) {
+                co_return std::unexpected(restored.error());
+            }
+            if (!checkpointed) {
+                co_return std::unexpected(checkpointed.error());
+            }
+            co_return std::unexpected(appended.error());
+        }
+        ++shared.current.pending_drips;
+        static_cast<void>(directory);
+    }
+    report.directories = touched_directories.size();
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    for (auto& value : shared.current.leases) {
+        if (value.by.taap_id == impl_->agent.taap_id && value.session == id() &&
+            value.expires > now) {
+            value.expires = now + (value.expires - value.since);
+            value.since = now;
+        }
+    }
+    if (options.message) {
+        auto change = co_await impl_->shared->cut(*options.message);
+        if (!change) {
+            auto restored = restore_shared();
+            auto checkpointed = restored ? co_await shared.checkpoint() : result<void>{};
+            reset_publish_state();
+            if (!restored) {
+                co_return std::unexpected(restored.error());
+            }
+            if (!checkpointed) {
+                co_return std::unexpected(checkpointed.error());
+            }
+            co_return std::unexpected(change.error());
+        }
+        report.change = *change;
+    } else {
+        auto checkpointed = co_await shared.checkpoint_or_journal();
+        if (!checkpointed) {
+            auto restored = restore_shared();
+            auto rollback_checkpointed = restored ? co_await shared.checkpoint() : result<void>{};
+            reset_publish_state();
+            if (!restored) {
+                co_return std::unexpected(restored.error());
+            }
+            if (!rollback_checkpointed) {
+                co_return std::unexpected(rollback_checkpointed.error());
+            }
+            co_return std::unexpected(checkpointed.error());
+        }
+    }
+    reset_publish_state();
+    const auto private_path = impl_->private_replica.impl_->root_path;
+    auto code = std::error_code{};
+    std::filesystem::remove_all(private_path, code);
+    if (code) {
+        co_return std::unexpected(failure(errc::io, code.message(), private_path.string()));
+    }
+    impl_->active = false;
+    co_return report;
+}
+
+runtime::task<void> session::discard() {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    auto owned = std::vector<lease_claim>{};
+    for (const auto& value : impl_->shared->impl_->current.leases) {
+        if (value.by.taap_id == impl_->agent.taap_id && value.session == id()) {
+            owned.push_back(value.claim);
+        }
+    }
+    for (auto& claim : owned) {
+        auto released = co_await release(std::move(claim));
+        if (!released) {
+            co_return std::unexpected(released.error());
+        }
+    }
+    const auto path = impl_->private_replica.impl_->root_path;
+    auto code = std::error_code{};
+    std::filesystem::remove_all(path, code);
+    if (code) {
+        co_return std::unexpected(failure(errc::io, code.message(), path.string()));
+    }
+    impl_->active = false;
+    co_return result<void>{};
+}
+runtime::task<void> repository::lock(std::string path, std::string reason) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    if (reason.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "lock reason must not be empty", path));
+    }
+    if (!impl_->lock_rule_matches(path)) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "path does not match a configured lock rule", path));
+    }
+    auto allowed = impl_->validate_lock_acquire(path);
+    if (!allowed) {
+        co_return std::unexpected(allowed.error());
+    }
+    const auto existing = std::ranges::find(impl_->current.locks, path, &exclusive_lock::path);
+    if (existing != impl_->current.locks.end()) {
+        if (existing->holder.taap_id == impl_->current_actor().taap_id) {
+            co_return result<void>{};
+        }
+        auto allowed = impl_->validate_lock_write(path);
+        co_return std::unexpected(allowed.error());
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    auto value = exclusive_lock{.path = path,
+                                .holder = impl_->current_actor(),
+                                .since = now,
+                                .reason = std::move(reason),
+                                .authority = impl_->authorize_lock ? lock_authority::lake
+                                                                   : lock_authority::advisory};
+    if (impl_->authorize_lock) {
+        auto authorized = co_await impl_->authorize_lock({lock_operation::acquire, value});
+        if (!authorized) {
+            co_return std::unexpected(authorized.error());
+        }
+    }
+    auto appended = co_await impl_->append_lock_drip("lock", value);
+    if (!appended) {
+        co_return std::unexpected(appended.error());
+    }
+    impl_->current.locks.push_back(value);
     auto operation_id = random_operation_id(impl_->hash_algorithm);
     if (!operation_id) {
         co_return std::unexpected(operation_id.error());
@@ -6471,19 +8313,43 @@ runtime::task<void> repository::lock(std::string path) {
     operation.id = *operation_id;
     operation.kind = "lock";
     operation.from = path;
-    operation.locks.push_back({path, present, true});
+    operation.locks.push_back({path, false, true});
     impl_->record_operation(std::move(operation));
+    ++impl_->current.pending_drips;
     auto saved = co_await impl_->checkpoint_or_journal();
-    if (!saved)
+    if (!saved) {
         co_return std::unexpected(saved.error());
+    }
     co_return result<void>{};
 }
 runtime::task<void> repository::unlock(std::string path) {
-    if (!impl_)
+    if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    const auto present =
-        std::ranges::find(impl_->current.locks, path) != impl_->current.locks.end();
-    std::erase(impl_->current.locks, path);
+    }
+    const auto found = std::ranges::find(impl_->current.locks, path, &exclusive_lock::path);
+    if (found == impl_->current.locks.end()) {
+        co_return std::unexpected(failure(errc::not_found, "path is not locked", path));
+    }
+    if (!found->holder.taap_id.empty() && found->holder.taap_id != impl_->current_actor().taap_id) {
+        co_return std::unexpected(
+            failure(errc::unauthorized, "only the lock holder can unlock the path", path));
+    }
+    const auto value = *found;
+    if (value.authority == lock_authority::lake && !impl_->authorize_lock) {
+        co_return std::unexpected(
+            failure(errc::unavailable, "lake authority is required to release this lock", path));
+    }
+    if (impl_->authorize_lock) {
+        auto authorized = co_await impl_->authorize_lock({lock_operation::release, value});
+        if (!authorized) {
+            co_return std::unexpected(authorized.error());
+        }
+    }
+    auto appended = co_await impl_->append_lock_drip("unlock", value);
+    if (!appended) {
+        co_return std::unexpected(appended.error());
+    }
+    impl_->current.locks.erase(found);
     auto operation_id = random_operation_id(impl_->hash_algorithm);
     if (!operation_id) {
         co_return std::unexpected(operation_id.error());
@@ -6492,12 +8358,277 @@ runtime::task<void> repository::unlock(std::string path) {
     operation.id = *operation_id;
     operation.kind = "unlock";
     operation.from = path;
-    operation.locks.push_back({path, present, false});
+    operation.locks.push_back({path, true, false});
     impl_->record_operation(std::move(operation));
+    ++impl_->current.pending_drips;
     auto saved = co_await impl_->checkpoint_or_journal();
-    if (!saved)
+    if (!saved) {
         co_return std::unexpected(saved.error());
+    }
     co_return result<void>{};
+}
+
+runtime::task<std::vector<exclusive_lock>> repository::locks() {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return impl_->current.locks;
+}
+
+runtime::task<void> repository::set_lock_configuration(lock_config configuration) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto valid = validate_lock_config(configuration);
+    if (!valid) {
+        co_return std::unexpected(valid.error());
+    }
+    if (impl_->current.lock_rules == configuration) {
+        co_return result<void>{};
+    }
+    auto appended = co_await impl_->append_lock_drip("lock_config", std::nullopt, configuration);
+    if (!appended) {
+        co_return std::unexpected(appended.error());
+    }
+    impl_->current.lock_rules = std::move(configuration);
+    ++impl_->current.pending_drips;
+    co_return co_await impl_->checkpoint_or_journal();
+}
+
+lock_config repository::lock_configuration() const {
+    return impl_ ? impl_->current.lock_rules : lock_config{};
+}
+
+runtime::task<void> repository::lease(lease_claim claim, std::chrono::seconds ttl) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto path = split_path(claim.path);
+    if (!path || ttl <= std::chrono::seconds::zero()) {
+        co_return std::unexpected(
+            path ? failure(errc::invalid_argument, "lease ttl must be positive", claim.path)
+                 : path.error());
+    }
+    if (claim.kind == lease_kind::file) {
+        claim.symbol.reset();
+        claim.range.reset();
+    } else if (claim.kind == lease_kind::range && !claim.range) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "range lease requires a range", claim.path));
+    } else if (claim.kind == lease_kind::symbol && (!claim.symbol || claim.symbol->empty())) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "symbol lease requires a symbol", claim.path));
+    }
+    if (claim.range && claim.range->start.byte >= claim.range->end.byte) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "lease range must not be empty", claim.path));
+    }
+    if (claim.kind == lease_kind::symbol && !claim.range) {
+        auto contents = co_await read(claim.path);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        auto subject = hash(algorithm::blake3, *contents);
+        if (!subject) {
+            co_return std::unexpected(subject.error());
+        }
+        auto recorded = co_await symbols(*subject);
+        if (!recorded) {
+            co_return std::unexpected(recorded.error());
+        }
+        const auto occurrence = std::ranges::find_if(recorded->occurrences, [&](const auto& value) {
+            return value.symbol == *claim.symbol || value.name == *claim.symbol;
+        });
+        if (occurrence == recorded->occurrences.end()) {
+            co_return std::unexpected(
+                failure(errc::not_found, "symbol is not recorded", *claim.symbol));
+        }
+        claim.range = occurrence->range;
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    const auto authority =
+        impl_->authorize_lease ? lease_authority::lake : lease_authority::advisory;
+    if (impl_->authorize_lease) {
+        auto authorized = co_await impl_->authorize_lease(
+            {claim, impl_->current_actor(), impl_->session, now, now + ttl, lease_authority::lake});
+        if (!authorized) {
+            co_return std::unexpected(authorized.error());
+        }
+    }
+    std::erase_if(impl_->current.leases, [&](const auto& value) { return value.expires <= now; });
+    const auto owned = std::ranges::find_if(impl_->current.leases, [&](const auto& value) {
+        return value.by.taap_id == impl_->current_actor().taap_id &&
+               value.session == impl_->session && impl_->same_claim(value.claim, claim);
+    });
+    const auto renewing = owned != impl_->current.leases.end();
+    if (renewing) {
+        owned->expires = now + ttl;
+    } else {
+        if (const auto* holder = impl_->lease_holder(claim)) {
+            co_return std::unexpected(failure(errc::locked,
+                                              "semantic lease is held by " + holder->by.taap_id,
+                                              holder->claim.path));
+        }
+        impl_->current.leases.push_back(
+            {std::move(claim), impl_->current_actor(), impl_->session, now, now + ttl, authority});
+    }
+    const auto& saved_claim = renewing ? owned->claim : impl_->current.leases.back().claim;
+    auto operation = random_operation_id(impl_->hash_algorithm);
+    if (!operation) {
+        co_return std::unexpected(operation.error());
+    }
+    impl_->record_operation(*operation,
+                            "lease",
+                            saved_claim.path,
+                            saved_claim.symbol.value_or(std::string{}),
+                            impl_->current.root.node,
+                            std::nullopt);
+    auto appended = co_await impl_->append_drip(
+        "lease", impl_->current.root.node, now, {saved_claim.path}, {}, std::nullopt);
+    if (!appended) {
+        co_return std::unexpected(appended.error());
+    }
+    ++impl_->current.pending_drips;
+    co_return co_await impl_->checkpoint_or_journal();
+}
+
+runtime::task<void> repository::release(lease_claim claim) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto found = std::ranges::find_if(impl_->current.leases, [&](const auto& value) {
+        return impl_->same_claim(value.claim, claim);
+    });
+    if (found == impl_->current.leases.end()) {
+        co_return std::unexpected(failure(errc::not_found, "semantic lease does not exist"));
+    }
+    if (found->by.taap_id != impl_->current_actor().taap_id || found->session != impl_->session) {
+        co_return std::unexpected(
+            failure(errc::unauthorized, "semantic lease belongs to another session", claim.path));
+    }
+    const auto path = found->claim.path;
+    impl_->current.leases.erase(found);
+    auto operation = random_operation_id(impl_->hash_algorithm);
+    if (!operation) {
+        co_return std::unexpected(operation.error());
+    }
+    impl_->record_operation(
+        *operation, "release", path, {}, impl_->current.root.node, std::nullopt);
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    auto appended = co_await impl_->append_drip(
+        "release", impl_->current.root.node, now, {path}, {}, std::nullopt);
+    if (!appended) {
+        co_return std::unexpected(appended.error());
+    }
+    ++impl_->current.pending_drips;
+    co_return co_await impl_->checkpoint_or_journal();
+}
+
+runtime::task<std::vector<semantic_lease>> repository::leases() {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    std::erase_if(impl_->current.leases, [&](const auto& value) { return value.expires <= now; });
+    co_return impl_->current.leases;
+}
+
+runtime::task<void> repository::report_presence(liquid::presence value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto path = split_path(value.path);
+    if (!path) {
+        co_return std::unexpected(path.error());
+    }
+    if (value.actor.taap_id.empty()) {
+        value.actor = impl_->current_actor();
+    }
+    if (value.session == session_id{}) {
+        value.session = impl_->session;
+    }
+    if (value.at == std::chrono::sys_seconds{}) {
+        value.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    }
+    std::erase_if(impl_->transient_presence, [&](const auto& current) {
+        return current.actor.taap_id == value.actor.taap_id && current.session == value.session;
+    });
+    impl_->transient_presence.push_back(std::move(value));
+    co_return result<void>{};
+}
+
+runtime::task<std::vector<liquid::presence>> repository::presence() {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    constexpr auto lifetime = std::chrono::seconds{30};
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    std::erase_if(impl_->transient_presence,
+                  [&](const auto& value) { return value.at + lifetime <= now; });
+    co_return impl_->transient_presence;
+}
+
+runtime::task<epoch> repository::compact(epoch_options options) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto heads = co_await impl_->capture_document_heads();
+    if (!heads) {
+        co_return std::unexpected(heads.error());
+    }
+    auto compacted_bytes = std::uint64_t{};
+    for (auto& [node, document] : impl_->directory_cache) {
+        static_cast<void>(node);
+        auto saved = document.save();
+        if (!saved) {
+            co_return std::unexpected(saved.error());
+        }
+        compacted_bytes += saved->size();
+        auto reopened =
+            crdt::directory_document::load_sync(*saved, "local", impl_->root_path.generic_string());
+        if (!reopened) {
+            co_return std::unexpected(reopened.error());
+        }
+        document = std::move(*reopened);
+    }
+    auto value =
+        epoch{.n = impl_->current.epochs.empty() ? 1 : impl_->current.epochs.back().n + 1,
+              .heads = std::move(*heads),
+              .at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()),
+              .document_bytes = compacted_bytes};
+    if (options.min_ack_peers != 0) {
+        if (!impl_->acknowledge_epoch) {
+            co_return std::unexpected(failure(errc::busy,
+                                              "epoch acknowledgement source is not configured",
+                                              std::to_string(options.min_ack_peers)));
+        }
+        auto acknowledged = co_await impl_->acknowledge_epoch(value);
+        if (!acknowledged) {
+            co_return std::unexpected(acknowledged.error());
+        }
+        if (*acknowledged < options.min_ack_peers) {
+            co_return std::unexpected(failure(errc::busy,
+                                              "peer acknowledgements are below min_ack_peers",
+                                              std::to_string(*acknowledged)));
+        }
+    }
+    impl_->current.epochs.push_back(value);
+    impl_->current.drips.clear();
+    impl_->current.operations.clear();
+    impl_->current.pending_drips = 0;
+    impl_->journal_bytes = 0;
+    auto checkpointed = co_await impl_->checkpoint();
+    if (!checkpointed) {
+        co_return std::unexpected(checkpointed.error());
+    }
+    co_return value;
+}
+
+runtime::task<std::vector<epoch>> repository::epochs() {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return impl_->current.epochs;
 }
 
 runtime::task<digest> repository::store_attestation(attestation value) {
@@ -6767,8 +8898,11 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
         co_return std::unexpected(position.error());
     }
     if (position->drips > impl_->current.drips.size()) {
-        co_return std::unexpected(
-            failure(errc::invalid_argument, "sync cursor is beyond the journal", cursor.token));
+        if (impl_->current.epochs.empty()) {
+            co_return std::unexpected(
+                failure(errc::invalid_argument, "sync cursor is beyond the journal", cursor.token));
+        }
+        *position = {};
     }
 
     auto items = std::vector<sync_item>{};
@@ -6871,6 +9005,17 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
                              .body = std::move(message)});
         }
     }
+    auto active_presence = co_await presence();
+    if (!active_presence) {
+        co_return std::unexpected(active_presence.error());
+    }
+    for (const auto& value : *active_presence) {
+        auto body = encode_presence_body(value);
+        if (!body) {
+            co_return std::unexpected(body.error());
+        }
+        items.push_back({.kind = sync_item_kind::presence, .body = std::move(*body)});
+    }
     for (const auto& [name, id] : impl_->current.refs) {
         items.push_back({.kind = sync_item_kind::reference, .name = name, .reference = id});
     }
@@ -6879,6 +9024,8 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
         if (conflict.id.alg != algorithm{}) {
             object_roots.push_back(conflict.id);
         }
+        object_roots.insert(
+            object_roots.end(), conflict.legacy_refs.begin(), conflict.legacy_refs.end());
     }
     for (const auto& [node, id] : impl_->current.dirs) {
         static_cast<void>(node);
@@ -6911,6 +9058,27 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
 runtime::task<sync_import_report> repository::import_drips(std::span<const sync_item> input) {
     if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto reported_items = input.size();
+    auto durable = std::vector<sync_item>{};
+    durable.reserve(input.size());
+    for (const auto& item : input) {
+        if (item.kind != sync_item_kind::presence) {
+            durable.push_back(item);
+            continue;
+        }
+        auto value = decode_presence_body(item.body);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        auto reported = co_await report_presence(std::move(*value));
+        if (!reported) {
+            co_return std::unexpected(reported.error());
+        }
+    }
+    input = std::span<const sync_item>{durable};
+    if (input.empty()) {
+        co_return sync_import_report{reported_items};
     }
     auto candidate_bytes = encode_repository_document(impl_->current);
     if (!candidate_bytes) {
@@ -6982,7 +9150,8 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
                                           received_documents,
                                           directory_states,
                                           imported_drips,
-                                          imported_refs};
+                                          imported_refs,
+                                          impl_->root_path.generic_string()};
     for (std::size_t index = 0; index < input.size(); ++index) {
         auto imported = co_await import_sync_item(import_state, input[index]);
         if (!imported) {
@@ -7014,6 +9183,11 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
         abort();
         co_return std::unexpected(refs_applied.error());
     }
+    auto locks_applied = co_await reconcile_lock_drips(*candidate, imported_drips, impl_->objects);
+    if (!locks_applied) {
+        abort();
+        co_return std::unexpected(locks_applied.error());
+    }
     candidate->drips.insert(candidate->drips.end(), imported_drips.begin(), imported_drips.end());
     candidate->pending_drips += imported_drips.size();
     auto merge = merge_operation(impl_->current,
@@ -7043,7 +9217,7 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
         impl_->directory_cache = std::move(previous_documents);
         co_return std::unexpected(checkpointed.error());
     }
-    co_return sync_import_report{input.size()};
+    co_return sync_import_report{reported_items};
 }
 
 namespace {
@@ -7439,8 +9613,10 @@ runtime::task<void> repository_detail::vfs_access::make_directory(repository& so
                                                                   std::uint32_t mode) {
     if (!source.impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    if (source.impl_->locked(path))
-        co_return std::unexpected(failure(errc::locked, "path is advisory locked", path));
+    auto lock_allowed = source.impl_->validate_lock_write(path);
+    if (!lock_allowed) {
+        co_return std::unexpected(lock_allowed.error());
+    }
     auto parts = split_path(path);
     if (!parts)
         co_return std::unexpected(parts.error());

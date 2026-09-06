@@ -98,6 +98,27 @@ auto map(std::initializer_list<std::pair<cbor::value, cbor::value>> fields) -> c
     return cbor::value{cbor::value::map{fields}};
 }
 
+auto presence_value(const liquid::presence& value) -> cbor::value {
+    auto range = cbor::value{cbor::null{}};
+    if (value.range) {
+        range = map({{"start_byte", value.range->start.byte},
+                     {"start_line", value.range->start.line},
+                     {"start_column", value.range->start.column},
+                     {"end_byte", value.range->end.byte},
+                     {"end_line", value.range->end.line},
+                     {"end_column", value.range->end.column}});
+    }
+    return map({{"actor", value.actor.taap_id},
+                {"session", to_string(value.session)},
+                {"path", value.path},
+                {"range", std::move(range)},
+                {"activity",
+                 value.activity == presence_activity::editing   ? cbor::value{"editing"}
+                 : value.activity == presence_activity::reading ? cbor::value{"reading"}
+                                                                : cbor::value{"idle"}},
+                {"at", static_cast<std::uint64_t>(value.at.time_since_epoch().count())}});
+}
+
 auto field(const cbor::value& source, std::string_view name) -> const cbor::value* {
     const auto* fields = std::get_if<cbor::value::map>(&source.data);
     if (!fields) {
@@ -125,6 +146,92 @@ auto unsigned_field(const cbor::value& source, std::string_view name) -> const s
 auto bool_field(const cbor::value& source, std::string_view name) -> const bool* {
     const auto* value = field(source, name);
     return value ? std::get_if<bool>(&value->data) : nullptr;
+}
+
+auto decode_presence_value(const cbor::value& source) -> result<liquid::presence> {
+    const auto* actor = text_field(source, "actor");
+    const auto* session_text = text_field(source, "session");
+    const auto* path = text_field(source, "path");
+    const auto* activity = text_field(source, "activity");
+    const auto* at = unsigned_field(source, "at");
+    const auto* range_value = field(source, "range");
+    if (!actor || actor->empty() || !session_text || !path || path->empty() || !activity ||
+        (*activity != "editing" && *activity != "reading" && *activity != "idle") || !at ||
+        !range_value) {
+        return std::unexpected(failure(errc::invalid_argument, "invalid presence report"));
+    }
+    auto session = parse_session_id(*session_text);
+    if (!session) {
+        return std::unexpected(session.error());
+    }
+    auto output = liquid::presence{.actor = {.taap_id = *actor},
+                                   .session = *session,
+                                   .path = *path,
+                                   .activity = *activity == "editing"   ? presence_activity::editing
+                                               : *activity == "reading" ? presence_activity::reading
+                                                                        : presence_activity::idle,
+                                   .at = std::chrono::sys_seconds{std::chrono::seconds{*at}}};
+    if (!std::holds_alternative<cbor::null>(range_value->data)) {
+        const auto* start_byte = unsigned_field(*range_value, "start_byte");
+        const auto* start_line = unsigned_field(*range_value, "start_line");
+        const auto* start_column = unsigned_field(*range_value, "start_column");
+        const auto* end_byte = unsigned_field(*range_value, "end_byte");
+        const auto* end_line = unsigned_field(*range_value, "end_line");
+        const auto* end_column = unsigned_field(*range_value, "end_column");
+        if (!start_byte || !start_line || !start_column || !end_byte || !end_line || !end_column ||
+            *start_byte > *end_byte) {
+            return std::unexpected(failure(errc::invalid_argument, "invalid presence range"));
+        }
+        output.range = frontend_source_range{{*start_byte, *start_line, *start_column},
+                                             {*end_byte, *end_line, *end_column}};
+    }
+    return output;
+}
+
+auto attribution_value(std::span<const line_attribution> values) -> cbor::value {
+    auto lines = cbor::value::array{};
+    lines.reserve(values.size());
+    for (const auto& value : values) {
+        lines.push_back(map({{"line", value.line},
+                             {"text", value.text},
+                             {"actor", value.by.taap_id},
+                             {"session", to_string(value.session)},
+                             {"change", to_string(value.change.value)},
+                             {"agent", value.agent}}));
+    }
+    return cbor::value{std::move(lines)};
+}
+
+auto decode_attribution_value(const cbor::value& source) -> result<std::vector<line_attribution>> {
+    const auto* values = std::get_if<cbor::value::array>(&source.data);
+    if (!values) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon attribution response"));
+    }
+    auto output = std::vector<line_attribution>{};
+    output.reserve(values->size());
+    for (const auto& value : *values) {
+        const auto* line = unsigned_field(value, "line");
+        const auto* text = text_field(value, "text");
+        const auto* actor = text_field(value, "actor");
+        const auto* session_text = text_field(value, "session");
+        const auto* change_text = text_field(value, "change");
+        const auto* agent = bool_field(value, "agent");
+        if (!line || *line == 0 || !text || !actor || !session_text || !change_text || !agent) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon attribution line"));
+        }
+        auto session = parse_session_id(*session_text);
+        auto change = parse_digest(*change_text);
+        if (!session || !change) {
+            return std::unexpected(session ? change.error() : session.error());
+        }
+        output.push_back({.line = *line,
+                          .text = *text,
+                          .by = {.taap_id = *actor},
+                          .session = *session,
+                          .change = {*change},
+                          .agent = *agent});
+    }
+    return output;
 }
 
 auto strings_value(const std::vector<std::string>& values) -> cbor::value {
@@ -1884,6 +1991,69 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                     }
                     response = encode_acknowledgement();
                 }
+            } else if (*operation == "presence") {
+                const auto* encoded_presence = field(*decoded, "presence");
+                auto value = encoded_presence
+                                 ? decode_presence_value(*encoded_presence)
+                                 : result<liquid::presence>{std::unexpected(failure(
+                                       errc::invalid_argument, "presence report is missing"))};
+                if (!value) {
+                    response = encode_error(value.error());
+                } else {
+                    auto delivered = co_await state->fanout->deliver_presence(std::move(*value));
+                    response =
+                        delivered ? encode_acknowledgement() : encode_error(delivered.error());
+                }
+            } else if (*operation == "lock" || *operation == "unlock") {
+                const auto* path = text_field(*decoded, "path");
+                const auto* reason = text_field(*decoded, "reason");
+                if (!path || path->empty() ||
+                    (*operation == "lock" && (!reason || reason->empty()))) {
+                    response = encode_error(
+                        failure(errc::invalid_argument, "invalid daemon lock request"));
+                } else {
+                    auto repository_options = liquid::repository_options{};
+                    repository_options.authorize_lock = state->options.authorize_lock;
+                    auto repository =
+                        co_await repository::open(state->checkout, repository_options);
+                    if (!repository) {
+                        response = encode_error(repository.error());
+                    } else {
+                        auto changed = *operation == "lock"
+                                           ? co_await repository->lock(*path, *reason)
+                                           : co_await repository->unlock(*path);
+                        if (!changed) {
+                            response = encode_error(changed.error());
+                        } else {
+                            auto locks = co_await repository->locks();
+                            auto delivered =
+                                locks ? co_await state->fanout->deliver_locks(std::move(*locks))
+                                      : result<void>{std::unexpected(locks.error())};
+                            response = delivered ? encode_acknowledgement()
+                                                 : encode_error(delivered.error());
+                        }
+                    }
+                }
+            } else if (*operation == "attribution") {
+                const auto* path = text_field(*decoded, "path");
+                const auto* change_text = text_field(*decoded, "change");
+                auto change = change_text
+                                  ? parse_digest(*change_text)
+                                  : result<digest>{std::unexpected(failure(
+                                        errc::invalid_argument, "attribution change is missing"))};
+                if (!path || path->empty() || !change) {
+                    response = encode_error(
+                        change ? failure(errc::invalid_argument, "attribution path is missing")
+                               : change.error());
+                } else {
+                    auto source = co_await repository::open(state->checkout);
+                    auto lines = source ? co_await source->attribution(*path, change_id{*change})
+                                        : result<std::vector<line_attribution>>{
+                                              std::unexpected(source.error())};
+                    response = lines ? encode_success(map({{"v", std::uint64_t{1}},
+                                                           {"lines", attribution_value(*lines)}}))
+                                     : encode_error(lines.error());
+                }
             } else if (*operation == "build_start" || *operation == "build_next" ||
                        *operation == "build_plan" || *operation == "build_repository") {
                 response = co_await process_build_request(state, *decoded, *operation);
@@ -2274,6 +2444,117 @@ runtime::task<void> daemon::report_consumer_lag(std::string name, std::uint64_t 
         co_return std::unexpected(decoded.error());
     }
     co_return {};
+#endif
+}
+
+runtime::task<void> daemon::report_presence(liquid::presence value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(value);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(
+        map({{"v", std::uint64_t{1}}, {"op", "presence"}, {"presence", presence_value(value)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    co_return result<void>{};
+#endif
+}
+
+runtime::task<void> daemon::lock(std::string path, std::string reason) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(path);
+    static_cast<void>(reason);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map({{"v", std::uint64_t{1}},
+                                     {"op", "lock"},
+                                     {"path", std::move(path)},
+                                     {"reason", std::move(reason)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    co_return result<void>{};
+#endif
+}
+
+runtime::task<void> daemon::unlock(std::string path) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(path);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map(
+        {{"v", std::uint64_t{1}}, {"op", "unlock"}, {"path", std::move(path)}, {"reason", ""}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    co_return result<void>{};
+#endif
+}
+
+runtime::task<std::vector<line_attribution>> daemon::attribution(std::string path,
+                                                                 change_id change) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(path);
+    static_cast<void>(change);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map({{"v", std::uint64_t{1}},
+                                     {"op", "attribution"},
+                                     {"path", std::move(path)},
+                                     {"change", to_string(change.value)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    const auto* lines = field(*decoded, "lines");
+    if (!lines) {
+        co_return std::unexpected(failure(errc::corrupt, "missing daemon attribution response"));
+    }
+    co_return decode_attribution_value(*lines);
 #endif
 }
 

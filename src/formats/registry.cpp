@@ -796,8 +796,22 @@ auto format_registry::operator=(format_registry&&) noexcept -> format_registry& 
 auto format_registry::global() -> format_registry& {
     static auto value = [] {
         auto registry = format_registry{};
-        const auto modules = std::array{formats::detail::zip_module(),
+        const auto modules = std::array{formats::detail::elf_module(),
+                                        formats::detail::macho_module(),
+                                        formats::detail::pe_module(),
+                                        formats::detail::jupyter_module(),
+                                        formats::detail::safetensors_module(),
+                                        formats::detail::pickle_module(),
+                                        formats::detail::pdf_module(),
+                                        formats::detail::ooxml_module(),
+                                        formats::detail::odf_module(),
+                                        formats::detail::wheel_module(),
+                                        formats::detail::jar_module(),
+                                        formats::detail::zip_module(),
                                         formats::detail::tar_module(),
+                                        formats::detail::deb_module(),
+                                        formats::detail::rpm_module(),
+                                        formats::detail::apk_module(),
                                         formats::detail::hdf5_module(),
                                         formats::detail::parquet_module(),
                                         formats::detail::sqlite_module()};

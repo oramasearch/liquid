@@ -3,7 +3,7 @@
 **What.** The HTTP/1.1 protocol used by libliquid clients and lake to exchange repository
 metadata and content. lake's `docs/api/sync.md` mirrors this page.
 
-**Status: implemented by liquid #160, #165, #177, #189, #195, and the shared request factoring in
+**Status: implemented by liquid #30, #160, #165, #177, #189, #195, and the shared request factoring in
 #201.** Metadata export and import are
 bounded by caller-provided spans. Imports verify the selected metadata before changing repository
 state, while reference authorization and application are reported per ref. Content negotiation and
@@ -46,6 +46,33 @@ journal. A pull request cursor is the last server cursor observed by that client
 is the next opaque cursor to persist for that peer.
 `objects` contains the roots referenced by the metadata stream. Missing-object negotiation walks
 their content-addressed graph and sends only objects the receiver reports absent.
+
+## Collaboration frames and epochs
+
+Presence uses metadata item kind `5`. Its canonical CBOR body carries actor, session, path,
+optional range, activity, and timestamp. Import removes these items from the persistent batch and
+updates an in-memory presence table, so presence crosses a peer connection but cannot appear in a
+journal, checkpoint, or historical replay. Entries expire 30 seconds after their timestamp.
+
+Semantic lease changes remain signed repository drips so ordinary sync fans them out to editors.
+Offline claims have advisory authority. A caller binds its authoritative sync peer through
+`repository_options::authorize_lease`; the repository sends the complete proposed lease through
+that task before changing local state. An error, including remote `errc::locked`, is final;
+acceptance persists `lake` authority. The policy that accepts the claim belongs to lake.
+
+Exclusive checkout rules and lock operations also remain signed repository drips. A version-4
+lock drip carries the complete holder, time, reason, authority, path, and configuration where
+applicable. Import verifies that the holder TAAP ID matches the drip author. Concurrent offline
+locks from different holders produce an issue #40 conflict value with references to both canonical
+lock records and retain the receiving checkout's claim. A caller installs
+`repository_options::authorize_lock` for connected authoritative acquire and release decisions;
+[locks.md](locks.md) defines both authority modes.
+
+An epoch records the heads of the repository and directory documents at its checkpoint. Once the
+acknowledgement condition is satisfied, the repository retires its pre-epoch operations and
+drips. `repository_options::acknowledge_epoch` bridges the sync peer registry to compaction: it
+receives the candidate heads and returns how many known peer cursors cover them. An older cursor
+resets to a full checkpoint export; it never asks the peer to replay unavailable drips.
 
 The wire version remains 1 for one compatibility version. A v1 decoder predating #189 ignores the
 new header keys and therefore reads a new successful reply. A #189 client also reads a legacy

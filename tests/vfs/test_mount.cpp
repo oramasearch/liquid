@@ -4,10 +4,12 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -52,6 +54,33 @@ private:
     std::filesystem::path path_;
 };
 
+#if !defined(_WIN32)
+class scoped_liquid_home {
+public:
+    explicit scoped_liquid_home(const std::filesystem::path& path) {
+        if (const auto* configured = std::getenv("LIQUID_HOME")) {
+            previous_ = configured;
+        }
+        set(path);
+    }
+
+    ~scoped_liquid_home() {
+        if (previous_) {
+            static_cast<void>(setenv("LIQUID_HOME", previous_->c_str(), 1));
+        } else {
+            static_cast<void>(unsetenv("LIQUID_HOME"));
+        }
+    }
+
+    auto set(const std::filesystem::path& path) -> void {
+        ASSERT_EQ(setenv("LIQUID_HOME", path.string().c_str(), 1), 0);
+    }
+
+private:
+    std::optional<std::string> previous_;
+};
+#endif
+
 auto text_bytes(std::string_view text) -> std::vector<std::byte> {
     return {reinterpret_cast<const std::byte*>(text.data()),
             reinterpret_cast<const std::byte*>(text.data() + text.size())};
@@ -91,8 +120,13 @@ TEST(VfsMount, hydrates_captures_and_reuses_cache) {
 #else
     mount_tree repository_path;
     mount_tree mountpoint;
+    mount_tree holder_identity;
+    mount_tree writer_identity;
+    auto identity_home = scoped_liquid_home{holder_identity.path()};
+    auto remote_source = std::make_shared<unavailable_source>();
     auto options = liquid::repository_options{};
-    options.storage.remote_sources.emplace("offline", std::make_shared<unavailable_source>());
+    options.storage.remote_sources.emplace("offline", remote_source);
+    options.locks.rules.push_back({"locked-file", {"locked.txt"}});
     auto created = liquid::runtime::block_on(
         liquid::repository::create(repository_path.path(), std::move(options)));
     ASSERT_TRUE(created) << created.error().message;
@@ -112,6 +146,14 @@ TEST(VfsMount, hydrates_captures_and_reuses_cache) {
                                      .remote = liquid::remote_blob_location{"offline", "drive"}};
     ASSERT_TRUE(liquid::runtime::block_on(repository.write_remote("offline.bin", offline_blob)));
     ASSERT_TRUE(liquid::runtime::block_on(repository.lock("locked.txt")));
+    repository = {};
+    identity_home.set(writer_identity.path());
+    auto open_options = liquid::repository_options{};
+    open_options.storage.remote_sources.emplace("offline", std::move(remote_source));
+    auto opened = liquid::runtime::block_on(
+        liquid::repository::open(repository_path.path(), std::move(open_options)));
+    ASSERT_TRUE(opened) << opened.error().message;
+    repository = std::move(*opened);
 
     auto mounted = liquid::runtime::block_on(liquid::vfs::mount(repository, mountpoint.path()));
     if (!mounted && mounted.error().code == liquid::errc::unsupported)

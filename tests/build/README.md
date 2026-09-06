@@ -94,6 +94,9 @@ returning a nonzero exit for replay coverage. Verification tests prove a pure ag
 signature-valid agreement and
 disagreement attestations, rate-one sampling, durable divergent quarantine, and critical output
 diagnostics.
+Its shell-compatible `-c` test mode creates a small prefix install tree for the Linux Spack import
+subset, allowing imported target execution and relocation publication to use the ordinary action
+path without host tools.
 
 Replay cases prove byte-identical reproduction of that recorded failure, action selection after a
 cache hit, opt-in verification recording, byte-zero diagnostics for an altered recorded output,

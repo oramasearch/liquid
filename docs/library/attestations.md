@@ -23,7 +23,7 @@ the public encoder.
 | Profile | Subject kind | Required attributes | Optional attributes | Status policy |
 |---|---|---|---|---|
 | `org_membership/1` | actor | `organization:text`, `role:text` | `display_name:text` | revocable; fresh status evidence no older than 24 hours |
-| `delegation/1` | actor | `principal:text`, `scopes:text_list` | `not_after:unsigned_integer` | revocable; fresh status evidence no older than 1 hour |
+| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text` | `model:text` | revocable; fresh status evidence no older than 1 hour |
 | `authorship/1` | drip | `author:text` | none | none |
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
@@ -35,9 +35,24 @@ the public encoder.
 | `scan_result/1` | drip | fixed record fields `detectors:text_list`, `findings:unsigned_integer`, `allowances:text_list` | none | maximum attestation age: 24 hours |
 | `reproducibility/1` | artifact | `verified_by:text`, `sandbox:text`, `agreement:boolean` | `differing_outputs:text_list` | none |
 | `image_provenance/1` | artifact | `image:text`, `tree:text` | `result:text` | none |
+| `projection/1` | artifact | `target:text`, `source_result:text_list`, `normalisation:text`, `tool:text` | none | none |
 
 `*` marks a field that may be represented by a salted disclosure commitment rather than its
 plaintext value. A required field is satisfied by its committed value when the profile permits it.
+
+### Delegation chains
+
+`delegation/1` is the authority carried by an agent session. The issuer is the principal and the
+subject is the agent actor. `scopes` contains repository-relative path globs; `may_publish` and
+`may_lease` are independent capabilities; `depth_remaining` limits further delegation; `model`
+records the optional model label; and `dispatcher` names who launched the agent.
+
+`validate_delegation(child, parent)` enforces attenuation. Every child scope must be contained by
+a parent scope, a denied capability cannot become allowed, and remaining depth must decrease.
+Session creation also verifies the signature, current revocation evidence, and that the local
+principal issued the delegation. Private writes need no publish capability. Scope and capability
+checks happen before lease or base validation, and version-3 signed drips record the delegation
+digest and agent actor. Versions 1 and 2 remain readable.
 
 The `scan_result/1` names describe its established wire fields: detector ids, finding count, and
 allowance records. Its full encoding and privacy limits remain in
@@ -70,6 +85,11 @@ record. Verification binds every attribute to the record before any object is lo
 `image_provenance/1` uses the OCI image's SHA-256 digest as its subject. `image` is the complete
 digest-pinned reference, `tree` is its `io.liquid.tree` digest, and optional `result` is the build
 result projected into the image. [`admission.md`](admission.md) defines its minting and policy use.
+`projection/1` uses the projected package, image manifest, or canonical chart digest as its
+subject. `source_result` preserves every result or install-tree identity in request order;
+`normalisation` records the fixed epoch, ownership, modes, and sorting rule; and `tool` binds the
+liquid version. OCI and Helm outputs carry the statement beside source provenance and SBOM
+statements through subject-bound OCI artifact manifests. See [projection.md](projection.md).
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's

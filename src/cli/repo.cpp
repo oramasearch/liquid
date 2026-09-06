@@ -2,8 +2,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <print>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "liquid/configuration.hpp"
 #include "liquid/daemon.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/repository.hpp"
@@ -252,6 +256,54 @@ auto data_branches_json(const std::vector<liquid::data_branch_record>& branches)
     return output;
 }
 
+auto configured_locks(const std::filesystem::path& root) -> liquid::result<liquid::lock_config> {
+    auto code = std::error_code{};
+    if (!std::filesystem::exists(root, code)) {
+        if (code) {
+            return std::unexpected(
+                liquid::error{liquid::errc::io, code.message(), root.generic_string()});
+        }
+        return liquid::lock_config{};
+    }
+    auto selected = root / "liquid.liquid";
+    if (!std::filesystem::is_regular_file(selected)) {
+        auto candidates = std::vector<std::filesystem::path>{};
+        code.clear();
+        for (std::filesystem::directory_iterator iterator{root, code};
+             !code && iterator != std::filesystem::directory_iterator{};
+             iterator.increment(code)) {
+            if (iterator->is_regular_file() && iterator->path().extension() == ".liquid") {
+                candidates.push_back(iterator->path());
+            }
+        }
+        if (code) {
+            return std::unexpected(
+                liquid::error{liquid::errc::io, code.message(), root.generic_string()});
+        }
+        if (candidates.empty()) {
+            return liquid::lock_config{};
+        }
+        std::ranges::sort(candidates);
+        selected = candidates.front();
+    }
+    auto input = std::ifstream{selected, std::ios::binary};
+    if (!input) {
+        return std::unexpected(liquid::error{
+            liquid::errc::io, "cannot read configuration", selected.generic_string()});
+    }
+    auto text =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    auto document = liquid::parse_configuration(text, selected);
+    if (!document) {
+        return std::unexpected(document.error());
+    }
+    auto lowered = liquid::lower(*document);
+    if (!lowered) {
+        return std::unexpected(lowered.error());
+    }
+    return std::move(lowered->locks);
+}
+
 } // namespace
 
 auto repo_init(int argc, char** argv) -> int {
@@ -259,7 +311,12 @@ auto repo_init(int argc, char** argv) -> int {
         return usage("init accepts at most one path");
     }
     const auto path = argc == 1 ? std::filesystem::path{argv[0]} : std::filesystem::current_path();
-    auto repository = liquid::runtime::block_on(liquid::repository::create(path));
+    auto locks = configured_locks(path);
+    if (!locks) {
+        return fail(locks.error());
+    }
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::create(path, {.locks = std::move(*locks)}));
     if (!repository) {
         return fail(repository.error());
     }
@@ -548,8 +605,11 @@ auto repo_log(int argc, char** argv) -> int {
                         : json_string(*drip.revalidated == liquid::stale_revalidation::disjoint
                                           ? "disjoint"
                                           : "forced");
+                const auto delegation =
+                    drip.delegation ? json_string(liquid::to_string(*drip.delegation)) : "null";
                 std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},\"at\":{},"
-                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{}}}",
+                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{},"
+                           "\"delegation\":{}}}",
                            index == 0 ? "" : ",",
                            json_string(liquid::to_string(drip.id.value)),
                            json_string(liquid::to_string(drip.base.value)),
@@ -558,7 +618,8 @@ auto repo_log(int argc, char** argv) -> int {
                            drip.at.time_since_epoch().count(),
                            reasoned_from,
                            cursor,
-                           revalidated);
+                           revalidated,
+                           delegation);
             }
             std::println("]");
         } else {

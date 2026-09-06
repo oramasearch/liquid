@@ -1,0 +1,7 @@
+site_name: liquid
+site_description: User and contributor documentation for liquid
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+theme:
+  name: mkdocs

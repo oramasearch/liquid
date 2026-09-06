@@ -34,6 +34,13 @@ Status also lists unresolved path and conflict-digest pairs. `conflict.cpp` impl
 `resolve` only through the public repository conflict operations and prints the canonical inputs,
 region, kind, explanation, and resulting resolution change.
 
+`repo.cpp` also lowers top-level lock rules before repository initialization. `locks.cpp` attaches
+to the checkout daemon and acquires or releases exclusive checkout through the public daemon API;
+platforms without daemon transport use the public repository operations directly.
+
+`session.cpp` starts, publishes, and discards private replicas through the public session API.
+`attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
+
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new
 random identifier; callers can pass the same explicit session to `wrap --session`.
@@ -45,6 +52,15 @@ repository storage or file contents.
 `diff.cpp` resolves each operand as a ref or change digest and calls public repository diff.
 `--text` opts into line hunks, `--formats` prints codec-tier container trees, an optional path
 filters the result, and `--json` emits the same nested values for tools.
+`tier.cpp` owns the shared `tier: <n> (<mechanism>)` text line and JSON object used by commands that
+degrade. `tiers.cpp` loads installed frontend modules, calls the pure public support-matrix API,
+filters language or format rows, and renders stable text, JSON, or the generated Markdown blocks.
+Diff, symbols, archive search, and wrap use the shared projection; #68, #69, and #70 must reuse it
+when their richer command paths land.
+
+`inspect.cpp` resolves a regular file or repository blob digest through public APIs, identifies its
+format codec, and prints the codec tier plus the decoded entry tree. Its JSON projection is stable
+and includes entry size, kind, and opaque-reader reason.
 
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
@@ -58,6 +74,13 @@ The same command group implements `replay`: it parses an action or result plus `
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
 `sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
 API, and uses the public foreign-binary path only when no producing result exists.
+`project.cpp` parses native-package, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap
+requests, distinguishes stored results from bare tree digests, calls the public projection task,
+and prints text or stable JSON reports. It does not read package writers or repository internals.
+`project.cpp` parses package, OCI, Helm, OSTree, and bootc requests, distinguishes stored results
+from bare tree digests, collects path-mounted overlay trees, reads `SOURCE_DATE_EPOCH`, and prints
+the commit checksum plus text or stable JSON reports. It does not read format writers or repository
+internals.
 `abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
 the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
 
@@ -84,6 +107,10 @@ by dependency; conflict and package-choice explanations use the stable library f
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`clone.cpp` resolves either a sync URL or a configured drive folder, refuses a non-empty target,
+and composes `drive_client::open`, root pinning, and one synchronization. This adopts the remote
+repository identity, retains the remote configuration, and fully materializes the plain checkout.
+It passes `LIQUID_TOKEN` without storing it and prints either the landing path or stable JSON.
 `deploy.cpp` implements deployment creation, listing, rollback, and status through the public
 deployment API. It resolves the operator control-plane URL from `--control`, `LIQUID_CONTROL_PLANE`,
 or persisted repository configuration, and passes `LIQUID_TOKEN` only as a bearer credential.
@@ -98,6 +125,11 @@ and performs local break-glass unsealing through the public secret API. Private-
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
 
+The CLI-internal metadata and validator live in `metadata.hpp` and `arguments.cpp`. Every command
+passes through the typed option allow-list before its handler interprets values. `docs.cpp` renders
+the same table as command help, Markdown, stable JSON, and man pages. The generated reference lives
+in [`docs/reference/cli/`](../../docs/reference/cli/); the replay output contract and contributor
+notes remain in [`docs/cli/README.md`](../../docs/cli/README.md).
 The same file maps `serve admission` flags and environment variables to the public admission
 options. The library owns named policy loading and atomic reload, TLS, structured review decisions,
 bounded streaming, control routes, and metrics; the CLI only prints listener state and the explicit
@@ -108,10 +140,24 @@ one-shot reconciliation. It also prints pending uploads, hydration debt, path av
 offline reasons; `pin` and `unpin` resolve the containing drive and call the public state API.
 `vfs.cpp` passes `LIQUID_TOKEN` to mounts that hydrate through a persisted drive endpoint. Both
 long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
-restores one as an ordinary repository drip through the public repository API.
+restores one as an ordinary repository drip through the public repository API. `blame.cpp`
+resolves the current head and asks the attached daemon for public per-line attribution records.
+Its text and JSON renderers expose line, change, session, actor, agent marker, and text without
+reading repository internals.
+
+`registry.cpp` implements `registry trust pin` and `registry trust show` through the public TUF
+client. It stores the exact trusted-root bytes and their SHA-256 pin in repository configuration;
+it does not implement artifact transport.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
+
+`configuration.cpp` implements `config check`, `config lower`, `config format`, and the
+configuration-backed `build --target` path entirely through the public configuration and repository
+APIs. Generator execution remains an ordinary library build action.
+`git.cpp` also implements `import spack`: it parses the export, destination, report, and JSON
+selectors, calls the public import task, and can render a previously saved report without repeating
+the import.
 
 `history.cpp` implements `ops` through the public operation-log API. Its JSON form includes the
 operation session. `repo.cpp` implements `log --ops` through the signed drip API. Undo accepts one
@@ -132,6 +178,13 @@ Status also projects daemon graph-validation backlog, flow watermarks and bucket
 divergence in text and JSON. Push prints the peer's exhausted scope and retry delay on HTTP 429.
 Wrap output includes its graph backlog and last divergence record.
 
+`symbols.cpp` loads the compiler frontend when installed, falls back to tree-sitter, and presents
+the public symbol record without inspecting private repository storage.
+
+`log.cpp` retains the repository-history form of `log` and adds the transparency verification
+subcommands. It decodes only caller-supplied base64url attestation bytes, opens repository state
+through the public API, and uses the public transparency source and client; persistence remains
+inside libliquid.
 `symbols.cpp` detects the language from the public registry's extension table, uses the compiler
 frontend when it supports that language, falls back to the locked tree-sitter grammar, and presents
 the public symbol record without inspecting private repository storage. `version --json` includes

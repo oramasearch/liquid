@@ -1,0 +1,18 @@
+source expat-1.4.0 {
+    digest: sha256:5f372cb1090e0bed69f013fe4feef01cda5077574cb56dfd2236814f4e589a1f
+    kind: archive
+    url: "https://example.invalid/expat-1.4.0.tar.gz"
+}
+
+package expat {
+    versions: [1.4.0]
+}
+
+build expat {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/5f372cb1090e0bed69f013fe4feef01cda5077574cb56dfd2236814f4e589a1f -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["expat-1.4.0"]
+    install {
+        layout: prefix
+    }
+}
