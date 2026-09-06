@@ -145,6 +145,17 @@ auto wrap(int argc, char** argv) -> int {
             fail_on_abi_break = true;
             continue;
         }
+        if (command.empty() && argument == "--install-prefix") {
+            if (++index == argc) {
+                return usage("wrap --install-prefix requires an absolute path");
+            }
+            options.install_prefix = argv[index];
+            continue;
+        }
+        if (command.empty() && argument == "--allow-embedded-prefix") {
+            options.allow_embedded_prefix = true;
+            continue;
+        }
         if (command.empty() && argument == "--remote") {
             if (++index == argc) {
                 return usage("wrap --remote requires an endpoint");
@@ -282,6 +293,9 @@ auto wrap(int argc, char** argv) -> int {
         return usage("wrap requires a build command");
     if (options.remote && options.remote->endpoint.empty()) {
         return usage("wrap remote options require --remote or --scheduler <endpoint>");
+    }
+    if (options.allow_embedded_prefix && !options.install_prefix) {
+        return usage("wrap --allow-embedded-prefix requires --install-prefix");
     }
     auto result = liquid::runtime::block_on(
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));

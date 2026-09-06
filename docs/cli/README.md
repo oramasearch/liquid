@@ -63,7 +63,7 @@ that the table and `liquid --help` name the same commands.
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--install-prefix <path>] [--allow-embedded-prefix] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions or publish a checked install tree. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
@@ -87,6 +87,14 @@ that the table and `liquid --help` name the same commands.
 | `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 
 ## Output and errors
+
+`wrap --install-prefix /opt/example` stages install output beneath the fixed sandbox output root,
+passes the logical prefix to CMake or a direct Autotools configure command, and publishes an
+unrooted install tree. An embedded sandbox prefix, declared prefix, absolute binary lookup path, or
+absolute installed package path fails with `invalid argument` and the first three file offsets.
+`--allow-embedded-prefix` requires `--install-prefix`; it permits the result and records the waiver
+in the schedule explanation shown by `liquid why`. See
+[relocation.md](../library/relocation.md) for build-system rules.
 
 `status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
 stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,

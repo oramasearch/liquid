@@ -15,6 +15,12 @@ normalise identically, timestamp-form Python bytecode becomes one payload-addres
 binary and text kinds are unchanged, and tree modes preserve only portable executability. The
 provenance tests also enumerate the stored signed input/output claim.
 
+`test_relocation.cpp` checks clean relative metadata and scripts, embedded virtual-root offsets,
+absolute pkg-config and CMake paths, and an absolute Mach-O install name. The `wrap/relocation`
+fixture installs a shared library, executable, header, pkg-config file, and CMake package export.
+The mount-backed wrapper case materialises the tree at one path, moves it, executes it, rejects an
+embedded prefix, and verifies that an allowed hit is retained in `why` diagnostics.
+
 `test_abi.cpp` decodes digest-pinned ELF, Mach-O, and PE fixtures; extracts native shared-library
 exports; checks compatible additions, removals, changed signatures, object sizes, GNU symbol
 versions, and debug signatures; round-trips stored descriptors; verifies the signed compatibility
@@ -96,7 +102,8 @@ The mixed-cost retention case writes a cheap large result and an expensive small
 real store, persists both index rows, exceeds the configured physical cap, and proves collection
 removes only the lower execution-cost-per-byte result.
 
-`wrap/` holds unchanged CMake, Autotools, recursive Make, compilation-database, and shared-library
+`wrap/` holds unchanged CMake, Autotools, recursive Make, compilation-database, install-tree, and
+shared-library
 projects built
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,

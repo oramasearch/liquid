@@ -128,6 +128,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > direct named inputs mount upstream bytes read-only below `deps/<name>/`; an identical normalised
 > upstream tree stops the downstream cascade. Directory modes, `ar` headers, and Python bytecode
 > are normalised before storage, with the rule set bound into the sandbox digest.
+> `wrap --install-prefix` stages a canonical `bin/lib/include/share` install tree with relative ELF
+> or Mach-O lookup paths. Publication rejects embedded sandbox or install prefixes and absolute
+> binary or package-metadata paths; an explicit waiver is retained in result diagnostics.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
 > in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
@@ -294,6 +297,7 @@ and Zetta's.
 - [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
 - [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
+- [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 
 | | |
