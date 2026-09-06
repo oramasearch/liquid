@@ -83,6 +83,8 @@ are a **byproduct of building**, not a separate CI indexing job.
 Unlike every existing system, they are fresh on every build rather than as stale as
 the last nightly index run. tree-sitter provides the syntactic fallback for languages
 liquid cannot compile.
+That fallback consumes the same graph-owned canonical parse used by build units and structural
+source diff, implemented by liquid #68.
 
 ## History
 

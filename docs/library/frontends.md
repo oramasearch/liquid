@@ -8,11 +8,13 @@ keys compiler work by the canonical unit and action fingerprints, so changing on
 does not invalidate its neighbours.
 
 **Status.** The ABI, loader, registry, graph coordinator, bundled tree-sitter fallback, concrete
-syntax operation, and bundled Clang C++ module are implemented. The CMake fixture compiles two definition objects with the
+syntax and canonical parse operations, and bundled Clang C++ module are implemented. The CMake fixture compiles two definition objects with the
 configured Clang, changes one body, executes one new action, and assembles the translation unit
 again. Its header change executes both actions because both units read that header. Liquid #66 adds
 the `symbols` ABI operation and graph query; its record is documented in [`symbols.md`](symbols.md).
-Liquid #205 adds the optional `syntax` operation used by structural edits.
+Liquid #205 adds the optional `syntax` operation used by structural edits. Liquid #68 adds the
+optional `parse` descriptor tail and the digest-keyed `parse_tree` graph query used by builds,
+symbols, and structural source diff.
 The grammar distribution decision, complete inventory, and maintenance process are in
 [`grammars.md`](grammars.md).
 
@@ -53,13 +55,21 @@ and continues updating the others. Plugins produce data and never receive an ImG
 | `symbols` | language, source blob, context | derived symbol-action description |
 | `symbols_from_output` | language, source blob, symbol-action stdout | per-translation-unit symbol output map |
 | `syntax` | language, source blob, context | concrete syntax tree |
+| `parse` | language, source blob, context | compact canonical parse tree plus unit and symbol sidecars |
 
 Every operation receives progress and cancellation callbacks. Return values use caller-independent
 owned bytes with an explicit release callback. ABI status values distinguish invalid input,
 unsupported operations, cancellation, and internal failure. The loader rejects the wrong ABI
 version, an incomplete required descriptor prefix, invalid owned bytes, malformed values, and
-non-canonical CBOR. `syntax` is appended to the descriptor and is optional: an older v1 descriptor
-or a null pointer returns `errc::unsupported`, so ABI v1 remains v1.
+non-canonical CBOR. `syntax` and `parse` are appended to the descriptor and are optional: an older
+v1 descriptor or a null pointer returns `errc::unsupported`, so ABI v1 remains v1.
+
+The compact parse value uses numeric node-kind IDs against its `kinds` table, half-open byte
+ranges, one-based line and column positions, named children, optional field names, and explicit
+error and missing flags. `grammar` is the lock digest and `node_types` is the SHA-256 identity of
+the grammar's `node-types.json`. `units` and `symbols` are canonical sidecar bytes derived before
+the tree-sitter tree is released. [`structural-diff.md`](structural-diff.md) documents its query and
+consumers.
 
 A syntax result is:
 
@@ -108,9 +118,10 @@ earlier in the file can therefore move an unchanged function without changing it
 `frontend_module` exposes the checked C++ wrapper. Its existing `languages()` method still returns
 names, while `language_details()` returns language, extensions, mechanism, and grammar digest.
 `frontend_registry` owns modules, resolves a language registration, and aggregates those detailed
-rows through `languages()`. `frontend_graph` owns the registered action, assembly, and `symbols` query
-kinds, accepts a caller's action executor, and returns each unit action/output, symbol sidecar,
-and assembled translation-unit value.
+rows through `languages()`. `frontend_graph` owns the registered `parse_tree`, action, assembly,
+and `symbols` query kinds, accepts a caller's action executor, and returns each canonical parse,
+unit action/output, symbol sidecar, and assembled translation-unit value. Parse keys contain the
+language and blob digest, so consumers share one value.
 The executor remains injected because the daemon and `build::execute` own scheduling, sandboxing,
 toolchain materialisation, and cache policy.
 

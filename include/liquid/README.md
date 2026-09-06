@@ -7,6 +7,9 @@ inventory is maintained in `docs/library/api-map.md`.
 `frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
 descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
 errors, progress, and cancellation types while registering queries, commands, and panels.
+Its optional `parse` tail returns the compact canonical syntax value shared by build, symbol, and
+source-diff queries. `frontend.hpp` exposes that value and its digest-keyed graph query;
+`repository.hpp` exposes structural edits and explicit structural, text, or binary diff tiers.
 
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.

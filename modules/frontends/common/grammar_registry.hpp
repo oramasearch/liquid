@@ -13,6 +13,7 @@ struct grammar_descriptor {
     std::span<const std::string_view> extensions;
     const TSLanguage* (*language_function)();
     std::span<const std::uint8_t> tags_query;
+    std::string_view node_types_digest;
     std::uint32_t abi_version;
 };
 

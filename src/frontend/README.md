@@ -14,3 +14,6 @@ contract is in [`docs/library/symbols.md`](../../docs/library/symbols.md).
 `node_at` and `enclosing` navigation without exposing a parser type.
 Syntactic records preserve the optional grammar-lock identity through canonical encoding and
 decoding.
+It also validates the compact canonical parse record. `graph.cpp` owns the `parse_tree` query keyed
+by language and blob digest, passes that value to unit and symbol operations, and exposes path-to-
+grammar selection for structural diff.

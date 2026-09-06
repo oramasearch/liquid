@@ -70,5 +70,13 @@ auto encode_symbols(std::string_view language,
                     const std::vector<syntax_symbol>& symbols) -> std::vector<std::uint8_t>;
 auto encode_syntax_tree(std::string_view language, std::span<const std::uint8_t> source)
     -> std::expected<std::vector<std::uint8_t>, syntax_error>;
+auto encode_parse_tree(std::string_view language, std::span<const std::uint8_t> source)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error>;
+auto parse_units_from_value(std::span<const std::uint8_t> value)
+    -> std::expected<std::vector<syntax_unit>, syntax_error>;
+auto parse_units_bytes_from_value(std::span<const std::uint8_t> value)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error>;
+auto parse_symbols_bytes_from_value(std::span<const std::uint8_t> value)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error>;
 
 } // namespace liquid_frontend

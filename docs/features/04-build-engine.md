@@ -100,6 +100,9 @@ There is no separate language server maintaining a parallel universe of parse tr
 and caches. That duplication is the largest piece of wasted work in modern
 toolchains, and removing it is the direct route to drip-by-drip builds.
 
+Liquid #68 implements that ownership for source parsing: the graph's language-and-blob-digest
+`parse_tree` query supplies build units, symbol fallback, and structural diff.
+
 Patches from the datastore ([17](17-implementation.md)) drive invalidation, so an
 edit arriving from another machine updates the graph the same way a local edit does.
 
