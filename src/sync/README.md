@@ -5,6 +5,9 @@ outcome fields, and the store-compatible `LQFRAME1` object frame. Decoders bound
 trailing or missing end frames, decompress zstd data, and verify object digests before returning
 bytes.
 
+The metadata stream also transports transient presence frames. They are decoded and delivered to
+the repository without entering the drip journal.
+
 `session.cpp` walks references from caller-provided roots. Send enumerates blob payload identities
 without reading them, asks the peer for its missing set, and loads only payloads that need upload;
 receive range-reads absent objects, verifies each full digest, stores it, and then continues through

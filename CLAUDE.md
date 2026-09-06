@@ -110,7 +110,8 @@ Configured target results must pass the relocation publication check before they
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
-locks, and nested pointers. Directory
+locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
+transient presence, compaction epochs, and delegation-attributed publication. Directory
 Liquid #59 configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
 `liquid wrap`, retains configured CMake inputs, requires a fully cached second run, and compares
 the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI transport and

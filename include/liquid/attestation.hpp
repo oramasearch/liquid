@@ -186,6 +186,8 @@ decode_attestation(std::span<const std::byte> bytes);
 [[nodiscard]] LIQUID_EXPORT result<attestation_verification>
 verify_attestation(const attestation& value, const attestation_verification_options& options = {});
 [[nodiscard]] LIQUID_EXPORT result<bool> verify(const attestation& value);
+[[nodiscard]] LIQUID_EXPORT result<void> validate_delegation(const attestation& value,
+                                                             const attestation* parent = nullptr);
 [[nodiscard]] LIQUID_EXPORT runtime::task<digest>
 attest_image(std::string image_reference,
              digest tree,

@@ -4,6 +4,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include "liquid/attestation.hpp"
 #include "liquid/runtime.hpp"
@@ -48,6 +49,28 @@ auto read_attestation(const liquid::digest& id) -> liquid::result<liquid::attest
     return std::unexpected(liquid::error{liquid::errc::not_found,
                                          "no repository or capture store in the current directory",
                                          root.string()});
+}
+
+auto attribute_text(const liquid::attestation_value& value) -> std::string {
+    return std::visit(
+        [](const auto& selected) -> std::string {
+            using value_type = std::decay_t<decltype(selected)>;
+            if constexpr (std::is_same_v<value_type, std::string>) {
+                return selected;
+            } else if constexpr (std::is_same_v<value_type, bool>) {
+                return selected ? "true" : "false";
+            } else if constexpr (std::is_same_v<value_type, std::uint64_t>) {
+                return std::to_string(selected);
+            } else {
+                auto output = std::string{};
+                for (std::size_t index = 0; index != selected.size(); ++index) {
+                    output += index == 0 ? "" : ",";
+                    output += selected[index];
+                }
+                return output;
+            }
+        },
+        value);
 }
 
 } // namespace
@@ -119,6 +142,9 @@ auto attestation(int argc, char** argv) -> int {
         std::println("issued_at={}", value->at.time_since_epoch().count());
         std::println("issuer={}", value->issuer.taap_id);
         std::println("attributes={}", value->attributes.size());
+        for (const auto& attribute : value->attributes) {
+            std::println("attribute.{}={}", attribute.name, attribute_text(attribute.value));
+        }
         std::println("commitments={}", value->disclosure_commitments.size());
         return 0;
     }

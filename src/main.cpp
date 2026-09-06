@@ -76,6 +76,8 @@ auto config(int argc, char** argv) -> int;
 auto project(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
+auto session(int argc, char** argv) -> int;
+auto compact(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -221,6 +223,17 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::history_undo},
     {"lock", "lock <path>", "advisory-lock a path", "available", liquid_cli::locks_lock},
     {"unlock", "unlock <path>", "remove an advisory lock", "available", liquid_cli::locks_unlock},
+    {"session",
+     "session <start <delegation>|write <id> <path> --from <file>|publish <id> [--message "
+     "<text>]|discard <id>>",
+     "manage a private speculative replica",
+     "available",
+     liquid_cli::session},
+    {"compact",
+     "compact --epoch [--min-ack-peers <count>]",
+     "checkpoint a repository epoch",
+     "available",
+     liquid_cli::compact},
     {"mount",
      "mount <mountpoint> [--read-only]",
      "mount a lazy working tree",

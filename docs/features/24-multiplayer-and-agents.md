@@ -21,6 +21,11 @@ for accept/reject; it does not expose the model as an autonomous peer.
 So liquid's position is genuinely differentiated and genuinely unproven. Both halves
 matter.
 
+**Implementation status:** liquid #30 implements private same-store speculative replicas,
+scope-checked atomic publication, semantic file/symbol/range leases, transient local and peer
+presence, compaction epochs, and `delegation/1` attribution. Lake-side authoritative lease policy
+and the liquify surface remain in their own repositories.
+
 **But isolation does not solve the problem — it defers it.** The research is direct
 about this: isolation prevents silent filesystem overwrites, and overlapping work then
 reappears as merge conflicts or, *more dangerously, as cleanly merged but semantically
@@ -101,10 +106,10 @@ Supporting controls, all of which liquid needs:
 
 | Control | Behaviour |
 |---|---|
-| **Batch and coalesce** | Group adjacent inserts and deletes into transactions; merge updates before publication. |
+| **Batch and coalesce — implemented by #30** | Private rewrite loops remain in the session journal; publication persists once and emits one net drip per touched directory. |
 | **Flow control — implemented by #85** | Bound unacknowledged operations per peer; pause generation when persistence or rendering lag crosses a watermark. |
 | **Rate limits — implemented by #85** | Token buckets per agent, per document, per tenant, plus maximum update size. **Must pause or reject explicitly** — silently dropping CRDT operations breaks causal dependencies. |
-| **Agent-aware rendering** | Throttle highlighting, diagnostics and tests independently from ingestion. Show *"agent changing lines 80–140"*, not an animation of 10,000 keystrokes. |
+| **Agent-aware rendering — data channel implemented by #30** | Transient presence carries actor, session, path, range, activity, and timestamp. Liquify owns visual throttling and display. |
 
 **Avoid whole-file rewrites.** Replacing an entire file creates enormous churn and
 tombstones compared with a range- or AST-level edit, and destroys authorship
@@ -210,7 +215,7 @@ liquid's defences, in order:
    default; the caller may accept a path-disjoint update or force a write only after re-planning.
    The signed drip records the stated base and the disjoint or forced result, while
    `explain_stale` returns changed paths and line hunks since the base. Implemented by liquid #86;
-   delegation-derived agent classification remains liquid #30.
+   delegation-derived agent classification is implemented by liquid #30.
 
 ## Presence for non-human actors
 
@@ -236,6 +241,26 @@ Most agent tooling today has no principled answer to "what exactly did the agent
 under whose authority, and can I undo precisely that?" liquid does, because drips,
 actors and attestations were already required for other reasons.
 
+## Epoch compaction measurement
+
+The Release `liquid-epoch-measure` workload applies 100,000 agent-rate writes in batches of 1,000
+while repeatedly replacing 100 paths, then loads the full document, writes a compact checkpoint,
+and loads it shallowly. This run used the same Apple M3 Max host as the object-model table and
+Homebrew Clang 22.1.8.
+
+| Writes | Replacement paths | Before bytes | Before load | After bytes | After load | Load average (1, 5, 15 min) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100,000 | 100 | 31,896,273 | 4,678.965 ms | 984,125 | 4,995.539 ms | 28.256, 50.889, 62.315 |
+
+Compaction reduced serialized bytes by 96.9%. The shallow load did not improve on this heavily
+loaded host, so the byte bound is the regression contract and load time remains reported rather
+than treated as an assumed win. Reproduce it with:
+
+```sh
+cmake --build build-measure --target liquid-epoch-measure
+./build-measure/tests/liquid-epoch-measure 100000 100 1000
+```
+
 ## Open questions
 - **Tombstone growth under machine-rate writers**, now partly quantified. In one
   benchmark, 260,000 operations cost Automerge ~44 MB and 1.8 s versus Yjs ~10 MB and
@@ -243,11 +268,11 @@ actors and attestations were already required for other reasons.
   what supports version-control-like features. That is the right trade for liquid and it
   is not free. The mitigation is **epoch compaction**: periodically materialise a
   canonical snapshot and start a new history epoch once peers acknowledge it, with
-  clients older than the epoch resyncing rather than replaying. This needs specifying,
-  and it is the same mechanism the general history-growth risk in
-  [17](17-implementation.md) requires.
-- **Whether agent drips should be a separate stream** that is promoted into the main
-  history on acceptance, rather than landing in it directly.
+  clients older than the epoch resyncing rather than replaying. Liquid #30 implements that
+  checkpoint and resync path. The measured result is recorded below.
+- **Agent publication stream — resolved.** A speculative session has a private journal. Publish
+  coalesces its net effect into one signed shared drip per directory, so intermediate generated
+  files and repeated replacement stay private.
 - **Text CRDT choice.** Automerge's RGA has known interleaving anomalies; Fugue/FugueMax
   (Loro) provide maximal — not total — non-interleaving. Whether that difference
   justifies revisiting the datastore decision is open, and the private-replica pattern
