@@ -9,6 +9,7 @@ add_executable(liquid-tests
   test_drip.cpp
   test_delta.cpp
   test_daemon.cpp
+  test_data.cpp
   test_error.cpp
   test_hash.cpp
   http2/test_codecs.cpp

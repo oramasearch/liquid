@@ -14,6 +14,14 @@ stability, unique child creation, cleanup, and the failure diagnostic.
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
+`test_data.cpp` starts a private PostgreSQL cluster when `initdb`, `pg_ctl`, and the client tools
+are available. A root-run container supplies `LIQUID_TEST_POSTGRES_URL` instead. The integration
+case proves branch writes leave the base and sibling branch unchanged, session environments select
+their own URLs through a sandboxed client action, discard removes the database, quiet-base promote
+replaces it, changed-base promote is refused, records/configuration persist, and status exposes live
+branches. It skips with the missing prerequisite when neither mode is available. The portable
+selector case probes APFS/Linux copy-on-write support and proves an ineligible local cluster falls
+back to template copying.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered

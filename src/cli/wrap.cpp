@@ -257,6 +257,17 @@ auto wrap(int argc, char** argv) -> int {
             options.target = value;
             continue;
         }
+        if (command.empty() && argument == "--session") {
+            if (++index == argc) {
+                return usage("wrap --session requires an id");
+            }
+            auto session = liquid::parse_session_id(argv[index]);
+            if (!session) {
+                return fail(session.error());
+            }
+            options.session = *session;
+            continue;
+        }
         if (command.empty() && argument == "--")
             continue;
         command.emplace_back(argument);

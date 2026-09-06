@@ -46,8 +46,9 @@ branch.
    is reachable. A partial database is removed before an error is returned.
 2. **`list`** returns every live record in stable creation order. `liquid status` includes the same
    records so abandoned session data is visible.
-3. **`discard`** removes the branch database, or stops its server and removes its cloned directory,
-   then removes the live record. Repeating discard for an absent ID reports `not_found`.
+3. **`discard`** removes the branch database and then removes the live record. A future eligible
+   reflink branch also stops its server and removes its cloned directory. Repeating discard for an
+   absent ID reports `not_found`.
 4. **`promote`** fingerprints the base again. If it differs from the branch-point fingerprint,
    promotion is refused with `conflict` and a reason that the base changed. If it agrees, the base
    database is replaced by the branch and the live record is removed. The old base is retained under
@@ -61,7 +62,7 @@ keeps promotion deterministic and prevents a successful-looking loss of another 
 Branch, discard, and promote serialize through a repository-local operation lock. The database
 work completes before the updated repository document is checkpointed. Recovery may therefore find
 an untracked database after a process stops between those two steps; generated names carry the
-repository/session identity so a later cleanup command can identify them without treating an
+configured database and session identity so a later cleanup command can identify them without treating an
 unrelated database as liquid-owned.
 
 ## PostgreSQL mechanisms
@@ -101,17 +102,26 @@ is exported to the session. This mechanism therefore needs more host isolation t
 and is useful primarily for local agent sandboxes whose base cluster can be stopped at the branch
 point.
 
+The prototype implements the APFS/Linux reflink capability probe and the `auto` eligibility
+selector, while the complete branch lifecycle currently uses template copies. The prescribed
+database declaration has a URL but no local cluster directory, control program, or ownership
+contract; liquid therefore cannot safely stop and clone that cluster. `auto` falls back to
+`template`, and an explicit `reflink` declaration returns `unsupported`, until that local-cluster
+metadata is part of the interface.
+
 ## Sandboxed client actions
 
 libliquid links no `libpq`. It finds `psql`, `createdb`, `dropdb`, and `pg_dump`, captures each
-executable and its dynamic-library closure into a content-addressed toolchain tree, and invokes them
-through the existing sandbox launcher. The data-action sandbox retains the fixed environment and
+executable and its dynamic-library closure into a content-addressed toolchain tree, materialises
+that tree for the action, and invokes its client executable through the existing sandbox launcher.
+The data-action sandbox retains the fixed environment and
 filesystem restrictions while explicitly enabling network access for the configured PostgreSQL
 endpoint. Ordinary build actions remain network-denied.
 
-Every potentially waiting step is coroutine-native. Client processes, filesystem capability probes,
-directory cloning, server launch, shutdown, and process waits run through `runtime::offload` or the
-sandbox executor. No coroutine calls `block_on`, and the implementation creates no raw thread.
+Every implemented potentially waiting step is coroutine-native. Client processes, filesystem
+capability probes, and process waits run through `runtime::offload` or the sandbox executor. No
+coroutine calls `block_on`, and the implementation creates no raw thread. The same rule applies to
+future directory cloning, server launch, and shutdown.
 
 When `wrap` is given a session ID, it looks up that session's live branch for every configured
 database and adds `url_env=branch.url` to the action environment before action identity is computed.
@@ -121,8 +131,9 @@ so both action cache identity and runtime access remain session-specific.
 ## Fingerprint and concurrency limit
 
 The prototype fingerprints the logical PostgreSQL contents with a deterministic plain `pg_dump`
-projection that excludes ownership and privileges. The same client version and flags are used at
-branch and promotion. This detects schema and row changes without installing triggers or extensions
+projection that excludes ownership and privileges and removes PostgreSQL 17's randomized
+`\\restrict` guards. The same client version and flags are used at branch and promotion. This
+detects schema and row changes without installing triggers or extensions
 in the user's database. The base must reject writes while the promotion fingerprint and rename
 sequence runs; otherwise a write after the comparison could be lost. The implementation obtains the
 database-level exclusion available to the configured administrative role and refuses promotion when
@@ -141,4 +152,3 @@ conservative refusal.
 - External services reached by the application outside a declared database URL.
 - The agent delegation/session model; this design consumes its session ID.
 - Managed data services owned by lake or the Orama operator.
-

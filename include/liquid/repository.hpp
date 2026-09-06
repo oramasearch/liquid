@@ -15,6 +15,7 @@
 
 #include "liquid/abi.hpp"
 #include "liquid/build.hpp"
+#include "liquid/data.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/frontend.hpp"
@@ -27,21 +28,13 @@ namespace liquid {
 
 namespace repository_detail {
 struct build_access;
+struct data_access;
 struct search_access;
 struct testing;
 struct vfs_access;
 struct git_access;
 struct sync_access;
 } // namespace repository_detail
-
-struct LIQUID_EXPORT session_id {
-    std::array<std::byte, 16> bytes{};
-
-    auto operator==(const session_id&) const -> bool = default;
-};
-
-[[nodiscard]] LIQUID_EXPORT std::string to_string(const session_id& value);
-[[nodiscard]] LIQUID_EXPORT result<session_id> parse_session_id(std::string_view text);
 
 enum class encryption_mode : std::uint8_t { leaf, file };
 
@@ -121,6 +114,7 @@ struct LIQUID_EXPORT repository_options {
     policy_config policy{};
     retention_config retention{};
     std::optional<remote_config> remote;
+    data_config data{};
     std::optional<session_id> session;
 };
 
@@ -174,6 +168,7 @@ struct LIQUID_EXPORT repository_status {
     std::vector<std::string> oversized_directories;
     std::optional<change_id> head;
     agents_config agents;
+    std::vector<data_branch_record> data_branches;
 };
 
 struct LIQUID_EXPORT snapshot {
@@ -484,6 +479,7 @@ private:
     redact_impl(std::string path, std::vector<std::byte> replacement, digest target);
 
     friend struct repository_detail::build_access;
+    friend struct repository_detail::data_access;
     friend struct repository_detail::search_access;
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;

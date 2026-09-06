@@ -170,6 +170,13 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > atomic manifest replacement makes the whole change visible at once. Identical blobs are indexed
 > once even when several paths refer to them. Named refs use snapshot-specific index slots.
 
+> **Agent application-data branching is implemented for PostgreSQL template copies.** Persisted
+> declarations create one isolated branch per session, guarded promotion refuses a changed base,
+> discard removes disposable data, and status plus `liquid data` expose the live lifecycle. A
+> session-scoped `wrap` receives branch URLs in a network-enabled sandbox. The reflink capability
+> selector is implemented; local cluster control metadata remains required for that lifecycle fast
+> path.
+
 ## Where this sits
 
 liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module of

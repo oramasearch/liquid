@@ -12,8 +12,8 @@ on each desktop platform.
 
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
-| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, Autoconf, Automake, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount scenario, `liquid version` |
-| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, CMake 3.28 or newer, Ninja | Configure, build, CTest, `liquid version` |
+| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, PostgreSQL server/client, Autoconf, Automake, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount and PostgreSQL data-branch scenarios, `liquid version` |
+| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario, `liquid version` |
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 
@@ -59,18 +59,29 @@ Hosted CI cannot build while the org submodule token is missing, and macOS build
 classes of Linux difference: libc++ supplies some standard headers transitively where libstdc++
 does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
 `std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same
-toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3, Autoconf,
-Automake). Build it once
+toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3, PostgreSQL,
+Autoconf, Automake). Build it once
 and run the whole suite against a worktree; `--privileged` with `/dev/fuse` lets the mount and
 sandbox tests run for real:
 
 ```sh
 docker build -t liquid-linux-ci tools/linux-ci
 docker run --rm --privileged --device /dev/fuse -v "$PWD":/src -w /src liquid-linux-ci \
-  bash -c 'cmake -S . -B build-linux -G Ninja && cmake --build build-linux -- -k 0 \
+  bash -c 'pg_version=$(ls /etc/postgresql | sort -Vr | head -1) \
+           && pg_ctlcluster "$pg_version" main start \
+           && runuser -u postgres -- psql -c "ALTER USER postgres PASSWORD '\''liquid'\''" \
+           && export LIQUID_TEST_POSTGRES_URL=postgresql://postgres:liquid@127.0.0.1:5432/postgres \
+           && cmake -S . -B build-linux -G Ninja && cmake --build build-linux -- -k 0 \
            && ctest --test-dir build-linux --output-on-failure --timeout 600 \
                     -LE "large|sim-long|realworld"'
 ```
+
+`DataBranch.isolates_discards_promotes_and_refuses_a_changed_base` starts a private cluster on a
+reserved loopback port when the test process is not root. The root-run Linux image starts its
+packaged cluster explicitly and supplies `LIQUID_TEST_POSTGRES_URL` as above. The test reports its
+missing server/client prerequisite when neither route exists; Windows records the documented
+unsupported skip. `DataBranch.automatic_mechanism_checks_reflink_support_and_cluster_eligibility`
+runs on every platform and exercises the filesystem probe without requiring PostgreSQL.
 
 The included `consumer-project-build` is the installed-package proof; run it alone with:
 

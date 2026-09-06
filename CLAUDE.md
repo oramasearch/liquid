@@ -72,6 +72,10 @@ publication, per-drip search fan-out target, public working/ref query API, and `
 Liquid #67 adds measured selection among BM25F, verified trigrams, and parallel mapped scans,
 cursor-based stale-index exclusion, common located hit records, the public executed-plan API, and
 `liquid search --explain`.
+Liquid #87 adds persisted PostgreSQL application-database declarations, isolated template-copy
+branches per session, guarded promote/discard, live-branch status and CLI commands, and
+session-scoped branch URLs in network-enabled wrapper sandboxes. The reflink capability selector
+is implemented; local cluster control metadata remains required for that lifecycle fast path.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.

@@ -57,6 +57,7 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto data(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
@@ -85,6 +86,11 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"data",
+     "data <branch|list|discard|promote> ...",
+     "manage session database branches",
+     "available with PostgreSQL client tools",
+     liquid_cli::data},
     {"write",
      "write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... "
      "[--on-stale refuse|disjoint|force]",

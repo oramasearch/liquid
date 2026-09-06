@@ -236,6 +236,11 @@ and `TMPDIR` to sandbox-private directories, `LANG=C.UTF-8`, `TZ=UTC`, `SOURCE_D
 from the change's time, nothing inherited). The sandbox definition (the mount layout, the
 environment, the enforcement profile) is itself a record and its digest is in the action, so
 two machines with different sandbox definitions never share a cache entry by accident.
+When `wrap_options::session` names a session, the wrapper opens the working-tree repository and
+adds every configured application database's declared environment key with that session's branch
+URL. It refuses an absent branch before launch. These additions are part of action identity, and
+their presence selects the network-enabled sandbox definition needed to reach PostgreSQL. A wrap
+without session data remains network-denied.
 On Linux, optional `etc`, `lib`, and `lib64` directories from that same toolchain are mounted at
 their conventional absolute paths for dynamic executables and compiler driver configuration; no
 worker-image runtime file is exposed.
@@ -541,6 +546,11 @@ belongs below it; this leaves compiler, linker, and configure probes as the boun
 driver remains the outer action. FUSE shutdown must wake the request loop through a fresh lookup,
 because an attribute lookup of the mount root can be answered from the kernel cache without waking
 the blocked worker.
+
+PostgreSQL branch management is a distinct sandboxed action path described in
+[data-branching.md](data-branching.md). It content-addresses and materialises the selected client
+program and its dynamic-library closure, retains the same minimal process environment, and enables
+network access only for that management action. libliquid does not link a database client library.
 
 ### Configure fact base
 
