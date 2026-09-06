@@ -54,7 +54,10 @@ decoders, exact Tier 1 repack, deterministic tar writing, volatile fields, malfo
 nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
-file writes, and key diffs.
+file writes, key diffs, v1/v2/v3 wrapped-key compatibility, age specification vectors, Shamir
+quorums, local and remote provider round trips, request authentication, and every ordered
+cross-provider rewrap with unchanged pack bytes. The remote provider doubles bind only to loopback
+and make no external requests.
 
 Repository tests cover persisted operation records and their public newest-first view, operation
 undo for writes, imported batches, records, and locks, skipped newer state, two-replica local

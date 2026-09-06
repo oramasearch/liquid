@@ -37,3 +37,7 @@ applied, and fetched file digests.
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
 identity encode, decode, and verification APIs.
+
+`cli-keys` creates an encrypted store through `store_options::custody`, then drives `keys show`,
+`rotate`, `revoke`, `rewrap`, and `split`. It checks the rotation disclosures, the one-line mutation
+reports, all emitted Shamir shares, and the final persisted custody kind.

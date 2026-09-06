@@ -54,6 +54,10 @@ directly.
 `delta.cpp` implements create, digest-checked apply, and fetch through the public delta API. A
 fetch can hydrate a patch or target registered with the store's configured remote sources.
 
+`keys.cpp` implements custody inspection, rewrap, data-key rotation, version revocation, and
+Shamir splitting entirely through the public keyring API. Credentials remain in provider-specific
+environment variables; command arguments contain only public custody URIs.
+
 `search.cpp` starts or attaches to the checkout daemon, parses optional ref, result-limit, and
 `--explain` selectors, and calls `repository::search` or `repository::plan_search`. Results include
 optional score and located path coordinates. Explain mode prints stable JSON with chosen and
