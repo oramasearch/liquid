@@ -50,6 +50,7 @@ that the table and `liquid --help` name the same commands.
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
@@ -121,6 +122,21 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+## Key custody
+
+`keys show [key-id]` prints one line per held or revoked data-key version. `keys rewrap <key-id>
+--to <custody-uri>` moves all held versions to another provider without touching pack files.
+`keys rotate <key-id>` creates the next data-key version and prints the version transition followed
+by the three encryption disclosure statements. `keys revoke <key-id> <version>` removes local
+custody for that version. `keys split <key-id> --threshold <k> --shares <n>` moves the held versions
+under a random Shamir KEK and prints the `n` shares once.
+
+Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
+`aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
+`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+shares are supplied through the environment described in
+[the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
 
 `write` is the scripted-agent file path. `--base` names the change the caller read and may append
 the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read

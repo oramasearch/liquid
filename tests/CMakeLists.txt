@@ -243,6 +243,14 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
+  target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-keys
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_KEYS_FIXTURE=$<TARGET_FILE:liquid-keys-cli-fixture>
+      -DLIQUID_KEYS_ROOT=${CMAKE_CURRENT_BINARY_DIR}/keys-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/keys.cmake)
   add_test(NAME cli-sbom-spdx
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --spdx)
   set_tests_properties(cli-sbom-spdx PROPERTIES

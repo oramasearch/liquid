@@ -33,6 +33,7 @@ auto history_operations(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
+auto keys(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
@@ -192,6 +193,11 @@ constexpr auto commands = std::to_array<command>({
      "show or rotate the device identity",
      "available",
      liquid_cli::identity},
+    {"keys",
+     "keys <show|rewrap|rotate|revoke|split> ...",
+     "inspect and manage data-key custody",
+     "available",
+     liquid_cli::keys},
     {"attest",
      "attest <show|verify> <digest>",
      "show or verify an attestation",

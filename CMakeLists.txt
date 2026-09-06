@@ -541,6 +541,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/git.cpp
     src/cli/history.cpp
     src/cli/identity.cpp
+    src/cli/keys.cpp
     src/cli/locks.cpp
     src/cli/policy.cpp
     src/cli/provenance.cpp
