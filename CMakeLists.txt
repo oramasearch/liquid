@@ -417,6 +417,7 @@ add_library(libliquid
   src/reapi/messages.cpp
   src/reapi/remote_client.cpp
   src/reapi/server.cpp
+  src/serve/http.cpp
   src/workers/protocol.cpp
   src/workers/control.cpp
   src/workers/scheduler.cpp
