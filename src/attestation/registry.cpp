@@ -184,6 +184,8 @@ attestation_profile_registry::attestation_profile_registry()
                 profile("projection/1",
                         {field("target", attestation_field_type::text, true),
                          field("source_result", attestation_field_type::text_list, true),
+                         field("base_tree", attestation_field_type::text, false, true),
+                         field("overlay_tree", attestation_field_type::text_list, false, true),
                          field("normalisation", attestation_field_type::text, true),
                          field("tool", attestation_field_type::text, true)},
                         {attestation_subject_kind::artifact},

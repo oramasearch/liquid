@@ -16,6 +16,7 @@ auto set_executable(std::filesystem::path path) -> void;
 auto frontend_module_path(bool compiler) -> std::filesystem::path;
 
 auto repo_init(int argc, char** argv) -> int;
+auto clone(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
 auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
@@ -75,6 +76,7 @@ auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto secret(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto inspect(int argc, char** argv) -> int;
 auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
@@ -84,6 +86,9 @@ auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
+auto tiers(int argc, char** argv) -> int;
+auto registry(int argc, char** argv) -> int;
+auto blame(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -95,6 +100,12 @@ using liquid_cli::flag;
 
 constexpr auto flag_json = std::to_array<flag>({
     {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_tiers = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--markdown", {}, "Write generated Markdown tables.", "false"},
+    {"--language", "<name>", "Limit language rows to this name.", "all languages"},
+    {"--format", "<name>", "Limit format rows to this name.", "all formats"},
 });
 constexpr auto flags_diff = std::to_array<flag>({
     {"--text", {}, "Include textual line-difference details.", "false"},
@@ -145,12 +156,21 @@ constexpr auto flags_drive = std::to_array<flag>({
     {"--watch", {}, "Continue synchronizing after the first successful transfer.", "false"},
 });
 constexpr auto flags_project = std::to_array<flag>({
-    {"--name", "<name>", "Set the package, image, or chart name.", "required"},
-    {"--version", "<version>", "Set the package, image, or chart version.", "required"},
+    {"--name", "<name>", "Set the projected artifact name.", "liquid-os for OS targets"},
+    {"--version",
+     "<version>",
+     "Set the projected artifact version.",
+     "commit epoch for OS targets"},
     {"--arch", "<arch>", "Set the target architecture.", "source architecture"},
     {"--out", "<dir>", "Write projected artifacts below this directory.", "projection"},
     {"--depends", "<dependency>", "Declare a package dependency; repeatable.", "none"},
     {"--service", "<value>", "Add a Helm service declaration; repeatable.", "none"},
+    {"--ref", "<name>", "Set the OSTree ref.", "required for OS targets"},
+    {"--overlay",
+     "[path=]<tree>",
+     "Overlay a tree at an optional relative path; repeatable.",
+     "none"},
+    {"--mode", "<archive-z2|bare-user>", "Select the OSTree repository mode.", "archive-z2"},
     {"--compat-gzip", {}, "Use gzip-compatible package compression.", "false"},
     {"--allow-abi-break", {}, "Permit an incompatible ABI projection.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
@@ -402,6 +422,16 @@ constexpr auto commands = std::to_array<command>({
      information_exit,
      argument_policy::ordinary,
      nullptr},
+    {"tiers",
+     "tiers [--json|--markdown] [--language <name>|--format <name>]",
+     "print declared language, format, and platform support",
+     "available",
+     flags_tiers,
+     "Report support tiers derived from the registered languages, formats, and host platforms.",
+     "liquid tiers --markdown",
+     information_exit,
+     argument_policy::ordinary,
+     liquid_cli::tiers},
     {"init",
      "init [path]",
      "create a repository and import its regular files",
@@ -412,6 +442,18 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_init},
+    {"clone",
+     "clone <url|drive-folder> [<dir>] [--json]",
+     "clone and materialize a repository",
+     "available",
+     flag_json,
+     "Create a repository from a sync endpoint or configured drive folder, persist its remote, "
+     "and materialize every file.",
+     "liquid clone https://lake.example.invalid/repositories/example ./example --json",
+     "0 on success, 1 when authorization, repository lookup, target validation, or transfer "
+     "fails, and 2 for invalid usage.",
+     argument_policy::ordinary,
+     liquid_cli::clone},
     {"status",
      "status [--json]",
      "show repository status",
@@ -486,13 +528,16 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::config},
     {"project",
-     "project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> "
+     "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
+     "<result|tree> [--overlay [path=]<tree>] "
+     "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
-     "project a build into an installable package, image, or chart",
+     "project a build into an installable package, commit, image, or chart",
      "available",
      flags_project,
-     "Project a recorded build result or install tree into an OCI image, package, or Helm chart.",
+     "Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or "
+     "bundled-runtime artifact.",
      "liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json",
      normal_exit,
      argument_policy::ordinary,
@@ -550,6 +595,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::path_history},
+    {"blame",
+     "blame <path> [--json]",
+     "show the session and change that last wrote each line",
+     "available on macOS and Linux",
+     flag_json,
+     "Show per-line operation attribution for a path at the current change.",
+     "liquid blame src/main.cpp --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::blame},
     {"drive",
      "drive <sync <folder> <remote> [--watch]|status [folder]|pin <path>|unpin <path>>",
      "synchronize a drive folder",
@@ -560,6 +615,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::drive},
+    {"registry",
+     "registry trust <pin <root.json>|show>",
+     "manage artifact-registry trust",
+     "available",
+     {},
+     "Pin a trusted TUF root or inspect the root currently trusted by this repository.",
+     "liquid registry trust show",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::registry},
     {"push",
      "push [--atomic] <url>",
      "push repository changes and objects",
@@ -766,8 +831,9 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::garbage_collect},
     {"import",
-     "import <path> | import git <path>",
-     "import a local tree or Git repository",
+     "import <path> | import git <path> | import spack <export.json> --into <repository> "
+     "[--report] [--json] | import spack --report [--into <repository>] [--json]",
+     "import a local tree, Git repository, or Spack package universe",
      "available",
      {},
      "Import reachable local Git history with its identity mapping.",
@@ -916,6 +982,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::abi},
+    {"inspect",
+     "inspect <path|digest> [--json]",
+     "explain a recognised artifact",
+     "available",
+     flag_json,
+     "Show the codec, fidelity tier, and decoded entry tree for an artifact path or stored blob.",
+     "liquid inspect artifact.whl --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::inspect},
     {"symbols",
      "symbols <path>",
      "show compiler or syntactic symbols for a source path",

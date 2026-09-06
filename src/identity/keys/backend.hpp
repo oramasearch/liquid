@@ -27,8 +27,7 @@ public:
     [[nodiscard]] virtual std::string_view custody() const noexcept = 0;
     [[nodiscard]] virtual std::span<const std::byte> public_key() const noexcept = 0;
     [[nodiscard]] virtual std::vector<std::byte> descriptor() const = 0;
-    [[nodiscard]] virtual runtime::task<backend_signature>
-    sign(std::vector<std::byte> input) = 0;
+    [[nodiscard]] virtual runtime::task<backend_signature> sign(std::vector<std::byte> input) = 0;
 };
 
 class fido2_transport {
@@ -49,13 +48,13 @@ public:
 [[nodiscard]] auto make_software_backend(std::span<const std::byte> secret)
     -> result<std::unique_ptr<key_backend>>;
 [[nodiscard]] auto make_fido2_backend() -> runtime::task<std::unique_ptr<key_backend>>;
-[[nodiscard]] auto make_piv_backend(std::string slot) -> runtime::task<std::unique_ptr<key_backend>>;
+[[nodiscard]] auto make_piv_backend(std::string slot)
+    -> runtime::task<std::unique_ptr<key_backend>>;
 [[nodiscard]] auto operating_system_fido2_transport() -> std::shared_ptr<fido2_transport>;
-[[nodiscard]] auto open_hardware_backend(std::string custody,
-                                         std::span<const std::byte> descriptor)
+[[nodiscard]] auto open_hardware_backend(std::string custody, std::span<const std::byte> descriptor)
     -> result<std::unique_ptr<key_backend>>;
 
-void install_fido2_transport(std::shared_ptr<fido2_transport> transport);
-void install_piv_transport(std::shared_ptr<piv_transport> transport);
+LIQUID_EXPORT void install_fido2_transport(std::shared_ptr<fido2_transport> transport);
+LIQUID_EXPORT void install_piv_transport(std::shared_ptr<piv_transport> transport);
 
 } // namespace liquid::identity_detail

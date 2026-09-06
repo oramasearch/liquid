@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #if defined(__linux__)
@@ -123,12 +124,39 @@ static int fail_recorded(const char* destination) {
     return 37;
 }
 
+static int install_imported(void) {
+    static const char contents[] = "imported package\n";
+    int output;
+    if (mkdir("out", 0755) != 0 && access("out", F_OK) != 0) {
+        return 2;
+    }
+    if (mkdir("out/prefix", 0755) != 0 && access("out/prefix", F_OK) != 0) {
+        return 3;
+    }
+    if (mkdir("out/prefix/lib", 0755) != 0 && access("out/prefix/lib", F_OK) != 0) {
+        return 4;
+    }
+    output = open("out/prefix/lib/imported.txt", O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (output < 0) {
+        return 5;
+    }
+    if (write(output, contents, sizeof(contents) - 1) != (ssize_t)(sizeof(contents) - 1)) {
+        close(output);
+        return 6;
+    }
+    close(output);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         return 64;
     }
     if (strcmp(argv[1], "copy") == 0 && argc == 4) {
         return copy_file(argv[2], argv[3]);
+    }
+    if (strcmp(argv[1], "-c") == 0 && argc == 3) {
+        return install_imported();
     }
     if (strcmp(argv[1], "copy-tagged") == 0 && argc == 4) {
         return copy_tagged(argv[2], argv[3]);

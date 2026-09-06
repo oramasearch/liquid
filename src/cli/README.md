@@ -48,6 +48,15 @@ repository storage or file contents.
 `diff.cpp` resolves each operand as a ref or change digest and calls public repository diff.
 `--text` opts into line hunks, `--formats` prints codec-tier container trees, an optional path
 filters the result, and `--json` emits the same nested values for tools.
+`tier.cpp` owns the shared `tier: <n> (<mechanism>)` text line and JSON object used by commands that
+degrade. `tiers.cpp` loads installed frontend modules, calls the pure public support-matrix API,
+filters language or format rows, and renders stable text, JSON, or the generated Markdown blocks.
+Diff, symbols, archive search, and wrap use the shared projection; #68, #69, and #70 must reuse it
+when their richer command paths land.
+
+`inspect.cpp` resolves a regular file or repository blob digest through public APIs, identifies its
+format codec, and prints the codec tier plus the decoded entry tree. Its JSON projection is stable
+and includes entry size, kind, and opaque-reader reason.
 
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
@@ -61,9 +70,13 @@ The same command group implements `replay`: it parses an action or result plus `
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
 `sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
 API, and uses the public foreign-binary path only when no producing result exists.
-`project.cpp` parses package, OCI, and Helm requests, distinguishes stored results from bare tree
-digests, calls the public projection task, and prints text or stable JSON reports. It does not read
-package writers or repository internals.
+`project.cpp` parses native-package, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap
+requests, distinguishes stored results from bare tree digests, calls the public projection task,
+and prints text or stable JSON reports. It does not read package writers or repository internals.
+`project.cpp` parses package, OCI, Helm, OSTree, and bootc requests, distinguishes stored results
+from bare tree digests, collects path-mounted overlay trees, reads `SOURCE_DATE_EPOCH`, and prints
+the commit checksum plus text or stable JSON reports. It does not read format writers or repository
+internals.
 `abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
 the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
 
@@ -90,6 +103,10 @@ by dependency; conflict and package-choice explanations use the stable library f
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`clone.cpp` resolves either a sync URL or a configured drive folder, refuses a non-empty target,
+and composes `drive_client::open`, root pinning, and one synchronization. This adopts the remote
+repository identity, retains the remote configuration, and fully materializes the plain checkout.
+It passes `LIQUID_TOKEN` without storing it and prints either the landing path or stable JSON.
 `deploy.cpp` implements deployment creation, listing, rollback, and status through the public
 deployment API. It resolves the operator control-plane URL from `--control`, `LIQUID_CONTROL_PLANE`,
 or persisted repository configuration, and passes `LIQUID_TOKEN` only as a bearer credential.
@@ -119,7 +136,14 @@ one-shot reconciliation. It also prints pending uploads, hydration debt, path av
 offline reasons; `pin` and `unpin` resolve the containing drive and call the public state API.
 `vfs.cpp` passes `LIQUID_TOKEN` to mounts that hydrate through a persisted drive endpoint. Both
 long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
-restores one as an ordinary repository drip through the public repository API.
+restores one as an ordinary repository drip through the public repository API. `blame.cpp`
+resolves the current head and asks the attached daemon for public per-line attribution records.
+Its text and JSON renderers expose line, change, session, actor, agent marker, and text without
+reading repository internals.
+
+`registry.cpp` implements `registry trust pin` and `registry trust show` through the public TUF
+client. It stores the exact trusted-root bytes and their SHA-256 pin in repository configuration;
+it does not implement artifact transport.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
@@ -127,6 +151,9 @@ The public command table, replay output contract, and user-facing examples live 
 `configuration.cpp` implements `config check`, `config lower`, `config format`, and the
 configuration-backed `build --target` path entirely through the public configuration and repository
 APIs. Generator execution remains an ordinary library build action.
+`git.cpp` also implements `import spack`: it parses the export, destination, report, and JSON
+selectors, calls the public import task, and can render a previously saved report without repeating
+the import.
 
 `history.cpp` implements `ops` through the public operation-log API. Its JSON form includes the
 operation session. `repo.cpp` implements `log --ops` through the signed drip API. Undo accepts one

@@ -7,7 +7,9 @@ Each command page is generated from the same metadata used to validate flags and
 | Command | Summary | Availability |
 |---|---|---|
 | [`version`](version.md) | print the version | available |
+| [`tiers`](tiers.md) | print declared language, format, and platform support | available |
 | [`init`](init.md) | create a repository and import its regular files | available |
+| [`clone`](clone.md) | clone and materialize a repository | available |
 | [`status`](status.md) | show repository status | available |
 | [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |
 | [`write`](write.md) | write a file from a stated base | available |
@@ -15,13 +17,15 @@ Each command page is generated from the same metadata used to validate flags and
 | [`search`](search.md) | search paths and contents | available |
 | [`resolve`](resolve.md) | concretise package specifications | available |
 | [`config`](config.md) | check, lower, or format .liquid configuration | available |
-| [`project`](project.md) | project a build into an installable package, image, or chart | available |
+| [`project`](project.md) | project a build into an installable package, commit, image, or chart | available |
 | [`log`](log.md) | show or verify change, signed drip, timestamp, or transparency-log history | available |
 | [`cut`](cut.md) | cut the working change | available |
 | [`refs`](refs.md) | list repository references | available |
 | [`diff`](diff.md) | compare changes and supported container formats | available |
 | [`history`](history.md) | show or restore path history | available |
+| [`blame`](blame.md) | show the session and change that last wrote each line | available on macOS and Linux |
 | [`drive`](drive.md) | synchronize a drive folder | available |
+| [`registry`](registry.md) | manage artifact-registry trust | available |
 | [`push`](push.md) | push repository changes and objects | available |
 | [`pull`](pull.md) | pull repository changes and objects | available |
 | [`review`](review.md) | review a lake change in place | available |
@@ -42,7 +46,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`mount`](mount.md) | mount a lazy working tree | available where FUSE is available |
 | [`materialise`](materialise.md) | write a full working tree | available |
 | [`gc`](gc.md) | checkpoint and collect a repository | available |
-| [`import`](import.md) | import a local tree or Git repository | available |
+| [`import`](import.md) | import a local tree, Git repository, or Spack package universe | available |
 | [`export`](export.md) | export as a Git repository | available |
 | [`retain`](retain.md) | explain retention for an object | available |
 | [`identity`](identity.md) | show or rotate the device identity | available |
@@ -57,6 +61,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`policy`](policy.md) | check or explain build-input policy | available |
 | [`sbom`](sbom.md) | print a derived or explicitly inferred SBOM | available |
 | [`abi`](abi.md) | show or compare library ABIs | available |
+| [`inspect`](inspect.md) | explain a recognised artifact | available |
 | [`symbols`](symbols.md) | show compiler or syntactic symbols for a source path | available |
 | [`hot-update`](hot-update.md) | classify, apply, or inspect runtime updates | available on macOS arm64 and Linux x86_64 |
 | [`secret`](secret.md) | fetch, seal, or unseal a Lake environment secret | available |

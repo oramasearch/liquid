@@ -22,14 +22,25 @@ It maps an anchor from the imported change through a later rename and checks the
 flags.
 It lists history through that rename, restores the imported version as a new drip, and cuts the
 restoration without changing an earlier change.
+`blame.cmake` creates a two-line repository and verifies both the versioned JSON attribution object
+and the line-oriented text form through the daemon-backed command.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 
 `format-diff.cmake` creates two changes through the public repository API and proves that
-`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and tier.
+`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and the
+shared tier line. It also pins Tier 0 text fallback, the JSON tier object, and a Tier 3 opaque
+archive-search result.
+
+`inspect.cmake` runs `liquid inspect --json` twice against a ZIP fixture and verifies that its
+codec identification and JSON projection are stable.
 
 `symbols-python.cmake` creates a Python source file and proves `liquid symbols` selects the locked
-Python grammar and reports `origin=syntactic`.
+Python grammar and reports its Tier 2 digest plus `origin=syntactic`.
+
+`tiers-docs.cmake` compares the two generated feature blocks with `liquid tiers --markdown`.
+`tiers-json.cmake` pins stable full output and filtered C++ and ZIP rows. `wrap-tier.cmake` requires
+the wrapper to name the host sandbox even when the backend is unavailable.
 
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.

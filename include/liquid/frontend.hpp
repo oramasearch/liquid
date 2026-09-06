@@ -133,6 +133,7 @@ struct LIQUID_EXPORT frontend_language {
     std::vector<std::string> extensions;
     frontend_tier_mechanism tier_mechanism{frontend_tier_mechanism::frontend};
     std::string grammar_digest;
+    std::string module;
 };
 
 [[nodiscard]] LIQUID_EXPORT auto encode_symbols(const symbol_record& value)
@@ -201,6 +202,8 @@ public:
     auto operator=(frontend_registry&&) noexcept -> frontend_registry&;
     frontend_registry(const frontend_registry&) = delete;
     auto operator=(const frontend_registry&) -> frontend_registry& = delete;
+
+    [[nodiscard]] static auto global() -> frontend_registry&;
 
     auto add(frontend_module module) -> result<void>;
     auto load(std::filesystem::path shared_object) -> result<void>;

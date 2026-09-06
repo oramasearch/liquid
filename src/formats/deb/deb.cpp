@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <map>
 
 #include <zstd.h>
 
+#include "formats/ar/ar.hpp"
 #include "formats/deflate/deflate.hpp"
 #include "liquid/format.hpp"
 
@@ -20,7 +20,7 @@ void field(std::vector<std::byte>& output, std::string value, std::size_t width)
                   reinterpret_cast<const std::byte*>(value.data() + width));
 }
 
-auto ar(std::span<const std::pair<std::string, std::vector<std::byte>>> members)
+auto write_ar(std::span<const std::pair<std::string, std::vector<std::byte>>> members)
     -> result<std::vector<std::byte>> {
     auto output = package::text_bytes("!<arch>\n");
     for (const auto& [name, bytes] : members) {
@@ -136,33 +136,17 @@ result<std::vector<std::byte>> write(const package_metadata& metadata,
         std::array{std::pair{std::string{"debian-binary"}, package::text_bytes("2.0\n")},
                    std::pair{std::move(control_name), std::move(control_bytes)},
                    std::pair{std::move(data_name), std::move(data_bytes)}};
-    return ar(members);
+    return write_ar(members);
 }
 
 result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_output) {
-    if (bytes.size() < 8 ||
-        std::string_view{reinterpret_cast<const char*>(bytes.data()), 8} != "!<arch>\n") {
-        return std::unexpected(error{errc::corrupt, "invalid ar magic", "deb"});
+    auto ar_members = ar::read(bytes);
+    if (!ar_members) {
+        return std::unexpected(ar_members.error());
     }
     auto members = std::map<std::string, std::vector<std::byte>>{};
-    auto offset = std::size_t{8};
-    while (offset < bytes.size()) {
-        if (bytes.size() - offset < 60) {
-            return std::unexpected(error{errc::corrupt, "truncated ar header", "deb"});
-        }
-        auto name = std::string{reinterpret_cast<const char*>(bytes.data() + offset), 16};
-        name.erase(name.find_last_not_of(" / ") + 1);
-        auto size_text =
-            std::string_view{reinterpret_cast<const char*>(bytes.data() + offset + 48), 10};
-        auto size = std::size_t{};
-        const auto [end, code] =
-            std::from_chars(size_text.data(), size_text.data() + size_text.size(), size);
-        if (code != std::errc{} || end == size_text.data() || size > bytes.size() - offset - 60) {
-            return std::unexpected(error{errc::corrupt, "invalid ar member size", "deb"});
-        }
-        members[name] = {bytes.begin() + static_cast<std::ptrdiff_t>(offset + 60),
-                         bytes.begin() + static_cast<std::ptrdiff_t>(offset + 60 + size)};
-        offset += 60 + size + size % 2;
+    for (auto& member : *ar_members) {
+        members.emplace(std::move(member.name), std::move(member.bytes));
     }
     const auto gzip = members.contains("control.tar.gz") && members.contains("data.tar.gz");
     const auto zstd = members.contains("control.tar.zst") && members.contains("data.tar.zst");
@@ -204,6 +188,8 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
     for (const auto& entry : data_tree->entries) {
         output.files.push_back(entry.path);
     }
+    output.control_entries = std::move(control_tree->entries);
+    output.data_entries = std::move(data_tree->entries);
     return output;
 }
 

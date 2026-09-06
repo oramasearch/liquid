@@ -1,21 +1,36 @@
 # liquid
 
-**A version control system, build system, package manager, artifact service and
-runtime — in one program.**
+liquid is a content-addressed, coroutine-native version control system and build system in one
+program. One chunk store holds source, binaries, packages, images, search indexes and encrypted
+data. One dependency graph of pure actions builds, packages, indexes and deploys from that store;
+the sandbox observes what each action reads rather than trusting a declaration, and outputs are
+content-addressed, so a rebuild that produces identical bytes stops the cascade. Every write to
+disk is captured as a signed drip, and nothing is materialised until it is read. On top of the
+store sit the incremental query graph, dependency resolution with liquid's own solver, and
+projection of one checked install tree to native packages, ecosystem recipes, images, and bundled
+runtime formats. The premise, the vocabulary, the design axioms and what liquid must do are stated
+in [`docs/features/README.md`](docs/features/README.md).
 
-The name is the thesis: *software changes form*. Source becomes objects, objects
-become libraries, libraries become packages, packages become images, images become
-running processes. liquid moves a project along that chain in either direction,
-computing only the minimum delta at each step, distributing the work across many
-machines, with a cryptographic chain of custody throughout.
+liquid is the tool. [lake](docs/features/18-lake-service.md) is the hosted service where it
+collects, and [liquify](docs/features/21-liquify-ide.md) is the IDE. The repository is an Orama
+project and one module of
+[`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge), which holds the
+action plan.
 
-It aims to subsume the role of git, GitHub, Hugging Face, Spack, Nix, `docker build`,
-CMake, Autotools, ccache/sccache, remote build execution, an artifact registry, a code
-search engine, a PaaS, Dropbox, Clerk and Vault.
+## Status
 
-**[lake.live](docs/features/18-lake-service.md)** is the hosted expression of all of
-it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
-and Railway** over one content-addressed store, with identity, secrets and PKI.
+The Phase 1 store exit criterion is met: the chunk store, repositories, capture, identity,
+encryption, Git import and export, sync, clone, drive and the macOS/Linux checkout daemon are implemented
+inside libliquid. The Phase 2 build wrapper, cache, verification and provenance, the Phase 3
+encryption, Git import and export, sync, drive and the macOS/Linux checkout daemon are implemented
+inside libliquid, including private sessions, presence, leases, and per-line attribution. The
+Phase 2 build wrapper, cache, verification and provenance, the Phase 3
+remote blobs, replay and delta delivery, the Phase 4 query graph, daemon, search and structural
+edits, and the Phase 5 formats, projection, resolution and `.liquid` configuration are implemented
+as recorded in [`docs/library/status.md`](docs/library/status.md), which also lists the known
+limits. Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
+files. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client of
+it.
 
 > **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, pluggable KEK custody including TPM sealing with trust-domain data-key rotation and revision readability, TAAP/1 software/FIDO2/PIV identities with rotation, signed drips and changes, threshold release approval, local change capture, agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env` encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
@@ -80,6 +95,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > stable JSON, and installed man-page reference from that table. Executable guides cover an
 > existing wrapped build, a first repository and sync peer, and the current keys-and-encryption
 > boundary. CI renders the complete documentation tree as a downloadable static-site artifact.
+## Build and run
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
@@ -118,6 +134,11 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > refusals; apply verifies file digests, writes one drip per file, and records one attributed
 > operation for whole-edit undo. The bundled tree-sitter frontend now exposes concrete syntax, and
 > `liquid edit` previews or applies through the checkout daemon.
+> Liquid #71 adds the pure public support matrix derived from loaded frontend modules and registered
+> format codecs, with declared platform wrapper backends. C++ resolves to its Tier 3 compiler
+> frontend while the digest-locked grammar registry supplies Tier 2 rows. `liquid tiers` renders
+> stable text, JSON, and generated feature tables, and degraded command results name their actual
+> tier and mechanism.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
@@ -247,6 +268,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > to deterministic `.deb`, `.rpm`, `.apk`, OCI image layouts, and digest-pinned Helm charts.
 > Binary readers derive package relationships, incompatible ABI verdicts refuse by default, and
 > signed `projection/1`, source provenance, and SBOM statements accompany OCI artifacts.
+> **Phase 5 now includes the image-based OS projection.** A digest-pinned base tree and declared
+> overlays produce reproducible `archive-z2` or `bare-user` OSTree commits and component-layered
+> bootc OCI layouts. The commit checksum and image digest are distinct identities, and signed
+> `projection/1` evidence binds the image to its input trees. Booting it remains Phase 7.
 > **Phase 5 dependency resolution is implemented.** Canonical
 > `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
 > concrete dependencies, compiler and target constraints, conflicts, and patches. The public
@@ -261,6 +286,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > generators executed with signed provenance. `liquid config` checks, lowers, traces, and formats;
 > `liquid build --target` executes a lowered target through the existing action path and refuses
 > outputs that fail relocation publication.
+> **Phase 5 package-universe import is implemented for Spack.** A pinned Spack checkout exports
+> package metadata through Spack's API into one provenance-linked JSON document. `liquid import
+> spack` writes formatter-canonical `.liquid` documents and `package/1` records, pins digest-less
+> patches, and records translated fields and explicit losses in `import-report/1`. The committed
+> 500-package universe resolves the documented roots and explains an introduced HDF5 conflict;
+> ten imported targets exercise source-digest, configured-build, and relocation paths on Linux.
 
 ## Where this sits
 
@@ -291,6 +322,8 @@ and Zetta's.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/deploy.md`](docs/library/deploy.md) — operator control-plane deployment records, digest-pinned interim images, rollback, status, and contract boundary.
+- [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
+- [`docs/library/tuf.md`](docs/library/tuf.md) — TUF root bootstrap, metadata update verification, rollback protection, and target acceptance.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
 - [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.
@@ -317,6 +350,7 @@ and Zetta's.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
+- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, OSTree commits, bootc images, byte identity, and attached attestations.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, derived dependencies, byte identity, and attached attestations.
 - [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
@@ -334,6 +368,7 @@ and Zetta's.
 - [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 - [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, lowering, source verification, generators, and trace origins.
+- [`docs/library/import-spack.md`](docs/library/import-spack.md) — pinned Spack export, field mapping, explicit translation losses, the imported universe, and build subset.
 
 | | |
 |---|---|
@@ -446,43 +481,51 @@ fetch or build benchmark code.
 
 GitHub Actions builds and tests clean checkouts on Linux, macOS, and Windows; see
 [`docs/build/ci.md`](docs/build/ci.md) for the toolchains and coverage.
+liquid needs a modern Clang (Homebrew LLVM on macOS, `clang++-17` or newer on Linux), CMake 3.28
+or newer, Ninja, OpenSSL and zlib. Linux also needs libfuse3. On macOS, macFUSE is optional and
+enables lazy mounts and `liquid wrap`.
 
 ```sh
 git clone --recurse-submodules git@github.com:oramasearch/liquid.git
 cd liquid
-cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build
+```
+
+The static library is `build/libliquid.a` and the command-line binary is `build/liquid`. A first
+repository:
+
+```sh
 mkdir example && printf 'first\n' > example/readme.txt
 (cd example && ../build/liquid init . && ../build/liquid status --json && ../build/liquid cut "import")
-cmake --install build --prefix /opt/liquid        # bin/liquid, lib/libliquid.a, libexec/liquid/, include/liquid/, lib/cmake/liquid/
 ```
 
-Consume from CMake either way:
+`cmake --install build --prefix <prefix>` installs `bin/liquid`, `lib/libliquid.a`,
+`include/liquid/` and the CMake package. Prerequisites, options, the install layout and the
+documentation checks are in [`docs/build/local.md`](docs/build/local.md). Consuming the library
+from another CMake project is in [`docs/library/libliquid.md`](docs/library/libliquid.md).
 
-```cmake
-# as a submodule (what liquify does)
-set(LIQUID_BUILD_CLI OFF)
-add_subdirectory(modules/liquid EXCLUDE_FROM_ALL)
-target_link_libraries(app PRIVATE liquid::liquid)
+## Documentation
 
-# or from an install
-find_package(liquid CONFIG REQUIRED)
-target_link_libraries(app PRIVATE liquid::liquid)
-```
+[`docs/README.md`](docs/README.md) indexes every page. The most useful ones:
 
-Submodule consumers may define `Boost::capy` and `Boost::corosio` first; liquid reuses those targets
-instead of adding its vendored checkouts again. The exact tested revisions and minimum-pin rule are
-documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite installs the
-already-built package into a test-local prefix and builds a separate `find_package` consumer without
-rebuilding liquid or its dependencies.
+- [`docs/features/README.md`](docs/features/README.md): the premise, names, design axioms, what liquid must do, and the 25 feature areas.
+- [`docs/library/status.md`](docs/library/status.md): what is implemented today, by phase, and the known limits.
+- [`docs/library/api-map.md`](docs/library/api-map.md): the public headers of libliquid and the rules they obey.
+- [`docs/cli/README.md`](docs/cli/README.md) and [`docs/reference/cli/`](docs/reference/cli/): the command-line client and its generated reference.
+- [`docs/guides/`](docs/guides/): executable workflows for a first repository, a wrapped build, and keys and encryption.
+- [`docs/research/99-synthesis/`](docs/research/99-synthesis/): the argument in one place, drawn from the 27 research topics.
 
-## Implementation
+## Repository rules
 
-Modern **C++26**, cross-platform.
+[`CLAUDE.md`](CLAUDE.md) holds the repository rules: the vocabulary, the document structure, the
+checks to run before finishing, the recorded decisions, and the org conventions inherited from
+[`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge).
+[`AGENTS.md`](AGENTS.md) restates the non-negotiables for every agent.
 
-- **Datastore** — [`oramasearch/automerge-cpp`](https://github.com/oramasearch/automerge-cpp),
-  a from-scratch C++23 CRDT implementation, for the metadata and namespace layer.
-- **Search** — [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp)
-  (BM25F) for ranked full-text, plus a positional trigram index for code substring
-  and regex search.
+## Licence
 
-See **[docs/features/17-implementation.md](docs/features/17-implementation.md)**.
+liquid and liquify will be open source; the licence text is not yet chosen
+([liquid-bridge #2](https://github.com/oramasearch/liquid-bridge/issues/2)). Until then
+`oramasearch/liquid` is private. Third-party notices are in [`NOTICE`](NOTICE).

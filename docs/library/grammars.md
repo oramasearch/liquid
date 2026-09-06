@@ -24,6 +24,8 @@ them. A changed upstream tag, branch, archive, generated parser, scanner, or que
 The SHA-256 of the canonical lock is the grammar set identity. `liquid version --json` reports it,
 and syntactic `symbols/1` records carry it as `grammar`. This proves which reviewed parser set
 produced a derived record. Compiler-origin symbol records omit the field.
+`liquid tiers` loads this module and derives one Tier 2 row per locked grammar with that same digest;
+new lock entries therefore enter the generated matrix without a second inventory.
 
 ## Lock format and build controls
 
