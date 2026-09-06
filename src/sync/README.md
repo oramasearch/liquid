@@ -26,4 +26,8 @@ push and pull. The public types contain no transport implementation types.
 URLs, resolves and connects on the caller's Capy executor, supports content-length and chunked
 responses, supplies bearer authentication, validates or synthesizes legacy push outcomes, and
 composes metadata with the object session for push and pull. HTTP 429 responses become explicit
+`endpoint.cpp` is the repository-protocol adapter over the private HTTP/1.1 client in
+`src/http1/client.cpp`. The client owns URL parsing, Corosio connections, TLS, request and response
+framing, and bearer authentication. The sync adapter owns its media type, CBOR errors, endpoint
+paths, legacy push outcomes, and object-session composition. HTTP 429 responses become explicit
 retry fields in the public sync report. The public types contain no transport implementation types.

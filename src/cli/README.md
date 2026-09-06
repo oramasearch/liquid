@@ -77,6 +77,9 @@ byte, cursor, and per-ref outcome lines, and returns failure when any ref is ref
 `review.cpp` implements lake review listing, display, creation, anchored comments, state updates,
 branch protections, and the polling watch entirely through `forge_client`. It reads `LIQUID_TOKEN`
 for the bearer and pins both line-oriented text and JSON output without exposing the token.
+`secret.cpp` fetches Lake sealing keys, seals stdin or file values, emits canonical CBOR or base64,
+and performs local break-glass unsealing through the public secret API. Private-key files must be
+32 raw bytes with mode `0600` on POSIX systems; key and value bytes are never written to errors.
 `serve.cpp` implements `serve sync` with the public `sync_server` and the vendored
 `oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
 authorization callback and returns one verdict per update. Request handlers await library tasks on

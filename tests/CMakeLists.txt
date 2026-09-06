@@ -32,6 +32,7 @@ add_executable(liquid-tests
   test_repository.cpp
   test_stale_reasoning.cpp
   test_runtime.cpp
+  test_secret.cpp
   test_store.cpp
   test_temporary_directory.cpp
   test_transparency.cpp
@@ -115,6 +116,10 @@ if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
+add_executable(liquid-secret-fixture-generator EXCLUDE_FROM_ALL secret_fixture.cpp)
+target_include_directories(liquid-secret-fixture-generator PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-secret-fixture-generator PRIVATE liquid::liquid)
+
 foreach(ABI_FIXTURE IN ITEMS v1 added break)
   add_library(liquid-abi-fixture-${ABI_FIXTURE} SHARED
     build/abi_fixture_${ABI_FIXTURE}.c)
@@ -158,6 +163,8 @@ endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TLS_CERTIFICATE="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
   LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
+  LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
+target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
@@ -284,6 +291,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_DELTA_ROOT=${CMAKE_CURRENT_BINARY_DIR}/delta-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/delta.cmake)
+  add_test(NAME cli-secret
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_SECRET_ROOT=${CMAKE_CURRENT_BINARY_DIR}/secret-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/secret.cmake)
   add_executable(liquid-format-diff-fixture cli/format_diff_fixture.cpp)
   target_link_libraries(liquid-format-diff-fixture PRIVATE liquid::liquid)
   add_test(NAME cli-format-diff

@@ -3,21 +3,21 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
 
-#include <boost/http.hpp>
-#include <nlohmann/json.hpp>
-
-#include "http1/client.hpp"
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid::net_detail {
+
+enum class http_method {
+    get,
+    post,
+};
 
 struct parsed_url {
     bool tls{};
@@ -25,6 +25,20 @@ struct parsed_url {
     std::string port;
     std::string path;
     std::string origin;
+};
+
+struct http_request {
+    http_method method{};
+    parsed_url url;
+    std::string target;
+    std::string bearer;
+    std::string content_type;
+    std::vector<std::byte> body;
+};
+
+struct http_response {
+    unsigned status{};
+    std::vector<std::byte> body;
 };
 
 inline auto http_error(errc code, std::string message, std::string context = {}) -> error {
@@ -104,89 +118,7 @@ inline auto parse_url(std::string_view input, std::string_view context) -> resul
     return output;
 }
 
-inline auto perform_request(const parsed_url& url,
-                            std::string_view token,
-                            boost::http::method method,
-                            std::string target,
-                            std::string_view content_type,
-                            std::span<const std::byte> body,
-                            std::string context) -> runtime::task<http1::response> {
-    auto headers = std::vector<std::pair<std::string, std::string>>{};
-    if (!content_type.empty()) {
-        headers.emplace_back("Content-Type", std::string{content_type});
-    }
-    if (!token.empty()) {
-        headers.emplace_back("Authorization", "Bearer " + std::string{token});
-    }
-    auto response =
-        co_await http1::request({.url = url.origin,
-                                 .method = method == boost::http::method::get ? "GET" : "POST",
-                                 .suffix = std::move(target),
-                                 .headers = std::move(headers),
-                                 .body = {body.begin(), body.end()}});
-    if (!response) {
-        co_return std::unexpected(
-            http_error(response.error().code, response.error().message, std::move(context)));
-    }
-    co_return std::move(*response);
-}
-
-inline auto json_request(const parsed_url& url,
-                         std::string_view token,
-                         boost::http::method method,
-                         std::string target,
-                         const nlohmann::json& input,
-                         std::string context) -> runtime::task<nlohmann::json> {
-    auto encoded = std::string{};
-    if (method != boost::http::method::get) {
-        encoded = input.dump();
-    }
-    const auto* first = reinterpret_cast<const std::byte*>(encoded.data());
-    auto response = co_await perform_request(url,
-                                             token,
-                                             method,
-                                             std::move(target),
-                                             "application/json",
-                                             std::span{first, encoded.size()},
-                                             context);
-    if (!response) {
-        co_return std::unexpected(response.error());
-    }
-    try {
-        const auto text = std::string_view{reinterpret_cast<const char*>(response->body.data()),
-                                           response->body.size()};
-        auto envelope = nlohmann::json::parse(text);
-        if (!envelope.is_object() || !envelope.contains("ok") || !envelope.at("ok").is_boolean()) {
-            co_return std::unexpected(
-                http_error(errc::corrupt, "invalid JSON response envelope", std::move(context)));
-        }
-        if (envelope.at("ok").get<bool>()) {
-            if (!envelope.contains("value")) {
-                co_return std::unexpected(http_error(
-                    errc::corrupt, "successful JSON envelope has no value", std::move(context)));
-            }
-            co_return envelope.at("value");
-        }
-        const auto failure = envelope.value("error", nlohmann::json::object());
-        const auto code_name = failure.value("code", "internal");
-        auto code = errc::internal;
-        if (code_name == "invalid_input") {
-            code = errc::invalid_argument;
-        } else if (code_name == "unauthorized" || code_name == "mfa_required") {
-            code = errc::unauthorized;
-        } else if (code_name == "not_found") {
-            code = errc::not_found;
-        } else if (code_name == "conflict") {
-            code = errc::conflict;
-        } else if (code_name == "store_unavailable") {
-            code = errc::unavailable;
-        }
-        co_return std::unexpected(http_error(code,
-                                             failure.value("message", "lake request failed"),
-                                             failure.value("path", std::string{})));
-    } catch (const nlohmann::json::exception& exception) {
-        co_return std::unexpected(http_error(errc::corrupt, exception.what(), std::move(context)));
-    }
-}
+[[nodiscard]] auto request_target(const parsed_url& url, std::string_view suffix) -> std::string;
+[[nodiscard]] auto perform_request(http_request request) -> runtime::task<http_response>;
 
 } // namespace liquid::net_detail

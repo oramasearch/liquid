@@ -27,6 +27,67 @@ auto forge_error(errc code, std::string message, std::string context = {}) -> er
     return {code, std::move(message), std::move(context)};
 }
 
+auto json_request(const net_detail::parsed_url& url,
+                  std::string_view token,
+                  boost::http::method method,
+                  std::string target,
+                  const json& input,
+                  std::string context) -> runtime::task<json> {
+    auto encoded = std::string{};
+    if (method != boost::http::method::get) {
+        encoded = input.dump();
+    }
+    const auto* first = reinterpret_cast<const std::byte*>(encoded.data());
+    auto response = co_await net_detail::perform_request(net_detail::http_request{
+        .method = method == boost::http::method::get ? net_detail::http_method::get
+                                                     : net_detail::http_method::post,
+        .url = url,
+        .target = std::move(target),
+        .bearer = std::string{token},
+        .content_type = "application/json",
+        .body = {first, first + encoded.size()},
+    });
+    if (!response) {
+        co_return std::unexpected(
+            forge_error(response.error().code, response.error().message, std::move(context)));
+    }
+    try {
+        const auto text = std::string_view{reinterpret_cast<const char*>(response->body.data()),
+                                           response->body.size()};
+        auto envelope = json::parse(text);
+        if (!envelope.is_object() || !envelope.contains("ok") || !envelope.at("ok").is_boolean()) {
+            co_return std::unexpected(
+                forge_error(errc::corrupt, "invalid JSON response envelope", std::move(context)));
+        }
+        if (envelope.at("ok").get<bool>()) {
+            if (!envelope.contains("value")) {
+                co_return std::unexpected(
+                    forge_error(errc::corrupt, "successful JSON envelope has no value", context));
+            }
+            co_return envelope.at("value");
+        }
+        const auto failure = envelope.value("error", json::object());
+        const auto code_name = failure.value("code", "internal");
+        auto code = errc::internal;
+        if (code_name == "invalid_input") {
+            code = errc::invalid_argument;
+        } else if (code_name == "unauthorized" || code_name == "mfa_required") {
+            code = errc::unauthorized;
+        } else if (code_name == "not_found") {
+            code = errc::not_found;
+        } else if (code_name == "conflict") {
+            code = errc::conflict;
+        } else if (code_name == "store_unavailable") {
+            code = errc::unavailable;
+        }
+        co_return std::unexpected(forge_error(code,
+                                              failure.value("message", "lake request failed"),
+                                              failure.value("path", std::string{})));
+    } catch (const json::exception& exception) {
+        co_return std::unexpected(forge_error(errc::corrupt, exception.what(), std::move(context)));
+    }
+}
+
 auto state_name(forge_review_state state) -> std::string_view {
     switch (state) {
     case forge_review_state::open:
@@ -280,12 +341,12 @@ auto call(const endpoint& endpoint,
     if (method == boost::http::method::get) {
         target += "?repository_id=" + query_escape(endpoint.repository_id) + "&limit=1000";
     }
-    co_return co_await net_detail::json_request(endpoint.url,
-                                                endpoint.options.bearer_token,
-                                                method,
-                                                std::move(target),
-                                                input,
-                                                std::string{capability});
+    co_return co_await json_request(endpoint.url,
+                                    endpoint.options.bearer_token,
+                                    method,
+                                    std::move(target),
+                                    input,
+                                    std::string{capability});
 }
 
 auto load_reviews(const endpoint& endpoint) -> runtime::task<std::vector<forge_review>> {

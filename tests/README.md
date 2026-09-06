@@ -49,6 +49,9 @@ mixed-cost size-cap eviction, rule counts, and rule/lease/expiry explanations al
 portable suite.
 
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
+`test_secret.cpp` covers the sealed-secret record, authenticated fields, exact scope checks,
+X25519 failure paths, deterministic interoperability fixture, and Lake public-key response.
+`cli/secret.cmake` exercises raw-CBOR and base64 command round trips without stderr disclosure.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
 Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
 Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.

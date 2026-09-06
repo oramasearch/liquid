@@ -9,10 +9,10 @@ bounded by caller-provided spans. Imports verify the selected metadata before ch
 state, while reference authorization and application are reported per ref. Content negotiation and
 transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
 owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
-The endpoint, [forge client](forge-client.md), admission evidence, and transparency lookups share
-the private `src/http1/client.cpp` transport for URL, socket, TLS, request, and response handling.
-`src/net/http_client.hpp` supplies forge's JSON request and lake-envelope mapping over that same
-transport.
+The endpoint, [forge client](forge-client.md), admission evidence, transparency lookups, and
+sealed-secret key lookup share the private `src/http1/client.cpp` transport for socket, TLS,
+request, and response handling. `src/net/http_client.*` supplies URL decomposition and reusable
+request values; forge owns its JSON request and lake-envelope mapping over that transport.
 
 ## Repository URL and requests
 
@@ -20,6 +20,10 @@ The URL passed to `liquid push` or `liquid pull` identifies one repository. Clie
 paths below. Requests and responses use `Content-Type: application/vnd.liquid.sync-v1` and may use
 either `Content-Length` or HTTP/1.1 chunked transfer coding. Frame boundaries are independent of
 HTTP read boundaries.
+
+The sync adapter uses liquid's shared private Corosio HTTP/1.1 client for URL parsing, request and
+response framing, chunked decoding, bearer authentication, and TLS. Protocol paths, media types,
+and CBOR envelopes remain owned by the sync layer.
 
 | Method and path | Request body | Successful response |
 |---|---|---|
