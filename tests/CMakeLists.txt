@@ -273,6 +273,11 @@ endif()
 if(LIQUID_BUILD_CLI)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")
   add_dependencies(liquid-tests liquid-cli)
+  add_test(NAME inspect-cli-json
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_INSPECT_FIXTURE=${PROJECT_SOURCE_DIR}/tests/fixtures/formats/stored.zip
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/inspect.cmake)
   if(NOT APPLE)
   set(LIQUID_SYMBOLS_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/symbols-cli-repository)
   add_test(NAME symbols-cli-clean

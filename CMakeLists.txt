@@ -643,6 +643,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/history.cpp
     src/cli/hot_update.cpp
     src/cli/identity.cpp
+    src/cli/inspect.cpp
     src/cli/keys.cpp
     src/cli/locks.cpp
     src/cli/node_store.cpp
