@@ -4,6 +4,10 @@ The default suite covers the public library surface and the local store. Focused
 collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
+`test_forge.cpp` covers lake review, comment, state, and branch-protection round trips; every
+documented envelope error; bearer isolation; HTTPS with the committed certificate; rebase anchor
+mapping; polling review events; and the built CLI's pinned JSON. `support/forge_double` provides the
+installable in-memory server used by those cases and downstream liquify tests.
 
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on

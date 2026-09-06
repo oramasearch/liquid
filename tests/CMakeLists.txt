@@ -10,6 +10,7 @@ add_executable(liquid-tests
   test_delta.cpp
   test_daemon.cpp
   test_error.cpp
+  test_forge.cpp
   test_hash.cpp
   http2/test_codecs.cpp
   test_identity.cpp
@@ -67,6 +68,7 @@ if(UNIX)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid
+  liquid_forge_double
   liquid_monocypher
   orama::oramacore-cpp
   GTest::gtest_main
@@ -127,6 +129,9 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TLS_CERTIFICATE="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
+  LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
@@ -169,6 +174,7 @@ endif()
 
 if(LIQUID_BUILD_CLI)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")
+  add_dependencies(liquid-tests liquid-cli)
   if(NOT APPLE)
   set(LIQUID_SYMBOLS_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/symbols-cli-repository)
   add_test(NAME symbols-cli-clean

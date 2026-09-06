@@ -9,8 +9,8 @@ bounded by caller-provided spans. Imports verify the selected metadata before ch
 state, while reference authorization and application are reported per ref. Content negotiation and
 transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
 owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
-The endpoint uses the shared private URL, socket, TLS, request, response, chunked-decoding, and
-bearer implementation in `src/net/http_client.hpp`.
+The endpoint and [forge client](forge-client.md) share the private URL, socket, TLS, request,
+response, chunked-decoding, and bearer implementation in `src/net/http_client.hpp`.
 
 ## Repository URL and requests
 

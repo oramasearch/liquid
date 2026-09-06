@@ -385,6 +385,7 @@ add_library(libliquid
   src/frontend/graph.cpp
   src/frontend/module.cpp
   src/frontend/symbols.cpp
+  src/forge.cpp
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
@@ -533,6 +534,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/sync.cpp
     src/cli/test.cpp
     src/cli/repo.cpp
+    src/cli/review.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
     src/cli/search.cpp
@@ -547,15 +549,36 @@ if(LIQUID_BUILD_CLI)
     liquid::liquid Boost::corosio Boost::http)
 endif()
 
+# The forge double is shipped for downstream review-client integration tests.
+include(GNUInstallDirs)
+add_library(liquid_forge_double STATIC tests/support/forge_double.cpp)
+target_include_directories(liquid_forge_double
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/tests/support>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
+target_link_libraries(liquid_forge_double
+  PUBLIC liquid::liquid
+  PRIVATE Boost::corosio Boost::http)
+set_target_properties(liquid_forge_double PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_executable(liquid-forge-double tests/support/forge_double_main.cpp)
+target_link_libraries(liquid-forge-double PRIVATE liquid_forge_double)
+
 # -----------------------------------------------------------------------------
 # Install + package config: find_package(liquid CONFIG) → liquid::liquid.
 # -----------------------------------------------------------------------------
-include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 install(TARGETS libliquid EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS liquid_forge_double EXPORT liquidTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS liquid-forge-double RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES tests/support/forge_double.hpp
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/liquid/test)
 install(TARGETS liquid-wrap-hook
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid
   RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)

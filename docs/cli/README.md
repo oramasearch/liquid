@@ -32,6 +32,7 @@ that the table and `liquid --help` name the same commands.
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
+| `review` | `review <list\|show\|open\|comment\|approve\|close\|protections\|watch> --lake <url> [--json] ...` | Review a lake change in place. | available |
 | `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
@@ -102,6 +103,28 @@ Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refu
 completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
 use `LIQUID_TOKEN` as an optional bearer credential and never print it. A URL must use HTTP or HTTPS
 and identify one lake repository.
+`review` uses the same bearer rule. Its verbs are:
+
+```sh
+liquid review list --lake https://lake.example/v1/repositories/example [--state open]
+liquid review show --lake https://lake.example/v1/repositories/example review-1
+liquid review open --lake https://lake.example/v1/repositories/example <change>
+liquid review comment --lake https://lake.example/v1/repositories/example \
+  review-1 'src/file.cpp:14:3@<change>' 'Please keep this check.'
+liquid review approve --lake https://lake.example/v1/repositories/example review-1
+liquid review close --lake https://lake.example/v1/repositories/example review-1
+liquid review protections --lake https://lake.example/v1/repositories/example
+liquid review watch --lake https://lake.example/v1/repositories/example review-1
+```
+
+`list --state` accepts `open`, `approved`, or `closed`. A requested-changes action is a comment plus
+the `open` state because lake has no requested-changes state. Text is one stable line per record or
+event. `--json` writes one object for single-record verbs, an array for lists, and one object per
+watch event. The built-binary test pins an opened review as:
+
+```json
+{"id":"review-1","change":"blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262","state":"open","reviewers":[],"created":1788537601,"updated":1788537601}
+```
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line

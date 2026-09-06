@@ -10,3 +10,6 @@ find_package(liquid CONFIG REQUIRED)
 
 add_executable(liquid-consumer main.cpp)
 target_link_libraries(liquid-consumer PRIVATE liquid::liquid)
+
+add_executable(liquid-forge-double-consumer forge_double.cpp)
+target_link_libraries(liquid-forge-double-consumer PRIVATE liquid::liquid_forge_double)

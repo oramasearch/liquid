@@ -58,6 +58,9 @@ alternative costs plus every planner input. It does not read the index files dir
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`review.cpp` implements lake review listing, display, creation, anchored comments, state updates,
+branch protections, and the polling watch entirely through `forge_client`. It reads `LIQUID_TOKEN`
+for the bearer and pins both line-oriented text and JSON output without exposing the token.
 `serve.cpp` implements `serve sync` with the public `sync_server` and the vendored
 `oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
 authorization callback and returns one verdict per update. Request handlers await library tasks on
