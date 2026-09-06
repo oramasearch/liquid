@@ -5697,9 +5697,16 @@ runtime::task<std::vector<std::byte>> repository::read(std::string path) {
         co_return co_await impl_->blob_contents((*entry)->id, std::move(path));
     }
     auto* entry = lookup(impl_->current.root, *parts);
-    if (!entry || entry->kind != entry_kind::file)
+    if (entry && entry->kind == entry_kind::file) {
+        co_return co_await impl_->blob_contents(entry->object, std::move(path));
+    }
+    const auto conflict =
+        std::ranges::find(impl_->current.conflict_values, path, &conflict_reference::path);
+    if (conflict == impl_->current.conflict_values.end() ||
+        conflict->selected_kind != node_kind::blob) {
         co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
-    co_return co_await impl_->blob_contents(entry->object, std::move(path));
+    }
+    co_return co_await impl_->blob_contents(conflict->selected, std::move(path));
 }
 runtime::task<std::vector<std::byte>> repository::read_decrypted(std::string path) {
     if (!impl_) {

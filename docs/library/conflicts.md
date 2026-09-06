@@ -54,6 +54,8 @@ The live repository retains the CRDT-selected blob, tree, or nested repository e
 conflict reference. Reads and edits use that selected entry. Checkpoints persist enough selection
 metadata to reconstruct the working tree after reopen while subsequent cuts continue to publish a
 conflict tree entry.
+If a converged CRDT directory omits a conflicted file path, file reads use that persisted selected
+blob until the conflict is resolved.
 
 Change record version 3 adds two canonical lists:
 

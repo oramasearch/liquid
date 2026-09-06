@@ -1240,7 +1240,7 @@ TEST(Drive, concurrent_offline_edits_from_two_clients_keep_both_named_versions) 
               "first offline edit");
     ASSERT_EQ(second_upload->status.conflicts.size(), 1U);
     EXPECT_EQ(second_upload->status.conflicts.front().region.path, "shared.txt");
-    EXPECT_EQ(second_upload->status.conflicts.front().kind, liquid::conflict_kind::text);
+    EXPECT_EQ(second_upload->status.conflicts.front().kind, liquid::conflict_kind::structural);
     EXPECT_NE(liquid::to_string(second_upload->status.conflicts.front().base),
               liquid::to_string(liquid::digest{}));
 
