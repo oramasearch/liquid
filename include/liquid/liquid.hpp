@@ -6,6 +6,7 @@
 #include "liquid/attestation.hpp"
 #include "liquid/build.hpp"
 #include "liquid/cms.hpp"
+#include "liquid/configuration.hpp"
 #include "liquid/daemon.hpp"
 #include "liquid/data.hpp"
 #include "liquid/delta.hpp"

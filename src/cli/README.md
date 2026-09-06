@@ -116,6 +116,10 @@ restores one as an ordinary repository drip through the public repository API.
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 
+`configuration.cpp` implements `config check`, `config lower`, `config format`, and the
+configuration-backed `build --target` path entirely through the public configuration and repository
+APIs. Generator execution remains an ordinary library build action.
+
 `history.cpp` implements `ops` through the public operation-log API. Its JSON form includes the
 operation session. `repo.cpp` implements `log --ops` through the signed drip API. Undo accepts one
 operation ID or a session with

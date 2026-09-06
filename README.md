@@ -249,6 +249,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > as dependencies, applies target-family fallback, optimises reuse before freshness and defaults,
 > and returns minimal attributed conflict cores. `liquid resolve` prints the graph, stable JSON, or
 > package-selection explanations.
+> **Phase 5 configuration is implemented.** `.liquid` is a typed declarative language for package,
+> source, and target records with repository-local includes, exact source-located diagnostics,
+> canonical formatting and CBOR lowering, digest-verified source fetch, and ordinary-program
+> generators executed with signed provenance. `liquid config` checks, lowers, traces, and formats;
+> `liquid build --target` executes a lowered target through the existing action path and refuses
+> outputs that fail relocation publication.
 
 ## Where this sits
 
@@ -320,6 +326,7 @@ and Zetta's.
 - [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
 - [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
+- [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, lowering, source verification, generators, and trace origins.
 
 | | |
 |---|---|

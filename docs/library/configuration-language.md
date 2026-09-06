@@ -1,0 +1,178 @@
+# The `.liquid` configuration language
+
+**What.** Issue #74 adds liquid's small typed configuration language, static checker, lowering,
+canonical formatter, source fetch, action-backed generator, and configured target command. The
+language is data: it has no functions, lambdas, evaluation order, laziness, or network imports.
+
+**Why.** Package rules and build actions need a reviewable source form without inheriting the
+evaluation model and distant failures of a general-purpose build language. An ordinary sandboxed
+program covers cases the declarative form cannot express while retaining action identity,
+provenance, caching, and traceability.
+
+**Implementation status.** The public parser, checker, lowerer, formatter, `package/1`, `target/1`,
+and `source/1` projection, repository-local includes, digest-verifying source fetch, generators,
+relocation-checked target execution, and CLI commands are implemented. The install record is
+syntax-checked and its layout is retained on the target; issue #80 adds install-intent semantics.
+Recipe import remains issue #75.
+
+## Files and grammar
+
+Configuration files use only the `.liquid` extension. Strings are UTF-8 and comments begin with
+`#` or `//`. Commas and semicolons may separate fields; the formatter removes them where a newline
+is unambiguous.
+
+```ebnf
+document       = { declaration } ;
+declaration    = package | build | source | generator | include ;
+package        = "package", name, "{", package-item*, "}" ;
+package-item   = field | variant | depends-on | provides | conflicts | patch | when ;
+build          = "build", name, "{", build-item*, "}" ;
+build-item     = field | depends-on | install | when ;
+source         = "source", name, "{", field*, "}" ;
+variant        = "variant", name, "{", field*, "}" ;
+depends-on     = "depends_on", name, "{", field*, "}" ;
+provides       = "provides", name, "{", field*, "}" ;
+conflicts      = "conflicts", [ name ], "{", field*, "}" ;
+patch          = "patch", [ name ], "{", field*, "}" ;
+install        = "install", [ name ], "{", field*, "}" ;
+when           = "when", ( string | spec-text ), "{", package-item* | depends-on*, "}" ;
+generator      = "generate", "=", "build", "{", field*, "}" ;
+include        = "include", string ;
+field          = identifier, ( ":" | "=" ), value ;
+value          = string | integer | boolean | version | spec | digest | path | identifier
+               | list | map ;
+spec           = "spec", string ;
+path           = "path", string ;
+list           = "[", [ value, { ",", value } ], "]" ;
+map            = "{", [ map-entry, { ",", map-entry } ], "}" ;
+map-entry      = ( identifier | string ), ":", value ;
+version        = digit, { digit | "." | "-" | "+" } ;
+digest         = ( "blake3:" | "sha256:" | "blake3k:" ), 64 * hex-digit ;
+name           = identifier | string ;
+```
+
+`when` accepts the public [`parse_spec`](resolution.md) grammar and is the only conditional. A
+condition records its spec constraint on the declarations it contains; it cannot run code or read
+ambient state. `include "relative/path.liquid"` resolves relative to the containing file, must
+remain under the nearest liquid or Git repository root, must end in `.liquid`, and must not form a
+cycle. URLs and absolute or parent-directory includes are rejected.
+
+## Types and records
+
+| Record | Required fields | Optional fields and children |
+|---|---|---|
+| `package <name>` | `versions: [version, ...]` | `compilers`, `targets`; `variant`, `depends_on`, `provides`, `conflicts`, `patch`, `when` |
+| `variant <name>` | `values: [boolean|string, ...]`, `default: boolean|string` | none |
+| `depends_on <name>` | none | `virtual: boolean`, `version: version|string`, `type: build|link|run` |
+| `provides <name>` | none | `version` |
+| `conflicts` | `constraint: spec` | `message: string` |
+| `patch` | `digest: digest` | none |
+| `source <name>` | `url: string`, `digest: digest`, `kind: archive|file` | none |
+| `build <name>` | `command: [string, ...]` | `cwd`, `environment`, `sources`, `dependencies`, `outputs`, `inputs`, `toolchain`; `depends_on`, `when`, `install` |
+| `install` | none | `layout: identifier`, `prefix: path` |
+| `generate = build` | `command`, `output`, `inputs`, `toolchain` | `cwd`, `environment`, `outputs`, `format: liquid|cbor` |
+
+Versions are deliberately unquoted, exact digests carry their algorithm, specs and paths use
+explicit literal prefixes, and enum values are unquoted. Lists are homogeneous where the field
+schema requires it. Environment maps have string values.
+
+Every checker diagnostic has this exact two-line shape:
+
+```text
+file.liquid:7:14: expected version, found string '1.14.3'
+  hint: versions are unquoted: 1.14.3
+```
+
+Unknown fields name the closest valid field. Duplicate fields and record names are rejected. The
+portable test suite pins twenty complete diagnostics, including file, line, column, expectation,
+actual value, and hint.
+
+## Lowering and canonical records
+
+`lower` maps `package` directly to the canonical `package/1` record from
+[`resolve.hpp`](../../include/liquid/resolve.hpp). Conditions become its existing `when` strings.
+A `build` becomes canonical `target/1`:
+
+```text
+target/1 {
+  name, command, cwd, environment,
+  sources: [declared digest ...],
+  dependencies: [{name, when?} ...],
+  outputs, install_layout, inputs?, toolchain?, origin
+}
+```
+
+Dependency results enter an action below `deps/<name>` through the existing named-input mechanism.
+Fetched source bytes enter the same immutable action-input mechanism below
+`deps/__liquid_sources/<algorithm>/<digest>`, so network activity finishes before sandbox execution
+and does not mutate the repository working tree. `source/1` is `{name, url, digest, kind, origin}`.
+Both records use canonical CBOR; decoders reject a non-canonical form.
+
+An origin is either `source(file)` or `generated(file, result digest)`. Package origins are kept
+beside `package/1` because changing that already-shipped record would change its identity. Target
+and source records carry the origin directly.
+
+The public surface is:
+
+```cpp
+result<configuration_document> parse_configuration(std::string_view, std::filesystem::path origin);
+std::vector<configuration_diagnostic> check(const configuration_document&);
+result<lowered_configuration> lower(const configuration_document&);
+result<std::string> format_configuration(const configuration_document&);
+runtime::task<lowered_configuration> run_generators(repository&, configuration_document);
+runtime::task<result_id> build_configuration(repository&, const lowered_configuration&,
+                                             std::string target);
+```
+
+Parsing, checking, lowering, and formatting are synchronous. Source fetch, generator execution,
+and target builds are Capy tasks. None starts a raw thread, and no coroutine calls `block_on`.
+
+## Sources by digest
+
+`repository::fetch_source(source)` performs a GET through liquid's existing HTTP client. HTTPS
+uses the existing Corosio TLS path, and the operation refuses plaintext HTTP even when called
+without the checker. The response is hashed with the declared unkeyed algorithm before any write
+reaches the store. A mismatch returns both expected and actual digests and leaves the bytes absent.
+There is no overload without a declared digest.
+
+## Ordinary-program generator
+
+```liquid
+generate = build {
+    command: ["bin/write-packages"]
+    inputs: blake3:<input-tree>
+    toolchain: blake3:<toolchain-tree>
+    output: path "generated.liquid"
+    outputs: [path "generated.liquid"]
+    format: liquid
+}
+```
+
+The command runs through `build::execute` with the fixed environment, sandbox, cache, result
+signature, and `slsa_provenance/1` production used by every action. Its selected output must be a
+`.liquid` document or a canonical CBOR array whose elements are byte strings containing
+`package/1`, `target/1`, or `source/1`. Nested generators are refused. `run_generators` verifies
+the result provenance before parsing its output and replaces every generated origin with that
+result digest. `liquid config lower --trace` displays those origins.
+
+## CLI
+
+```sh
+liquid config check <file|dir>
+liquid config lower <file> [--json] [--trace]
+liquid config format <file>
+liquid build --target <name> [--json]
+```
+
+`config check` checks every `.liquid` file under a directory. `format` writes the canonical form;
+formatting twice produces identical bytes. A repository build prefers `liquid.liquid`, then the
+first sorted top-level `.liquid` file, runs generators, fetches every selected source, resolves
+unconditional named target outputs, and executes the target through the ordinary action path.
+Before returning the result, it applies the relocation publication check to every declared output.
+Conditional target edges remain solver input and are not guessed by the direct command.
+
+## Open questions
+
+- Issue #80 owns the install-intent meaning beyond the retained layout; `prefix` is checked but not
+  lowered until that meaning is defined.
+- Issue #75 owns recipe import and how imported files choose their top-level root document.

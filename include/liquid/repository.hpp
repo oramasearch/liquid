@@ -30,6 +30,8 @@
 
 namespace liquid {
 
+struct source;
+
 namespace repository_detail {
 struct build_access;
 struct data_access;
@@ -464,6 +466,7 @@ public:
     [[nodiscard]] runtime::task<void>
     write_remote(std::string path, blob value, write_options options = {});
     [[nodiscard]] runtime::task<digest> store_remote_blob(blob value);
+    [[nodiscard]] runtime::task<digest> fetch_source(const source& value);
     [[nodiscard]] runtime::task<void>
     write(std::string path, std::vector<std::byte> contents, write_options options);
     [[nodiscard]] runtime::task<void> redact(std::string path,

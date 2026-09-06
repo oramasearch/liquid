@@ -72,6 +72,7 @@ auto abi(int argc, char** argv) -> int;
 auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
+auto config(int argc, char** argv) -> int;
 auto project(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
@@ -132,6 +133,11 @@ constexpr auto commands = std::to_array<command>({
      "concretise package specifications",
      "available",
      liquid_cli::resolve},
+    {"config",
+     "config check <file|dir> | config lower <file> [--json] [--trace] | config format <file>",
+     "check, lower, or format .liquid configuration",
+     "available",
+     liquid_cli::config},
     {"project",
      "project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
@@ -339,7 +345,8 @@ constexpr auto commands = std::to_array<command>({
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build [target] | build --plan [target] | build --events <command> [args...] | "
+     "build --target <name> [--json] | build [target] | build --plan [target] | build --events "
+     "<command> [args...] | "
      "build --profile [remote options] <command> [args...] | build trace [--chrome]",
      "plan or start a configured repository build, profile a command, stream events, or export a "
      "trace",

@@ -89,7 +89,8 @@ owning issue in `error::context`.
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, remote-record, and streaming tree-import writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/resolve.hpp` | #25, #27 | implemented | plain spec/package/concretisation values, canonical record codecs, filesystem and repository universe loading, reuse, known-output and ABI-compatibility inputs, asynchronous CDCL resolution, minimal attributed conflict cores, stable explanations and JSON |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #85, #86, #116, #160, #165, #166, #174, #193, #200, #205 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; flow-controlled memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural-edit preview/apply with grouped undo; cost-planned working/ref search with common located hits and executed-plan explanations; stale-base validation; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote, agent, and flow configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/configuration.hpp` | #74 | implemented | typed `.liquid` AST and locations, exact diagnostics, synchronous parse/check/lower/format, canonical `target/1` and `source/1` codecs, generator and relocation-checked configured-target tasks, trace origins, and digest-declared source values |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #74, #85, #86, #116, #160, #165, #166, #174, #193, #200, #205 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; digest-verifying configuration source fetch; flow-controlled memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural-edit preview/apply with grouped undo; cost-planned working/ref search with common located hits and executed-plan explanations; stale-base validation; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote, agent, and flow configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, asynchronous key wrapping, keyring inspection, URI-selected custody providers, and Shamir splitting |
 | `liquid/drive.hpp` | #195, #235 | implemented | three-tree sync, persisted path states and policy, pin/unpin hydration, pending-upload and hydration-debt status |
@@ -958,6 +959,7 @@ class repository {
                                  write_options = {});   // streams a large file in; one drip
   runtime::task<void> write_remote(std::string path, blob, write_options = {});
   runtime::task<digest> store_remote_blob(blob);
+  runtime::task<digest> fetch_source(const source&); // verify declared digest before storage
   runtime::task<void> move(std::string from, std::string to, write_options = {});
   runtime::task<void> remove(std::string path, write_options = {});
   runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
@@ -1213,6 +1215,63 @@ runtime::task<void> materialise(repository&, std::filesystem::path,
 
 The handle contains no FUSE type. Backend details and the persistent hydration cache are private
 under `src/vfs/`; see [`vfs.md`](vfs.md).
+
+### `liquid/configuration.hpp`
+
+```cpp
+struct configuration_location { std::filesystem::path file; std::uint64_t line, column; };
+enum class configuration_value_kind { string, integer, boolean, version, spec, digest, path,
+                                      identifier, list, map };
+struct configuration_value { configuration_value_kind kind; configuration_location location;
+  std::string text; std::int64_t integer; bool boolean;
+  std::vector<configuration_value> list; std::map<std::string, configuration_value> map; };
+struct configuration_field { std::string name; configuration_location location;
+                             configuration_value value; };
+struct configuration_record { std::string kind; std::optional<std::string> name;
+  configuration_location location; std::vector<configuration_field> fields;
+  std::vector<configuration_record> records; std::optional<spec> condition;
+  std::optional<std::string> condition_text; };
+struct configuration_document { std::filesystem::path origin;
+                                std::vector<configuration_record> records; };
+struct configuration_diagnostic { configuration_location location;
+  std::string expected, found, hint; };
+enum class configuration_origin_kind { source, generated };
+struct configuration_record_origin { configuration_origin_kind kind;
+  std::filesystem::path file; std::optional<digest> result; };
+enum class source_kind { archive, file };
+struct source { std::uint64_t v; std::string name, url; digest content; source_kind kind;
+                configuration_record_origin origin; };
+struct target_dependency { std::string name; std::optional<std::string> when; };
+struct target { std::uint64_t v; std::string name; std::vector<std::string> command;
+  std::string cwd; std::map<std::string, std::string> environment; std::vector<digest> sources;
+  std::vector<target_dependency> dependencies; std::vector<std::string> outputs;
+  std::string install_layout; std::optional<digest> inputs, toolchain;
+  configuration_record_origin origin; };
+struct lowered_configuration { std::vector<package_record> packages;
+  std::vector<configuration_record_origin> package_origins; std::vector<target> targets;
+  std::vector<source> sources; std::vector<configuration_generator> generators; };
+result<configuration_document> parse_configuration(std::string_view, std::filesystem::path);
+std::vector<configuration_diagnostic> check(const configuration_document&);
+result<lowered_configuration> lower(const configuration_document&);
+result<std::string> format_configuration(const configuration_document&);
+result<std::vector<std::byte>> encode_target(const target&);
+result<target> decode_target(std::span<const std::byte>);
+result<std::vector<std::byte>> encode_source(const source&);
+result<source> decode_source(std::span<const std::byte>);
+runtime::task<lowered_configuration> run_generators(repository&, configuration_document);
+runtime::task<result_id> execute_target(repository&, const target&);
+runtime::task<result_id> build_configuration(repository&, const lowered_configuration&,
+                                             std::string target_name);
+```
+
+The AST retains source positions and include structure. Parsing resolves only relative `.liquid`
+files beneath the repository root. `check` returns every schema diagnostic without I/O; `lower`
+produces the existing `package_record` plus canonical target/source values. Generator and build
+operations use `build::execute`; generated origins carry the verified result digest, and configured
+targets apply the relocation publication check to their action outputs. The
+`repository::fetch_source(const source&)` task is the only source download entry point and hashes
+the complete response before writing it to the store. See
+[configuration-language.md](configuration-language.md).
 
 ### `liquid/build.hpp`
 

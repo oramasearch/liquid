@@ -49,6 +49,9 @@ The shared-library macOS test target compiles the private platform launcher that
 exercises, so hidden library visibility does not omit that profile coverage.
 Spec parsing, canonical package records, universe loading, solver dimensions, cancellation,
 explanations, optimisation, CLI output, and the generated scale workload live in `resolve/`.
+Configuration-language coverage lives in `config/`: twenty exact diagnostics, typed lowering,
+conditional dependencies, canonical target/source records, generator provenance, digest-verified
+source fetch, and formatter idempotence.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
