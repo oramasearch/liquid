@@ -6,6 +6,19 @@ restore a result before the tool starts. The cache therefore includes command ar
 environment, toolchain, sandbox definition, and every observed input rather than only declared
 dependencies.
 
+`wrap` is the first shippable build product: it wraps an existing project without adding liquid
+configuration. In any project the shape is:
+
+```sh
+liquid wrap cmake -S . -B build -G Ninja
+liquid wrap --jobs 8 --explain cmake --build build
+liquid wrap --target aarch64-unknown-linux-gnu ./configure
+```
+
+The second command reuses valid compile and link results before their tools start. Linux requires
+libfuse3; macOS requires macFUSE. See [`../cli/README.md`](../cli/README.md) for options and
+platform availability.
+
 ## CMake
 
 This executable example uses the repository's CMake fixture. In another project, start with its
