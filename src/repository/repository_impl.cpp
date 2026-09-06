@@ -3098,7 +3098,7 @@ struct repository::impl {
                 co_return std::unexpected(root.error());
             }
         }
-        auto document = co_await persist();
+        auto document = co_await persist(false);
         if (!document) {
             co_return std::unexpected(document.error());
         }
