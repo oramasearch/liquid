@@ -41,6 +41,7 @@ notes so that each claim has a clear role.
 | [`library/relocation.md`](library/relocation.md) | Position-independent install-tree rules, build-system conventions, binary and metadata enforcement, public checking, and recorded waivers. |
 | [`library/resolution.md`](library/resolution.md) | Package and concretised records, spec grammar, universe layout, solver model, explanations, optimisation, and scale measurements. |
 | [`library/configuration-language.md`](library/configuration-language.md) | The typed `.liquid` grammar, exact diagnostics, package/target/source lowering, repository-local includes, verified source fetch, generators, and trace origins. |
+| [`library/import-spack.md`](library/import-spack.md) | Pinned Spack export, package-field mapping, import reports and losses, the 500-package universe, and the Linux build subset. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10's local executor: fixed environment, observed-mount manifest, Linux namespace enforcement, and platform limits. |
 | [`library/api-map.md`](library/api-map.md) | The implemented and declared public headers of libliquid, including flow configuration and status, the rules every one obeys, dependency provenance, what is deliberately internal, and the ABI policy. |
 | [`library/hash-agility.md`](library/hash-agility.md) | Digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits. |
