@@ -5,3 +5,5 @@ header. `main.cpp` supplies the executable entry point; the other files instanti
 public values. `abi.cpp` covers the linked-binary descriptor and compatibility report types.
 `admission.cpp` keeps the public policy, evidence interfaces, options, and server entry point
 independently compilable.
+`frontend_abi.c` compiles the frontend and liquify plugin descriptors as C11 and checks both
+independent ABI version constants.

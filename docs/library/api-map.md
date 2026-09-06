@@ -69,7 +69,7 @@ owning issue in `error::context`.
 | `liquid/hot_update.hpp` | #32 | implemented | build evidence, tier and outcome values, deterministic classification, canonical patch codecs, signed patch creation and verification, cooperative apply, sandboxed restart, and composition status |
 | `liquid/format_abi.h` | #29 | implemented | versioned C codec descriptor, canonical-CBOR operations, owned bytes, progress/cancellation callbacks, and optional merge/repack operations |
 | `liquid/format.hpp` | #29 | implemented | fidelity tiers, descriptors, entries, trees and diffs; checked shared/static codec loading; the built-in global registry and resource limits |
-| `liquid/frontend_abi.h` | #65, #66, #205 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
+| `liquid/frontend_abi.h` | #65, #66, #205, liquify #3 | implemented | versioned C frontend and liquify plugin descriptors, language/query/command/panel registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
 | `liquid/frontend.hpp` | #65, #66, #193, #205 | implemented | checked shared/static frontend loading, language registry, source units, concrete syntax trees and navigation, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/edit.hpp` | #205 | implemented | canonical structural-edit requests, targets, previews, refusals, attribution, file/text changes, results, and codecs |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
@@ -347,6 +347,12 @@ names, source ranges, and source bytes. `compile_unit(unit, context)` returns a 
 `assemble(unit_outputs, context)` returns the translation-unit output. The release callback owns
 every successful result buffer; the loader copies and releases it before returning. The complete
 canonical schemas are in [`frontends.md`](frontends.md).
+
+`liquify_plugin_v1` extends this boundary without duplicating its common types. It registers named
+graph queries, commands with default bindings and canonical-CBOR argument schemas, and panels whose
+operations return canonical-CBOR view models. Dynamic plugins export `liquify_plugin_get_v1`;
+static registration passes the same descriptor to the host. The descriptor has its own version and
+size so editor plugin evolution does not change `liquid_frontend_module_v1`.
 
 ```cpp
 enum class frontend_diagnostic_severity { note, warning, error, fatal };
@@ -1695,7 +1701,8 @@ records and receive content-addressed concretisations without depending on the e
 - **Shared builds are for packaging, not for stability.** Rules 2 and 3 above are what make a
   future stable ABI possible; until 1.0 they are discipline, not a promise.
 - **Frontend C ABI v1 exists before 1.0.** `liquid/frontend_abi.h` is separately versioned and does
-  not expose the C++ ABI. Language modules use it now. `liquid/format_abi.h` applies the same owned
+  not expose the C++ ABI. Language modules and liquify's native plugin descriptor use its common
+  boundary types now. `liquid/format_abi.h` applies the same owned
   bytes, canonical-CBOR, callback, and checked-loader rules to its dedicated format-codec
   descriptor. Both built-in and external codecs enter the registry through that descriptor.
 - **At 1.0:** semantic versioning of the C++ API, `SOVERSION` bumped on breaks, still no symbol
