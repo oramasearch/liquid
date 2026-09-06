@@ -612,6 +612,7 @@ if(LIQUID_BUILD_CLI)
   add_executable(liquid-cli
     src/main.cpp
     src/cli/abi.cpp
+    src/cli/arguments.cpp
     src/cli/anchor.cpp
     src/cli/attestation.cpp
     src/cli/capture.cpp
@@ -622,6 +623,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/delta.cpp
     src/cli/deploy.cpp
     src/cli/diff.cpp
+    src/cli/docs.cpp
     src/cli/edit.cpp
     src/cli/drive.cpp
     src/cli/gc.cpp
@@ -660,6 +662,35 @@ if(LIQUID_BUILD_CLI)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE
     liquid::liquid Boost::corosio Boost::corosio_openssl Boost::http Boost::json)
+  target_include_directories(liquid-cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+  # Keep a build-tree reference beside the binary.  The CTest below compares this
+  # binary-produced tree with the committed documentation.
+  set(LIQUID_REFERENCE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/reference/cli)
+  set(LIQUID_REFERENCE_STAMP ${CMAKE_CURRENT_BINARY_DIR}/reference/generated.stamp)
+  add_custom_command(
+    OUTPUT ${LIQUID_REFERENCE_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format markdown --out ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format json --out ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E touch ${LIQUID_REFERENCE_STAMP}
+    DEPENDS liquid-cli
+    VERBATIM)
+  add_custom_target(liquid-reference-docs ALL
+    DEPENDS ${LIQUID_REFERENCE_STAMP})
+
+  set(LIQUID_MAN_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/man)
+  add_custom_command(
+    OUTPUT ${LIQUID_MAN_DIRECTORY}/generated.stamp
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_MAN_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIQUID_MAN_DIRECTORY}
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format man --out ${LIQUID_MAN_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E touch ${LIQUID_MAN_DIRECTORY}/generated.stamp
+    DEPENDS liquid-cli
+    VERBATIM)
+  add_custom_target(liquid-man-pages ALL
+    DEPENDS ${LIQUID_MAN_DIRECTORY}/generated.stamp)
 endif()
 
 # The forge double is shipped for downstream review-client integration tests.
@@ -745,6 +776,9 @@ foreach(LIQUID_BOOST_LIBRARY
 endforeach()
 if(LIQUID_BUILD_CLI)
   install(TARGETS liquid-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(DIRECTORY ${LIQUID_MAN_DIRECTORY}/
+    DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
+    FILES_MATCHING PATTERN "*.1")
 endif()
 install(EXPORT liquidTargets NAMESPACE liquid::
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/liquid)

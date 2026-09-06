@@ -102,6 +102,8 @@ one repository without losing the other, and reopens by identifier. Tree-diff ca
 additions, removals, content and mode changes, `node_id` moves, opt-in text hunks, and stored
 conflict values. Text-anchor cases map unchanged and shifted lines, approximate replacements,
 deleted regions and files, and a renamed node in one unsorted batch. CLI scenario and
+command-documentation tests live in `cli/`. Marked guide blocks run through `guides/run.py` on
+Linux, and `docs/check-links.py` checks the documentation tree on every platform. `test_runtime.cpp`
 command-documentation tests live in `cli/`. Flow-control cases pin the eleventh-write refusal and
 operation count, update-size rejection, cross-actor directory isolation, persisted configuration,
 daemon pause/resume and bucket status, peer HTTP 429 retry projection, and the status JSON fixture.

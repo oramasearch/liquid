@@ -170,6 +170,9 @@ Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and re
 approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
 line-hunk stale reports, and signed disjoint or forced re-validation records.
+Liquid #82 adds the typed CLI command and flag table, generated Markdown, stable JSON and man-page
+reference, executable user guides, and the documentation-site CI artifact. `liquid diff` exposes
+the existing public change-diff API for the first-repository guide.
 Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
 3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
 anchors and historical certificate validation.
@@ -208,6 +211,10 @@ docs/build/<topic>.md
     local and continuous-integration build verification
 docs/standards/
     external standards liquid depends on, vendored
+docs/reference/cli/
+    generated command and flag reference; edit the CLI table, not these pages
+docs/guides/
+    executable user workflows whose marked shell blocks run in CTest
 ```
 
 ### `sources.md` is evidence

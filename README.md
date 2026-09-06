@@ -78,6 +78,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > compatibility losses. Strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA
 > validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against explicitly pinned
 > TSA trust anchors at each token's historical generation time.
+> The CLI now validates every option from one typed command table and generates its Markdown,
+> stable JSON, and installed man-page reference from that table. Executable guides cover an
+> existing wrapped build, a first repository and sync peer, and the current keys-and-encryption
+> boundary. CI renders the complete documentation tree as a downloadable static-site artifact.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
@@ -338,6 +342,8 @@ and Zetta's.
 | **[docs/features/](docs/features/)** | What liquid does. 25 feature areas, each traceable to the research. |
 | **[docs/build/](docs/build/)** | Local and GitHub Actions build verification. |
 | **[docs/standards/](docs/standards/)** | External standards liquid depends on — currently [TAAP/1](docs/standards/taap-1-spec-draft.md), vendored until it has its own repository. |
+| **[docs/reference/](docs/reference/)** | Generated user reference, including every CLI command and flag. |
+| **[docs/guides/](docs/guides/)** | Executable user workflows for repositories, wrapped builds, and encryption. |
 
 Start with **[docs/research/99-synthesis/](docs/research/99-synthesis/)** for the
 argument in one place, then **[docs/features/](docs/features/)** for the

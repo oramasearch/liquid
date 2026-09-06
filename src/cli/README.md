@@ -101,6 +101,11 @@ and performs local break-glass unsealing through the public secret API. Private-
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
 
+The CLI-internal metadata and validator live in `metadata.hpp` and `arguments.cpp`. Every command
+passes through the typed option allow-list before its handler interprets values. `docs.cpp` renders
+the same table as command help, Markdown, stable JSON, and man pages. The generated reference lives
+in [`docs/reference/cli/`](../../docs/reference/cli/); the replay output contract and contributor
+notes remain in [`docs/cli/README.md`](../../docs/cli/README.md).
 The same file maps `serve admission` flags and environment variables to the public admission
 options. The library owns named policy loading and atomic reload, TLS, structured review decisions,
 bounded streaming, control routes, and metrics; the CLI only prints listener state and the explicit

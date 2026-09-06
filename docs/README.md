@@ -8,6 +8,8 @@ notes so that each claim has a clear role.
 | [`research/`](research/) | Curated analysis and its web-grounded sources. |
 | [`features/`](features/) | Specifications for what liquid does. |
 | [`standards/`](standards/) | External standards liquid depends on. |
+| [`reference/`](reference/) | Generated command, flag, example, availability, and exit-status reference. |
+| [`guides/`](guides/) | Executable user workflows for a first repository, existing builds, and encryption. |
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, structural-edit operations, edit-surviving text anchors, compact/shallow CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, #174, and #205. |
 | [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, edit-surviving text anchors, checked compact-or-full CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, and #174. |

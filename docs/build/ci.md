@@ -10,6 +10,13 @@ absent. Local clones should use
 then builds without a dependency cache, runs CTest with failure output, and runs `liquid version`
 on each desktop platform.
 
+The separate `Documentation site` job installs the pinned `mkdocs==1.6.1`, runs the same internal
+link checker registered as `docs-links`, renders all of `docs/`, and uploads
+`liquid-documentation-site` as a workflow artifact. The artifact is the published deliverable;
+hosting is intentionally not selected here. CLI reference freshness remains a CTest responsibility,
+so each binary build regenerates Markdown and stable JSON from its own typed command table before
+the site job packages the committed tree.
+
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
 | Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, PostgreSQL server/client, Autoconf, Automake, GNU `time`, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount and PostgreSQL data-branch scenarios, `liquid version` |
@@ -131,6 +138,10 @@ memory-limit failure.
 
 `BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
 The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.
+`guides-run` executes the marked shell blocks in `docs/guides/` against the same CMake and Autotools
+fixtures, including second-run cache hits, miss explanation, a local sync peer, and the current
+identity commands. It returns CTest's skip code only when `/dev/fuse` is unavailable; the privileged
+container proof must execute it.
 
 Test processes create a random fixture directory beneath the platform temporary root through
 `tests/temporary_directory.hpp`. On Linux this honours `TMPDIR`, which allows container runs to
