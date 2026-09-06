@@ -5,11 +5,12 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
-#include <system_error>
 #include <utility>
 
+#include <boost/http.hpp>
+
 #include "encoding/cbor.hpp"
-#include "http1/client.hpp"
+#include "net/http_client.hpp"
 #include "repository/sync_access.hpp"
 #include "sync/codec.hpp"
 
@@ -119,22 +120,32 @@ auto flow_rejection(std::span<const std::byte> body)
     return std::pair{*retry, *scope};
 }
 
-auto perform_request(std::string url,
-                     std::string_view token,
-                     std::string method,
-                     std::string suffix,
-                     std::span<const std::byte> body) -> runtime::task<http1::response> {
-    auto headers = std::vector<std::pair<std::string, std::string>>{
-        {"Content-Type", content_type},
-    };
-    if (!token.empty()) {
-        headers.emplace_back("Authorization", "Bearer " + std::string{token});
+auto endpoint_target(const net_detail::parsed_url& url, std::string_view suffix) -> std::string {
+    auto output = url.path == "/" ? std::string{} : url.path;
+    output += suffix;
+    return output;
+}
+
+auto endpoint_request(const net_detail::parsed_url& url,
+                      std::string_view bearer,
+                      boost::http::method method,
+                      std::string target,
+                      std::string_view content_type,
+                      std::span<const std::byte> body) -> runtime::task<net_detail::http_response> {
+    auto response = co_await net_detail::perform_request(net_detail::http_request{
+        .method = method == boost::http::method::get ? net_detail::http_method::get
+                                                     : net_detail::http_method::post,
+        .url = url,
+        .target = std::move(target),
+        .bearer = std::string{bearer},
+        .content_type = std::string{content_type},
+        .body = {body.begin(), body.end()},
+    });
+    if (!response) {
+        co_return std::unexpected(
+            sync_error(response.error().code, response.error().message, "sync endpoint"));
     }
-    co_return co_await http1::request({.url = std::move(url),
-                                       .method = std::move(method),
-                                       .suffix = std::move(suffix),
-                                       .headers = std::move(headers),
-                                       .body = {body.begin(), body.end()}});
+    co_return std::move(*response);
 }
 
 auto reference_outcomes(std::span<const sync_item> sent, std::span<const sync_ref_outcome> received)
@@ -171,16 +182,16 @@ auto reference_outcomes(std::span<const sync_item> sent, std::span<const sync_re
 } // namespace
 
 struct sync_endpoint::impl {
-    std::string url;
+    net_detail::parsed_url url;
     sync_endpoint_options options;
 };
 
 sync_endpoint::sync_endpoint(std::string repository_url, sync_endpoint_options options) {
-    auto valid = http1::validate_url(repository_url);
-    if (!valid) {
-        throw std::invalid_argument(valid.error().message);
+    auto parsed = net_detail::parse_url(repository_url, "sync URL");
+    if (!parsed) {
+        throw std::invalid_argument(parsed.error().message);
     }
-    impl_ = std::make_unique<impl>(impl{std::move(repository_url), std::move(options)});
+    impl_ = std::make_unique<impl>(impl{std::move(*parsed), std::move(options)});
 }
 
 sync_endpoint::~sync_endpoint() = default;
@@ -194,8 +205,12 @@ runtime::task<std::vector<digest>> sync_endpoint::find_missing(std::string insta
     if (!encoded) {
         co_return std::unexpected(encoded.error());
     }
-    auto response = co_await perform_request(
-        impl_->url, impl_->options.bearer_token, "POST", "/sync/find-missing", *encoded);
+    auto response = co_await endpoint_request(impl_->url,
+                                              impl_->options.bearer_token,
+                                              boost::http::method::post,
+                                              endpoint_target(impl_->url, "/sync/find-missing"),
+                                              content_type,
+                                              *encoded);
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -210,10 +225,14 @@ runtime::task<std::uint64_t> sync_endpoint::read_range(std::string instance,
                                                        std::uint64_t offset,
                                                        std::span<std::byte> output) {
     static_cast<void>(instance);
-    auto target = "/sync/chunks/" + to_string(blob) + "?offset=" + std::to_string(offset) +
-                  "&length=" + std::to_string(output.size());
-    auto response = co_await perform_request(
-        impl_->url, impl_->options.bearer_token, "GET", std::move(target), {});
+    auto target = endpoint_target(impl_->url, "/sync/chunks/") + to_string(blob) +
+                  "?offset=" + std::to_string(offset) + "&length=" + std::to_string(output.size());
+    auto response = co_await endpoint_request(impl_->url,
+                                              impl_->options.bearer_token,
+                                              boost::http::method::get,
+                                              std::move(target),
+                                              content_type,
+                                              {});
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -235,8 +254,12 @@ sync_endpoint::write(std::string instance, digest blob, std::vector<std::byte> c
     if (!frame) {
         co_return std::unexpected(frame.error());
     }
-    auto response = co_await perform_request(
-        impl_->url, impl_->options.bearer_token, "POST", "/sync/chunks", *frame);
+    auto response = co_await endpoint_request(impl_->url,
+                                              impl_->options.bearer_token,
+                                              boost::http::method::post,
+                                              endpoint_target(impl_->url, "/sync/chunks"),
+                                              content_type,
+                                              *frame);
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -280,8 +303,12 @@ runtime::task<sync_report> sync_endpoint::push(repository& source) {
     if (!encoded) {
         co_return std::unexpected(encoded.error());
     }
-    auto response = co_await perform_request(
-        impl_->url, impl_->options.bearer_token, "POST", "/sync/push", *encoded);
+    auto response = co_await endpoint_request(impl_->url,
+                                              impl_->options.bearer_token,
+                                              boost::http::method::post,
+                                              endpoint_target(impl_->url, "/sync/push"),
+                                              content_type,
+                                              *encoded);
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -327,8 +354,12 @@ runtime::task<sync_report> sync_endpoint::pull(repository& destination) {
     if (!request) {
         co_return std::unexpected(request.error());
     }
-    auto response = co_await perform_request(
-        impl_->url, impl_->options.bearer_token, "POST", "/sync/pull", *request);
+    auto response = co_await endpoint_request(impl_->url,
+                                              impl_->options.bearer_token,
+                                              boost::http::method::post,
+                                              endpoint_target(impl_->url, "/sync/pull"),
+                                              content_type,
+                                              *request);
     if (!response) {
         co_return std::unexpected(response.error());
     }

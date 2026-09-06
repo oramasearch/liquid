@@ -131,6 +131,11 @@ synchronisation service bolted alongside it. That is a real head start — but s
 editor, against real semantics rather than a text diff — and comments anchor to
 cursors that survive rebases.
 
+**Implementation status.** Liquid #201 provides the coroutine forge client consumed by liquify:
+review and comment records, branch protections, edit-surviving anchor advancement, and polling
+events for review updates, comments, and repository head movement. The liquify review panel remains
+in its own repository.
+
 **Build, test, deploy inline.** Same graph. A test result is a query; a deployment
 ([13](13-deployment-runtime.md)) is an action.
 

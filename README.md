@@ -37,6 +37,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
+> shared HTTP/1.1 client, `serve sync` adapter, and lake forge review client with its polling event
+> stream and installable double are implemented. VFS full materialisation works on every platform;
 > HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
 > policy reload, local or node-store evidence lookup, metrics, REST, OpenAPI, and MCP. Complete
@@ -258,6 +260,7 @@ and Zetta's.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
 - [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.
 - [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, conflicts, transfer resume, path history, and daemon watching.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
@@ -379,6 +382,7 @@ library, never the other way round).
 |---|---|
 | `liquid::liquid` (`libliquid`) | the library: `libliquid.a`, or `libliquid.so`/`.dylib` with `-DBUILD_SHARED_LIBS=ON`; symbols hidden by default, `LIQUID_EXPORT` marks the API |
 | `liquid-cli` → `liquid` | the command-line binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
+| `liquid_forge_double`, `liquid-forge-double` | installable in-memory lake forge target and standalone integration-test server |
 | `liquid-tests` | GoogleTest; on by default only when liquid is the top-level project |
 
 ### Build

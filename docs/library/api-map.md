@@ -90,6 +90,7 @@ owning issue in `error::context`.
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/forge.hpp` | #201 | implemented | plain review, comment, mapped-anchor, branch-protection, and polling-event values plus a move-only coroutine client and watch; HTTP and JSON remain private |
 | `liquid/secret.hpp` | #204 | implemented | X25519 sealing keys, exact deployment scopes, canonical-CBOR sealed-secret encode/decode, synchronous seal/unseal, keypair generation, and coroutine-native Lake public-key fetch |
 | `liquid/sync.hpp` | #160, #165, #177, #189, #202, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, whole-graph and metadata-only `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull, node stores, and lake clients |
 | `liquid/sync.hpp` | #85, #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, peer flow rejection and retry reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
@@ -662,6 +663,45 @@ and applies the entire span against candidates before one checkpoint. The endpoi
 in [sync.md](sync.md); pack frames remain private wire data.
 `receive_metadata` accepts tree roots, stores only tree and blob records, registers blob content at
 the session's remote source and instance, and reports fetched record counts plus bytes still remote.
+
+### `liquid/forge.hpp`
+
+```cpp
+enum class forge_review_state : std::uint8_t { open, approved, closed };
+struct forge_review { std::string id; change_id change; forge_review_state state;
+                      std::vector<std::string> reviewers;
+                      std::chrono::sys_seconds created, updated; };
+struct forge_comment { std::string id, review; std::optional<actor> author; std::string body;
+                       text_anchor anchor; std::optional<mapped_anchor> mapped;
+                       std::chrono::sys_seconds created; };
+struct forge_branch_protection { std::string pattern;
+  bool required_review, required_verification, fast_forward_only;
+  std::vector<std::string> allowed_pushers; };
+struct forge_client_options { std::string bearer_token;
+                              std::chrono::milliseconds poll_interval{2000}; };
+enum class forge_event_kind : std::uint8_t { review_updated, comment_added, head_moved };
+struct forge_event { forge_event_kind kind; std::optional<forge_review> review;
+                     std::optional<forge_comment> comment; std::optional<change_id> head; };
+class forge_watch { public: runtime::task<forge_event> next(); };
+class forge_client {
+ public:
+  explicit forge_client(std::string lake_repository_url, forge_client_options = {});
+  runtime::task<std::vector<forge_review>> list_reviews(std::optional<forge_review_state> = {});
+  runtime::task<forge_review> get_review(std::string id);
+  runtime::task<forge_review> create_review(change_id, std::vector<std::string> reviewers = {});
+  runtime::task<forge_review> set_review_state(std::string id, forge_review_state);
+  runtime::task<std::vector<forge_comment>> list_comments(std::string review);
+  runtime::task<forge_comment> create_comment(std::string review, std::string body, text_anchor);
+  runtime::task<std::vector<forge_comment>>
+    advance_anchors(repository&, std::string review, change_id target);
+  runtime::task<std::vector<forge_branch_protection>> branch_protections();
+  runtime::task<forge_watch> watch(std::string review);
+};
+```
+
+All operations await network or repository work on the caller runtime. `watch::next()` delays and
+polls through Capy, and its repository pull, review update, and comment event ordering is pinned in
+[forge-client.md](forge-client.md). No operation blocks inside a coroutine.
 
 ### `liquid/delta.hpp`
 

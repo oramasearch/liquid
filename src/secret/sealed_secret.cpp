@@ -581,7 +581,7 @@ auto secret_detail::fetch_sealing_public_key_with(std::string lake_url,
         auto response = co_await request(net_detail::http_request{
             .method = net_detail::http_method::get,
             .url = *parsed,
-            .target = net_detail::endpoint_target(*parsed, "/v1/sealing_public_key"),
+            .target = net_detail::request_target(*parsed, "/v1/sealing_public_key"),
             .bearer = std::move(bearer),
             .content_type = "application/json",
         });
