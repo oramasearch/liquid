@@ -78,6 +78,8 @@ repeatable path and drip filters, and renders every applied or skipped report en
 `workers.cpp` implements the scheduler and worker daemons with flag-over-environment
 configuration. Long-running entry points run on the guarded process-wide runtime while the command
 thread waits for completion, keeping accept and polling loops live between I/O callbacks.
+`node_store.cpp` implements `node-store serve` plus the status, mount, unmount, and prefetch thin
+HTTP clients. Flags override the documented node-store environment variables.
 `wrap.cpp` selects the scheduler backend with `--scheduler` while `--remote` keeps the stock REAPI
 path.
 

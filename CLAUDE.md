@@ -388,6 +388,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
     the same trust boundary as vendored bytes without adding hundreds of megabytes or an aggregate
     mirror maintenance obligation. `LIQUID_GRAMMAR_MIRROR` remains the explicit URL-root change for
     an organisation or air-gapped mirror. See [`docs/library/grammars.md`](docs/library/grammars.md).
+11. **The runtime node store is embedded liquid, not a containerd snapshotter** (liquid #202;
+    bridge decision 23). An image root is a tree digest plus its sync URL. `liquid node-store
+    serve` receives only tree and blob records, exposes a reference-counted read-only VFS mount,
+    and owns the shared node chunk budget. The k0s #14 Go proxy snapshotter bind-mounts that path
+    and owns writable layers; liquid ships neither the proxy nor layers.
 
 **Still open:**
 
