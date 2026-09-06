@@ -17,7 +17,8 @@ same library as a pinned submodule, lake will. The mapped public headers compile
 error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
 store, liquid #199's pre-pack write-through callback and remote-registered local eviction,
 liquid #4's TAAP/1 actor identities,
-liquid #111's identity-key rotation and chain verification, and signed drips and changes, liquid #7's
+liquid #111's identity-key rotation and chain verification, liquid #81's software, FIDO2, and PIV
+identity backends, TPM-sealed KEK custody, and threshold release approval, signed drips and changes, liquid #7's
 trust-domain encrypted objects, liquid #51's pluggable local, recipient, cloud KMS, lake transit,
 and threshold-share KEK custody, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
@@ -47,7 +48,9 @@ input/output claim enumeration.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
 and retention explanations. Liquid #207 adds signed Lake transparency checkpoint, witness quorum,
 tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 evidence
-verification with repository-backed trusted checkpoint state. Liquid #61 adds signed `sbom/1` attestations with graph-derived
+verification with repository-backed trusted checkpoint state. Liquid #83 adds complete full and
+partial parent-tile walks, cache reauthentication through the selected checkpoint, and the same walk
+before consistency proofs. Liquid #61 adds signed `sbom/1` attestations with graph-derived
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
 remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
 materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
@@ -179,8 +182,8 @@ benchmarks live under `bench/` and are excluded unless their build option is ena
 Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and the fail-closed
 `liquid serve admission` Kubernetes webhook. Its TLS admission and independent control listeners
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
-metrics, REST, OpenAPI, and MCP are implemented. Log mode refuses until #83 supplies complete
-transparency inclusion verification.
+metrics, REST, OpenAPI, and MCP are implemented. The shared #83 transparency verifier is complete;
+the admission lake adapter remains fail-closed until it calls that verifier.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
@@ -524,6 +527,13 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
     binary lookup paths, and absolute package metadata. Liquid never rewrites existing binaries
     and does not require a fixed content-addressed install path. See
     [`docs/library/relocation.md`](docs/library/relocation.md).
+13. **Hardware command layers are owned by liquid over operating-system transports** (Steve,
+    2026-09-05; liquid-bridge decision 21). CTAP2 uses liquid's canonical CBOR over USB HID, PIV
+    sends APDUs through PC/SC, and the TPM 2.0 sealing subset uses `/dev/tpmrm0` or Windows TBS.
+    Tests inject protocol-level software doubles through those transport interfaces. Do not add
+    libfido2, OpenSC, or tpm2-tss. Design: [`docs/library/identity.md`](docs/library/identity.md),
+    [`docs/library/encryption.md`](docs/library/encryption.md), and
+    [`docs/library/release-approval.md`](docs/library/release-approval.md).
 
 **Still open:**
 

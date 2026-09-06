@@ -1,0 +1,839 @@
+#include <gtest/gtest.h>
+
+#include <array>
+#include <cstdlib>
+#include <filesystem>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <openssl/core_names.h>
+#include <openssl/evp.h>
+
+#if defined(__linux__)
+#include <cerrno>
+#include <cstring>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
+
+#include "encoding/cbor.hpp"
+#include "identity/custody/tpm.hpp"
+#include "identity/keys/backend.hpp"
+#include "identity/taap.hpp"
+#include "liquid/hash.hpp"
+#include "liquid/identity.hpp"
+#include "liquid/release.hpp"
+#include "liquid/runtime.hpp"
+#include "monocypher-ed25519.h"
+#include "temporary_directory.hpp"
+
+namespace {
+
+namespace cbor = liquid::encoding::cbor;
+
+auto bytes(std::string_view text) -> std::vector<std::byte> {
+    return {reinterpret_cast<const std::byte*>(text.data()),
+            reinterpret_cast<const std::byte*>(text.data() + text.size())};
+}
+
+auto field(const cbor::value& source, std::string_view name) -> const cbor::value* {
+    const auto* values = std::get_if<cbor::value::map>(&source.data);
+    if (!values) {
+        return nullptr;
+    }
+    for (const auto& [key, value] : *values) {
+        const auto* text = std::get_if<std::string>(&key.data);
+        if (text && *text == name) {
+            return &value;
+        }
+    }
+    return nullptr;
+}
+
+auto field(const cbor::value& source, std::int64_t name) -> const cbor::value* {
+    const auto* values = std::get_if<cbor::value::map>(&source.data);
+    if (!values) {
+        return nullptr;
+    }
+    for (const auto& [key, value] : *values) {
+        if (const auto* signed_key = std::get_if<std::int64_t>(&key.data);
+            signed_key && *signed_key == name) {
+            return &value;
+        }
+        if (const auto* unsigned_key = std::get_if<std::uint64_t>(&key.data);
+            unsigned_key && name >= 0 && *unsigned_key == static_cast<std::uint64_t>(name)) {
+            return &value;
+        }
+    }
+    return nullptr;
+}
+
+auto byte_string(std::span<const std::byte> input) -> cbor::value {
+    return cbor::value{cbor::value::bytes{input.begin(), input.end()}};
+}
+
+class fido_double final : public liquid::identity_detail::fido2_transport {
+public:
+    fido_double() {
+        auto seed = std::array<std::uint8_t, 32>{};
+        for (std::size_t index = 0; index < seed.size(); ++index) {
+            seed[index] = static_cast<std::uint8_t>(index + 1);
+        }
+        crypto_ed25519_key_pair(secret_.data(), public_key_.data(), seed.data());
+    }
+
+    auto transact(std::uint8_t command, std::span<const std::byte> payload)
+        -> liquid::result<std::vector<std::byte>> override {
+        auto decoded = cbor::decode(payload);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        if (command == 0x01) {
+            auto algorithms = field(*decoded, 4);
+            auto extensions = field(*decoded, 6);
+            if (!algorithms || !extensions) {
+                return std::unexpected(liquid::error{
+                    liquid::errc::corrupt, "invalid makeCredential command", "FIDO2 double"});
+            }
+            auto cose = cbor::encode(cbor::value{cbor::value::map{
+                {cbor::value{std::uint64_t{1}}, cbor::value{std::uint64_t{1}}},
+                {cbor::value{std::uint64_t{3}}, cbor::value{std::int64_t{-8}}},
+                {cbor::value{std::int64_t{-1}}, cbor::value{std::uint64_t{6}}},
+                {cbor::value{std::int64_t{-2}}, byte_string(std::as_bytes(std::span{public_key_}))},
+            }});
+            if (!cose) {
+                return std::unexpected(cose.error());
+            }
+            auto authenticator_data = std::vector<std::byte>(53, std::byte{0});
+            authenticator_data[32] = std::byte{0x41};
+            authenticator_data.push_back(std::byte{0x00});
+            authenticator_data.push_back(std::byte{static_cast<std::uint8_t>(credential_.size())});
+            authenticator_data.insert(
+                authenticator_data.end(), credential_.begin(), credential_.end());
+            authenticator_data.insert(authenticator_data.end(), cose->begin(), cose->end());
+            return cbor::encode(cbor::value{cbor::value::map{
+                {cbor::value{std::uint64_t{1}}, "packed"},
+                {cbor::value{std::uint64_t{2}}, byte_string(authenticator_data)},
+                {cbor::value{std::uint64_t{3}}, cbor::value{cbor::value::map{}}},
+            }});
+        }
+        if (command != 0x02) {
+            return std::unexpected(liquid::error{
+                liquid::errc::unsupported, "unsupported CTAP2 command", "FIDO2 double"});
+        }
+        const auto* allow = field(*decoded, 3);
+        const auto* allowed = allow ? std::get_if<cbor::value::array>(&allow->data) : nullptr;
+        const auto* credential =
+            allowed && !allowed->empty() ? field(allowed->front(), "id") : nullptr;
+        const auto* client_data = field(*decoded, 2);
+        const auto* credential_bytes =
+            credential ? std::get_if<cbor::value::bytes>(&credential->data) : nullptr;
+        const auto* client_bytes =
+            client_data ? std::get_if<cbor::value::bytes>(&client_data->data) : nullptr;
+        if (!credential_bytes || *credential_bytes != credential_ || !client_bytes ||
+            client_bytes->size() != 32) {
+            return std::unexpected(liquid::error{
+                liquid::errc::unauthorized, "unknown FIDO2 credential", "FIDO2 double"});
+        }
+        auto authenticator_data = std::vector<std::byte>(37, std::byte{0});
+        authenticator_data[32] = std::byte{0x01};
+        auto client_hash = liquid::hash(liquid::algorithm::sha256, *client_bytes);
+        if (!client_hash) {
+            return std::unexpected(client_hash.error());
+        }
+        auto assertion = authenticator_data;
+        assertion.insert(assertion.end(), client_hash->bytes.begin(), client_hash->bytes.end());
+        auto signature = std::vector<std::byte>(64);
+        crypto_ed25519_sign(reinterpret_cast<std::uint8_t*>(signature.data()),
+                            secret_.data(),
+                            reinterpret_cast<const std::uint8_t*>(assertion.data()),
+                            assertion.size());
+        return cbor::encode(cbor::value{cbor::value::map{
+            {cbor::value{std::uint64_t{2}}, byte_string(authenticator_data)},
+            {cbor::value{std::uint64_t{3}}, byte_string(signature)},
+        }});
+    }
+
+private:
+    std::array<std::uint8_t, 64> secret_{};
+    std::array<std::uint8_t, 32> public_key_{};
+    std::vector<std::byte> credential_{std::byte{0x81}, std::byte{0x02}, std::byte{0x03}};
+};
+
+class p256_key {
+public:
+    p256_key() {
+        auto context = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+        EXPECT_NE(context, nullptr);
+        EXPECT_GT(EVP_PKEY_keygen_init(context), 0);
+        EXPECT_GT(EVP_PKEY_CTX_set_group_name(context, "P-256"), 0);
+        EXPECT_GT(EVP_PKEY_keygen(context, &key_), 0);
+        EVP_PKEY_CTX_free(context);
+    }
+
+    ~p256_key() {
+        EVP_PKEY_free(key_);
+    }
+
+    auto public_key() const -> std::vector<std::byte> {
+        auto size = std::size_t{};
+        EXPECT_GT(EVP_PKEY_get_octet_string_param(key_, OSSL_PKEY_PARAM_PUB_KEY, nullptr, 0, &size),
+                  0);
+        auto encoded = std::vector<unsigned char>(size);
+        EXPECT_GT(EVP_PKEY_get_octet_string_param(
+                      key_, OSSL_PKEY_PARAM_PUB_KEY, encoded.data(), encoded.size(), &size),
+                  0);
+        EXPECT_EQ(size, 65U);
+        return {reinterpret_cast<const std::byte*>(encoded.data() + 1),
+                reinterpret_cast<const std::byte*>(encoded.data() + size)};
+    }
+
+    auto sign_digest(std::span<const std::byte> digest) const -> std::vector<std::byte> {
+        auto context = EVP_PKEY_CTX_new(key_, nullptr);
+        EXPECT_NE(context, nullptr);
+        EXPECT_GT(EVP_PKEY_sign_init(context), 0);
+        EXPECT_GT(EVP_PKEY_CTX_set_signature_md(context, EVP_sha256()), 0);
+        auto size = std::size_t{};
+        EXPECT_GT(EVP_PKEY_sign(context,
+                                nullptr,
+                                &size,
+                                reinterpret_cast<const unsigned char*>(digest.data()),
+                                digest.size()),
+                  0);
+        auto output = std::vector<std::byte>(size);
+        EXPECT_GT(EVP_PKEY_sign(context,
+                                reinterpret_cast<unsigned char*>(output.data()),
+                                &size,
+                                reinterpret_cast<const unsigned char*>(digest.data()),
+                                digest.size()),
+                  0);
+        EVP_PKEY_CTX_free(context);
+        output.resize(size);
+        return output;
+    }
+
+private:
+    EVP_PKEY* key_{};
+};
+
+class fido_es256_double final : public liquid::identity_detail::fido2_transport {
+public:
+    auto transact(std::uint8_t command, std::span<const std::byte> payload)
+        -> liquid::result<std::vector<std::byte>> override {
+        auto decoded = cbor::decode(payload);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        if (command == 0x01) {
+            const auto public_key = key_.public_key();
+            auto cose = cbor::encode(cbor::value{cbor::value::map{
+                {cbor::value{std::uint64_t{1}}, cbor::value{std::uint64_t{2}}},
+                {cbor::value{std::uint64_t{3}}, cbor::value{std::int64_t{-7}}},
+                {cbor::value{std::int64_t{-1}}, cbor::value{std::uint64_t{1}}},
+                {cbor::value{std::int64_t{-2}}, byte_string(std::span{public_key}.first(32))},
+                {cbor::value{std::int64_t{-3}}, byte_string(std::span{public_key}.subspan(32))},
+            }});
+            if (!cose) {
+                return std::unexpected(cose.error());
+            }
+            auto authenticator_data = std::vector<std::byte>(53, std::byte{0});
+            authenticator_data[32] = std::byte{0x41};
+            authenticator_data.push_back(std::byte{0x00});
+            authenticator_data.push_back(std::byte{static_cast<std::uint8_t>(credential_.size())});
+            authenticator_data.insert(
+                authenticator_data.end(), credential_.begin(), credential_.end());
+            authenticator_data.insert(authenticator_data.end(), cose->begin(), cose->end());
+            return cbor::encode(cbor::value{cbor::value::map{
+                {cbor::value{std::uint64_t{1}}, "packed"},
+                {cbor::value{std::uint64_t{2}}, byte_string(authenticator_data)},
+                {cbor::value{std::uint64_t{3}}, cbor::value{cbor::value::map{}}},
+            }});
+        }
+        if (command != 0x02) {
+            return std::unexpected(liquid::error{
+                liquid::errc::unsupported, "unsupported CTAP2 command", "FIDO2 ES256 double"});
+        }
+        const auto* allow = field(*decoded, 3);
+        const auto* allowed = allow ? std::get_if<cbor::value::array>(&allow->data) : nullptr;
+        const auto* credential =
+            allowed && !allowed->empty() ? field(allowed->front(), "id") : nullptr;
+        const auto* client_data = field(*decoded, 2);
+        const auto* credential_bytes =
+            credential ? std::get_if<cbor::value::bytes>(&credential->data) : nullptr;
+        const auto* client_bytes =
+            client_data ? std::get_if<cbor::value::bytes>(&client_data->data) : nullptr;
+        if (!credential_bytes || *credential_bytes != credential_ || !client_bytes ||
+            client_bytes->size() != 32) {
+            return std::unexpected(liquid::error{
+                liquid::errc::unauthorized, "unknown FIDO2 credential", "FIDO2 ES256 double"});
+        }
+        auto authenticator_data = std::vector<std::byte>(37, std::byte{0});
+        authenticator_data[32] = std::byte{0x01};
+        auto client_hash = liquid::hash(liquid::algorithm::sha256, *client_bytes);
+        if (!client_hash) {
+            return std::unexpected(client_hash.error());
+        }
+        auto assertion = authenticator_data;
+        assertion.insert(assertion.end(), client_hash->bytes.begin(), client_hash->bytes.end());
+        auto assertion_hash = liquid::hash(liquid::algorithm::sha256, assertion);
+        if (!assertion_hash) {
+            return std::unexpected(assertion_hash.error());
+        }
+        const auto signature = key_.sign_digest(assertion_hash->bytes);
+        return cbor::encode(cbor::value{cbor::value::map{
+            {cbor::value{std::uint64_t{2}}, byte_string(authenticator_data)},
+            {cbor::value{std::uint64_t{3}}, byte_string(signature)},
+        }});
+    }
+
+private:
+    p256_key key_;
+    std::vector<std::byte> credential_{std::byte{0x82}, std::byte{0x04}, std::byte{0x08}};
+};
+
+auto tlv(std::initializer_list<std::byte> tag, std::span<const std::byte> value)
+    -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>{tag.begin(), tag.end()};
+    if (value.size() < 0x80U) {
+        output.push_back(std::byte{static_cast<std::uint8_t>(value.size())});
+    } else {
+        output.push_back(std::byte{0x81});
+        output.push_back(std::byte{static_cast<std::uint8_t>(value.size())});
+    }
+    output.insert(output.end(), value.begin(), value.end());
+    return output;
+}
+
+class piv_double final : public liquid::identity_detail::piv_transport {
+public:
+    auto transmit(std::span<const std::byte> apdu)
+        -> liquid::result<std::vector<std::byte>> override {
+        if (apdu.size() == 15 && apdu[1] == std::byte{0xa4} && apdu[4] == std::byte{0x09} &&
+            apdu.back() == std::byte{0x00}) {
+            return std::vector<std::byte>{std::byte{0x90}, std::byte{0x00}};
+        }
+        if (apdu.size() == 11 && apdu[1] == std::byte{0x47} && apdu[3] == std::byte{0x9c} &&
+            apdu.back() == std::byte{0x00}) {
+            auto point = key_.public_key();
+            point.insert(point.begin(), std::byte{0x04});
+            auto encoded_point = tlv({std::byte{0x86}}, point);
+            auto output = tlv({std::byte{0x7f}, std::byte{0x49}}, encoded_point);
+            output.push_back(std::byte{0x90});
+            output.push_back(std::byte{0x00});
+            return output;
+        }
+        if (apdu.size() == 44 && apdu[1] == std::byte{0x87} && apdu[3] == std::byte{0x9c} &&
+            apdu[4] == std::byte{0x26} && apdu[5] == std::byte{0x7c} &&
+            apdu[6] == std::byte{0x24} && apdu[7] == std::byte{0x82} &&
+            apdu[8] == std::byte{0x00} && apdu[9] == std::byte{0x81} &&
+            apdu[10] == std::byte{0x20} && apdu.back() == std::byte{0x00}) {
+            auto signature = key_.sign_digest(apdu.subspan(11, 32));
+            auto encoded_signature = tlv({std::byte{0x82}}, signature);
+            auto output = tlv({std::byte{0x7c}}, encoded_signature);
+            output.push_back(std::byte{0x90});
+            output.push_back(std::byte{0x00});
+            return output;
+        }
+        return std::unexpected(
+            liquid::error{liquid::errc::unauthorized, "unsupported PIV APDU", "PIV double"});
+    }
+
+private:
+    p256_key key_;
+};
+
+auto put_u32(std::vector<std::byte>& output, std::uint32_t value) -> void {
+    output.push_back(std::byte{static_cast<std::uint8_t>(value >> 24)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(value >> 16)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(value >> 8)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(value)});
+}
+
+auto get_u32(std::span<const std::byte> input, std::size_t offset) -> std::uint32_t {
+    return (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[offset])) << 24) |
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[offset + 1])) << 16) |
+           (static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[offset + 2])) << 8) |
+           static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(input[offset + 3]));
+}
+
+auto put_u16(std::vector<std::byte>& output, std::uint16_t value) -> void {
+    output.push_back(std::byte{static_cast<std::uint8_t>(value >> 8)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(value)});
+}
+
+auto get_u16(std::span<const std::byte> input, std::size_t offset) -> std::uint16_t {
+    return static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(std::to_integer<std::uint8_t>(input[offset])) << 8) |
+        std::to_integer<std::uint8_t>(input[offset + 1]));
+}
+
+class tpm_double final : public liquid::custody_detail::tpm_transport {
+public:
+    auto submit(std::span<const std::byte> request)
+        -> liquid::result<std::vector<std::byte>> override {
+        if (request.size() < 10) {
+            return reply(0x101, {});
+        }
+        const auto code = get_u32(request, 6);
+        const auto body = request.subspan(10);
+        if (code == 0x00000131) {
+            auto output = std::vector<std::byte>{};
+            put_u32(output, 0x80000000);
+            put_u32(output, 0);
+            return reply(0, output);
+        }
+        if (code == 0x00000176) {
+            auto output = std::vector<std::byte>{};
+            put_u32(output, 0x03000000);
+            put_u16(output, 0);
+            return reply(0, output);
+        }
+        if (code == 0x0000017f && body.size() >= 4) {
+            auto policy_input = std::vector<std::byte>{body.begin() + 4, body.end()};
+            policy_input.insert(policy_input.end(), pcr_state_.begin(), pcr_state_.end());
+            auto policy = liquid::hash(liquid::algorithm::sha256, policy_input);
+            if (!policy) {
+                return std::unexpected(policy.error());
+            }
+            current_policy_.assign(policy->bytes.begin(), policy->bytes.end());
+            return reply(0, {});
+        }
+        if (code == 0x00000189) {
+            auto output = std::vector<std::byte>{};
+            put_u16(output, static_cast<std::uint16_t>(current_policy_.size()));
+            output.insert(output.end(), current_policy_.begin(), current_policy_.end());
+            return reply(0, output);
+        }
+        if (code == 0x00000153 && body.size() > 17) {
+            const auto authorization_size = get_u32(body, 4);
+            auto offset = std::size_t{8 + authorization_size};
+            const auto sensitive_size = get_u16(body, offset);
+            offset += 2;
+            const auto data_size = get_u16(body, offset + 2);
+            if (sensitive_size < 36 || data_size != 32) {
+                return reply(0x101, {});
+            }
+            sealed_ = current_policy_;
+            sealed_.insert(sealed_.end(), body.begin() + offset + 4, body.begin() + offset + 36);
+            auto parameters = std::vector<std::byte>{};
+            put_u16(parameters, static_cast<std::uint16_t>(sealed_.size()));
+            parameters.insert(parameters.end(), sealed_.begin(), sealed_.end());
+            put_u16(parameters, 1);
+            parameters.push_back(std::byte{1});
+            auto output = std::vector<std::byte>{};
+            put_u32(output, static_cast<std::uint32_t>(parameters.size()));
+            output.insert(output.end(), parameters.begin(), parameters.end());
+            return reply(0, output);
+        }
+        if (code == 0x00000157 && body.size() > 17) {
+            const auto authorization_size = get_u32(body, 4);
+            auto offset = std::size_t{8 + authorization_size};
+            const auto private_size = get_u16(body, offset);
+            offset += 2;
+            if (offset + private_size > body.size()) {
+                return reply(0x101, {});
+            }
+            loaded_.assign(body.begin() + offset, body.begin() + offset + private_size);
+            auto output = std::vector<std::byte>{};
+            put_u32(output, 0x80000001);
+            put_u32(output, 2);
+            put_u16(output, 0);
+            return reply(0, output);
+        }
+        if (code == 0x0000015e && loaded_.size() == 64) {
+            if (!std::ranges::equal(current_policy_, std::span{loaded_}.first(32))) {
+                return reply(0x99d, {});
+            }
+            auto output = std::vector<std::byte>{};
+            put_u32(output, 34);
+            put_u16(output, 32);
+            output.insert(output.end(), loaded_.begin() + 32, loaded_.end());
+            return reply(0, output);
+        }
+        if (code == 0x00000165) {
+            return reply(0, {});
+        }
+        return reply(0x101, {});
+    }
+
+    void change_pcr() {
+        pcr_state_.front() ^= std::byte{1};
+    }
+
+private:
+    auto reply(std::uint32_t status, std::span<const std::byte> body)
+        -> liquid::result<std::vector<std::byte>> {
+        auto output = std::vector<std::byte>{std::byte{0x80}, std::byte{0x02}};
+        put_u32(output, static_cast<std::uint32_t>(10 + body.size()));
+        put_u32(output, status);
+        output.insert(output.end(), body.begin(), body.end());
+        return output;
+    }
+
+    std::array<std::byte, 32> pcr_state_{};
+    std::vector<std::byte> current_policy_;
+    std::vector<std::byte> sealed_;
+    std::vector<std::byte> loaded_;
+};
+
+#if defined(__linux__)
+class swtpm_transport final : public liquid::custody_detail::tpm_transport {
+public:
+    explicit swtpm_transport(std::string path) : path_(std::move(path)) {}
+
+    ~swtpm_transport() override {
+        if (descriptor_ >= 0) {
+            ::close(descriptor_);
+        }
+    }
+
+    auto submit(std::span<const std::byte> request)
+        -> liquid::result<std::vector<std::byte>> override {
+        auto lock = std::scoped_lock{mutex_};
+        auto connected = connect();
+        if (!connected) {
+            return std::unexpected(connected.error());
+        }
+        auto written = write_all(request);
+        if (!written) {
+            return std::unexpected(written.error());
+        }
+        auto header = std::array<std::byte, 10>{};
+        auto read = read_all(header);
+        if (!read) {
+            return std::unexpected(read.error());
+        }
+        const auto size = get_u32(header, 2);
+        if (size < header.size() || size > 4096) {
+            return std::unexpected(
+                liquid::error{liquid::errc::corrupt, "invalid swtpm response size", path_});
+        }
+        auto output = std::vector<std::byte>{header.begin(), header.end()};
+        output.resize(size);
+        read = read_all(std::span{output}.subspan(header.size()));
+        if (!read) {
+            return std::unexpected(read.error());
+        }
+        return output;
+    }
+
+private:
+    auto connect() -> liquid::result<void> {
+        if (descriptor_ >= 0) {
+            return {};
+        }
+        auto address = sockaddr_un{};
+        address.sun_family = AF_UNIX;
+        if (path_.size() >= sizeof(address.sun_path)) {
+            return std::unexpected(liquid::error{
+                liquid::errc::invalid_argument, "swtpm socket path is too long", path_});
+        }
+        descriptor_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (descriptor_ < 0) {
+            return io_error("cannot create swtpm socket");
+        }
+        std::ranges::copy(path_, address.sun_path);
+        if (::connect(descriptor_,
+                      reinterpret_cast<const sockaddr*>(&address),
+                      static_cast<socklen_t>(sizeof(address))) != 0) {
+            return io_error("cannot connect to swtpm");
+        }
+        return {};
+    }
+
+    auto write_all(std::span<const std::byte> input) -> liquid::result<void> {
+        auto offset = std::size_t{};
+        while (offset < input.size()) {
+            const auto count = ::write(descriptor_, input.data() + offset, input.size() - offset);
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
+            if (count <= 0) {
+                return io_error("cannot write swtpm command");
+            }
+            offset += static_cast<std::size_t>(count);
+        }
+        return {};
+    }
+
+    auto read_all(std::span<std::byte> output) -> liquid::result<void> {
+        auto offset = std::size_t{};
+        while (offset < output.size()) {
+            const auto count = ::read(descriptor_, output.data() + offset, output.size() - offset);
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
+            if (count <= 0) {
+                return io_error("cannot read swtpm response");
+            }
+            offset += static_cast<std::size_t>(count);
+        }
+        return {};
+    }
+
+    auto io_error(std::string message) -> liquid::result<void> {
+        const auto detail = std::string{std::strerror(errno)};
+        if (descriptor_ >= 0) {
+            ::close(descriptor_);
+            descriptor_ = -1;
+        }
+        return std::unexpected(
+            liquid::error{liquid::errc::io, std::move(message), path_ + ": " + detail});
+    }
+
+    std::string path_;
+    std::mutex mutex_;
+    int descriptor_{-1};
+};
+
+auto extend_pcr(const std::shared_ptr<swtpm_transport>& transport, std::uint32_t pcr)
+    -> liquid::result<void> {
+    auto body = std::vector<std::byte>{};
+    put_u32(body, pcr);
+    put_u32(body, 9);
+    put_u32(body, 0x40000009);
+    put_u16(body, 0);
+    body.push_back(std::byte{0});
+    put_u16(body, 0);
+    put_u32(body, 1);
+    put_u16(body, 0x000b);
+    body.insert(body.end(), 32, std::byte{0xa5});
+    auto request = std::vector<std::byte>{std::byte{0x80}, std::byte{0x02}};
+    put_u32(request, static_cast<std::uint32_t>(10 + body.size()));
+    put_u32(request, 0x00000182);
+    request.insert(request.end(), body.begin(), body.end());
+    auto response = transport->submit(request);
+    if (!response) {
+        return std::unexpected(response.error());
+    }
+    if (response->size() < 10 || get_u32(*response, 6) != 0) {
+        return std::unexpected(liquid::error{
+            liquid::errc::unauthorized, "swtpm PCR extend failed", "TPM2_PCR_Extend"});
+    }
+    return {};
+}
+#endif
+
+auto set_environment(std::string_view name, const std::filesystem::path& value) -> void {
+#if defined(_WIN32)
+    EXPECT_EQ(_putenv_s(std::string{name}.c_str(), value.string().c_str()), 0);
+#else
+    EXPECT_EQ(setenv(std::string{name}.c_str(), value.c_str(), 1), 0);
+#endif
+}
+
+auto identity_home(std::string_view name) -> std::filesystem::path {
+    const auto path = liquid::test::fixture_path("liquid-hardware-" + std::string{name});
+    std::error_code code;
+    std::filesystem::remove_all(path, code);
+    std::filesystem::create_directories(path, code);
+    EXPECT_FALSE(code);
+    set_environment("LIQUID_HOME", path);
+    return path;
+}
+
+auto select_identity_home(std::string_view name) -> void {
+    const auto path = liquid::test::fixture_path("liquid-hardware-" + std::string{name});
+    set_environment("LIQUID_HOME", path);
+}
+
+auto open_identity(std::string_view name) -> liquid::signer {
+    identity_home(name);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    EXPECT_TRUE(signer) << signer.error().message;
+    return std::move(*signer);
+}
+
+auto test_signatures(std::string_view name, std::string_view destination) -> void {
+    auto signer = open_identity(name);
+    const auto original = signer.identity();
+    auto rotated = liquid::runtime::block_on(signer.rotate_to(std::string{destination}));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    EXPECT_EQ(rotated->subject.taap_id, original.taap_id);
+    EXPECT_NE(rotated->subject.key_fingerprint, original.key_fingerprint);
+    for (const auto purpose : {std::string{"drip"}, std::string{"change"}}) {
+        auto body = bytes(purpose + " body");
+        auto signature = liquid::runtime::block_on(signer.sign(purpose, body));
+        ASSERT_TRUE(signature) << signature.error().message;
+        auto verified = liquid::verify(signer.identity(), purpose, body, *signature);
+        ASSERT_TRUE(verified) << verified.error().message;
+        EXPECT_TRUE(*verified);
+    }
+    auto reopened = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    EXPECT_EQ(reopened->identity().key_fingerprint, signer.identity().key_fingerprint);
+}
+
+auto digest_with(std::byte value) -> liquid::digest {
+    auto output = liquid::digest{liquid::algorithm::blake3, {}};
+    output.bytes.fill(value);
+    return output;
+}
+
+TEST(HardwareIdentity, fido2_double_signs_drips_and_changes) {
+    liquid::identity_detail::install_fido2_transport(std::make_shared<fido_double>());
+    test_signatures("fido", "fido2");
+}
+
+TEST(HardwareIdentity, fido2_es256_fallback_signs_drips_and_changes) {
+    liquid::identity_detail::install_fido2_transport(std::make_shared<fido_es256_double>());
+    test_signatures("fido-es256", "fido2");
+}
+
+TEST(HardwareIdentity, piv_double_signs_drips_and_changes) {
+    liquid::identity_detail::install_piv_transport(std::make_shared<piv_double>());
+    test_signatures("piv", "piv:9c");
+}
+
+TEST(HardwareIdentity, wrong_algorithm_and_malformed_metadata_are_unauthorized) {
+    auto signer = open_identity("wrong-algorithm");
+    auto body = bytes("body");
+    auto signed_value = liquid::runtime::block_on(signer.sign("drip", body));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+    signed_value->algorithm = "ecdsa-p256";
+    auto wrong = liquid::verify(signer.identity(), "drip", body, *signed_value);
+    ASSERT_FALSE(wrong);
+    EXPECT_EQ(wrong.error().code, liquid::errc::unauthorized);
+    signed_value->algorithm = "ed25519";
+    signed_value->bytes.resize(12);
+    auto malformed = liquid::verify(signer.identity(), "drip", body, *signed_value);
+    ASSERT_FALSE(malformed);
+    EXPECT_EQ(malformed.error().code, liquid::errc::unauthorized);
+}
+
+TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
+    auto policy_signer = open_identity("release-policy");
+    auto first = open_identity("release-first");
+    auto second = open_identity("release-second");
+    auto third = open_identity("release-third");
+    const auto repository = digest_with(std::byte{0x11});
+    const auto artifact = digest_with(std::byte{0x22});
+    auto policy = liquid::runtime::block_on(liquid::make_release_policy(
+        repository,
+        "targets",
+        2,
+        {first.identity().taap_id, second.identity().taap_id, third.identity().taap_id},
+        "2099-01-01T00:00:00Z",
+        policy_signer));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto first_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", first));
+    auto second_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", second));
+    ASSERT_TRUE(first_approval) << first_approval.error().message;
+    ASSERT_TRUE(second_approval) << second_approval.error().message;
+
+    const auto one = std::array{*first_approval};
+    auto one_result = liquid::verify_release(artifact, *policy, one);
+    ASSERT_TRUE(one_result) << one_result.error().message;
+    EXPECT_FALSE(one_result->satisfied);
+
+    const auto duplicate = std::array{*first_approval, *first_approval};
+    auto duplicate_result = liquid::verify_release(artifact, *policy, duplicate);
+    ASSERT_TRUE(duplicate_result) << duplicate_result.error().message;
+    EXPECT_FALSE(duplicate_result->satisfied);
+    EXPECT_EQ(duplicate_result->distinct_valid_signers.size(), 1U);
+
+    const auto two = std::array{*first_approval, *second_approval};
+    auto two_result = liquid::verify_release(artifact, *policy, two);
+    ASSERT_TRUE(two_result) << two_result.error().message;
+    EXPECT_TRUE(two_result->satisfied);
+    EXPECT_EQ(two_result->distinct_valid_signers.size(), 2U);
+}
+
+TEST(ReleaseApproval, approval_after_declared_compromise_is_rejected) {
+    auto policy_signer = open_identity("compromise-policy");
+    auto first = open_identity("compromise-first");
+    auto second = open_identity("compromise-second");
+    const auto repository = digest_with(std::byte{0x33});
+    const auto artifact = digest_with(std::byte{0x44});
+    auto policy = liquid::runtime::block_on(
+        liquid::make_release_policy(repository,
+                                    "targets",
+                                    2,
+                                    {first.identity().taap_id, second.identity().taap_id},
+                                    "2099-01-01T00:00:00Z",
+                                    policy_signer));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto first_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v2", first));
+    auto second_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v2", second));
+    ASSERT_TRUE(first_approval) << first_approval.error().message;
+    ASSERT_TRUE(second_approval) << second_approval.error().message;
+    auto signature = liquid::decode_signature(second_approval->statement.signature);
+    ASSERT_TRUE(signature) << signature.error().message;
+    select_identity_home("compromise-second");
+    auto rotated = liquid::runtime::block_on(second.rotate(liquid::compromise_declaration{
+        second.identity().key_fingerprint, signature->signed_at, "release key compromised"}));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    const auto approvals = std::array{*first_approval, *second_approval};
+    auto result = liquid::verify_release(artifact, *policy, approvals);
+    ASSERT_TRUE(result) << result.error().message;
+    EXPECT_FALSE(result->satisfied);
+    EXPECT_EQ(result->distinct_valid_signers.size(), 1U);
+}
+
+TEST(TpmCustody, seal_unseal_and_changed_pcr_refusal) {
+    auto transport = std::make_shared<tpm_double>();
+    liquid::custody_detail::install_tpm_transport(transport);
+    auto provider = liquid::runtime::block_on(liquid::key_provider_from_uri("tpm:pcrs=0,7"));
+    ASSERT_TRUE(provider) << provider.error().message;
+    auto source = liquid::key{};
+    source.fill(std::byte{0x5a});
+    auto wrapped = liquid::runtime::block_on((*provider)->wrap(source, {"build", 1}));
+    ASSERT_TRUE(wrapped) << wrapped.error().message;
+    auto opened = liquid::runtime::block_on((*provider)->unwrap(*wrapped, {"build", 1}));
+    ASSERT_TRUE(opened) << opened.error().message;
+    EXPECT_EQ(*opened, source);
+    transport->change_pcr();
+    auto refused = liquid::runtime::block_on((*provider)->unwrap(*wrapped, {"build", 1}));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+}
+
+#if defined(__linux__)
+TEST(TpmCustody, swtpm_seals_unseals_and_refuses_a_changed_pcr) {
+    const auto* socket = std::getenv("LIQUID_SWTPM_SOCKET");
+    if (!socket || socket[0] == '\0') {
+        GTEST_SKIP() << "LIQUID_SWTPM_SOCKET is not configured";
+    }
+    auto transport = std::make_shared<swtpm_transport>(socket);
+    liquid::custody_detail::install_tpm_transport(transport);
+    auto provider = liquid::runtime::block_on(liquid::key_provider_from_uri("tpm:pcrs=0,7"));
+    ASSERT_TRUE(provider) << provider.error().message;
+    auto source = liquid::key{};
+    source.fill(std::byte{0x6b});
+    auto wrapped = liquid::runtime::block_on((*provider)->wrap(source, {"swtpm", 1}));
+    ASSERT_TRUE(wrapped) << wrapped.error().message << " (" << wrapped.error().context << ")";
+    auto opened = liquid::runtime::block_on((*provider)->unwrap(*wrapped, {"swtpm", 1}));
+    ASSERT_TRUE(opened) << opened.error().message << " (" << opened.error().context << ")";
+    EXPECT_EQ(*opened, source);
+    auto extended = extend_pcr(transport, 7);
+    ASSERT_TRUE(extended) << extended.error().message;
+    auto refused = liquid::runtime::block_on((*provider)->unwrap(*wrapped, {"swtpm", 1}));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+}
+#endif
+
+#if defined(__APPLE__)
+TEST(TpmCustody, macos_reports_the_platform_reason) {
+    liquid::custody_detail::install_tpm_transport({});
+    auto provider = liquid::runtime::block_on(liquid::key_provider_from_uri("tpm:pcrs=0,7"));
+    ASSERT_TRUE(provider) << provider.error().message;
+    auto source = liquid::key{};
+    auto wrapped = liquid::runtime::block_on((*provider)->wrap(source, {"build", 1}));
+    ASSERT_FALSE(wrapped);
+    EXPECT_EQ(wrapped.error().code, liquid::errc::unsupported);
+    EXPECT_NE(wrapped.error().message.find("Secure Enclave"), std::string::npos);
+}
+#endif
+
+} // namespace

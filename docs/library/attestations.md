@@ -36,6 +36,8 @@ the public encoder.
 | `reproducibility/1` | artifact | `verified_by:text`, `sandbox:text`, `agreement:boolean` | `differing_outputs:text_list` | none |
 | `image_provenance/1` | artifact | `image:text`, `tree:text` | `result:text` | none |
 | `projection/1` | artifact | `target:text`, `source_result:text_list`, `normalisation:text`, `tool:text` | none | none |
+| `release_policy/1` | repository | `role:text`, `threshold:unsigned_integer`, `signers:text_list`, `not_after:text` | none | none |
+| `release_approval/1` | artifact | `policy:text`, `release:text` | none | none |
 
 `*` marks a field that may be represented by a salted disclosure commitment rather than its
 plaintext value. A required field is satisfied by its committed value when the profile permits it.
@@ -90,6 +92,10 @@ subject. `source_result` preserves every result or install-tree identity in requ
 `normalisation` records the fixed epoch, ownership, modes, and sorting rule; and `tool` binds the
 liquid version. OCI and Helm outputs carry the statement beside source provenance and SBOM
 statements through subject-bound OCI artifact manifests. See [projection.md](projection.md).
+`release_policy/1` and `release_approval/1` implement independent-signature release authorization.
+The policy binds a repository role, threshold, allowed TAAP identities, and expiry; each approval
+binds one artifact to the complete signed policy. Distinct counting, compromise-time rejection,
+and TUF alignment are specified in [release-approval.md](release-approval.md).
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's

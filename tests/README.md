@@ -84,9 +84,12 @@ Secret detector, inline capture, `scan_result/1`, and redaction cases live in `s
 X25519 failure paths, deterministic interoperability fixture, and Lake public-key response.
 `cli/secret.cmake` exercises raw-CBOR and base64 command round trips without stderr disclosure.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
-`test_transparency.cpp` consumes Lake's deterministic fixture and checks checkpoint signatures,
-witness quorum, every tile level, inclusion and consistency proofs, and altered or missing input.
-Its `cve_2026_56865` case keeps valid leaf bytes while changing a verified parent hash tile.
+`test_lake_transparency.cpp` consumes Lake's deterministic fixture and checks checkpoint signatures,
+witness quorum, every full and partial tile level, inclusion and consistency proofs, cache
+reauthentication, and altered or missing input. Its `cve_2026_56865` case keeps valid leaf bytes
+while changing a verified parent hash tile and requires the failure to name that tile. The skipped
+level case proves consistency verification completes the tile walk before requesting its proof.
+`liquid-transparency-measure` times cold and cached verification of a synthetic `2^16`-leaf log.
 Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
 Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
@@ -241,7 +244,10 @@ and runs an executable linked to `liquid::liquid`. `consumer-project-build` inst
 built parent artifacts into a test-local prefix, configures the consumer with the parent generator
 and C++ compiler, and compiles only the consumer source. `cli-identity-codec` creates and rotates an
 identity through the CLI, then decodes, re-encodes, and verifies the stored canonical-CBOR files
-through public libliquid API.
+through the public API. `test_hardware_keys.cpp` drives CTAP2, PIV, and TPM command-level doubles,
+cross-backend identity rotation, malformed signature rejection, and threshold release approval
+including compromise-time refusal. On Linux it also drives an installed `swtpm` through the TPM
+command transport.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.

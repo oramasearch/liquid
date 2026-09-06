@@ -52,6 +52,9 @@ the report returns the OSTree commit independently of an OCI image digest.
 rule-attributed review results, injected attestation-source and transparency-log interfaces, the
 one-image review operation, named policy-directory options, bounded replay, and the long-running
 admission server.
+`identity.hpp` exposes algorithm- and custody-tagged actors, software and hardware key rotation,
+and TPM-capable key custody without exposing transport types. `release.hpp` exposes signed release
+policy and approval values plus distinct-identity threshold verification.
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
 engine and its clause encoding stay private.

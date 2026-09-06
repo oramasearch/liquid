@@ -32,6 +32,7 @@ limits. Phase 5 also includes Tier 2 artifact codecs for binaries, documents, pa
 files. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client of
 it.
 
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, pluggable KEK custody including TPM sealing with trust-domain data-key rotation and revision readability, TAAP/1 software/FIDO2/PIV identities with rotation, signed drips and changes, threshold release approval, local change capture, agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env` encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, pluggable KEK custody with trust-domain data-key rotation and revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
@@ -44,6 +45,7 @@ it.
 > named refs is implemented with measured cost planning, current mapped scans, stable explanations,
 > and atomic per-drip publication. The public waiting operations are lazy
 > Boost.Capy tasks, backed by a private Corosio runtime. The local store implements open, put,
+> bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase, raw-key-file, age/X25519, cloud KMS, lake transit, Shamir, or TPM custody,
 > bounded-memory `put_file` and `get_to_file`, get, range read, contains, trust-domain encrypted objects with passphrase, raw-key-file, age/X25519, cloud KMS, lake transit, or Shamir custody,
 > versioned data-key rotation and revocation, repository readability reports,
 > leased roots, epoch garbage collection, and pack compaction. Multiple repositories can use one
@@ -51,8 +53,10 @@ it.
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
 > metadata also retains verified Lake transparency checkpoints: the public client verifies signed
-> witness-quorum checkpoints, all entry and parent hash tiles, exact TAAP inclusion, consistency,
-> and identity scans before callers trust a log response.
+> witness-quorum checkpoints, all full and partial entry and parent hash tiles, exact TAAP
+> inclusion, consistency, and identity scans before callers trust a log response. Liquid #83 makes
+> consistency use the same complete tile walk and reauthenticates cached tile bytes through the
+> selected checkpoint.
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
@@ -62,8 +66,8 @@ it.
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
 > atomically reloaded named policy sets at `/admit/<policy>`, structured CBOR/JSON decisions in
 > AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
-> metrics, REST, OpenAPI, and MCP. Complete
-> transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and proofs before log mode accepts a record.
+> metrics, REST, OpenAPI, and MCP. The shared transparency client now provides complete inclusion
+> verification; the admission lake adapter remains fail-closed until it calls that verifier.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
 > per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the
@@ -717,6 +721,7 @@ and Zetta's.
 - [`docs/library/leaf-encryption.md`](docs/library/leaf-encryption.md) — JSON and `.env` leaf encryption, path rules, explicit decryption, and structural key diff.
 - [`docs/library/simulation.md`](docs/library/simulation.md) — seeded crash recovery simulation, fault points, invariants, and replay.
 - [`docs/library/identity.md`](docs/library/identity.md) — TAAP/1 identities, local custody, signatures, and verification.
+- [`docs/library/release-approval.md`](docs/library/release-approval.md) — signed release policies, TUF-style threshold evaluation, custody trust models, and compromise handling.
 - [`docs/library/vfs.md`](docs/library/vfs.md) — lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, full materialisation, and platform support.
 - [`docs/library/git-interop.md`](docs/library/git-interop.md) — local Git import/export, identity mapping, and compatibility reporting.
 - [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, write buckets, cursor delivery, coalescing, recovery, and telemetry.

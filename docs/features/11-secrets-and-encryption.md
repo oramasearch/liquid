@@ -1,8 +1,9 @@
 # Secrets and encryption
 
 > **Status:** store and structured encryption, versioned data-key rotation, and passphrase,
-> raw-file, age/X25519, AWS KMS, GCP KMS, Azure Key Vault, lake transit, and Shamir KEK custody
-> are implemented. Hardware-backed custody remains tracked separately.
+> raw-file, age/X25519, AWS KMS, GCP KMS, Azure Key Vault, lake transit, Shamir KEK custody, and
+> TPM 2.0 PCR-bound sealing are implemented. macOS reports TPM custody as unsupported because
+> Secure Enclave is a different device.
 
 > Research: [14-secrets-and-encryption](../research/14-secrets-and-encryption/)
 >
@@ -78,7 +79,7 @@ protected":
 | **Cloud KMS** (AWS, GCP, Azure) | Organisations; IAM-controlled and audited |
 | **lake transit** | Lake-native encryption as a service |
 | **Hardware tokens** (PIV, FIDO2 `hmac-secret`) | Keys that never leave the device |
-| **TPM sealing** | Unattended machine-bound decryption |
+| **TPM sealing** | Unattended machine-bound decryption through `tpm:pcrs=<list>` |
 | **Shamir threshold shares** | Root-key custody requiring a quorum |
 
 ## Per-subtree keys

@@ -10,3 +10,8 @@ coroutine.
 lake-native transit contract. `shamir.cpp` splits and reconstructs the local random KEK over
 GF(256). Provider credentials are read at use time from the environment and never enter v3
 parameters.
+
+`tpm.cpp` implements `tpm:pcrs=<list>` sealing through the TPM 2.0 command subset. Linux submits
+through `/dev/tpmrm0`, Windows through TBS, and macOS returns an explicit unsupported result.
+Blocking device calls run under `runtime::offload`; the transport can be replaced by the protocol
+double in tests.
