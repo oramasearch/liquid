@@ -95,6 +95,9 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
+digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
+images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.

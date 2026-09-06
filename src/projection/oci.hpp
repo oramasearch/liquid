@@ -19,7 +19,9 @@ struct oci_descriptor {
                                 const oci_descriptor& config,
                                 std::span<const oci_descriptor> layers,
                                 std::optional<oci_descriptor> subject = {},
-                                std::string artifact_type = {}) -> result<oci_descriptor>;
+                                std::string artifact_type = {},
+                                std::map<std::string, std::string> annotations = {})
+    -> result<oci_descriptor>;
 [[nodiscard]] auto attach_attestations(repository& source,
                                        const prepared_projection& prepared,
                                        std::filesystem::path root,
