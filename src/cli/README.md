@@ -31,6 +31,10 @@ policy parsing through public repository APIs. Status projects persisted agent p
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
 
+`repo.cpp` also lowers top-level lock rules before repository initialization. `locks.cpp` attaches
+to the checkout daemon and acquires or releases exclusive checkout through the public daemon API;
+platforms without daemon transport use the public repository operations directly.
+
 `session.cpp` starts, publishes, and discards private replicas through the public session API.
 `attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
 

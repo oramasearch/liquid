@@ -146,6 +146,21 @@ auto lower_json(const liquid::lowered_configuration& value) -> std::string {
                   liquid::to_string(value.sources[index].content) +
                   "\",\"origin\":" + origin_json(value.sources[index].origin) + "}";
     }
+    output += "],\"locks\":[";
+    for (std::size_t index = 0; index < value.locks.rules.size(); ++index) {
+        if (index != 0) {
+            output += ',';
+        }
+        output += "{\"name\":\"" + json_escape(value.locks.rules[index].name) + "\",\"paths\":[";
+        for (std::size_t path_index = 0; path_index < value.locks.rules[index].paths.size();
+             ++path_index) {
+            if (path_index != 0) {
+                output += ',';
+            }
+            output += "\"" + json_escape(value.locks.rules[index].paths[path_index]) + "\"";
+        }
+        output += "]}";
+    }
     return output + "]}";
 }
 
@@ -193,6 +208,9 @@ auto lower_command(const std::filesystem::path& path, bool json, bool trace)
             std::print(" origin={}", origin_json(source.origin));
         }
         std::println();
+    }
+    for (const auto& rule : lowered->locks.rules) {
+        std::println("lock {}", rule.name);
     }
     co_return 0;
 }

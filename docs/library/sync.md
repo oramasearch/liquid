@@ -57,6 +57,14 @@ Offline claims have advisory authority. A caller binds its authoritative sync pe
 that task before changing local state. An error, including remote `errc::locked`, is final;
 acceptance persists `lake` authority. The policy that accepts the claim belongs to lake.
 
+Exclusive checkout rules and lock operations also remain signed repository drips. A version-4
+lock drip carries the complete holder, time, reason, authority, path, and configuration where
+applicable. Import verifies that the holder TAAP ID matches the drip author. Concurrent offline
+locks from different holders produce an issue #40 conflict value with references to both canonical
+lock records and retain the receiving checkout's claim. A caller installs
+`repository_options::authorize_lock` for connected authoritative acquire and release decisions;
+[locks.md](locks.md) defines both authority modes.
+
 An epoch records the heads of the repository and directory documents at its checkpoint. Once the
 acknowledgement condition is satisfied, the repository retires its pre-epoch operations and
 drips. `repository_options::acknowledge_epoch` bridges the sync peer registry to compaction: it

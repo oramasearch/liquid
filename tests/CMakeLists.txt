@@ -410,6 +410,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CONFIG_ROOT=${CMAKE_CURRENT_BINARY_DIR}/configuration-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/configuration.cmake)
+  add_test(NAME cli-locks
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_LOCK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lock-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/locks.cmake)
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
