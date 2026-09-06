@@ -64,6 +64,8 @@ struct LIQUID_EXPORT sync_report {
     sync_transfer_report sent;
     sync_transfer_report received;
     std::vector<sync_ref_outcome> references;
+    std::uint64_t retry_after_ms{};
+    std::string exhausted_scope;
 };
 
 struct LIQUID_EXPORT sync_endpoint_options {
