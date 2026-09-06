@@ -73,6 +73,7 @@ for what is implemented today.
 | [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
 | [`library/search.md`](library/search.md) | Issues #22, #67, and #29's BM25F, positional-trigram, and mapped-scan executors; archive entries; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
 | [`library/formats.md`](library/formats.md) | Issue #29's format registry and C ABI, fidelity tiers, launch codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
+| [`library/projection.md`](library/projection.md) | Issues #28 and #78: Tier A packages, OCI and Helm artifacts, owned OSTree object encoding, bootc encapsulation, deterministic layers, attestations, and peer proof. |
 | [`library/support-tiers.md`](library/support-tiers.md) | Issue #71's registry-derived language, format, and platform support matrix and strongest-frontend selection. |
 | [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
 | [`library/symbols.md`](library/symbols.md) | Content-addressed per-translation-unit symbol records, query behavior, fallback labelling, public repository access, and CLI use. |

@@ -201,6 +201,10 @@ of it.
 > to deterministic `.deb`, `.rpm`, `.apk`, OCI image layouts, and digest-pinned Helm charts.
 > Binary readers derive package relationships, incompatible ABI verdicts refuse by default, and
 > signed `projection/1`, source provenance, and SBOM statements accompany OCI artifacts.
+> **Phase 5 now includes the image-based OS projection.** A digest-pinned base tree and declared
+> overlays produce reproducible `archive-z2` or `bare-user` OSTree commits and component-layered
+> bootc OCI layouts. The commit checksum and image digest are distinct identities, and signed
+> `projection/1` evidence binds the image to its input trees. Booting it remains Phase 7.
 > **Phase 5 dependency resolution is implemented.** Canonical
 > `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
 > concrete dependencies, compiler and target constraints, conflicts, and patches. The public
@@ -272,6 +276,7 @@ and Zetta's.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
+- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, OSTree commits, bootc images, byte identity, and attached attestations.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, derived dependencies, byte identity, and attached attestations.
 - [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
