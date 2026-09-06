@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "build/content.hpp"
+#include "build/relocation.hpp"
 #include "build/repository_access.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/repository.hpp"
@@ -241,6 +242,21 @@ auto source_input(repository& repository,
     co_return std::optional<named_input>{named_input{"__liquid_sources", *tree}};
 }
 
+auto require_relocatable_result(repository& source, result_id id) -> runtime::task<result_id> {
+    auto value = co_await build::result(source, id);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    auto relocation = co_await build_detail::relocation_check(source, value->outputs, std::nullopt);
+    if (!relocation) {
+        co_return std::unexpected(relocation.error());
+    }
+    if (!relocation->relocatable) {
+        co_return std::unexpected(build_detail::relocation_failure(*relocation));
+    }
+    co_return id;
+}
+
 auto build_named(repository& source,
                  const lowered_configuration& configuration,
                  const target& selected,
@@ -308,9 +324,13 @@ auto build_named(repository& source,
     if (!id) {
         co_return std::unexpected(id.error());
     }
+    auto checked = co_await require_relocatable_result(source, *id);
+    if (!checked) {
+        co_return std::unexpected(checked.error());
+    }
     active.erase(selected.name);
-    completed.emplace(selected.name, *id);
-    co_return *id;
+    completed.emplace(selected.name, *checked);
+    co_return *checked;
 }
 
 } // namespace
@@ -403,7 +423,7 @@ runtime::task<result_id> execute_target(repository& source, const target& select
         }
         input_tree = *root;
     }
-    co_return co_await build::execute(source,
+    auto id = co_await build::execute(source,
                                       {.command = selected.command,
                                        .cwd = selected.cwd,
                                        .env = selected.environment,
@@ -411,6 +431,10 @@ runtime::task<result_id> execute_target(repository& source, const target& select
                                        .inputs = *input_tree,
                                        .toolchain = *selected.toolchain,
                                        .platform = current_platform()});
+    if (!id) {
+        co_return std::unexpected(id.error());
+    }
+    co_return co_await require_relocatable_result(source, *id);
 }
 
 runtime::task<result_id> build_configuration(repository& source,

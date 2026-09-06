@@ -103,7 +103,7 @@ in the schedule explanation shown by `liquid why`. See
 source or generated-result origins to text output. `config format` replaces one valid file with the
 canonical form. `build --target --json` prints the selected target and signed result digest after
 source verification, dependency-output resolution, generator provenance verification, and ordinary
-action execution.
+action execution. The command refuses a result that fails the relocation publication check.
 
 `status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
 stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,

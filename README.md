@@ -239,7 +239,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > source, and target records with repository-local includes, exact source-located diagnostics,
 > canonical formatting and CBOR lowering, digest-verified source fetch, and ordinary-program
 > generators executed with signed provenance. `liquid config` checks, lowers, traces, and formats;
-> `liquid build --target` executes a lowered target through the existing action path.
+> `liquid build --target` executes a lowered target through the existing action path and refuses
+> outputs that fail relocation publication.
 
 ## Where this sits
 

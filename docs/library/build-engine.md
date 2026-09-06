@@ -42,7 +42,8 @@ TAAP-signed worker fleet. Configure checks additionally populate a shared conten
 base and can be answered across projects without starting the probe.
 Issue #74 projects typed `.liquid` targets into the same `action_input`, verifies declared source
 digests before storage, supplies dependency output trees as named inputs, and runs configuration
-generators through this executor with ordinary provenance.
+generators through this executor with ordinary provenance. Configured target results pass the same
+relocation publication check before they are returned.
 
 ## Public repository plans and builds (#200)
 

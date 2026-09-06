@@ -11,8 +11,9 @@ provenance, caching, and traceability.
 
 **Implementation status.** The public parser, checker, lowerer, formatter, `package/1`, `target/1`,
 and `source/1` projection, repository-local includes, digest-verifying source fetch, generators,
-and CLI commands are implemented. The install record is syntax-checked and retained as the target
-layout contract; issue #80 adds install-intent semantics. Recipe import remains issue #75.
+relocation-checked target execution, and CLI commands are implemented. The install record is
+syntax-checked and its layout is retained on the target; issue #80 adds install-intent semantics.
+Recipe import remains issue #75.
 
 ## Files and grammar
 
@@ -167,9 +168,11 @@ liquid build --target <name> [--json]
 formatting twice produces identical bytes. A repository build prefers `liquid.liquid`, then the
 first sorted top-level `.liquid` file, runs generators, fetches every selected source, resolves
 unconditional named target outputs, and executes the target through the ordinary action path.
+Before returning the result, it applies the relocation publication check to every declared output.
 Conditional target edges remain solver input and are not guessed by the direct command.
 
 ## Open questions
 
-- Issue #80 owns the install-intent meaning beyond the retained layout and prefix fields.
+- Issue #80 owns the install-intent meaning beyond the retained layout; `prefix` is checked but not
+  lowered until that meaning is defined.
 - Issue #75 owns recipe import and how imported files choose their top-level root document.
