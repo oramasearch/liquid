@@ -115,7 +115,7 @@ tests continue to exercise the same evidence model after reader extraction.
 The private ELF and Mach-O readers also expose file-offset path references for relocation
 publication. ELF includes `DT_NEEDED`, `DT_SONAME`, `DT_RPATH`, and `DT_RUNPATH`; Mach-O includes
 install names, needed libraries, and `LC_RPATH`. The public rules and findings belong to
-issue #73's relocation check, not the ABI descriptor.
+[relocation.md](relocation.md), not the ABI descriptor.
 
 ## Deferred
 

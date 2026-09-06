@@ -4,7 +4,8 @@
 > [11-container-images](../research/11-container-images/)
 >
 > **Status:** the `abi/1` input and compatibility verdict required by package projection are
-> implemented in issue #27. Package-format projection and dependency metadata remain issue #28.
+> implemented in issue #27. Issue #73 supplies checked, position-independent install trees.
+> Package-format projection and dependency metadata remain issue #28.
 
 ## Projection, not translation
 
@@ -124,7 +125,8 @@ Archive formats are the easy part. These are not:
 
 - **ABI compatibility** — extracted and diffed continuously
   ([07](07-dependency-resolution.md)).
-- **Relocation** — solved by construction, not by rewriting binaries.
+- **Relocation** — implemented as position-independent install trees checked before publication;
+  see [relocation.md](../library/relocation.md).
 - **glibc version floors** and musl/glibc differences — expressed as constraints in
   the solver rather than discovered at runtime.
 - **File conflicts** between packages claiming a path.

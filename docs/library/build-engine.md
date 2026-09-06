@@ -615,6 +615,22 @@ driver remains the outer action. FUSE shutdown must wake the request loop throug
 because an attribute lookup of the mount root can be answered from the kernel cache without waking
 the blocked worker.
 
+### Install trees and relocation publication
+
+`wrap --install-prefix <absolute-logical-prefix>` selects install mode. The wrapper fixes `DESTDIR`
+at `/liquid/work/out/prefix`, exports the logical prefix through `CMAKE_INSTALL_PREFIX`, and adds
+the platform linker conventions from [relocation.md](relocation.md). Direct CMake configure and
+Autotools `configure` commands receive the corresponding prefix arguments when absent. The outer
+install action publishes only files staged below the logical prefix and strips that prefix, making
+the canonical output tree start at `bin`, `lib`, `include`, and `share`.
+
+Before the result and its output tree become visible, publication scans the installed files for the
+virtual root, the declared prefix, absolute binary lookup paths, and absolute package metadata.
+The scan runs as CPU work through `runtime::offload`. A finding returns `errc::invalid_argument`
+with the first three file/offset/context rows. `--allow-embedded-prefix` retains the result but
+records the waiver and finding count in its scheduling reason, so `why` can explain it. Ordinary
+non-install wrapper actions retain their existing publication behavior.
+
 ### Configure fact base
 
 The configure fact base (#56) applies action caching to `AC_CHECK_*`, CMake `try_compile`, and the
