@@ -82,6 +82,7 @@ auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
+auto tiers(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -93,6 +94,12 @@ using liquid_cli::flag;
 
 constexpr auto flag_json = std::to_array<flag>({
     {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_tiers = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--markdown", {}, "Write generated Markdown tables.", "false"},
+    {"--language", "<name>", "Limit language rows to this name.", "all languages"},
+    {"--format", "<name>", "Limit format rows to this name.", "all formats"},
 });
 constexpr auto flags_diff = std::to_array<flag>({
     {"--text", {}, "Include textual line-difference details.", "false"},
@@ -390,6 +397,16 @@ constexpr auto commands = std::to_array<command>({
      information_exit,
      argument_policy::ordinary,
      nullptr},
+    {"tiers",
+     "tiers [--json|--markdown] [--language <name>|--format <name>]",
+     "print declared language, format, and platform support",
+     "available",
+     flags_tiers,
+     "Report support tiers derived from the registered languages, formats, and host platforms.",
+     "liquid tiers --markdown",
+     information_exit,
+     argument_policy::ordinary,
+     liquid_cli::tiers},
     {"init",
      "init [path]",
      "create a repository and import its regular files",

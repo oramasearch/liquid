@@ -38,6 +38,7 @@
 #include "liquid/session.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
+#include "liquid/tiers.hpp"
 #include "liquid/transparency.hpp"
 #include "liquid/version.hpp"
 #include "liquid/vfs.hpp"

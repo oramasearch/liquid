@@ -120,6 +120,11 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > refusals; apply verifies file digests, writes one drip per file, and records one attributed
 > operation for whole-edit undo. The bundled tree-sitter frontend now exposes concrete syntax, and
 > `liquid edit` previews or applies through the checkout daemon.
+> Liquid #71 adds the pure public support matrix derived from loaded frontend modules and registered
+> format codecs, with declared platform wrapper backends. C++ resolves to its Tier 3 compiler
+> frontend while the digest-locked grammar registry supplies Tier 2 rows. `liquid tiers` renders
+> stable text, JSON, and generated feature tables, and degraded command results name their actual
+> tier and mechanism.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
