@@ -74,7 +74,9 @@ enforcement remains visible without adding a second success vocabulary.
 ## Execution and transport
 
 Webhook reviews are Capy tasks dispatched on the listener executor. Local disk work uses the
-runtime blocking adapter, and node-store/lake reads share liquid's private Corosio HTTP client.
+runtime blocking adapter, and node-store/lake reads share liquid's private Corosio HTTP client. The
+client request entry point is available in static and shared builds so process-level admission tests
+exercise the same transport as the service.
 The default listener is HTTPS on `0.0.0.0:8443`; each accepted socket is wrapped in Corosio's
 `openssl_stream` before the vendored HTTP/1.1 parser reads it. `--insecure-http` is test-only and
 prints a warning. The independent control listener defaults to `127.0.0.1:8083`.

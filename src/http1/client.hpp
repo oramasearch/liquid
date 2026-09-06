@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "liquid/export.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid::http1 {
@@ -24,6 +25,6 @@ struct request_options {
 };
 
 [[nodiscard]] auto validate_url(std::string_view url) -> result<void>;
-[[nodiscard]] auto request(request_options options) -> runtime::task<response>;
+[[nodiscard]] LIQUID_EXPORT auto request(request_options options) -> runtime::task<response>;
 
 } // namespace liquid::http1
