@@ -189,8 +189,26 @@ retry contract is in [hot-update.md](hot-update.md).
 Callers can instead pass ordered `daemon_target` implementations. Every target persists its own
 journal cursor only after successful delivery. Replayed or duplicate cursor values are ignored;
 a failed target keeps its old cursor and error, so restart retries it. `liquid status` reports the
-last drip, changed paths, delivery count, cursor, error, optional detail, and cursor distance for
-each target.
+last drip, changed paths, delivery count, cursor, error, optional detail, cursor distance, and
+undelivered drip count for each target.
+
+### Flow watermarks
+
+The daemon reports two independent lag measures. Persistence lag is
+`capture_status::pending_drips`; consumer lag is the largest `behind` value across delivery targets
+and registered in-process consumers. Target `behind` values count observed drips, not journal cursor
+bytes. `flow_config::pause_above` and `resume_below` form a
+hysteresis band. Above the high mark, writes return `errc::busy` with `paused_for=persistence` or
+`paused_for=consumers`; the pause remains until that measure reaches the low mark. The configured
+`max_unacknowledged` is also an upper bound for consumer lag.
+
+`daemon::report_consumer_lag(name, behind)` is a task-returning hook for an in-process client that
+is not a delivery target. liquify reports its render backlog through this hook. Reporting a lower
+value updates the existing named consumer, so it participates in the same resume decision without
+gaining a delivery cursor.
+
+`daemon_status::flow` contains `paused`, `reason`, `persistence_lag`, `consumer_lag`, and live
+bucket rows with scope, key, tokens, rate, burst, and rejection count since daemon start.
 
 ## Continuous clean-rebuild validation (#23)
 

@@ -19,9 +19,9 @@ public:
                     std::vector<std::shared_ptr<daemon_target>> targets);
 
     [[nodiscard]] auto load() -> result<void>;
+    [[nodiscard]] auto observe(const journal_cursor& cursor) -> result<void>;
     [[nodiscard]] runtime::task<void> deliver(daemon_delivery delivery);
-    [[nodiscard]] auto target_status(const journal_cursor& capture_cursor) const
-        -> std::vector<daemon_target_status>;
+    [[nodiscard]] auto target_status() const -> std::vector<daemon_target_status>;
     [[nodiscard]] auto replay_cursor() const -> journal_cursor;
     [[nodiscard]] auto last_drip() const -> std::optional<drip_id>;
     [[nodiscard]] auto invalidated_paths() const -> std::vector<std::string>;
@@ -39,6 +39,8 @@ private:
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<daemon_target>> targets_;
     std::map<std::string, target_state> state_;
+    journal_cursor observed_cursor_;
+    std::uint64_t observed_deliveries_{};
     journal_cursor last_cursor_;
     std::optional<drip_id> last_drip_;
     std::vector<std::string> invalidated_paths_;
