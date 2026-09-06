@@ -122,7 +122,8 @@ auto project(int argc, char** argv) -> int {
             return std::string{argv[index]};
         };
         if (argument == "--name" || argument == "--version" || argument == "--arch" ||
-            argument == "--out" || argument == "--depends" || argument == "--service") {
+            argument == "--out" || argument == "--depends" || argument == "--against" ||
+            argument == "--replaces" || argument == "--service") {
             auto parsed = value(argument);
             if (!parsed) {
                 return fail(parsed.error());
@@ -137,6 +138,10 @@ auto project(int argc, char** argv) -> int {
                 request.options.output_directory = std::move(*parsed);
             } else if (argument == "--depends") {
                 request.metadata.declared_dependencies.push_back(std::move(*parsed));
+            } else if (argument == "--against") {
+                request.options.against = std::move(*parsed);
+            } else if (argument == "--replaces") {
+                request.metadata.replaces.push_back(std::move(*parsed));
             } else {
                 auto parsed_service = service(*parsed);
                 if (!parsed_service) {

@@ -167,8 +167,8 @@ auto parse_header(std::span<const std::byte> bytes,
     return data + data_size;
 }
 
-auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<std::string>> {
-    auto output = std::vector<std::string>{};
+auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<package::file>> {
+    auto output = std::vector<package::file>{};
     auto offset = std::size_t{};
     while (offset + 110 <= bytes.size()) {
         if (std::string_view{reinterpret_cast<const char*>(bytes.data() + offset), 6} != "070701") {
@@ -186,6 +186,7 @@ auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<std::str
             return value;
         };
         const auto size = parse_hex(54);
+        const auto mode = parse_hex(14);
         const auto name_size = parse_hex(94);
         if (name_size == 0 || name_size > bytes.size() - offset - 110) {
             return std::unexpected(error{errc::corrupt, "invalid cpio name", "rpm"});
@@ -200,7 +201,10 @@ auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<std::str
         if (name == "TRAILER!!!") {
             return output;
         }
-        output.push_back(std::move(name));
+        output.push_back({std::move(name),
+                          {bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+                           bytes.begin() + static_cast<std::ptrdiff_t>(offset + size)},
+                          mode & 0777U});
         offset = (offset + size + 3) & ~std::size_t{3};
     }
     return std::unexpected(error{errc::corrupt, "cpio trailer is absent", "rpm"});
@@ -211,7 +215,8 @@ auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<std::str
 result<std::vector<std::byte>> write(const package_metadata& metadata,
                                      const projection_options& options,
                                      std::span<const std::string> dependencies,
-                                     std::span<const package::file> files) {
+                                     std::span<const package::file> files,
+                                     const generated_maintainer_scripts* scripts) {
     auto payload_uncompressed = package::cpio(files, options.source_date_epoch);
     if (!payload_uncompressed) {
         return std::unexpected(payload_uncompressed.error());
@@ -324,6 +329,16 @@ result<std::vector<std::byte>> write(const package_metadata& metadata,
         string_value(1125, "zstd"),
         string_value(1126, "19"),
         int32_value(5011, algorithm)};
+    if (scripts) {
+        values.push_back(string_value(1023, scripts->pre_install));
+        values.push_back(string_value(1024, scripts->post_install));
+        values.push_back(string_value(1025, scripts->pre_remove));
+        values.push_back(string_value(1026, scripts->post_remove));
+        values.push_back(string_value(1085, "/bin/sh"));
+        values.push_back(string_value(1086, "/bin/sh"));
+        values.push_back(string_value(1087, "/bin/sh"));
+        values.push_back(string_value(1088, "/bin/sh"));
+    }
     auto main_header = header(std::move(values));
     auto header_digest = package::sha256(main_header);
     if (!header_digest) {
@@ -360,23 +375,32 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
         return std::unexpected(payload_offset ? error{errc::corrupt, "rpm payload is absent", "rpm"}
                                               : payload_offset.error());
     }
-    const auto payload = bytes.subspan(*payload_offset);
-    const auto size = ZSTD_getFrameContentSize(payload.data(), payload.size());
+    const auto compressed = bytes.subspan(*payload_offset);
+    const auto size = ZSTD_getFrameContentSize(compressed.data(), compressed.size());
     if (size == ZSTD_CONTENTSIZE_ERROR || size == ZSTD_CONTENTSIZE_UNKNOWN ||
         size > maximum_output) {
         return std::unexpected(error{errc::corrupt, "invalid rpm zstd payload", "rpm"});
     }
     auto decoded = std::vector<std::byte>(static_cast<std::size_t>(size));
     const auto decompressed =
-        ZSTD_decompress(decoded.data(), decoded.size(), payload.data(), payload.size());
+        ZSTD_decompress(decoded.data(), decoded.size(), compressed.data(), compressed.size());
     if (ZSTD_isError(decompressed) || decompressed != decoded.size()) {
         return std::unexpected(error{errc::corrupt, "cannot decode rpm payload", "rpm"});
     }
-    auto files = cpio_files(decoded);
-    if (!files) {
-        return std::unexpected(files.error());
+    auto payload = cpio_files(decoded);
+    if (!payload) {
+        return std::unexpected(payload.error());
     }
-    return archive{tags[1000], tags[1001], std::move(*files)};
+    auto output =
+        archive{.name = tags[1000], .version = tags[1001], .payload = std::move(*payload)};
+    for (const auto& file : output.payload) {
+        output.files.push_back(file.path);
+    }
+    if (tags.contains(1023) || tags.contains(1024) || tags.contains(1025) || tags.contains(1026)) {
+        output.scripts =
+            generated_maintainer_scripts{tags[1023], tags[1024], tags[1025], tags[1026]};
+    }
+    return output;
 }
 
 } // namespace liquid::formats::rpm

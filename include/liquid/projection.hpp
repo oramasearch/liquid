@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "liquid/build.hpp"
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/install.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -57,6 +59,7 @@ struct LIQUID_EXPORT projection_options {
     std::uint64_t source_date_epoch{};
     bool compat_gzip{};
     bool allow_abi_break{};
+    std::optional<std::filesystem::path> against;
     std::vector<std::string> pre_depends;
     std::vector<std::string> recommends;
     std::vector<std::string> breaks;
@@ -71,6 +74,19 @@ struct LIQUID_EXPORT projection_request {
     projection_target target{projection_target::oci_image};
     projection_options options;
     std::vector<projection_service> services;
+    std::optional<install_intent> install;
+};
+
+struct LIQUID_EXPORT generated_maintainer_scripts {
+    std::string pre_install;
+    std::string post_install;
+    std::string pre_remove;
+    std::string post_remove;
+};
+
+struct LIQUID_EXPORT projection_replacement {
+    std::string package;
+    std::vector<std::string> paths;
 };
 
 struct LIQUID_EXPORT projected_artifact {
@@ -94,11 +110,16 @@ struct LIQUID_EXPORT projection_report {
     std::vector<digest> attestations;
     std::vector<pinned_artifact> pinned;
     std::vector<projection_dependency> dependencies;
+    std::vector<projection_replacement> replacements;
     bool abi_break_allowed{};
 };
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<projection_report> project(repository& source,
                                                                      projection_request request);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<projection_report>>
+project(repository& source, std::vector<projection_request> requests);
+[[nodiscard]] LIQUID_EXPORT result<generated_maintainer_scripts>
+generate_maintainer_scripts(projection_target target, const install_intent& intent);
 [[nodiscard]] LIQUID_EXPORT result<std::string>
 projection_report_json(const projection_report& report);
 [[nodiscard]] LIQUID_EXPORT std::string_view to_string(projection_target target) noexcept;

@@ -14,6 +14,8 @@ outside the public `liquid/` header tree or the CLI's own metadata header. The `
 cache.
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
+`install.cmake` installs two trees into isolated generations, lists them, rolls back, and verifies
+that `current` exposes the first tree again.
 `configuration.cmake` checks a directory, lowers source origins in text and JSON, and formats the
 same document twice to pin idempotence.
 The help/documentation comparison also pins the `scheduler` and `worker` command names.

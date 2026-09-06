@@ -43,6 +43,7 @@ public:
                                   .original = {blob.begin(), blob.end()}};
         auto metadata = std::string{};
         auto files = std::vector<std::string>{};
+        auto scripts = std::optional<generated_maintainer_scripts>{};
         if (kind_ == package_kind::deb) {
             auto value = deb::read(blob, limits.byte_budget);
             if (!value) {
@@ -50,6 +51,7 @@ public:
             }
             metadata = std::move(value->control);
             files = std::move(value->files);
+            scripts = std::move(value->scripts);
         } else if (kind_ == package_kind::rpm) {
             auto value = rpm::read(blob, limits.byte_budget);
             if (!value) {
@@ -57,6 +59,7 @@ public:
             }
             metadata = "Name: " + value->name + "\nVersion: " + value->version + "\n";
             files = std::move(value->files);
+            scripts = std::move(value->scripts);
         } else {
             auto value = apk::read(blob, limits.byte_budget);
             if (!value) {
@@ -64,8 +67,11 @@ public:
             }
             metadata = std::move(value->pkginfo);
             files = std::move(value->files);
+            scripts = std::move(value->scripts);
         }
-        if (files.size() >= limits.maximum_entries) {
+        const auto generated_entries = scripts ? std::size_t{5} : std::size_t{1};
+        if (generated_entries > limits.maximum_entries ||
+            files.size() > limits.maximum_entries - generated_entries) {
             return std::unexpected(
                 error{errc::unsupported, "package entry limit exceeded", output.codec});
         }
@@ -81,6 +87,28 @@ public:
                 return std::unexpected(entry.error());
             }
             output.entries.push_back(std::move(*entry));
+        }
+        if (scripts) {
+            const auto names =
+                kind_ == package_kind::deb
+                    ? std::array<std::string_view, 4>{"preinst", "postinst", "prerm", "postrm"}
+                : kind_ == package_kind::rpm
+                    ? std::array<std::string_view, 4>{"%pre", "%post", "%preun", "%postun"}
+                    : std::array<std::string_view, 4>{
+                          ".pre-install", ".post-install", ".pre-deinstall", ".post-deinstall"};
+            const auto values = std::array<std::string_view, 4>{scripts->pre_install,
+                                                                scripts->post_install,
+                                                                scripts->pre_remove,
+                                                                scripts->post_remove};
+            for (std::size_t index = 0; index < names.size(); ++index) {
+                auto entry = make_entry(".scripts/" + std::string{names[index]},
+                                        format_entry_kind::member,
+                                        package::text_bytes(values[index]));
+                if (!entry) {
+                    return std::unexpected(entry.error());
+                }
+                output.entries.push_back(std::move(*entry));
+            }
         }
         return output;
     }

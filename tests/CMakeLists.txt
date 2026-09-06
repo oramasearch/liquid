@@ -24,6 +24,7 @@ add_executable(liquid-tests
   test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_install.cpp
   test_node_store.cpp
   test_object.cpp
   test_projection.cpp
@@ -172,6 +173,14 @@ if(UNIX)
   add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
   target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
   add_dependencies(liquid-tests liquid-graph-crash-fixture)
+endif()
+if(UNIX)
+  add_executable(liquid-install-crash-fixture install_crash_fixture.cpp)
+  target_include_directories(liquid-install-crash-fixture PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(liquid-install-crash-fixture PRIVATE liquid::liquid)
+  add_dependencies(liquid-tests liquid-install-crash-fixture)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_INSTALL_CRASH_FIXTURE="$<TARGET_FILE:liquid-install-crash-fixture>")
 endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
@@ -349,6 +358,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_REFERENCE_SOURCE=${PROJECT_SOURCE_DIR}/docs/reference/cli
       -DLIQUID_REFERENCE_OUTPUT=${PROJECT_BINARY_DIR}/reference/cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/reference-docs.cmake)
+  add_test(NAME cli-install-generations
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_INSTALL_ROOT=${CMAKE_CURRENT_BINARY_DIR}/install-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/install.cmake)
   add_test(NAME cli-docs-json
     COMMAND $<TARGET_FILE:liquid-cli> docs --format json)
   set_tests_properties(cli-docs-json PROPERTIES
@@ -570,6 +584,7 @@ add_executable(liquid-header-tests
   headers/hash.cpp
   headers/hot_update.cpp
   headers/identity.cpp
+  headers/install.cpp
   headers/liquid.cpp
   headers/node_store.cpp
   headers/main.cpp

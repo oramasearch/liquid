@@ -1,6 +1,7 @@
 #include "formats/apk/apk.hpp"
 
 #include <algorithm>
+#include <charconv>
 
 #include "formats/deflate/deflate.hpp"
 #include "liquid/format.hpp"
@@ -10,7 +11,8 @@ namespace liquid::formats::apk {
 result<std::vector<std::byte>> write(const package_metadata& metadata,
                                      const projection_options& options,
                                      std::span<const std::string> dependencies,
-                                     std::span<const package::file> files) {
+                                     std::span<const package::file> files,
+                                     const generated_maintainer_scripts* scripts) {
     auto data_tar = package::tar(files, options.source_date_epoch, "usr");
     if (!data_tar) {
         return std::unexpected(data_tar.error());
@@ -41,9 +43,17 @@ result<std::vector<std::byte>> write(const package_metadata& metadata,
     for (const auto& replace : metadata.replaces) {
         pkginfo += "replaces = " + replace + "\n";
     }
-    auto control_tar =
-        package::tar(std::array{package::file{".PKGINFO", package::text_bytes(pkginfo), 0644}},
-                     options.source_date_epoch);
+    auto control_files =
+        std::vector<package::file>{{".PKGINFO", package::text_bytes(pkginfo), 0644}};
+    if (scripts) {
+        control_files.push_back({".pre-install", package::text_bytes(scripts->pre_install), 0755});
+        control_files.push_back(
+            {".post-install", package::text_bytes(scripts->post_install), 0755});
+        control_files.push_back({".pre-deinstall", package::text_bytes(scripts->pre_remove), 0755});
+        control_files.push_back(
+            {".post-deinstall", package::text_bytes(scripts->post_remove), 0755});
+    }
+    auto control_tar = package::tar(control_files, options.source_date_epoch);
     if (!control_tar) {
         return std::unexpected(control_tar.error());
     }
@@ -78,8 +88,39 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
     }
     auto output = archive{};
     output.pkginfo.assign(reinterpret_cast<const char*>(info->bytes.data()), info->bytes.size());
+    auto scripts = generated_maintainer_scripts{};
+    auto found_scripts = false;
+    for (const auto& entry : control_tree->entries) {
+        auto* destination = entry.path == ".pre-install"      ? &scripts.pre_install
+                            : entry.path == ".post-install"   ? &scripts.post_install
+                            : entry.path == ".pre-deinstall"  ? &scripts.pre_remove
+                            : entry.path == ".post-deinstall" ? &scripts.post_remove
+                                                              : nullptr;
+        if (destination) {
+            destination->assign(reinterpret_cast<const char*>(entry.bytes.data()),
+                                entry.bytes.size());
+            found_scripts = true;
+        }
+    }
+    if (found_scripts) {
+        output.scripts = std::move(scripts);
+    }
     for (const auto& entry : data_tree->entries) {
         output.files.push_back(entry.path);
+        if (entry.kind != format_entry_kind::member) {
+            continue;
+        }
+        auto mode_text = package::attribute(entry.attributes, "mode");
+        if (!mode_text) {
+            return std::unexpected(mode_text.error());
+        }
+        auto mode = std::uint32_t{};
+        const auto [end, code] =
+            std::from_chars(mode_text->data(), mode_text->data() + mode_text->size(), mode);
+        if (code != std::errc{} || end != mode_text->data() + mode_text->size()) {
+            return std::unexpected(error{errc::corrupt, "apk file mode is invalid", entry.path});
+        }
+        output.payload.push_back({entry.path, entry.bytes, mode});
     }
     return output;
 }

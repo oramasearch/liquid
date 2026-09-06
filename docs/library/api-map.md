@@ -74,7 +74,8 @@ owning issue in `error::context`.
 | `liquid/format_abi.h` | #29 | implemented | versioned C codec descriptor, canonical-CBOR operations, owned bytes, progress/cancellation callbacks, and optional merge/repack operations |
 | `liquid/format.hpp` | #29 | implemented | fidelity tiers, descriptors, entries, trees and diffs; checked shared/static codec loading; the built-in global registry and resource limits |
 | `liquid/frontend_abi.h` | #65, #66, #205, liquify #3 | implemented | versioned C frontend and liquify plugin descriptors, language/query/command/panel registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
-| `liquid/projection.hpp` | #28 | implemented | package/image targets, result or install-tree sources, package and service metadata, projection options, coroutine projection, artifact and attestation reports, and stable JSON output |
+| `liquid/projection.hpp` | #28, #80 | implemented | package/image targets, result or install-tree sources, install intent, generated scripts, package and service metadata, batch and inventory conflict detection, replacement reports, coroutine projection, artifact and attestation reports, and stable JSON output |
+| `liquid/install.hpp` | #80 | implemented | canonical `install_intent/1`, strict validation, lifecycle-script inputs, atomic generation install/list/rollback tasks, and generation reports |
 | `liquid/frontend_abi.h` | #65, #66, #205 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
 | `liquid/frontend.hpp` | #65, #66, #193, #205 | implemented | checked shared/static frontend loading, language registry, source units, concrete syntax trees and navigation, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/edit.hpp` | #205 | implemented | canonical structural-edit requests, targets, previews, refusals, attribution, file/text changes, results, and codecs |
@@ -92,7 +93,7 @@ owning issue in `error::context`.
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, remote-record, and streaming tree-import writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/resolve.hpp` | #25, #27 | implemented | plain spec/package/concretisation values, canonical record codecs, filesystem and repository universe loading, reuse, known-output and ABI-compatibility inputs, asynchronous CDCL resolution, minimal attributed conflict cores, stable explanations and JSON |
-| `liquid/configuration.hpp` | #74 | implemented | typed `.liquid` AST and locations, exact diagnostics, synchronous parse/check/lower/format, canonical `target/1` and `source/1` codecs, generator and relocation-checked configured-target tasks, trace origins, and digest-declared source values |
+| `liquid/configuration.hpp` | #74, #80 | implemented | typed `.liquid` AST and locations, exact diagnostics, synchronous parse/check/lower/format, canonical `target/1`, `source/1`, and nested `install_intent/1` codecs, generator and relocation-checked configured-target tasks, trace origins, and digest-declared source values |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #74, #85, #86, #116, #160, #165, #166, #174, #193, #200, #205 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; digest-verifying configuration source fetch; flow-controlled memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural-edit preview/apply with grouped undo; cost-planned working/ref search with common located hits and executed-plan explanations; stale-base validation; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote, agent, and flow configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, asynchronous key wrapping, keyring inspection, URI-selected custody providers, and Shamir splitting |
@@ -1219,6 +1220,47 @@ runtime::task<void> materialise(repository&, std::filesystem::path,
 The handle contains no FUSE type. Backend details and the persistent hydration cache are private
 under `src/vfs/`; see [`vfs.md`](vfs.md).
 
+### `liquid/install.hpp`
+
+```cpp
+struct install_service { std::string name; std::filesystem::path executable;
+  std::string user; std::vector<std::string> after; service_restart restart; };
+struct install_user { std::string name; bool system; std::filesystem::path home; };
+struct install_group { std::string name; bool system; };
+struct install_directory { std::filesystem::path path; std::uint32_t mode; std::string owner; };
+struct install_symlink { std::filesystem::path path, target; };
+enum class install_cache { ldconfig, desktop_database, mime_database, man_db, icon_cache,
+                           systemd_daemon_reload, fonts };
+struct install_alternative { std::string name; std::filesystem::path path;
+                             std::int32_t priority; };
+struct install_intent { std::uint64_t v; std::vector<install_service> services;
+  std::vector<install_user> users; std::vector<install_group> groups;
+  std::vector<install_directory> directories; std::vector<install_symlink> symlinks;
+  std::vector<install_cache> caches; std::vector<install_alternative> alternatives; };
+result<void> validate_install_intent(const install_intent&);
+result<std::vector<std::byte>> encode_install_intent(const install_intent&);
+result<install_intent> decode_install_intent(std::span<const std::byte>);
+namespace installation {
+runtime::task<install_report> install(std::filesystem::path source,
+                                      std::filesystem::path root);
+runtime::task<install_generation> rollback(std::filesystem::path root);
+runtime::task<std::vector<install_generation>> list(std::filesystem::path root);
+}
+```
+
+The codec accepts only canonical CBOR and the public validator applies the closed name and path
+grammars before scripts or generation files are produced. Install, rollback, and list perform file
+work on the runtime blocking boundary. Completed trees live below `.liquid/generations`; the root's
+`current` relative symlink is the only activation point. See [projection.md](projection.md).
+
+### `liquid/projection.hpp`
+
+`projection_request::install` carries an optional validated intent. The vector overload of
+`project` checks all requested package ownership together; `projection_options::against` checks a
+single request against package files or an installed-package inventory. An allowed replacement is
+returned as `projection_report::replacements`. `generate_maintainer_scripts` exposes the exact
+four-script result used by each package writer. See [projection.md](projection.md).
+
 ### `liquid/configuration.hpp`
 
 ```cpp
@@ -1248,7 +1290,8 @@ struct target_dependency { std::string name; std::optional<std::string> when; };
 struct target { std::uint64_t v; std::string name; std::vector<std::string> command;
   std::string cwd; std::map<std::string, std::string> environment; std::vector<digest> sources;
   std::vector<target_dependency> dependencies; std::vector<std::string> outputs;
-  std::string install_layout; std::optional<digest> inputs, toolchain;
+  std::string install_layout; std::optional<install_intent> install;
+  std::optional<digest> inputs, toolchain;
   configuration_record_origin origin; };
 struct lowered_configuration { std::vector<package_record> packages;
   std::vector<configuration_record_origin> package_origins; std::vector<target> targets;

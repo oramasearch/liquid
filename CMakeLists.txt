@@ -468,6 +468,9 @@ add_library(libliquid
   src/identity/custody/lake.cpp
   src/identity/custody/shamir.cpp
   src/identity/taap.cpp
+  src/install/faults.cpp
+  src/install/install.cpp
+  src/install/records.cpp
   src/node_store.cpp
   src/node_store/service.cpp
   src/crypto/crypto.cpp
@@ -477,10 +480,12 @@ add_library(libliquid
   src/objects/records.cpp
   src/protobuf/wire.cpp
   src/projection/helm.cpp
+  src/projection/conflicts.cpp
   src/projection/oci.cpp
   src/projection/package.cpp
   src/projection/projection.cpp
   src/projection/rules.cpp
+  src/projection/scripts.cpp
   src/reapi/conversion.cpp
   src/reapi/client.cpp
   src/reapi/messages.cpp
@@ -633,6 +638,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/history.cpp
     src/cli/hot_update.cpp
     src/cli/identity.cpp
+    src/cli/install.cpp
     src/cli/keys.cpp
     src/cli/locks.cpp
     src/cli/node_store.cpp

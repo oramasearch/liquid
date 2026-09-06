@@ -58,9 +58,11 @@ The same command group implements `replay`: it parses an action or result plus `
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
 `sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
 API, and uses the public foreign-binary path only when no producing result exists.
-`project.cpp` parses package, OCI, and Helm requests, distinguishes stored results from bare tree
-digests, calls the public projection task, and prints text or stable JSON reports. It does not read
-package writers or repository internals.
+`project.cpp` parses package, OCI, and Helm requests, installed-inventory and replacement options,
+distinguishes stored results from bare tree digests, calls the public projection task, and prints
+text or stable JSON reports. It does not read package writers or repository internals.
+`install.cpp` maps package or tree installation, generation listing, and rollback directly to the
+public atomic-generation tasks.
 `abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
 the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
 

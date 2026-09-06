@@ -1,6 +1,7 @@
 #include "projection/projection.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <map>
@@ -10,6 +11,7 @@
 #include "build/repository_access.hpp"
 #include "liquid/abi.hpp"
 #include "liquid/version.hpp"
+#include "objects/records.hpp"
 
 namespace liquid::projection_detail {
 namespace {
@@ -57,6 +59,67 @@ auto collect_tree(repository& source,
         files.insert_or_assign(path, std::move(value));
     }
     co_return result<void>{};
+}
+
+auto add_generated_file(std::map<std::string, formats::package::file>& files,
+                        std::string path,
+                        std::vector<std::byte> bytes,
+                        std::uint32_t mode) -> result<void> {
+    auto value = formats::package::file{std::move(path), std::move(bytes), mode};
+    const auto found = files.find(value.path);
+    if (found != files.end() &&
+        (found->second.mode != value.mode || found->second.bytes != value.bytes)) {
+        return std::unexpected(failure(
+            errc::conflict, "generated install intent claims an existing path", value.path));
+    }
+    files.insert_or_assign(value.path, std::move(value));
+    return {};
+}
+
+auto systemd_unit(const install_service& service) -> std::string {
+    auto output = std::string{"[Unit]\nDescription="} + service.name + "\n";
+    if (!service.after.empty()) {
+        output += "After=";
+        for (std::size_t index = 0; index < service.after.size(); ++index) {
+            if (index != 0) {
+                output.push_back(' ');
+            }
+            output += service.after[index] + ".service";
+        }
+        output.push_back('\n');
+    }
+    output += "\n[Service]\nType=simple\nUser=" + service.user +
+              "\nExecStart=" + service.executable.generic_string() +
+              "\nRestart=" + std::string{to_string(service.restart)} +
+              "\n\n[Install]\nWantedBy=multi-user.target\n";
+    return output;
+}
+
+auto add_install_files(const package_metadata& metadata,
+                       const install_intent& intent,
+                       std::map<std::string, formats::package::file>& files) -> result<void> {
+    auto encoded = encode_install_intent(intent);
+    if (!encoded) {
+        return std::unexpected(encoded.error());
+    }
+    auto manifest = add_generated_file(
+        files, "share/liquid/intents/" + metadata.name + ".cbor", std::move(*encoded), 0644);
+    if (!manifest) {
+        return manifest;
+    }
+    for (const auto& service : intent.services) {
+        auto text = systemd_unit(service);
+        auto added =
+            add_generated_file(files,
+                               "lib/systemd/system/" + service.name + ".service",
+                               {reinterpret_cast<const std::byte*>(text.data()),
+                                reinterpret_cast<const std::byte*>(text.data() + text.size())},
+                               0644);
+        if (!added) {
+            return added;
+        }
+    }
+    return {};
 }
 
 auto text_attribute(const attestation& statement, std::string_view name) -> const std::string* {
@@ -135,6 +198,56 @@ auto unique_digests(std::vector<digest> values) -> std::vector<digest> {
     });
     values.erase(std::unique(values.begin(), values.end(), same_digest), values.end());
     return values;
+}
+
+auto script_values(const prepared_projection& prepared, projection_target target)
+    -> std::vector<std::pair<std::string, std::string>> {
+    if (!prepared.scripts) {
+        return {};
+    }
+    auto names = std::array<std::string_view, 4>{};
+    if (target == projection_target::deb) {
+        names = {"preinst", "postinst", "prerm", "postrm"};
+    } else if (target == projection_target::rpm) {
+        names = {"%pre", "%post", "%preun", "%postun"};
+    } else {
+        names = {".pre-install", ".post-install", ".pre-deinstall", ".post-deinstall"};
+    }
+    const auto values = std::array<std::string_view, 4>{prepared.scripts->pre_install,
+                                                        prepared.scripts->post_install,
+                                                        prepared.scripts->pre_remove,
+                                                        prepared.scripts->post_remove};
+    auto output = std::vector<std::pair<std::string, std::string>>{};
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        auto bytes = std::span{reinterpret_cast<const std::byte*>(values[index].data()),
+                               values[index].size()};
+        auto content = formats::package::sha256(bytes);
+        if (content) {
+            output.emplace_back(names[index], to_string(*content));
+        }
+    }
+    return output;
+}
+
+auto script_claims(const prepared_projection& prepared, projection_target target)
+    -> std::vector<std::string> {
+    auto output = std::vector<std::string>{};
+    for (const auto& [name, content] : script_values(prepared, target)) {
+        output.push_back(name + "=" + content);
+    }
+    return output;
+}
+
+auto json_quote(std::string_view value) -> std::string {
+    auto output = std::string{"\""};
+    for (const auto item : value) {
+        if (item == '\\' || item == '"') {
+            output.push_back('\\');
+        }
+        output.push_back(item);
+    }
+    output.push_back('"');
+    return output;
 }
 
 auto metadata_is_safe(const package_metadata& metadata) -> bool {
@@ -296,6 +409,25 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
             co_return std::unexpected(collected.error());
         }
     }
+    if (request.install) {
+        auto valid = validate_install_intent(*request.install);
+        if (!valid) {
+            co_return std::unexpected(valid.error());
+        }
+        auto added = add_install_files(output.metadata, *request.install, files);
+        if (!added) {
+            co_return std::unexpected(added.error());
+        }
+        output.install = request.install;
+        if (request.target == projection_target::deb || request.target == projection_target::rpm ||
+            request.target == projection_target::apk) {
+            auto scripts = generate_maintainer_scripts(request.target, *request.install);
+            if (!scripts) {
+                co_return std::unexpected(scripts.error());
+            }
+            output.scripts = std::move(*scripts);
+        }
+    }
     if (output.metadata.architecture.empty()) {
         co_return std::unexpected(failure(
             errc::invalid_argument, "tree-digest projection requires an architecture", "--arch"));
@@ -357,6 +489,81 @@ runtime::task<digest> store_projection_attestation(repository& source,
                        {"source_result", prepared.source_ids},
                        {"normalisation", std::string{"epoch,uid=0,gid=0,modes,sorted"}},
                        {"tool", "liquid/" + std::string{version_string()}}}};
+    const auto scripts = script_claims(prepared, target);
+    if (!scripts.empty()) {
+        statement.attributes.push_back({"scripts", scripts});
+    }
+    auto signed_statement =
+        co_await repository_detail::build_access::sign_attestation(source, statement);
+    if (!signed_statement) {
+        co_return std::unexpected(signed_statement.error());
+    }
+    co_return co_await source.store_attestation(std::move(statement));
+}
+
+runtime::task<digest> store_script_sbom(repository& source,
+                                        const prepared_projection& prepared,
+                                        projection_target target,
+                                        digest subject,
+                                        std::string output_name) {
+    const auto scripts = script_values(prepared, target);
+    if (scripts.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "projection has no generated scripts", output_name));
+    }
+    auto files = std::string{};
+    auto relationships = std::string{};
+    auto claims = std::vector<std::string>{};
+    for (std::size_t index = 0; index < scripts.size(); ++index) {
+        if (index != 0) {
+            files.push_back(',');
+            relationships.push_back(',');
+        }
+        const auto id = "SPDXRef-Script-" + std::to_string(index + 1);
+        const auto digest = scripts[index].second.substr(std::string_view{"sha256:"}.size());
+        files +=
+            "{\"SPDXID\":" + json_quote(id) + ",\"fileName\":" + json_quote(scripts[index].first) +
+            ",\"checksums\":[{\"algorithm\":\"SHA256\",\"checksumValue\":" + json_quote(digest) +
+            "}]}";
+        relationships += "{\"spdxElementId\":\"SPDXRef-Package\",\"relationshipType\":"
+                         "\"CONTAINS\",\"relatedSpdxElement\":" +
+                         json_quote(id) + "}";
+        claims.push_back(scripts[index].first + "=" + scripts[index].second);
+    }
+    auto document =
+        std::string{"{\"spdxVersion\":\"SPDX-2.3\",\"dataLicense\":\"CC0-1.0\","
+                    "\"SPDXID\":\"SPDXRef-DOCUMENT\",\"name\":"} +
+        json_quote(output_name + " generated maintainer scripts") +
+        ",\"documentNamespace\":" + json_quote("https://liquid.dev/sbom/" + to_string(subject)) +
+        ",\"creationInfo\":{\"created\":\"1970-01-01T00:00:00Z\",\"creators\":["
+        "\"Tool: liquid\"]},\"packages\":[{\"SPDXID\":\"SPDXRef-Package\",\"name\":" +
+        json_quote(output_name) +
+        ",\"downloadLocation\":\"NOASSERTION\",\"filesAnalyzed\":true}],\"files\":[" + files +
+        "],\"relationships\":[" + relationships + "]}";
+    auto record = objects::sbom_record{
+        "SPDX-2.3",
+        {reinterpret_cast<const std::byte*>(document.data()),
+         reinterpret_cast<const std::byte*>(document.data() + document.size())}};
+    auto encoded = objects::encode(record);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto record_id =
+        co_await repository_detail::build_access::put_record(source, std::move(*encoded));
+    if (!record_id) {
+        co_return std::unexpected(record_id.error());
+    }
+    auto statement = attestation{
+        .subject = subject,
+        .profile = "sbom/1",
+        .at = std::chrono::sys_seconds{std::chrono::seconds{prepared.options.source_date_epoch}},
+        .subject_kind = attestation_subject_kind::artifact,
+        .attributes = {{"format", std::string{"SPDX-2.3"}},
+                       {"output", output_name},
+                       {"document", to_string(*record_id)},
+                       {"derived", true},
+                       {"inferred", false},
+                       {"components", claims}}};
     auto signed_statement =
         co_await repository_detail::build_access::sign_attestation(source, statement);
     if (!signed_statement) {
@@ -385,6 +592,28 @@ result<void> write_file(std::filesystem::path path, std::span<const std::byte> b
 
 namespace liquid {
 
+namespace {
+
+auto project_prepared(repository& source,
+                      projection_target target,
+                      projection_detail::prepared_projection prepared,
+                      std::span<const projection_service> services)
+    -> runtime::task<projection_report> {
+    switch (target) {
+    case projection_target::deb:
+    case projection_target::rpm:
+    case projection_target::apk:
+        co_return co_await projection_detail::project_package(source, target, std::move(prepared));
+    case projection_target::oci_image:
+        co_return co_await projection_detail::project_oci(source, std::move(prepared));
+    case projection_target::helm_chart:
+        co_return co_await projection_detail::project_helm(source, std::move(prepared), services);
+    }
+    co_return std::unexpected(error{errc::unsupported, "unknown projection target", "project"});
+}
+
+} // namespace
+
 std::string_view to_string(projection_target target) noexcept {
     switch (target) {
     case projection_target::oci_image:
@@ -406,19 +635,55 @@ runtime::task<projection_report> project(repository& source, projection_request 
     if (!prepared) {
         co_return std::unexpected(prepared.error());
     }
-    switch (request.target) {
-    case projection_target::deb:
-    case projection_target::rpm:
-    case projection_target::apk:
-        co_return co_await projection_detail::project_package(
-            source, request.target, std::move(*prepared));
-    case projection_target::oci_image:
-        co_return co_await projection_detail::project_oci(source, std::move(*prepared));
-    case projection_target::helm_chart:
-        co_return co_await projection_detail::project_helm(
-            source, std::move(*prepared), request.services);
+    if (request.options.against) {
+        auto conflicts = co_await projection_detail::resolve_projection_conflicts(
+            *prepared, request.target, *request.options.against);
+        if (!conflicts) {
+            co_return std::unexpected(conflicts.error());
+        }
     }
-    co_return std::unexpected(error{errc::unsupported, "unknown projection target", "project"});
+    co_return co_await project_prepared(
+        source, request.target, std::move(*prepared), request.services);
+}
+
+runtime::task<std::vector<projection_report>> project(repository& source,
+                                                      std::vector<projection_request> requests) {
+    if (requests.empty()) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "projection request set is empty", "project"});
+    }
+    auto prepared = std::vector<projection_detail::prepared_projection>{};
+    auto targets = std::vector<projection_target>{};
+    prepared.reserve(requests.size());
+    targets.reserve(requests.size());
+    for (const auto& request : requests) {
+        if (request.options.against) {
+            co_return std::unexpected(error{errc::invalid_argument,
+                                            "batch projection does not accept --against",
+                                            request.metadata.name});
+        }
+        auto value = co_await projection_detail::prepare(source, request);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        prepared.push_back(std::move(*value));
+        targets.push_back(request.target);
+    }
+    auto conflicts = projection_detail::resolve_projection_conflicts(prepared, targets);
+    if (!conflicts) {
+        co_return std::unexpected(conflicts.error());
+    }
+    auto reports = std::vector<projection_report>{};
+    reports.reserve(requests.size());
+    for (std::size_t index = 0; index < requests.size(); ++index) {
+        auto report = co_await project_prepared(
+            source, requests[index].target, std::move(prepared[index]), requests[index].services);
+        if (!report) {
+            co_return std::unexpected(report.error());
+        }
+        reports.push_back(std::move(*report));
+    }
+    co_return reports;
 }
 
 namespace {
@@ -498,6 +763,20 @@ result<std::string> projection_report_json(const projection_report& report) {
         }
         output += "{\"value\":" + quote(report.dependencies[index].value) +
                   ",\"declared\":" + (report.dependencies[index].declared ? "true" : "false") + "}";
+    }
+    output += "],\"replacements\":[";
+    for (auto index = std::size_t{}; index < report.replacements.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += "{\"package\":" + quote(report.replacements[index].package) + ",\"paths\":[";
+        for (auto path = std::size_t{}; path < report.replacements[index].paths.size(); ++path) {
+            if (path != 0) {
+                output.push_back(',');
+            }
+            output += quote(report.replacements[index].paths[path]);
+        }
+        output += "]}";
     }
     output += "],\"abi_break_allowed\":";
     output += report.abi_break_allowed ? "true}" : "false}";

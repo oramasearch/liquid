@@ -227,6 +227,10 @@ case verifies the sandboxed restart-hook arguments where a FUSE backend is insta
 `test_projection.cpp` imports the committed `fixtures/projection/root` install tree and covers
 package round trips, registry recognition, deterministic compression and output, OCI layers and
 attestation referrers, signed `projection/1`, digest-only Helm values, and native Helm lint when
-the tool is installed. The pinned target digests are the macOS/Linux byte-identity contract.
+the tool is installed. It also pins twelve generated lifecycle scripts, quoting/refusal behavior,
+script attestation and SBOM binding, batch and installed-inventory ownership conflicts, and derived
+replacements. `test_install.cpp` covers intent application, generation listing and rollback, and a
+subprocess `SIGKILL` after every staged file and at the selection switch. The pinned target digests
+are the macOS/Linux byte-identity contract.
 The format-registry inventory also pins the Debian, RPM, and Alpine codecs beside the five launch
 codecs.

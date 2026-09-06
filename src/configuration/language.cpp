@@ -191,11 +191,13 @@ auto check_fields(const configuration_record& record,
             continue;
         }
         if (std::ranges::find(valid, item.name) == valid.end()) {
-            const auto suggestion = nearest(item.name, valid);
+            const auto suggestion = valid.empty() ? std::string_view{} : nearest(item.name, valid);
             output.push_back(diagnostic(item.location,
                                         "known " + record.kind + " field",
                                         "'" + item.name + "'",
-                                        "did you mean '" + std::string{suggestion} + "'?"));
+                                        suggestion.empty()
+                                            ? "this record does not accept fields"
+                                            : "did you mean '" + std::string{suggestion} + "'?"));
         }
     }
 }
@@ -218,6 +220,216 @@ auto check_string_list(const configuration_field* selected,
                                         paths ? type_hint(configuration_value_kind::path)
                                               : type_hint(configuration_value_kind::string)));
         }
+    }
+}
+
+auto intent_name_is_valid(std::string_view value) -> bool {
+    if (value.empty() || (value.front() != '_' && (value.front() < 'a' || value.front() > 'z'))) {
+        return false;
+    }
+    return std::ranges::all_of(value.substr(1), [](const char item) {
+        return (item >= 'a' && item <= 'z') || (item >= '0' && item <= '9') || item == '_' ||
+               item == '-';
+    });
+}
+
+auto canonical_absolute_path(std::string_view value) -> bool {
+    const auto path = std::filesystem::path{value};
+    if (value.empty() || value.front() != '/' || value == "/" ||
+        value.find("//") != std::string::npos || path.lexically_normal() != path) {
+        return false;
+    }
+    return std::ranges::all_of(value, [](const char item) {
+        return std::isalnum(static_cast<unsigned char>(item)) != 0 || item == '/' || item == '.' ||
+               item == '_' || item == '+' || item == '-';
+    });
+}
+
+auto check_intent_name(const configuration_field* selected,
+                       std::string_view field_name,
+                       std::vector<configuration_diagnostic>& output) -> void {
+    if (!require_type(selected, configuration_value_kind::identifier, output)) {
+        return;
+    }
+    if (!intent_name_is_valid(selected->value.text)) {
+        output.push_back(diagnostic(selected->value.location,
+                                    "name matching [a-z_][a-z0-9_-]*",
+                                    found(selected->value),
+                                    std::string{field_name} + " cannot contain metacharacters"));
+    }
+}
+
+auto check_intent_path(const configuration_field* selected,
+                       std::string_view field_name,
+                       std::vector<configuration_diagnostic>& output) -> void {
+    if (!require_type(selected, configuration_value_kind::path, output)) {
+        return;
+    }
+    if (!canonical_absolute_path(selected->value.text)) {
+        output.push_back(diagnostic(selected->value.location,
+                                    "canonical absolute path",
+                                    found(selected->value),
+                                    std::string{field_name} +
+                                        " begins with / and has no metacharacters, . or .."));
+    }
+}
+
+auto require_install_field(const configuration_record& record,
+                           std::string_view name,
+                           std::vector<configuration_diagnostic>& output)
+    -> const configuration_field* {
+    return require_field(record,
+                         name,
+                         "install intent field '" + std::string{name} + "'",
+                         "install intent records require every listed field",
+                         output);
+}
+
+auto check_install_child(const configuration_record& record,
+                         std::vector<configuration_diagnostic>& output) -> void {
+    if (!record.records.empty()) {
+        output.push_back(diagnostic(record.records.front().location,
+                                    "install intent field",
+                                    "nested record '" + record.records.front().kind + "'",
+                                    "install intent records contain fields only"));
+    }
+    if (record.kind == "service") {
+        static constexpr auto valid =
+            std::array<std::string_view, 5>{"name", "exec", "user", "after", "restart"};
+        check_fields(record, valid, output);
+        check_intent_name(require_install_field(record, "name", output), "service name", output);
+        check_intent_path(
+            require_install_field(record, "exec", output), "service executable", output);
+        check_intent_name(require_install_field(record, "user", output), "service user", output);
+        const auto* after = require_install_field(record, "after", output);
+        if (require_type(after, configuration_value_kind::list, output)) {
+            for (const auto& value : after->value.list) {
+                auto item = configuration_field{"after", value.location, value};
+                check_intent_name(&item, "service dependency", output);
+            }
+        }
+        const auto* restart = require_install_field(record, "restart", output);
+        if (require_type(restart, configuration_value_kind::identifier, output) &&
+            restart->value.text != "no" && restart->value.text != "on-failure" &&
+            restart->value.text != "always") {
+            output.push_back(diagnostic(restart->value.location,
+                                        "no, on-failure, or always",
+                                        found(restart->value),
+                                        "service restart policy is a closed enum"));
+        }
+        return;
+    }
+    if (record.kind == "user") {
+        static constexpr auto valid = std::array<std::string_view, 3>{"name", "system", "home"};
+        check_fields(record, valid, output);
+        check_intent_name(require_install_field(record, "name", output), "user name", output);
+        require_type(require_install_field(record, "system", output),
+                     configuration_value_kind::boolean,
+                     output);
+        check_intent_path(require_install_field(record, "home", output), "user home", output);
+        return;
+    }
+    if (record.kind == "group") {
+        static constexpr auto valid = std::array<std::string_view, 2>{"name", "system"};
+        check_fields(record, valid, output);
+        check_intent_name(require_install_field(record, "name", output), "group name", output);
+        require_type(require_install_field(record, "system", output),
+                     configuration_value_kind::boolean,
+                     output);
+        return;
+    }
+    if (record.kind == "directory") {
+        static constexpr auto valid = std::array<std::string_view, 3>{"path", "mode", "owner"};
+        check_fields(record, valid, output);
+        check_intent_path(require_install_field(record, "path", output), "directory path", output);
+        const auto* mode = require_install_field(record, "mode", output);
+        if (require_type(mode, configuration_value_kind::integer, output) &&
+            (mode->value.integer < 0 || mode->value.integer > 777 ||
+             std::to_string(mode->value.integer).find_first_of("89") != std::string::npos)) {
+            output.push_back(diagnostic(mode->value.location,
+                                        "octal mode from 0000 through 0777",
+                                        found(mode->value),
+                                        "write modes with octal digits, for example 755"));
+        }
+        check_intent_name(
+            require_install_field(record, "owner", output), "directory owner", output);
+        return;
+    }
+    if (record.kind == "symlink") {
+        static constexpr auto valid = std::array<std::string_view, 2>{"path", "target"};
+        check_fields(record, valid, output);
+        check_intent_path(require_install_field(record, "path", output), "symlink path", output);
+        check_intent_path(
+            require_install_field(record, "target", output), "symlink target", output);
+        return;
+    }
+    if (record.kind == "cache") {
+        static constexpr auto caches = std::array<std::string_view, 7>{"ldconfig",
+                                                                       "desktop-database",
+                                                                       "mime-database",
+                                                                       "man-db",
+                                                                       "icon-cache",
+                                                                       "systemd-daemon-reload",
+                                                                       "fonts"};
+        static constexpr auto no_fields = std::array<std::string_view, 0>{};
+        check_fields(record, no_fields, output);
+        if (!record.name || std::ranges::find(caches, *record.name) == caches.end()) {
+            output.push_back(
+                diagnostic(record.location,
+                           "known cache name",
+                           record.name ? "'" + *record.name + "'" : "missing name",
+                           "cache names are ldconfig, desktop-database, mime-database, "
+                           "man-db, icon-cache, systemd-daemon-reload, or fonts"));
+        }
+        return;
+    }
+    if (record.kind == "alternatives") {
+        static constexpr auto valid = std::array<std::string_view, 3>{"name", "path", "priority"};
+        check_fields(record, valid, output);
+        check_intent_name(
+            require_install_field(record, "name", output), "alternative name", output);
+        check_intent_path(
+            require_install_field(record, "path", output), "alternative path", output);
+        const auto* priority = require_install_field(record, "priority", output);
+        if (require_type(priority, configuration_value_kind::integer, output) &&
+            (priority->value.integer < std::numeric_limits<std::int32_t>::min() ||
+             priority->value.integer > std::numeric_limits<std::int32_t>::max())) {
+            output.push_back(diagnostic(priority->value.location,
+                                        "32-bit signed integer",
+                                        found(priority->value),
+                                        "alternative priorities must fit the package formats"));
+        }
+        return;
+    }
+    static constexpr auto kinds = std::array<std::string_view, 7>{
+        "service", "user", "group", "directory", "symlink", "cache", "alternatives"};
+    output.push_back(
+        diagnostic(record.location,
+                   "install intent record",
+                   "record '" + record.kind + "'",
+                   "did you mean '" + std::string{nearest(record.kind, kinds)} + "'?"));
+}
+
+auto check_install(const configuration_record& record,
+                   std::vector<configuration_diagnostic>& output) -> void {
+    static constexpr auto install_fields = std::array<std::string_view, 2>{"layout", "prefix"};
+    check_fields(record, install_fields, output);
+    if (const auto* layout = field(record, "layout")) {
+        if (require_type(layout, configuration_value_kind::identifier, output) &&
+            layout->value.text != "prefix") {
+            output.push_back(diagnostic(layout->value.location,
+                                        "prefix layout",
+                                        "identifier '" + layout->value.text + "'",
+                                        "install trees contain bin, lib, include, and share"));
+        }
+    }
+    if (const auto* prefix = field(record, "prefix")) {
+        static constexpr auto accepted =
+            std::array{configuration_value_kind::path, configuration_value_kind::string};
+        require_one_of(prefix, accepted, "path", type_hint(configuration_value_kind::path), output);
+    }
+    for (const auto& child : record.records) {
+        check_install_child(child, output);
     }
 }
 
@@ -552,25 +764,7 @@ auto check_build(const configuration_record& record,
                 }
             }
         } else if (child.kind == "install") {
-            static constexpr auto install_fields =
-                std::array<std::string_view, 2>{"layout", "prefix"};
-            check_fields(child, install_fields, output);
-            if (const auto* layout = field(child, "layout")) {
-                if (require_type(layout, configuration_value_kind::identifier, output) &&
-                    layout->value.text != "prefix") {
-                    output.push_back(
-                        diagnostic(layout->value.location,
-                                   "prefix layout",
-                                   "identifier '" + layout->value.text + "'",
-                                   "install trees contain bin, lib, include, and share"));
-                }
-            }
-            if (const auto* prefix = field(child, "prefix")) {
-                static constexpr auto accepted =
-                    std::array{configuration_value_kind::path, configuration_value_kind::string};
-                require_one_of(
-                    prefix, accepted, "path", type_hint(configuration_value_kind::path), output);
-            }
+            check_install(child, output);
         } else {
             output.push_back(diagnostic(child.location,
                                         "depends_on, when, or install",
@@ -830,6 +1024,89 @@ auto append_target_dependency(target& output,
     output.dependencies.push_back({record.name.value_or(""), std::move(when)});
 }
 
+auto lower_mode(std::int64_t value) -> std::uint32_t {
+    auto output = std::uint32_t{};
+    auto place = std::uint32_t{1};
+    do {
+        output += static_cast<std::uint32_t>(value % 10) * place;
+        value /= 10;
+        place *= 8;
+    } while (value != 0);
+    return output;
+}
+
+auto lower_restart(std::string_view value) -> service_restart {
+    if (value == "no") {
+        return service_restart::no;
+    }
+    if (value == "always") {
+        return service_restart::always;
+    }
+    return service_restart::on_failure;
+}
+
+auto lower_cache(std::string_view value) -> install_cache {
+    if (value == "desktop-database") {
+        return install_cache::desktop_database;
+    }
+    if (value == "mime-database") {
+        return install_cache::mime_database;
+    }
+    if (value == "man-db") {
+        return install_cache::man_db;
+    }
+    if (value == "icon-cache") {
+        return install_cache::icon_cache;
+    }
+    if (value == "systemd-daemon-reload") {
+        return install_cache::systemd_daemon_reload;
+    }
+    if (value == "fonts") {
+        return install_cache::fonts;
+    }
+    return install_cache::ldconfig;
+}
+
+auto lower_install(const configuration_record& record) -> install_intent {
+    auto output = install_intent{};
+    for (const auto& child : record.records) {
+        if (child.kind == "service") {
+            auto after = std::vector<std::string>{};
+            for (const auto& item : field(child, "after")->value.list) {
+                after.push_back(item.text);
+            }
+            output.services.push_back(
+                {.name = field(child, "name")->value.text,
+                 .executable = field(child, "exec")->value.text,
+                 .user = field(child, "user")->value.text,
+                 .after = std::move(after),
+                 .restart = lower_restart(field(child, "restart")->value.text)});
+        } else if (child.kind == "user") {
+            output.users.push_back({.name = field(child, "name")->value.text,
+                                    .system = field(child, "system")->value.boolean,
+                                    .home = field(child, "home")->value.text});
+        } else if (child.kind == "group") {
+            output.groups.push_back({.name = field(child, "name")->value.text,
+                                     .system = field(child, "system")->value.boolean});
+        } else if (child.kind == "directory") {
+            output.directories.push_back({.path = field(child, "path")->value.text,
+                                          .mode = lower_mode(field(child, "mode")->value.integer),
+                                          .owner = field(child, "owner")->value.text});
+        } else if (child.kind == "symlink") {
+            output.symlinks.push_back({.path = field(child, "path")->value.text,
+                                       .target = field(child, "target")->value.text});
+        } else if (child.kind == "cache") {
+            output.caches.push_back(lower_cache(*child.name));
+        } else if (child.kind == "alternatives") {
+            output.alternatives.push_back(
+                {.name = field(child, "name")->value.text,
+                 .path = field(child, "path")->value.text,
+                 .priority = static_cast<std::int32_t>(field(child, "priority")->value.integer)});
+        }
+    }
+    return output;
+}
+
 auto lower_target(const configuration_record& record,
                   const std::map<std::string, digest>& declared_sources) -> result<target> {
     auto output = target{.name = *record.name,
@@ -876,6 +1153,7 @@ auto lower_target(const configuration_record& record,
             if (const auto* layout = field(child, "layout")) {
                 output.install_layout = layout->value.text;
             }
+            output.install = lower_install(child);
         }
     }
     for (const auto name : {"inputs", "toolchain"}) {

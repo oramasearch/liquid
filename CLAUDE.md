@@ -95,6 +95,10 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #80 adds canonical declarative install intents, fixed Debian/RPM/Alpine lifecycle-script
+generation, script SBOM and projection binding, batch and installed-inventory file conflict
+detection, derived replacement relationships, and atomic projected-tree generations with install,
+list, rollback, and interruption recovery.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
@@ -113,6 +117,7 @@ Spack-style parser, filesystem and repository universe loading, and a private CD
 Liquid #74 adds the typed declarative `.liquid` configuration language, exact source-located
 diagnostics, canonical formatting and package/target/source lowering, repository-local includes,
 digest-verified source fetch, action-backed generators with provenance, and configured target CLI.
+Its `install` block lowers the strict issue #80 intent vocabulary into canonical `install_intent/1`.
 Configured target results must pass the relocation publication check before they are returned.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,

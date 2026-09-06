@@ -86,7 +86,9 @@ built binary under the build directory before CTest compares it with the committ
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
-| `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart, with optional ownership checking. | available |
+| `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
+| `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
@@ -435,11 +437,21 @@ writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible e
 from the same canonical TAAP record.
 `project` accepts a result ID or install-tree digest. A bare tree also requires `--arch`; a result
 uses its action platform and refuses a conflicting override. Repeatable `--depends` values are
-additive to reader-derived dependencies. Helm services use
+additive to reader-derived dependencies. `--against` accepts a package directory, dpkg status
+inventory, or RPM package/path dump and refuses every overlapping owned path. `--replaces` names an
+allowed owner, derives the format's conflict/replacement metadata, and includes the package and
+paths in JSON `replacements`. Helm services use
 `name=repository@sha256:digest[,port=N][,env=K=V][,volume=P]`. `--compat-gzip` selects liquid's
 deterministic gzip encoder for Debian and OCI; `--allow-abi-break` records an explicit override.
 Text output lists artifact and attestation digests, while `--json` adds pinned image references,
 dependency labels, and the ABI override bit. See [projection.md](../library/projection.md).
+
+`install` accepts a liquid-projected `.deb`, `.rpm`, `.apk`, or an install-tree directory. It
+stages the next generation below `<root>/.liquid/generations`, applies embedded declarative intent,
+and replaces `<root>/current` only after the generation is complete. `install --list` prints one
+line per complete generation with its number, current flag, and path. `rollback` selects the
+complete generation immediately preceding the selected one. Both switch operations are atomic;
+an interrupted install leaves the previous `current` tree visible.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, the outer
 action's status, its canonical `output_tree`, the disk hit rate, bytes transferred, bytes avoided,

@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
@@ -21,6 +21,8 @@ Project a recorded build result or install tree into an OCI image, package, or H
 | `--arch` | `<arch>` | Set the target architecture. | source architecture |
 | `--out` | `<dir>` | Write projected artifacts below this directory. | projection |
 | `--depends` | `<dependency>` | Declare a package dependency; repeatable. | none |
+| `--against` | `<path>` | Check file ownership against packages or an installed database. | none |
+| `--replaces` | `<package>` | Permit owned paths by deriving replacement relationships. | none |
 | `--service` | `<value>` | Add a Helm service declaration; repeatable. | none |
 | `--compat-gzip` | — | Use gzip-compatible package compression. | false |
 | `--allow-abi-break` | — | Permit an incompatible ABI projection. | false |
