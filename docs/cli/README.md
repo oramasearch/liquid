@@ -27,7 +27,7 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
-| `log` | `log [--ops] [--json]` | Show change or signed drip history. | available |
+| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
@@ -140,6 +140,20 @@ Plaintext is written verbatim to stdout. Scope matching includes optional-field 
 `--namespace` or `--name` does not match a record that contains that field. Values, private-key
 bytes, and bearer credentials are never included in errors. The envelope and fixture are specified
 in [sealed secrets](../library/sealed-secrets.md).
+
+`log timestamps <log-url>` reads lake's current `transparency_checkpoint`, uses its checkpoint
+digest to read `timestamp_evidence`, and prints the checkpoint digest, signature digest, digest
+algorithm, and each archive timestamp summary. The command does not grant trust to lake's summary;
+it is an inspection view. `LIQUID_TOKEN` supplies the optional bearer credential for the evidence
+read and is never printed.
+
+`log verify --timestamps` reads the same two lake capabilities and verifies the exact decoded
+checkpoint signature value against the returned DER evidence record. Set `LIQUID_LOG_URL` to the
+lake base URL and `LIQUID_TSA_TRUST_CERT` to a PEM file containing one or more pinned TSA trust
+anchors. The trust-anchor default is none: an unset or empty trust path is refused, and the command
+never substitutes operating-system certificate roots. Successful output names the checkpoint,
+reports `timestamp_evidence=verified`, and prints each independently decoded archive timestamp.
+Lake checkpoint, tile, and proof authentication remains the separate `#207` verification layer.
 
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
