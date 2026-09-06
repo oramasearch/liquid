@@ -36,16 +36,41 @@ LIQUID_PROJECTION_PEER_OUT="$artifacts" \
   "$tests" --gtest_filter=Projection.emit_peer_artifacts_when_requested
 
 docker run --rm --platform linux/amd64 -v "$artifacts:/artifacts:ro" "$debian_image" \
-  sh -c 'dpkg -i /artifacts/deb/*.deb && /usr/bin/liquid-fixture'
-echo "Debian dpkg install and executable: PASS"
+  sh -eu -c '
+    mkdir -p /run/systemd/system
+    printf "#!/bin/sh\necho \"\044*\" >>/tmp/liquid-systemctl.log\n" \
+      >/usr/local/bin/systemctl
+    chmod 0755 /usr/local/bin/systemctl
+    dpkg -i /artifacts/deb/*.deb
+    getent passwd liquid_agent
+    test -f /usr/lib/systemd/system/liquid_agent.service
+    grep -Fx "enable --now liquid_agent.service" /tmp/liquid-systemctl.log
+    /usr/bin/liquid-fixture
+    apt-get remove -y liquid-fixture
+    test ! -e /usr/bin/liquid-fixture
+    test ! -e /usr/lib/systemd/system/liquid_agent.service
+  '
+echo "Debian dpkg install, intent, unit enable, executable, and apt remove: PASS"
 
 docker run --rm --platform linux/amd64 -v "$artifacts:/artifacts:ro" "$fedora_image" \
-  sh -c 'rpm -i /artifacts/rpm/*.rpm && /usr/bin/liquid-fixture'
-echo "Fedora rpm install and executable: PASS"
+  sh -eu -c '
+    rpm -i /artifacts/rpm/*.rpm
+    getent passwd liquid_agent
+    test -f /usr/lib/systemd/system/liquid_agent.service
+    /usr/bin/liquid-fixture
+    rpm -e liquid-fixture
+  '
+echo "Fedora rpm install, intent, executable, and remove: PASS"
 
 docker run --rm --platform linux/amd64 -v "$artifacts:/artifacts:ro" "$alpine_image" \
-  sh -c 'apk add --allow-untrusted /artifacts/apk/*.apk && /usr/bin/liquid-fixture'
-echo "Alpine apk install and executable: PASS"
+  sh -eu -c '
+    apk add --allow-untrusted /artifacts/apk/*.apk
+    getent passwd liquid_agent
+    test -f /usr/lib/systemd/system/liquid_agent.service
+    /usr/bin/liquid-fixture
+    apk del liquid-fixture
+  '
+echo "Alpine apk install, intent, executable, and remove: PASS"
 
 image_layout="$artifacts/oci/liquid-fixture-1.2.3.oci"
 tar -C "$image_layout" -cf "$artifacts/liquid-fixture.oci.tar" .
