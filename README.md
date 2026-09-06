@@ -84,7 +84,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
 > dependency-aware build observability, build-input policy, a cross-project configure fact base,
-> cost-aware retention, and graph-derived SPDX and CycloneDX SBOMs for every output.**
+> cost-aware retention, graph-derived SPDX and CycloneDX SBOMs for every output, and stored ABI
+> descriptors plus signed compatibility comparisons for every built shared library.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -224,6 +225,7 @@ and Zetta's.
 - [`docs/cli/build-events.md`](docs/cli/build-events.md) — the stable build-event JSON-lines schema and ordering.
 - [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
+- [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
 
 | | |
 |---|---|

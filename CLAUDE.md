@@ -40,10 +40,12 @@ and policy check/explain commands. Liquid #56 adds content-keyed Autotools and C
 facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
 and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
-SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
-remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
-materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
-refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
+SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #27 adds ELF, Mach-O, and
+PE `abi/1` extraction, automatic result publication, signed compatibility attestations, public
+descriptor lookup and diffing, wrapper break reports, and the `liquid abi` command. Liquid #17 adds
+transport-neutral remote blob records, local/remote/absent store availability, chunk-range
+hydration and on-demand materialisation, remote-byte status, metadata-only remote result recording,
+and opt-in Linux read refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
 blob interfaces, source and toolchain transfer from the store, recorded local/remote/race cost
 decisions, short-action batching, and race-loser cancellation; private HTTP/2 and gRPC framing are
 implemented. Liquid #16 adds the REAPI client, validated remote cache tier, repository configuration,

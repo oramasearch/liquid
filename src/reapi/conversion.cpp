@@ -606,7 +606,7 @@ auto from_reapi_result(const ActionResult& value,
                                 .exit = value.exit_code,
                                 .stdout_output = *stdout_output,
                                 .stderr_output = *stderr_output,
-                                .record_version = 3};
+                                .record_version = 4};
     if (value.execution_metadata) {
         output.worker = value.execution_metadata->worker;
         if (value.execution_metadata->execution_start_timestamp) {
