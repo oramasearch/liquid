@@ -50,6 +50,9 @@ values. A build or materialisation that walks into the conflict entry returns `e
 with the repository path and conflict digest. A tree that does not contain that entry materialises
 normally.
 
+The shared-library test target calls the same materialisation function as the static target, so
+the conflict refusal is verified for both library link modes.
+
 The live repository retains the CRDT-selected blob, tree, or nested repository entry alongside the
 conflict reference. Reads and edits use that selected entry. Checkpoints persist enough selection
 metadata to reconstruct the working tree after reopen while subsequent cuts continue to publish a
