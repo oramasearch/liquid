@@ -73,6 +73,7 @@ auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto secret(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto inspect(int argc, char** argv) -> int;
 auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
@@ -923,6 +924,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::abi},
+    {"inspect",
+     "inspect <path|digest> [--json]",
+     "explain a recognised artifact",
+     "available",
+     flag_json,
+     "Show the codec, fidelity tier, and decoded entry tree for an artifact path or stored blob.",
+     "liquid inspect artifact.whl --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::inspect},
     {"symbols",
      "symbols <path>",
      "show compiler or syntactic symbols for a source path",

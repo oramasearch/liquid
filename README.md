@@ -25,8 +25,9 @@ inside libliquid. The Phase 2 build wrapper, cache, verification and provenance,
 remote blobs, replay and delta delivery, the Phase 4 query graph, daemon, search and structural
 edits, and the Phase 5 formats, projection, resolution and `.liquid` configuration are implemented
 as recorded in [`docs/library/status.md`](docs/library/status.md), which also lists the known
-limits. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client
-of it.
+limits. Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
+files. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client of
+it.
 
 ## Build and run
 
