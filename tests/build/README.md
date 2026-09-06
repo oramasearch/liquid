@@ -8,11 +8,21 @@ and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, s
 SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages over public
 results, attestations, traces, and result-scoped SBOMs.
 
+`test_abi.cpp` decodes digest-pinned ELF, Mach-O, and PE fixtures; extracts native shared-library
+exports; checks compatible additions, removals, changed signatures, object sizes, GNU symbol
+versions, and debug signatures; round-trips stored descriptors; verifies the signed compatibility
+attestation; and pins JSON ordering. The privileged `wrap/abi` fixture rebuilds a C shared library
+with a removed function and changed signature, then requires the `abi-break:` event and
+`--fail-on-abi-break` status. The repository-backed case also invokes a result-qualified CLI diff
+between its two stored builds.
+
 Filesystem fixtures allocate their named directories beneath the unique process root specified in
 the parent [`README.md`](../README.md).
 
 `test_events.cpp` covers subscription-point fan-out, terminal failure ordering, frontend-shaped
-diagnostics, and exact JSON-lines schema stability for the public build stream. The Linux wrap
+diagnostics, and exact JSON-lines schema stability for the public build stream and configured
+plan. Public plan cases cover the named unconfigured error, root digest, complete inputs,
+output-derived dependency edges, one-call repository execution, and daemon round trips. The Linux wrap
 scenario edits a second input while a delayed action runs and checks that re-planning reports the
 untouched actions as hits. The mount-backed own-tree measurement edits a function body in
 `src/store/faults.cpp` inside a repository snapshot and prints call-to-start latency, event count,
@@ -67,7 +77,8 @@ The mixed-cost retention case writes a cheap large result and an expensive small
 real store, persists both index rows, exceeds the configured physical cap, and proves collection
 removes only the lower execution-cost-per-byte result.
 
-`wrap/` holds unchanged CMake, Autotools, recursive Make, and compilation-database projects built
+`wrap/` holds unchanged CMake, Autotools, recursive Make, compilation-database, and shared-library
+projects built
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
@@ -76,8 +87,11 @@ CLI case runs `liquid verify --all` and `liquid verify --graph --all`, checks th
 action and query agrees, then replays one action through `liquid replay --json`.
 It also parses every line from a failing `liquid build --events` run and checks that the command
 returns the recorded status.
+The configured-build CLI case parses every `liquid build --plan` line and checks the recorded
+compile and link actions, complete input fields, and dependency arrays.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
-and toolchain-tree leaf. Its query-graph cases make a comment-only translation-unit edit execute
+and toolchain-tree leaf. The shared-library fixture exercises automatic ABI publication and the
+compatibility gate. The query-graph cases make a comment-only translation-unit edit execute
 one compiler while preserving the object and link result, then make a semantic edit execute the
 compiler and linker and change the link result.
 The fixture registers a labelled smoke test, and the wrap scenario verifies its public target

@@ -40,10 +40,12 @@ and policy check/explain commands. Liquid #56 adds content-keyed Autotools and C
 facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
 and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
-SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
-remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
-materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
-refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
+SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #27 adds ELF, Mach-O, and
+PE `abi/1` extraction, automatic result publication, signed compatibility attestations, public
+descriptor lookup and diffing, wrapper break reports, and the `liquid abi` command. Liquid #17 adds
+transport-neutral remote blob records, local/remote/absent store availability, chunk-range
+hydration and on-demand materialisation, remote-byte status, metadata-only remote result recording,
+and opt-in Linux read refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
 blob interfaces, source and toolchain transfer from the store, recorded local/remote/race cost
 decisions, short-action batching, and race-loser cancellation; private HTTP/2 and gRPC framing are
 implemented. Liquid #16 adds the REAPI client, validated remote cache tier, repository configuration,
@@ -73,6 +75,9 @@ cursor-based stale-index exclusion, common located hit records, the public execu
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
+Liquid #200 adds public configured-build plans with complete action inputs, dependency edges and
+validated hit state, one-call repository and daemon builds, the current root-tree digest, and
+`liquid build --plan`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
@@ -97,6 +102,8 @@ recorded compile actions, graph retrieval,
 repository access, and the `liquid symbols` command.
 Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
 approximate, or deleted positions across changes.
+Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
+line-hunk stale reports, and signed disjoint or forced re-validation records.
 
 ### Vocabulary — use these words exactly
 

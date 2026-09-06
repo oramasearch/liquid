@@ -272,6 +272,30 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     auto repository =
         liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
     ASSERT_TRUE(repository) << repository.error().message;
+    auto build_plan = liquid::runtime::block_on(repository->build_plan());
+    ASSERT_TRUE(build_plan) << build_plan.error().message;
+    ASSERT_GE(build_plan->size(), 3U);
+    const auto own_compile =
+        std::ranges::find_if(*build_plan, [](const liquid::build_plan_action& action) {
+            return std::ranges::any_of(action.input.command, [](const std::string& argument) {
+                return std::filesystem::path{argument}.filename() == "left.c";
+            });
+        });
+    ASSERT_NE(own_compile, build_plan->end());
+    EXPECT_FALSE(own_compile->input.outputs.empty());
+    EXPECT_TRUE(std::ranges::any_of(*build_plan, [](const liquid::build_plan_action& action) {
+        return !action.dependencies.empty();
+    }));
+    for (const auto& planned : *build_plan) {
+        EXPECT_FALSE(planned.input.command.empty());
+        EXPECT_FALSE(planned.input.outputs.empty());
+        EXPECT_FALSE(planned.input.platform.os.empty());
+        EXPECT_FALSE(planned.input.platform.arch.empty());
+        auto inputs = liquid::runtime::block_on(repository->tree(planned.input.inputs));
+        EXPECT_TRUE(inputs) << inputs.error().message;
+        auto toolchain = liquid::runtime::block_on(repository->tree(planned.input.toolchain));
+        EXPECT_TRUE(toolchain) << toolchain.error().message;
+    }
     auto tests = liquid::runtime::block_on(repository->tests());
     ASSERT_TRUE(tests) << tests.error().message;
     ASSERT_EQ(tests->size(), 1U);
@@ -485,6 +509,49 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(other_built->outer, liquid::cache_status::hit);
     EXPECT_EQ(std::getenv("LD_PRELOAD"), nullptr);
     EXPECT_EQ(std::getenv("DYLD_INSERT_LIBRARIES"), nullptr);
+}
+
+TEST(BuildWrap, incompatible_shared_library_is_reported_and_can_fail_the_cli) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("cmake") || !available("ninja") || !available("clang")) {
+        GTEST_SKIP() << "cmake, ninja, or clang is absent";
+    }
+    wrap_directory fixture{"abi"};
+    auto cache_environment = scoped_environment{"LIQUID_WRAP_CACHE", fixture.cache().string()};
+    ASSERT_TRUE(cache_environment.valid());
+    auto configured = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(),
+                            {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"},
+                            {.cache = true, .verify = false}));
+    ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
+    ASSERT_EQ(configured->exit, 0);
+    auto first = liquid::runtime::block_on(liquid::build::wrap(
+        fixture.project(), {"cmake", "--build", "build"}, {.cache = true, .verify = false}));
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    ASSERT_EQ(first->exit, 0);
+    EXPECT_TRUE(first->abi_breaks.empty());
+
+    auto source = std::ofstream{fixture.project() / "abi.c", std::ios::trunc};
+    source << "int abi_retained(double value) { return (int)value + 1; }\n";
+    source.close();
+#if defined(LIQUID_CLI)
+    const auto output = fixture.project().parent_path() / "abi-break-output";
+    const auto command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                         shell_quote(LIQUID_CLI) +
+                         " wrap --fail-on-abi-break cmake --build build --clean-first >" +
+                         shell_quote(output.string()) + " 2>&1";
+    const auto status = std::system(command.c_str());
+    auto input = std::ifstream{output};
+    const auto text =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    ASSERT_TRUE(WIFEXITED(status)) << text;
+    EXPECT_EQ(WEXITSTATUS(status), 1) << text;
+    EXPECT_NE(text.find("abi-break:"), std::string::npos) << text;
+    EXPECT_NE(text.find("abi_removed removed"), std::string::npos) << text;
+    EXPECT_NE(text.find("abi_retained type_changed"), std::string::npos) << text;
+#endif
 }
 
 TEST(BuildWrap, recursive_make_is_split_into_actions) {
@@ -738,6 +805,79 @@ TEST(BuildWrap, why_reports_current_policy_refusal_for_a_recorded_target) {
 }
 
 #if defined(LIQUID_CLI)
+
+TEST(BuildPlan, cli_prints_configured_compile_and_link_actions) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("make") || !available("clang")) {
+        GTEST_SKIP() << "make or clang is absent";
+    }
+    wrap_directory fixture{"make"};
+    auto cache_environment =
+        scoped_environment{"LIQUID_WRAP_CACHE", (fixture.cache().parent_path() / "plan").string()};
+    ASSERT_TRUE(cache_environment.valid());
+    const auto output = fixture.cache().parent_path() / "build-plan.jsonl";
+    const auto events = fixture.cache().parent_path() / "repository-build.jsonl";
+    const auto command =
+        "cd " + shell_quote(fixture.project().string()) + " && " + shell_quote(LIQUID_CLI) +
+        " wrap make >/dev/null && " + shell_quote(LIQUID_CLI) + " build --plan >" +
+        shell_quote(output.string()) + " && " + shell_quote(LIQUID_CLI) + " build build/wrapped >" +
+        shell_quote(events.string()) + "; result=$?; " + shell_quote(LIQUID_CLI) +
+        " daemon --shutdown >/dev/null 2>&1 || true; exit $result";
+    const auto status = std::system(command.c_str());
+    ASSERT_EQ(status, 0);
+    auto input = std::ifstream{output};
+    ASSERT_TRUE(input.is_open());
+    auto lines = std::uint64_t{};
+    auto compile = false;
+    auto dependent = false;
+    for (auto line = std::string{}; std::getline(input, line);) {
+        auto json = liquid::formats::json::parse(line);
+        ASSERT_TRUE(json) << line;
+        EXPECT_NE(line.find("\"action\":"), std::string::npos) << line;
+        EXPECT_NE(line.find("\"state\":"), std::string::npos) << line;
+        EXPECT_NE(line.find("\"command\":"), std::string::npos) << line;
+        EXPECT_NE(line.find("\"inputs\":"), std::string::npos) << line;
+        EXPECT_NE(line.find("\"toolchain\":"), std::string::npos) << line;
+        EXPECT_NE(line.find("\"platform\":"), std::string::npos) << line;
+        compile = compile || line.find(".c\"") != std::string::npos;
+        dependent = dependent || line.find("\"dependencies\":[]") == std::string::npos;
+        ++lines;
+    }
+    EXPECT_GE(lines, 4U);
+    EXPECT_TRUE(compile);
+    EXPECT_TRUE(dependent);
+
+    auto event_input = std::ifstream{events};
+    ASSERT_TRUE(event_input.is_open());
+    auto event_lines = std::vector<std::string>{};
+    for (auto line = std::string{}; std::getline(event_input, line);) {
+        auto json = liquid::formats::json::parse(line);
+        ASSERT_TRUE(json) << line;
+        event_lines.push_back(std::move(line));
+    }
+    ASSERT_GE(event_lines.size(), 5U);
+    EXPECT_NE(event_lines.front().find("\"type\":\"action_queued\""), std::string::npos);
+    EXPECT_NE(event_lines.back().find("\"type\":\"build_finished\""), std::string::npos);
+
+    auto repository = liquid::runtime::block_on(liquid::repository::open_build(fixture.project()));
+    ASSERT_TRUE(repository) << repository.error().message;
+    auto local = repository->build(liquid::build_target{"build/wrapped"});
+    ASSERT_TRUE(local) << local.error().message;
+    auto local_events = liquid::runtime::block_on(collect_events(std::move(*local)));
+    ASSERT_TRUE(local_events) << local_events.error().message;
+    ASSERT_EQ(local_events->size(), event_lines.size());
+    for (auto index = std::size_t{}; index != local_events->size(); ++index) {
+        auto json = liquid::event_json((*local_events)[index]);
+        ASSERT_TRUE(json) << json.error().message;
+        const auto type = json->find("\"type\":");
+        const auto type_end = json->find(',', type);
+        ASSERT_NE(type, std::string::npos);
+        ASSERT_NE(type_end, std::string::npos);
+        EXPECT_NE(event_lines[index].find(json->substr(type, type_end - type)), std::string::npos);
+    }
+}
 
 TEST(BuildEvents, cli_prints_json_lines_and_preserves_failure_exit) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0) {

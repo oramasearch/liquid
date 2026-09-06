@@ -26,6 +26,7 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
   test_repository.cpp
+  test_stale_reasoning.cpp
   test_runtime.cpp
   test_store.cpp
   test_temporary_directory.cpp
@@ -56,6 +57,7 @@ add_executable(liquid-tests
   build/test_provenance.cpp
   build/test_why.cpp
   build/test_sbom.cpp
+  build/test_abi.cpp
   build/test_symbols.cpp
   build/test_wrap.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
@@ -92,6 +94,24 @@ if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
+foreach(ABI_FIXTURE IN ITEMS v1 added break)
+  add_library(liquid-abi-fixture-${ABI_FIXTURE} SHARED
+    build/abi_fixture_${ABI_FIXTURE}.c)
+  set_target_properties(liquid-abi-fixture-${ABI_FIXTURE} PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    OUTPUT_NAME liquid-abi-fixture-${ABI_FIXTURE}
+    SOVERSION 1)
+  if(MSVC)
+    target_compile_options(liquid-abi-fixture-${ABI_FIXTURE} PRIVATE /Zi)
+  else()
+    target_compile_options(liquid-abi-fixture-${ABI_FIXTURE} PRIVATE -g)
+  endif()
+  if(UNIX AND NOT APPLE)
+    target_link_options(liquid-abi-fixture-${ABI_FIXTURE} PRIVATE
+      "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/build/abi_fixture.map")
+  endif()
+  add_dependencies(liquid-tests liquid-abi-fixture-${ABI_FIXTURE})
+endforeach()
 if(UNIX)
   add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
   target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
@@ -99,6 +119,10 @@ if(UNIX)
 endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+  LIQUID_ABI_FIXTURE_V1="$<TARGET_FILE:liquid-abi-fixture-v1>"
+  LIQUID_ABI_FIXTURE_ADDED="$<TARGET_FILE:liquid-abi-fixture-added>"
+  LIQUID_ABI_FIXTURE_BREAK="$<TARGET_FILE:liquid-abi-fixture-break>"
+  LIQUID_ABI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/fixtures/abi"
   LIQUID_SOURCE_ROOT="${PROJECT_SOURCE_DIR}"
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
@@ -227,6 +251,17 @@ if(LIQUID_BUILD_CLI)
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --cyclonedx)
   set_tests_properties(cli-sbom-cyclonedx PROPERTIES
     PASS_REGULAR_EXPRESSION "\"bomFormat\"[^\n]*\"CycloneDX\"")
+  add_test(NAME cli-abi-show-json
+    COMMAND $<TARGET_FILE:liquid-cli> abi show $<TARGET_FILE:liquid-abi-fixture-v1> --json)
+  set_tests_properties(cli-abi-show-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"version\":1[^\n]*\"liquid_abi_retained\"")
+  add_test(NAME cli-abi-diff-json
+    COMMAND $<TARGET_FILE:liquid-cli> abi diff
+      $<TARGET_FILE:liquid-abi-fixture-v1>
+      $<TARGET_FILE:liquid-abi-fixture-added>
+      --json)
+  set_tests_properties(cli-abi-diff-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"verdict\":\"compatible_additions\"[^\n]*\"liquid_abi_added\"")
 endif()
 
 add_executable(liquid-vfs-queue-tests
@@ -319,6 +354,7 @@ target_link_libraries(liquid-store-sim-tests PRIVATE liquid::liquid GTest::gtest
 gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 
 add_executable(liquid-header-tests
+  headers/abi.cpp
   headers/attestation.cpp
   headers/build.cpp
   headers/daemon.cpp
@@ -444,12 +480,11 @@ target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)
 
 add_test(NAME consumer-project-build
   COMMAND ${CMAKE_COMMAND}
-    -DLIQUID_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+    -DLIQUID_BINARY_DIR=${PROJECT_BINARY_DIR}
     -DLIQUID_CONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/consumer
     -DLIQUID_CONSUMER_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/consumer-project
+    -DLIQUID_CONSUMER_INSTALL_DIR=${CMAKE_CURRENT_BINARY_DIR}/consumer-install
     -DLIQUID_CONSUMER_GENERATOR=${CMAKE_GENERATOR}
-    -DLIQUID_CONSUMER_C_COMPILER=${CMAKE_C_COMPILER}
     -DLIQUID_CONSUMER_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     -DLIQUID_CONSUMER_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-    -DLIQUID_CONSUMER_SHARED=${BUILD_SHARED_LIBS}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/consumer/run.cmake)

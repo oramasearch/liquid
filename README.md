@@ -41,7 +41,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and removals, change cuts, references, snapshots, historical document state, composition,
 > conflict values, operation- and session-scoped local-intent undo, advisory
 > locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
-> and one-drip streaming file writes are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
+> one-drip streaming file writes, and caller-stated write bases with stale-reasoning refusal,
+> disjoint re-validation, and forced re-planning records are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
 > Directory CRDT checkpoints are compact and shallow-loaded, remote changes are observed through
 > patches, and every automerge apply, merge, and sync-receive failure is checked.
@@ -71,11 +72,16 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Public build handles now stream queued, started, hit, done, failed, critical-path, and finished
 > events through the library and daemon. CMake test registrations become discoverable cached
 > actions, with `liquid build --events` providing JSON Lines and `liquid test` reporting results.
+> Configured repository builds now expose complete public action plans with dependency edges and
+> validated hit state. `repository::build()` and the daemon start the whole selected build in one
+> call, `repository::root_digest()` exposes the current tree record, and `liquid build --plan`
+> prints the daemon plan schema as JSON Lines.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
 > dependency-aware build observability, build-input policy, a cross-project configure fact base,
-> cost-aware retention, and graph-derived SPDX and CycloneDX SBOMs for every output.**
+> cost-aware retention, graph-derived SPDX and CycloneDX SBOMs for every output, and stored ABI
+> descriptors plus signed compatibility comparisons for every built shared library.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -215,6 +221,7 @@ and Zetta's.
 - [`docs/cli/build-events.md`](docs/cli/build-events.md) — the stable build-event JSON-lines schema and ordering.
 - [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
+- [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
 
 | | |
 |---|---|
@@ -349,8 +356,9 @@ target_link_libraries(app PRIVATE liquid::liquid)
 
 Submodule consumers may define `Boost::capy` and `Boost::corosio` first; liquid reuses those targets
 instead of adding its vendored checkouts again. The exact tested revisions and minimum-pin rule are
-documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite builds a
-separate lake-shaped consumer project with Capy, Corosio, and nlohmann/json already present.
+documented in [`docs/library/libliquid.md`](docs/library/libliquid.md). The CTest suite installs the
+already-built package into a test-local prefix and builds a separate `find_package` consumer without
+rebuilding liquid or its dependencies.
 
 ## Implementation
 

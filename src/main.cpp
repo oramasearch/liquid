@@ -15,6 +15,7 @@ auto frontend_module_path(bool compiler) -> std::filesystem::path;
 
 auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
+auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
 auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
@@ -60,6 +61,7 @@ auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
+auto abi(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -83,6 +85,12 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"write",
+     "write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... "
+     "[--on-stale refuse|disjoint|force]",
+     "write a file from a stated base",
+     "available",
+     liquid_cli::repo_write},
     {"daemon",
      "daemon [--shutdown]",
      "start or stop the checkout daemon",
@@ -95,7 +103,7 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::search},
     {"log",
      "log [--ops] [--json]",
-     "show change or operation history",
+     "show change or signed drip history",
      "available",
      liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
@@ -219,6 +227,11 @@ constexpr auto commands = std::to_array<command>({
      "print a derived or explicitly inferred SBOM",
      "available",
      liquid_cli::sbom},
+    {"abi",
+     "abi <show|diff> ... [--json]",
+     "show or compare library ABIs",
+     "available",
+     liquid_cli::abi},
     {"symbols",
      "symbols <path>",
      "show compiler or syntactic symbols for a source path",
@@ -227,15 +240,16 @@ constexpr auto commands = std::to_array<command>({
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "
-     "[--no-cache] [--no-verify] [--explain] <command> "
+     "[--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> "
      "[args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build --events <command> [args...] | build --profile [remote options] <command> [args...] | "
-     "build trace [--chrome]",
-     "profile a build or export its trace",
+     "build [target] | build --plan [target] | build --events <command> [args...] | "
+     "build --profile [remote options] <command> [args...] | build trace [--chrome]",
+     "plan or start a configured repository build, profile a command, stream events, or export a "
+     "trace",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::build},
     {"test",

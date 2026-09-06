@@ -59,6 +59,16 @@ record or update the accepted chunk list. This records that the exact blocked by
 been reported, so a delayed watcher hint or periodic reconciliation cannot publish the same block
 again; a later filesystem change remains eligible for scanning.
 
+## Caller-stated write bases
+
+Repository API writes run the issue #86 stale-reasoning check before remote registration, content
+storage, or a directory-document transaction. The check compares the caller's change and optional
+journal cursor with the current head and signed repository drips. Written paths and `depends_on`
+form the material read set. A refusal appends no drip and leaves the working tree unchanged;
+`repository::explain_stale` reads historical and current blobs on the runtime and returns text
+hunks without nested blocking. Filesystem watcher capture remains base-optional because it records
+an already completed local filesystem write rather than accepting an agent write request.
+
 ## Platform mechanisms
 
 | Platform | Mechanism | Capture behavior |

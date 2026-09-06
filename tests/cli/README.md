@@ -3,8 +3,9 @@
 `scenario.cmake` drives the built `liquid` executable through the Phase 1 command-line scenario
 without watcher capture: import files with `init`, inspect status, cut, move, nest a second
 repository, split a subtree, combine it, inspect JSON history, undo the move, reject a locked
-mutation, and dry-run collection. It reads `log --ops --json`, verifies the `ops` alias, and
-reverses a selected session path while checking the applied report. `help-docs.cmake` ensures every documented command is present
+mutation, and dry-run collection. It reads signed drips through `log --ops --json`, recorded
+operations through `ops --json`, and reverses a selected session path while checking the applied
+report. `help-docs.cmake` ensures every documented command is present
 in the command table's `--help` output by extracting the command cell directly instead of
 splitting a Markdown row as a CMake list. `public-includes.cmake` rejects a CLI source that
 includes anything outside the public `liquid/` header tree. The `cli-why-json` and

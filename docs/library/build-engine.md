@@ -16,7 +16,7 @@ The cache key then covers exactly what was read, and a miss can name the input t
 changed.
 
 **Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
-#23, and #193 implement
+#23, #193, and #200 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -40,6 +40,43 @@ local/remote/race selection, remote batching, and loser cancellation. Issue #16 
 network transport and validated remote cache tier. Issue #63 supplies liquid's scheduler and
 TAAP-signed worker fleet. Configure checks additionally populate a shared content-addressed fact
 base and can be answered across projects without starting the probe.
+
+## Public repository plans and builds (#200)
+
+`repository::build_plan(build_target)` exposes the configured build recorded by `liquid wrap`.
+Each `build_plan_action` contains a complete `action_input`, its planned action digest, the
+digests of producer actions it depends on, its currently validated `hit` or `miss` state, and the
+selected result on a hit. The planner derives an edge when a recorded manifest path is produced by
+another configured action. Empty targets select the whole configured build; a nonempty target
+selects the action producing that exact repository-relative output and all of its transitive
+dependencies.
+
+Planning replaces each recorded action's input-tree digest with `repository::root_digest()`,
+recomputes its action digest, then uses the ordinary signed, manifest-validating disk-cache lookup.
+Commands, declared outputs,
+environment, toolchain, platform, timeout, and remote eligibility remain the recorded values. A
+repository without wrapper configuration returns `errc::not_configured` and tells the caller to
+run `liquid wrap <command>` first. An unknown nonempty target returns `errc::not_found`.
+
+`repository::build(build_target)` starts the selected graph on the existing `build_handle` stream.
+Actions run in dependency order. Before each action, the planner refreshes the current root and
+hit state so an upstream output written by this build cannot leave a dependent action with a stale
+decision. A hit is materialised into the repository; a miss uses the ordinary action executor and
+then materialises its declared outputs. When materialisation changes the tree, the build records
+that tree before planning the dependent action, as required by the action executor; materialising
+identical hit outputs does not add a change. The stream reports queue, start, terminal state,
+critical path update, and final summary events for the complete build.
+
+`daemon::build_plan` and `daemon::build(build_target)` use the protocol operations `build_plan` and
+`build_repository`; event consumption remains on `build_next`. The older `build_start` operation
+continues to accept a caller-supplied `action_input`. Daemon start and attach resolve an ordinary
+wrapped working tree to its recorded repository, while direct repository paths remain valid.
+`liquid build --plan [target]` writes one version-1 JSON object per planned action, and `liquid
+build [target]` starts the repository build through the daemon. The plan JSON schema is documented in
+[`../cli/build-events.md`](../cli/build-events.md).
+
+`repository::root_digest()` stores and returns the current working tree record without decoding it,
+while `repository::root()` continues to return decoded entries.
 
 ## Public build handles and events (#193)
 
@@ -142,6 +179,7 @@ result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, 
           timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
           started_at: time, finished_at: time, provenance: digest(attestation),
           sboms: [ digest(attestation) … ],
+          abis: [ digest(abi/1) … ], abi_compatibility: [ digest(attestation) … ],
           schedule: { decision, history, size_class, input_bytes, remote_state_queried,
                       remote_missing_bytes, remote_queue_depth, remote_cache_locality_permille,
                       batch_supported, batch_size, local_estimate_ms, remote_estimate_ms, reason },
@@ -151,12 +189,13 @@ build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outpu
               cache: { hits, misses, bytes_served, bytes_rebuilt, bytes_avoided } }
 ```
 
-New result records use version 3. Its phase durations are non-overlapping and their sum is the
+New result records use version 4. Its phase durations are non-overlapping and their sum is the
 recorded action duration: queue wait, sandbox preparation, tool execution, result analysis and
-hashing, then local-store writes. Version 3 adds the immutable scheduling decision and every cost
-model input; it does not change the five timing phases. The decoder continues to accept versions 1
-and 2 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded into
-local store time; absent bytes and the transfer estimate are explicit schedule fields.
+hashing, then local-store writes. Version 4 adds descriptor and compatibility-attestation
+references for shared-library outputs. Version 3 added the immutable scheduling decision and every
+cost model input without changing the five timing phases. The decoder continues to accept versions
+1 through 3 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded
+into local store time; absent bytes and the transfer estimate are explicit schedule fields.
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
   materialised into the sandbox from the store and addressed by content; the `toolchain`
@@ -223,8 +262,8 @@ Issue #11 implements both stages through `src/build/cache.{hpp,cpp}`. Validation
 manifest path from the action's current input-tree record and compares the referenced blob digest;
 it never hashes a checkout path. Missing paths have no actual digest. Results are tried newest
 first. A candidate is served only when its result and action records decode, the action derives the
-same candidate key, the producer's TAAP `result` signature and referenced provenance and SBOMs verify, every
-manifest entry matches, and every output and stream blob record still exists.
+same candidate key, the producer's TAAP `result` signature and referenced provenance, SBOM, and ABI
+records verify, every manifest entry matches, and every output and stream blob record still exists.
 `action_result::cache` and `why` describe the current execution request and are not part of the
 immutable producer-signed result bytes.
 `src/build/why.cpp` turns recorded comparisons into the public `why_report` and persists the
