@@ -65,6 +65,7 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # libliquid — everything under include/liquid/ is the public API.
 # -----------------------------------------------------------------------------
 include(FetchContent)
+include(cmake/Grammars.cmake)
 find_package(ZLIB REQUIRED)
 
 if(NOT TARGET Boost::capy)
@@ -164,36 +165,24 @@ FetchContent_Declare(zstd_source
 FetchContent_MakeAvailable(zstd_source)
 
 if(LIQUID_BUILD_FRONTENDS)
-  FetchContent_Declare(tree_sitter_source
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
-    GIT_TAG        v0.25.9
-    GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  liquid-no-upstream-cmake)
-  FetchContent_Declare(tree_sitter_c_source
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
-    GIT_TAG        v0.24.1
-    GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  liquid-no-upstream-cmake)
-  FetchContent_Declare(tree_sitter_cpp_source
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
-    GIT_TAG        v0.23.4
-    GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  liquid-no-upstream-cmake)
-  FetchContent_MakeAvailable(tree_sitter_source tree_sitter_c_source tree_sitter_cpp_source)
+  liquid_configure_grammars(
+    OUT_RUNTIME_SOURCE LIQUID_TREE_SITTER_RUNTIME_SOURCE
+    OUT_RUNTIME_INCLUDE LIQUID_TREE_SITTER_RUNTIME_INCLUDE
+    OUT_SOURCES LIQUID_GRAMMAR_SOURCES
+    OUT_INCLUDES LIQUID_GRAMMAR_INCLUDES
+    OUT_GENERATED LIQUID_GRAMMAR_GENERATED_SOURCE
+    OUT_SOURCE_MAP LIQUID_GRAMMAR_SOURCE_MAP)
 
   add_library(liquid_frontend_syntax STATIC
     modules/frontends/common/cbor.cpp
     modules/frontends/common/syntax.cpp
-    ${tree_sitter_source_SOURCE_DIR}/lib/src/lib.c
-    ${tree_sitter_c_source_SOURCE_DIR}/src/parser.c
-    ${tree_sitter_cpp_source_SOURCE_DIR}/src/parser.c
-    ${tree_sitter_cpp_source_SOURCE_DIR}/src/scanner.c)
+    ${LIQUID_GRAMMAR_GENERATED_SOURCE}
+    ${LIQUID_TREE_SITTER_RUNTIME_SOURCE}
+    ${LIQUID_GRAMMAR_SOURCES})
   target_include_directories(liquid_frontend_syntax PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
-    ${tree_sitter_source_SOURCE_DIR}/lib/include
-    ${tree_sitter_source_SOURCE_DIR}/lib/src
-    ${tree_sitter_c_source_SOURCE_DIR}/src
-    ${tree_sitter_cpp_source_SOURCE_DIR}/src)
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE}
+    ${LIQUID_GRAMMAR_INCLUDES})
   target_compile_features(liquid_frontend_syntax PRIVATE c_std_11 cxx_std_26)
   target_compile_definitions(liquid_frontend_syntax PRIVATE TREE_SITTER_HIDE_SYMBOLS)
   set_target_properties(liquid_frontend_syntax PROPERTIES
@@ -205,7 +194,8 @@ if(LIQUID_BUILD_FRONTENDS)
   add_library(liquid-frontend-tree-sitter MODULE modules/frontends/tree_sitter/module.cpp)
   target_include_directories(liquid-frontend-tree-sitter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
   target_link_libraries(liquid-frontend-tree-sitter PRIVATE liquid_frontend_syntax)
   set_target_properties(liquid-frontend-tree-sitter PROPERTIES
     PREFIX ""
@@ -483,6 +473,7 @@ target_include_directories(libliquid PUBLIC
           ${monocypher_source_SOURCE_DIR}/src/optional)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_compile_definitions(libliquid PRIVATE
+  LIQUID_GRAMMAR_LOCK_DIGEST="sha256:${LIQUID_GRAMMAR_LOCK_SHA256}"
   LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
   LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
 add_dependencies(libliquid liquid-wrap-hook)

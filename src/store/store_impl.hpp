@@ -8,12 +8,11 @@
 #include <string_view>
 #include <vector>
 
-#include <boost/capy/ex/async_mutex.hpp>
-
 #include "../crypto/crypto.hpp"
 #include "index.hpp"
 #include "leases.hpp"
 #include "liquid/store.hpp"
+#include "mutation_mutex.hpp"
 #include "subject_index.hpp"
 
 namespace liquid::store_detail {
@@ -124,7 +123,7 @@ private:
     std::uint32_t current_pack_{};
     std::uint64_t object_batch_depth_{};
     bool objects_dirty_{};
-    boost::capy::async_mutex mutation_;
+    mutation_mutex mutation_;
 };
 
 } // namespace liquid::store_detail

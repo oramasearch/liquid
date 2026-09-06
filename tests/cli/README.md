@@ -18,6 +18,9 @@ flags.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 
+`symbols-python.cmake` creates a Python source file and proves `liquid symbols` selects the locked
+Python grammar and reports `origin=syntactic`.
+
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.
 
