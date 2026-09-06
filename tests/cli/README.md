@@ -36,3 +36,10 @@ and proves that the plaintext is absent from stderr.
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
 identity encode, decode, and verification APIs.
+
+The admission process test invokes `attest image` and verifies its printed digest through
+`attest verify`, then starts the built `serve admission` command over TLS and explicit insecure
+HTTP and posts committed Kubernetes fixtures.
+`cli-keys` creates an encrypted store through `store_options::custody`, then drives `keys show`,
+`rotate`, `revoke`, `rewrap`, and `split`. It checks the rotation disclosures, the one-line mutation
+reports, all emitted Shamir shares, and the final persisted custody kind.

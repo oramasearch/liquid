@@ -350,6 +350,11 @@ set_target_properties(liquid_metadata_objects PROPERTIES
 add_library(libliquid
   src/asn1.cpp
   src/abi.cpp
+  src/admission/policy.cpp
+  src/admission/review.cpp
+  src/admission/server.cpp
+  src/admission/source.cpp
+  src/attestation/image.cpp
   src/attestation/registry.cpp
   src/build/abi.cpp
   src/build/cache.cpp
@@ -394,6 +399,8 @@ add_library(libliquid
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
+  src/http1/client.cpp
+  src/http1/server.cpp
   src/http2/frame.cpp
   src/http2/grpc.cpp
   src/http2/hpack.cpp
@@ -403,6 +410,14 @@ add_library(libliquid
   src/git/object_store.cpp
   src/git/sha1.cpp
   src/identity.cpp
+  src/identity/custody/age.cpp
+  src/identity/custody/aws_kms.cpp
+  src/identity/custody/azure_kv.cpp
+  src/identity/custody/common.cpp
+  src/identity/custody/gcp_kms.cpp
+  src/identity/custody/http.cpp
+  src/identity/custody/lake.cpp
+  src/identity/custody/shamir.cpp
   src/identity/taap.cpp
   src/node_store.cpp
   src/node_store/service.cpp
@@ -544,6 +559,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/git.cpp
     src/cli/history.cpp
     src/cli/identity.cpp
+    src/cli/keys.cpp
     src/cli/locks.cpp
     src/cli/node_store.cpp
     src/cli/policy.cpp

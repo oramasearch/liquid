@@ -200,6 +200,23 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
             if (!saved)
                 co_return std::unexpected(saved.error());
         }
+        if (!options.keys && !options.custody.empty()) {
+            auto keys = std::make_shared<keyring>();
+            for (const auto& [key_id, uri] : options.custody) {
+                auto provider = co_await key_provider_from_uri(uri);
+                if (!provider)
+                    co_return std::unexpected(provider.error());
+                auto added = keys->add(key_id, std::move(*provider));
+                if (!added)
+                    co_return std::unexpected(added.error());
+            }
+            const auto default_key =
+                options.write_key.empty() ? options.custody.begin()->first : options.write_key;
+            auto selected = keys->set_default_key_id(default_key);
+            if (!selected)
+                co_return std::unexpected(selected.error());
+            options.keys = std::move(keys);
+        }
         auto result =
             std::unique_ptr<store_backend>(new store_backend(std::move(root), std::move(options)));
         if (result->options_.keys) {

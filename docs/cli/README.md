@@ -55,6 +55,8 @@ that the table and `liquid --help` name the same commands.
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
+| `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
+| `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
@@ -72,6 +74,7 @@ that the table and `liquid --help` name the same commands.
 | `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
+| `serve` | `serve admission --policy <file> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>]` | Serve image admission and its control API. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -184,6 +187,13 @@ pattern; `*` matches any sequence and `?` one character. Supplying the flag refu
 all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
 there is no built-in authentication policy, so the default is appropriate for local use; network
 services embed the public server with their own authorization callback.
+`serve admission` loads the JSON policy documented in
+[`../library/admission.md`](../library/admission.md). Its admission listener defaults to
+`0.0.0.0:8443`, its control listener to `127.0.0.1:8083`, and TLS is required unless tests select
+`--insecure-http`. The environment forms are `LIQUID_ADMISSION_POLICY`,
+`LIQUID_ADMISSION_LISTEN`, `LIQUID_CONTROL_LISTEN`, `LIQUID_ADMISSION_TLS_CERT`,
+`LIQUID_ADMISSION_TLS_KEY`, `LIQUID_ADMISSION_ATTESTATION_SOURCE`, and
+`LIQUID_ADMISSION_LOG_CACHE`; flags win.
 `version --json` is also available for scripts and returns
 `{"version":"0.0.1","grammar":"sha256:<canonical-lock-digest>"}`. Text output is line-oriented
 and stable. A library
@@ -195,6 +205,20 @@ error: <code>: <message> (<context>)
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
 
+## Key custody
+
+`keys show [key-id]` prints one line per held or revoked data-key version. `keys rewrap <key-id>
+--to <custody-uri>` moves all held versions to another provider without touching pack files.
+`keys rotate <key-id>` creates the next data-key version and prints the version transition followed
+by the three encryption disclosure statements. `keys revoke <key-id> <version>` removes local
+custody for that version. `keys split <key-id> --threshold <k> --shares <n>` moves the held versions
+under a random Shamir KEK and prints the `n` shares once.
+
+Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
+`aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
+`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+shares are supplied through the environment described in
+[the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
 Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
 is itself the package directory. Specs containing spaces must be passed as one quoted argument.
@@ -426,6 +450,7 @@ liquid retain explain blake3:<object-digest>
 liquid identity rotate
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
+liquid attest image registry.example/app@sha256:<image-digest> --tree blake3:<tree-digest> --result blake3:<result-digest>
 liquid delta create release-1.tar release-2.tar
 liquid delta apply blake3:<delta-record> release-1.tar release-2.tar
 liquid delta fetch blake3:<target> release-1.tar release-2.tar

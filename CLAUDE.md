@@ -18,7 +18,8 @@ error, digest, identity document codec, and signature decoder APIs plus liquid #
 store, liquid #199's pre-pack write-through callback and remote-registered local eviction,
 liquid #4's TAAP/1 actor identities,
 liquid #111's identity-key rotation and chain verification, and signed drips and changes, liquid #7's
-trust-domain encrypted objects, liquid #53's versioned data-key rotation, revocation, and repository
+trust-domain encrypted objects, liquid #51's pluggable local, recipient, cloud KMS, lake transit,
+and threshold-share KEK custody, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
 deterministic crash simulator, liquid #116's bounded-memory file and repository streaming, liquid
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
@@ -107,6 +108,12 @@ libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repo
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
 and GoogleTest are used. Phase 1 (the store) is built inside libliquid. Optional developer
 benchmarks live under `bench/` and are excluded unless their build option is enabled.
+
+Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and the fail-closed
+`liquid serve admission` Kubernetes webhook. Its TLS admission and independent control listeners
+share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
+metrics, REST, OpenAPI, and MCP are implemented. Log mode refuses until #83 supplies complete
+transparency inclusion verification.
 
 Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
 enumeration used by CLI record views.
