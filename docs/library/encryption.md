@@ -47,6 +47,7 @@ gcp-kms:<resource>
 azure-kv:<key-version-url>
 lake:<base-url>/<key>
 shamir:<threshold>/<share-count>
+tpm:pcrs=0,7
 ```
 
 Passphrases, age identities, cloud bearer credentials, AWS credentials, lake tokens, and Shamir
@@ -84,6 +85,7 @@ KEK rewrapping and data-key rotation are separate operations.
 | Azure Key Vault | Azure RBAC or access policy controls the key version. | `AZURE_ACCESS_TOKEN` | `wrapkey`/`unwrapkey` uses `RSA-OAEP-256`; bearer, HTTP, and response errors fail closed. |
 | lake transit | lake authorizes a named remote custody key; liquid never receives lake's KEK. | `LIQUID_TOKEN` | The lake-native wrap or unwrap route must return an authenticated result; there is no Vault-compatible surface. |
 | Shamir | Any threshold of independently held shares reconstructs the random 32-byte KEK. | `LIQUID_SHAMIR_SHARES`, comma or newline separated direct shares or share-file paths; prefix a path with `@` to distinguish it explicitly | Bad checksums, incompatible shares, unreadable files, and fewer than the threshold return `unauthorized` for `key-id@version`. |
+| TPM 2.0 sealing | The data key is bound to the local TPM and selected SHA-256 PCR state. Firmware, boot policy, and measured components extending those PCRs are trusted. | `tpm:pcrs=<comma-separated 0..23>`; `/dev/tpmrm0` on Linux or TBS on Windows | A missing TPM, changed selected PCR, malformed sealed object, or failed policy or authorization session refuses unwrap. macOS returns `unsupported` because Secure Enclave is a different device. |
 
 Age wraps a fresh 16-byte file key for every recipient with X25519, HKDF-SHA-256, and RFC
 ChaCha20-Poly1305, authenticates the age v1 header, and encrypts the liquid data key with the age
@@ -111,6 +113,13 @@ operation is not implemented; rewriting history is separate work.
 Signed encrypted OCI manifests also remain deferred because the artifact-emission pipeline they
 must cover is not present in Phase 1; this implementation makes no `ocicrypt` interoperability
 claim.
+
+TPM wrapping creates a TPM 2.0 sealed object under a PCR policy and stores only its public/private
+object blobs in the v3 wrapped value. Unwrap loads the object, applies `TPM2_PolicyPCR` in a policy
+session, and calls `TPM2_Unseal`. Linux uses the resource-manager device and Windows uses TBS. All
+device calls run through `runtime::offload`; liquid owns the bounded command marshalling layer and
+does not link tpm2-tss. The in-process transport double pins command framing and changed-PCR
+refusal; the Linux verification image includes `swtpm` for its device lane.
 
 ## On-disk format
 
@@ -157,7 +166,7 @@ cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build --
 ```
 
 The suite covers passphrase derivation, key-file permissions, XChaCha20-Poly1305 known answers,
-age specification vectors, Shamir thresholds, signed and bearer-authenticated in-process KMS and
+age specification vectors, Shamir thresholds, TPM seal/unseal and PCR refusal, signed and bearer-authenticated in-process KMS and
 lake doubles, every ordered custody-kind rewrap pair with exact pack-byte comparison, all three
 wrapped-key formats, the `keys` CLI,
 encrypted deduplication, cross-domain duplicate storage, plaintext exclusion from packs, missing

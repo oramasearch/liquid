@@ -53,17 +53,20 @@ auto json_string(std::string_view value) -> std::string {
 
 auto print_identity(const liquid::actor& actor, bool json) -> void {
     if (json) {
-        std::println("{{\"id\":{},\"algorithm\":{},\"fingerprint\":{},\"key_fingerprint\":{}}}",
+        std::println("{{\"id\":{},\"algorithm\":{},\"fingerprint\":{},\"key_fingerprint\":{},"
+                     "\"custody\":{}}}",
                      json_string(actor.taap_id),
                      json_string(actor.algorithm),
                      json_string(actor.fingerprint),
-                     json_string(actor.key_fingerprint));
+                     json_string(actor.key_fingerprint),
+                     json_string(actor.custody));
         return;
     }
     std::println("id={}", actor.taap_id);
     std::println("algorithm={}", actor.algorithm);
     std::println("fingerprint={}", actor.fingerprint);
     std::println("key_fingerprint={}", actor.key_fingerprint);
+    std::println("custody={}", actor.custody);
 }
 
 } // namespace
@@ -71,25 +74,28 @@ auto print_identity(const liquid::actor& actor, bool json) -> void {
 auto identity(int argc, char** argv) -> int {
     auto command = std::string_view{"show"};
     auto json = false;
-    if (argc > 2) {
-        return usage("identity accepts show or rotate and optional --json");
-    }
+    auto custody = std::string{"software"};
     for (auto index = 0; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
         if (argument == "--json") {
             json = true;
+        } else if (argument == "--to" && index + 1 < argc) {
+            custody = argv[++index];
         } else if (argument == "show" || argument == "rotate") {
             command = argument;
         } else {
-            return usage("identity accepts show or rotate and optional --json");
+            return usage("identity [show|rotate [--to software|fido2|piv:9c]] [--json]");
         }
+    }
+    if (command == "show" && custody != "software") {
+        return usage("identity show does not accept --to");
     }
     auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
     if (!signer) {
         return fail(signer.error());
     }
     if (command == "rotate") {
-        auto rotated = liquid::runtime::block_on(signer->rotate());
+        auto rotated = liquid::runtime::block_on(signer->rotate_to(std::move(custody)));
         if (!rotated) {
             return fail(rotated.error());
         }

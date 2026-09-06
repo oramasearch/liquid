@@ -238,7 +238,10 @@ and runs an executable linked to `liquid::liquid`. `consumer-project-build` inst
 built parent artifacts into a test-local prefix, configures the consumer with the parent generator
 and C++ compiler, and compiles only the consumer source. `cli-identity-codec` creates and rotates an
 identity through the CLI, then decodes, re-encodes, and verifies the stored canonical-CBOR files
-through public libliquid API.
+through the public API. `test_hardware_keys.cpp` drives CTAP2, PIV, and TPM command-level doubles,
+cross-backend identity rotation, malformed signature rejection, and threshold release approval
+including compromise-time refusal. On Linux it also drives an installed `swtpm` through the TPM
+command transport.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.

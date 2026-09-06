@@ -56,14 +56,20 @@ auto field(const cbor::value& source, std::string_view name) -> const cbor::valu
 
 auto public_key_object(std::span<const std::byte> public_key,
                        std::string_view created_at,
-                       std::string_view key_label) -> cbor::value {
+                       std::string_view key_label,
+                       std::string_view algorithm,
+                       std::string_view custody) -> cbor::value {
     auto usage = cbor::value::array{};
     usage.emplace_back("signing");
-    return map({{"key_algorithm", "ed25519"},
-                {"key_usage", cbor::value{std::move(usage)}},
-                {"public_key_bytes_base64", base64(public_key)},
-                {"created_at", std::string{created_at}},
-                {"key_label", std::string{key_label}}});
+    auto fields = cbor::value::map{{"key_algorithm", std::string{algorithm}},
+                                   {"key_usage", cbor::value{std::move(usage)}},
+                                   {"public_key_bytes_base64", base64(public_key)},
+                                   {"created_at", std::string{created_at}},
+                                   {"key_label", std::string{key_label}}};
+    if (!custody.empty() && custody != "software") {
+        fields.emplace_back("key_custody", std::string{custody});
+    }
+    return cbor::value{std::move(fields)};
 }
 
 auto parse_actor_identifier(std::string_view value, actor& output) -> result<void> {
@@ -83,12 +89,17 @@ auto parse_actor_identifier(std::string_view value, actor& output) -> result<voi
 }
 
 auto signature_value(const signature& value) -> cbor::value {
-    return map({{"signature_algorithm", value.algorithm},
-                {"signing_key_identifier", value.signing_key_identifier},
-                {"signing_key_label", value.signing_key_label},
-                {"signature_purpose", value.signature_purpose},
-                {"signed_at", value.signed_at},
-                {"signature_bytes_base64", base64(value.bytes)}});
+    auto fields = cbor::value::map{{"signature_algorithm", value.algorithm},
+                                   {"signing_key_identifier", value.signing_key_identifier},
+                                   {"signing_key_label", value.signing_key_label},
+                                   {"signature_purpose", value.signature_purpose},
+                                   {"signed_at", value.signed_at},
+                                   {"signature_bytes_base64", base64(value.bytes)}};
+    if (!value.authenticator_data.empty() || !value.client_data_hash.empty()) {
+        fields.emplace_back("authenticator_data_base64", base64(value.authenticator_data));
+        fields.emplace_back("client_data_hash_base64", base64(value.client_data_hash));
+    }
+    return cbor::value{std::move(fields)};
 }
 
 auto compromise_value(const compromise_declaration& value) -> cbor::value {
@@ -206,27 +217,42 @@ auto base64(std::span<const std::byte> input) -> std::string {
 auto identifier(std::span<const std::byte> public_key,
                 std::string_view created_at,
                 std::string_view key_label) -> result<actor> {
-    auto fingerprint = key_fingerprint(public_key, created_at, key_label);
+    return identifier(public_key, created_at, key_label, "ed25519", "software");
+}
+
+auto identifier(std::span<const std::byte> public_key,
+                std::string_view created_at,
+                std::string_view key_label,
+                std::string_view algorithm,
+                std::string_view custody) -> result<actor> {
+    auto fingerprint = key_fingerprint(public_key, created_at, key_label, algorithm, custody);
     if (!fingerprint) {
         return std::unexpected(fingerprint.error());
     }
     auto output = actor{};
-    output.algorithm = "ed25519";
+    output.algorithm = algorithm;
     output.fingerprint = *fingerprint;
     output.key_fingerprint = *fingerprint;
-    output.taap_id = "taap:1:ed25519:" + output.fingerprint;
+    output.taap_id = "taap:1:" + std::string{algorithm} + ":" + output.fingerprint;
     output.public_key.assign(public_key.begin(), public_key.end());
+    output.custody = custody;
     return output;
 }
 
 auto key_fingerprint(std::span<const std::byte> public_key,
                      std::string_view created_at,
-                     std::string_view key_label) -> result<std::string> {
-    if (public_key.size() != 32) {
-        return std::unexpected(
-            failure(errc::invalid_argument, "Ed25519 public key must be 32 bytes"));
+                     std::string_view key_label,
+                     std::string_view algorithm,
+                     std::string_view custody) -> result<std::string> {
+    const auto valid_size =
+        (algorithm == "ed25519" || algorithm == "fido2-eddsa")      ? public_key.size() == 32
+        : (algorithm == "ecdsa-p256" || algorithm == "fido2-es256") ? public_key.size() == 64
+                                                                    : false;
+    if (!valid_size) {
+        return std::unexpected(failure(errc::invalid_argument, "invalid signing public key"));
     }
-    auto encoded = cbor::encode(public_key_object(public_key, created_at, key_label));
+    auto encoded =
+        cbor::encode(public_key_object(public_key, created_at, key_label, algorithm, custody));
     if (!encoded) {
         return std::unexpected(encoded.error());
     }
@@ -234,7 +260,13 @@ auto key_fingerprint(std::span<const std::byte> public_key,
 }
 
 auto canonical_signature(const signature& value) -> result<std::vector<std::byte>> {
-    if (value.algorithm != "ed25519" || value.bytes.size() != 64) {
+    const auto ordinary = (value.algorithm == "ed25519" && value.bytes.size() == 64) ||
+                          (value.algorithm == "ecdsa-p256" && !value.bytes.empty());
+    const auto fido = (value.algorithm == "fido2-eddsa" || value.algorithm == "fido2-es256") &&
+                      !value.bytes.empty() && !value.authenticator_data.empty() &&
+                      value.client_data_hash.size() == 32;
+    if ((!ordinary && !fido) ||
+        (ordinary && (!value.authenticator_data.empty() || !value.client_data_hash.empty()))) {
         return std::unexpected(failure(errc::invalid_argument, "invalid TAAP signature object"));
     }
     return cbor::encode(signature_value(value));
@@ -251,6 +283,8 @@ auto parse_signature(std::span<const std::byte> input) -> result<signature> {
     const auto* purpose = field(*decoded, "signature_purpose");
     const auto* signed_at = field(*decoded, "signed_at");
     const auto* bytes = field(*decoded, "signature_bytes_base64");
+    const auto* authenticator = field(*decoded, "authenticator_data_base64");
+    const auto* client_data = field(*decoded, "client_data_hash_base64");
     const auto* algorithm_text = algorithm ? std::get_if<std::string>(&algorithm->data) : nullptr;
     const auto* identifier_text =
         identifier ? std::get_if<std::string>(&identifier->data) : nullptr;
@@ -262,22 +296,55 @@ auto parse_signature(std::span<const std::byte> input) -> result<signature> {
         !encoded) {
         return std::unexpected(failure(errc::corrupt, "invalid TAAP signature object"));
     }
-    if (*algorithm_text != "ed25519") {
+    if (*algorithm_text != "ed25519" && *algorithm_text != "ecdsa-p256" &&
+        *algorithm_text != "fido2-eddsa" && *algorithm_text != "fido2-es256") {
         return std::unexpected(unsupported_signature_algorithm(*algorithm_text));
     }
     auto raw = decode_base64(*encoded);
-    if (!raw || raw->size() != 64) {
+    const auto fixed_ed25519 = (*algorithm_text == "ed25519" || *algorithm_text == "fido2-eddsa");
+    if (!raw || raw->empty() || (fixed_ed25519 && raw->size() != 64)) {
         return std::unexpected(failure(errc::corrupt, "invalid TAAP signature bytes"));
     }
-    return signature{
-        *algorithm_text, *identifier_text, *label_text, *purpose_text, *time_text, std::move(*raw)};
+    auto authenticator_bytes = std::vector<std::byte>{};
+    auto client_data_bytes = std::vector<std::byte>{};
+    const auto fido = *algorithm_text == "fido2-eddsa" || *algorithm_text == "fido2-es256";
+    if (fido) {
+        const auto* authenticator_text =
+            authenticator ? std::get_if<std::string>(&authenticator->data) : nullptr;
+        const auto* client_data_text =
+            client_data ? std::get_if<std::string>(&client_data->data) : nullptr;
+        if (!authenticator_text || !client_data_text) {
+            return std::unexpected(failure(errc::corrupt, "invalid FIDO2 signature object"));
+        }
+        auto parsed_authenticator = decode_base64(*authenticator_text);
+        auto parsed_client_data = decode_base64(*client_data_text);
+        if (!parsed_authenticator || parsed_authenticator->empty() || !parsed_client_data ||
+            parsed_client_data->size() != 32) {
+            return std::unexpected(failure(errc::corrupt, "invalid FIDO2 signature object"));
+        }
+        authenticator_bytes = std::move(*parsed_authenticator);
+        client_data_bytes = std::move(*parsed_client_data);
+    } else if (authenticator || client_data) {
+        return std::unexpected(failure(errc::corrupt, "invalid TAAP signature object"));
+    }
+    return signature{*algorithm_text,
+                     *identifier_text,
+                     *label_text,
+                     *purpose_text,
+                     *time_text,
+                     std::move(*raw),
+                     std::move(authenticator_bytes),
+                     std::move(client_data_bytes)};
 }
 
 auto canonical_document(const identity_document& document, bool include_signatures)
     -> result<std::vector<std::byte>> {
     auto keys = cbor::value::array{};
-    keys.push_back(
-        public_key_object(document.subject.public_key, document.created_at, document.key_label));
+    keys.push_back(public_key_object(document.subject.public_key,
+                                     document.created_at,
+                                     document.key_label,
+                                     document.subject.algorithm,
+                                     document.subject.custody));
     auto fields = cbor::value::map{{"artifact_type", "identity_document"},
                                    {"protocol_version", "TAAP/1"},
                                    {"encoding", "ccbor"},
@@ -355,17 +422,27 @@ auto parse_document(std::span<const std::byte> input) -> result<identity_documen
     const auto* key_algorithm = key_field("key_algorithm");
     const auto* key_label = key_field("key_label");
     const auto* encoded_public_key = key_field("public_key_bytes_base64");
+    const auto* key_custody = key_field("key_custody");
     const auto* key_algorithm_text =
         key_algorithm ? std::get_if<std::string>(&key_algorithm->data) : nullptr;
     const auto* key_label_text = key_label ? std::get_if<std::string>(&key_label->data) : nullptr;
     const auto* encoded_public_key_text =
         encoded_public_key ? std::get_if<std::string>(&encoded_public_key->data) : nullptr;
-    if (!key_algorithm_text || *key_algorithm_text != "ed25519" || !key_label_text ||
-        !encoded_public_key_text) {
+    const auto* key_custody_text =
+        key_custody ? std::get_if<std::string>(&key_custody->data) : nullptr;
+    if (!key_algorithm_text || !key_label_text || !encoded_public_key_text ||
+        (key_custody && !key_custody_text)) {
         return std::unexpected(failure(errc::corrupt, "invalid identity document key"));
     }
     auto public_key = decode_base64(*encoded_public_key_text);
-    if (!public_key || public_key->size() != 32) {
+    const auto custody = key_custody_text ? *key_custody_text : std::string{"software"};
+    const auto valid_size =
+        (*key_algorithm_text == "ed25519" || *key_algorithm_text == "fido2-eddsa")
+            ? public_key && public_key->size() == 32
+        : (*key_algorithm_text == "ecdsa-p256" || *key_algorithm_text == "fido2-es256")
+            ? public_key && public_key->size() == 64
+            : false;
+    if (!valid_size) {
         return std::unexpected(failure(errc::corrupt, "invalid identity document public key"));
     }
     auto subject = actor{};
@@ -374,7 +451,10 @@ auto parse_document(std::span<const std::byte> input) -> result<identity_documen
         return std::unexpected(parsed_identifier.error());
     }
     subject.public_key = std::move(*public_key);
-    auto fingerprint = key_fingerprint(subject.public_key, *created_text, *key_label_text);
+    subject.algorithm = *key_algorithm_text;
+    subject.custody = custody;
+    auto fingerprint = key_fingerprint(
+        subject.public_key, *created_text, *key_label_text, subject.algorithm, subject.custody);
     if (!fingerprint) {
         return std::unexpected(fingerprint.error());
     }

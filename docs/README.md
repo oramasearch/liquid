@@ -143,11 +143,12 @@ for what is implemented today.
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
 | [`library/store.md`](library/store.md) | Content-defined local and caller-owned shared stores, pre-pack write-through, remote-registered local eviction, on-disk formats, integrity checks, index, tuning, and rebuild. |
 | [`library/gc.md`](library/gc.md) | Repository-scoped leased roots, typed retention rules, cost-aware result eviction, epoch bitmaps, reference extraction, crash-safe sweep order, and collection verification. |
-| [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, versioned data-key rotation and revocation, readability reports, key custody, on-disk envelopes, and failure behavior. |
+| [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, versioned data-key rotation and revocation, readability reports, TPM sealing and other key custody, on-disk envelopes, and failure behavior. |
 | [`library/sealed-secrets.md`](library/sealed-secrets.md) | The X25519 and XChaCha20-Poly1305 Lake envelope, canonical CBOR, exact scope binding, Go mapping, key custody, and interoperability fixture. |
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
-| [`library/identity.md`](library/identity.md) | TAAP/1 identity documents, public canonical-CBOR codecs, rotation, signatures, and verification. |
+| [`library/identity.md`](library/identity.md) | TAAP/1 software, FIDO2, and PIV identity keys; canonical-CBOR codecs, rotation, signatures, and verification. |
+| [`library/release-approval.md`](library/release-approval.md) | Signed release policies, distinct-signer threshold evaluation, TUF alignment, custody trust models, CLI storage, and compromise handling. |
 | [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |

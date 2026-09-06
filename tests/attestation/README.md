@@ -10,3 +10,5 @@ The `hot_update/1` example pins old and new results, tier, symbols, object, reco
 The `image_provenance/1` example pins the digest-reference, tree, and optional result fields used by
 admission.
 The `delegation/1` case validates scoped, attenuation-only agent authority.
+The release policy and approval examples pin repository/artifact subject kinds and the complete
+threshold, signer, expiry, policy-digest, and release-name schemas.

@@ -31,6 +31,7 @@
 #include "liquid/object.hpp"
 #include "liquid/projection.hpp"
 #include "liquid/reapi.hpp"
+#include "liquid/release.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/resolve.hpp"
