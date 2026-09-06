@@ -27,6 +27,9 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, timestamp, or recorded operation history and verify timestamp evidence. | available |
+| `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
+| `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]>` | Synchronize or inspect a configured drive folder. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
@@ -52,6 +55,8 @@ that the table and `liquid --help` name the same commands.
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
+| `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
+| `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
@@ -129,6 +134,14 @@ Lake checkpoint, tile, and proof authentication remains the separate `#207` veri
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
 sets `approximate`; and a removed line or file sets `deleted`.
+`history` follows the same stable node through moves. `--restore` appends an ordinary working-tree
+drip from the selected change and leaves prior changes and refs untouched. See
+[`history.md`](history.md).
+`drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
+counts, conflicts, per-path outcomes, and per-reference outcomes. Refusal reasons are verbatim and
+make the command exit with status 1 without advancing the base. `drive status` reads the persisted
+state without contacting the server. `--watch` performs one sync and then attaches to the checkout
+daemon. See [`drive.md`](drive.md).
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
@@ -154,6 +167,20 @@ error: <code>: <message> (<context>)
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
 
+## Key custody
+
+`keys show [key-id]` prints one line per held or revoked data-key version. `keys rewrap <key-id>
+--to <custody-uri>` moves all held versions to another provider without touching pack files.
+`keys rotate <key-id>` creates the next data-key version and prints the version transition followed
+by the three encryption disclosure statements. `keys revoke <key-id> <version>` removes local
+custody for that version. `keys split <key-id> --threshold <k> --shares <n>` moves the held versions
+under a random Shamir KEK and prints the `n` shares once.
+
+Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
+`aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
+`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+shares are supplied through the environment described in
+[the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
 Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
 is itself the package directory. Specs containing spaces must be passed as one quoted argument.
@@ -423,6 +450,10 @@ liquid facts list
 liquid facts show blake3:<fact-digest>
 liquid facts export
 liquid serve reapi --listen 127.0.0.1:8980
+liquid history src/main.cpp
+liquid history src/main.cpp --restore blake3:<change-digest>
+liquid drive sync ~/Documents https://lake.live/api/repositories/example
+liquid drive status ~/Documents
 liquid pause
 liquid resume
 liquid watch
@@ -431,9 +462,10 @@ liquid watch
 ## How to verify
 
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
-two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
-combines it, reads JSON history and signed drips through `log --ops`, reads recorded operations
-through `ops`, undoes a selected session path, verifies a locked mutation is
+two repositories, imports files, cuts changes, moves a path, lists and restores its stable-node
+history, nests a repository, splits a subtree, combines it, reads JSON history and signed drips
+through `log --ops`, checks writer-base validation from the restored change, reads recorded
+operations through `ops`, undoes a selected session path, and verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.

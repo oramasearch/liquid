@@ -54,6 +54,10 @@ directly.
 `delta.cpp` implements create, digest-checked apply, and fetch through the public delta API. A
 fetch can hydrate a patch or target registered with the store's configured remote sources.
 
+`keys.cpp` implements custody inspection, rewrap, data-key rotation, version revocation, and
+Shamir splitting entirely through the public keyring API. Credentials remain in provider-specific
+environment variables; command arguments contain only public custody URIs.
+
 `search.cpp` starts or attaches to the checkout daemon, parses optional ref, result-limit, and
 `--explain` selectors, and calls `repository::search` or `repository::plan_search`. Results include
 optional score and located path coordinates. Explain mode prints stable JSON with chosen and
@@ -74,6 +78,10 @@ the listener executor and never include the private protocol codec.
 The same file maps `serve admission` flags and environment variables to the public admission
 options. The library owns policy loading, TLS, review decisions, control routes, and metrics; the
 CLI only prints listener state and the explicit insecure-HTTP warning.
+`drive.cpp` configures or reopens a public `drive_client`, prints the persisted three-tree and
+per-reference state, and attaches `--watch` to the checkout daemon after the first successful
+one-shot reconciliation. `history.cpp` lists node-following path versions and restores one as an
+ordinary repository drip through the public repository API.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).

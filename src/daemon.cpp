@@ -34,6 +34,7 @@
 #include "daemon/fanout.hpp"
 #include "encoding/cbor.hpp"
 #include "flow_control.hpp"
+#include "liquid/drive.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/repository.hpp"
@@ -999,6 +1000,35 @@ private:
     graph& graph_;
 };
 
+class drive_target final : public daemon_target {
+public:
+    explicit drive_target(drive_client client) : client_(std::move(client)) {}
+
+    auto name() const -> std::string override {
+        return "drive";
+    }
+
+    runtime::task<void> deliver(daemon_delivery) override {
+        auto synchronized = co_await client_.sync();
+        if (!synchronized) {
+            co_return std::unexpected(synchronized.error());
+        }
+        const auto refused =
+            std::ranges::find_if(synchronized->status.references, [](const auto& reference) {
+                return reference.outcome == sync_ref_outcome_kind::refused;
+            });
+        if (refused != synchronized->status.references.end()) {
+            co_return std::unexpected(
+                failure(errc::unauthorized,
+                        "drive remote refused " + refused->name + ": " + refused->reason));
+        }
+        co_return result<void>{};
+    }
+
+private:
+    drive_client client_;
+};
+
 #ifndef _WIN32
 
 struct accepted_request {
@@ -1765,7 +1795,15 @@ runtime::task<daemon> daemon::start(std::filesystem::path checkout, daemon_optio
         if (state->options.targets.empty()) {
             targets.push_back(search_detail::make_daemon_target(state->checkout));
             targets.push_back(std::make_shared<no_op_target>("collaborators"));
-            targets.push_back(std::make_shared<no_op_target>("lake"));
+            auto drive = co_await drive_client::open(
+                state->checkout, drive_options{.bearer_token = state->options.drive_bearer_token});
+            if (drive) {
+                targets.push_back(std::make_shared<drive_target>(std::move(*drive)));
+            } else if (drive.error().code == errc::not_found) {
+                targets.push_back(std::make_shared<no_op_target>("lake"));
+            } else {
+                co_return std::unexpected(drive.error());
+            }
         } else {
             targets.insert(
                 targets.end(), state->options.targets.begin(), state->options.targets.end());

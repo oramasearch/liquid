@@ -1,5 +1,9 @@
 # Secrets and encryption
 
+> **Status:** store and structured encryption, versioned data-key rotation, and passphrase,
+> raw-file, age/X25519, AWS KMS, GCP KMS, Azure Key Vault, lake transit, and Shamir KEK custody
+> are implemented. Hardware-backed custody remains tracked separately.
+
 > Research: [14-secrets-and-encryption](../research/14-secrets-and-encryption/)
 >
 > **Requirement:** store encrypted data — password- or key-protected — so secrets can
@@ -72,7 +76,7 @@ protected":
 | **Passphrase** (Argon2 / scrypt) | Individuals; the simple case |
 | **age / X25519 recipients** | Small teams, offline |
 | **Cloud KMS** (AWS, GCP, Azure) | Organisations; IAM-controlled and audited |
-| **Vault Transit** | Encryption as a service |
+| **lake transit** | Lake-native encryption as a service |
 | **Hardware tokens** (PIV, FIDO2 `hmac-secret`) | Keys that never leave the device |
 | **TPM sealing** | Unattended machine-bound decryption |
 | **Shamir threshold shares** | Root-key custody requiring a quorum |

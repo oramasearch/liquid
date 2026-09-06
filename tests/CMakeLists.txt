@@ -301,6 +301,14 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
+  target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-keys
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_KEYS_FIXTURE=$<TARGET_FILE:liquid-keys-cli-fixture>
+      -DLIQUID_KEYS_ROOT=${CMAKE_CURRENT_BINARY_DIR}/keys-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/keys.cmake)
   add_test(NAME cli-sbom-spdx
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --spdx)
   set_tests_properties(cli-sbom-spdx PROPERTIES
@@ -419,6 +427,7 @@ add_executable(liquid-header-tests
   headers/daemon.cpp
   headers/drip.cpp
   headers/delta.cpp
+  headers/drive.cpp
   headers/error.cpp
   headers/export.cpp
   headers/flow.cpp
@@ -466,16 +475,25 @@ target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_ma
 gtest_discover_tests(liquid-format-tests)
 
 add_executable(liquid-encryption-tests
+  encryption/test_custody.cpp
   encryption/test_leaf.cpp
   encryption/test_repository_leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp
   ${PROJECT_SOURCE_DIR}/src/encryption/leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
-  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp
+  ${PROJECT_SOURCE_DIR}/src/hash/sha256.c
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/age.cpp
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/common.cpp)
+if(UNIX)
+  target_sources(liquid-encryption-tests PRIVATE encryption/test_remote_custody.cpp)
+endif()
 target_include_directories(liquid-encryption-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
+target_compile_definitions(liquid-encryption-tests PRIVATE
+  LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-encryption-tests PRIVATE
   liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main)
 gtest_discover_tests(liquid-encryption-tests)

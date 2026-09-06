@@ -32,6 +32,7 @@ struct search_access;
 struct testing;
 struct vfs_access;
 struct git_access;
+struct drive_access;
 struct sync_access;
 } // namespace repository_detail
 
@@ -225,6 +226,18 @@ struct LIQUID_EXPORT mapped_anchor {
     std::uint64_t column{};
     bool moved{};
     bool approximate{};
+    bool deleted{};
+};
+
+struct LIQUID_EXPORT path_history_entry {
+    change_id change;
+    std::string path;
+    node_id node{};
+    std::optional<digest> value;
+    std::uint32_t mode{0100644};
+    actor by;
+    std::chrono::sys_seconds at;
+    std::string message;
     bool deleted{};
 };
 
@@ -435,6 +448,8 @@ public:
     [[nodiscard]] runtime::task<mapped_anchor> map_anchor(text_anchor anchor, change_id target);
     [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
     map_anchors(std::span<const text_anchor> anchors, change_id target);
+    [[nodiscard]] runtime::task<std::vector<path_history_entry>> history(std::string path);
+    [[nodiscard]] runtime::task<void> restore(std::string path, change_id change);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
     [[nodiscard]] runtime::task<action_input> action(digest id);
     [[nodiscard]] runtime::task<record_page<repository_attestation>>
@@ -492,6 +507,7 @@ private:
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     friend struct repository_detail::git_access;
+    friend struct repository_detail::drive_access;
     friend struct repository_detail::sync_access;
     struct impl;
     std::unique_ptr<impl> impl_;
