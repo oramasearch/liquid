@@ -31,6 +31,56 @@ jobs:
           path: site/
           if-no-files-found: error
 
+  offline-cli:
+    name: Offline CLI (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            runner: ubuntu-24.04
+            platform: linux
+          - name: macOS
+            runner: macos-15
+            platform: macos
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
+
+      - name: Install Linux toolchain
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ca-certificates gpg software-properties-common wget
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
+            sudo gpg --dearmor --yes --output /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | \
+            sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install --yes autoconf automake clang-19 clang-format-19 cmake fuse3 libfuse3-dev libssl-dev libstdc++-14-dev ninja-build openssl postgresql-client zlib1g-dev
+
+      - name: Install macOS toolchain
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: brew install cmake llvm ninja openssl@3 postgresql@17
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build -G Ninja
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --parallel 6
+
+      - name: Test without networking
+        shell: bash
+        run: ctest --test-dir build --output-on-failure -L liquid-offline
+
   build-and-test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}

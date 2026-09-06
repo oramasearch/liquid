@@ -12,6 +12,12 @@ per-command manual pages. `public-includes.cmake` rejects a CLI source that incl
 outside the public `liquid/` header tree or the CLI's own metadata header. The `cli-why-json` and
 `cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
 cache.
+
+`offline.cmake` runs every test carrying the `liquid-cli` label through `offline_runner.cpp`,
+which invokes the same macOS or Linux sandbox launcher used by build wrapping with networking
+denied. It first pins exit 69 and the exact diagnostic for push, pull, remote execution, and the
+remote cache; any unclassified network use then fails inside the sandbox. The outer test carries
+the `liquid-offline` label for local and hosted selection.
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
 `configuration.cmake` checks a directory, lowers source origins in text and JSON, and formats the

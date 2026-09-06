@@ -82,6 +82,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > stable JSON, and installed man-page reference from that table. Executable guides cover an
 > existing wrapped build, a first repository and sync peer, and the current keys-and-encryption
 > boundary. CI renders the complete documentation tree as a downloadable static-site artifact.
+> The `liquid-offline` suite reruns every CLI test in liquid's macOS or Linux sandbox with
+> networking denied and verifies the explicit push, pull, remote-execution, and remote-cache
+> refusals before their handlers start.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
