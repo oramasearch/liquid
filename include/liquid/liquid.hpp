@@ -27,6 +27,7 @@
 #include "liquid/identity.hpp"
 #include "liquid/node_store.hpp"
 #include "liquid/object.hpp"
+#include "liquid/projection.hpp"
 #include "liquid/reapi.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/repository.hpp"

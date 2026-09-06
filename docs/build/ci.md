@@ -175,3 +175,6 @@ the compiler version.
 The CLI documentation check extracts the backticked command cell from each Markdown table row.
 It must not split table rows into CMake lists: CMake policy CMP0007 differs on whether the leading
 empty field before a Markdown row's first `|` is retained.
+
+
+Test discovery (`gtest_discover_tests`) runs each test binary once at build time with a 120 s timeout (the CMake default is 5 s, which a loaded host exceeds and reports as a build failure).

@@ -798,6 +798,9 @@ auto format_registry::global() -> format_registry& {
         auto registry = format_registry{};
         const auto modules = std::array{formats::detail::zip_module(),
                                         formats::detail::tar_module(),
+                                        formats::detail::deb_module(),
+                                        formats::detail::rpm_module(),
+                                        formats::detail::apk_module(),
                                         formats::detail::hdf5_module(),
                                         formats::detail::parquet_module(),
                                         formats::detail::sqlite_module()};

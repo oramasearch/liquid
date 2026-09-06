@@ -1,0 +1,507 @@
+#include "projection/projection.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <map>
+#include <ranges>
+
+#include "build/relocation.hpp"
+#include "build/repository_access.hpp"
+#include "liquid/abi.hpp"
+#include "liquid/version.hpp"
+
+namespace liquid::projection_detail {
+namespace {
+
+auto failure(errc code, std::string message, std::string context = {}) -> error {
+    return {code, std::move(message), std::move(context)};
+}
+
+auto same_digest(const digest& left, const digest& right) -> bool {
+    return left.alg == right.alg && left.bytes == right.bytes;
+}
+
+auto collect_tree(repository& source,
+                  digest root,
+                  std::string prefix,
+                  std::map<std::string, formats::package::file>& files) -> runtime::task<void> {
+    auto tree = co_await source.tree(root);
+    if (!tree) {
+        co_return std::unexpected(tree.error());
+    }
+    for (const auto& entry : tree->entries) {
+        const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
+        if (entry.kind == node_kind::tree) {
+            auto nested = co_await collect_tree(source, entry.ref, path, files);
+            if (!nested) {
+                co_return std::unexpected(nested.error());
+            }
+            continue;
+        }
+        if (entry.kind != node_kind::blob) {
+            co_return std::unexpected(
+                failure(errc::unsupported, "projection source contains a repository entry", path));
+        }
+        auto bytes = co_await source.blob(entry.ref);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto value = formats::package::file{path, std::move(*bytes), entry.mode & 0777U};
+        const auto found = files.find(path);
+        if (found != files.end() &&
+            (found->second.mode != value.mode || found->second.bytes != value.bytes)) {
+            co_return std::unexpected(
+                failure(errc::conflict, "projection sources claim different file bytes", path));
+        }
+        files.insert_or_assign(path, std::move(value));
+    }
+    co_return result<void>{};
+}
+
+auto text_attribute(const attestation& statement, std::string_view name) -> const std::string* {
+    const auto found = std::ranges::find(statement.attributes, name, &attestation_attribute::name);
+    return found == statement.attributes.end() ? nullptr : std::get_if<std::string>(&found->value);
+}
+
+auto check_abi(repository& source, const action_result& result, bool allow) -> runtime::task<bool> {
+    auto allowed = false;
+    for (const auto& id : result.abi_compatibility) {
+        auto page = co_await source.attestations({.id = id});
+        if (!page) {
+            co_return std::unexpected(page.error());
+        }
+        if (page->records.empty()) {
+            co_return std::unexpected(
+                failure(errc::corrupt, "ABI compatibility attestation is absent", to_string(id)));
+        }
+        const auto& statement = page->records.front().value;
+        auto verified = verify_attestation(statement);
+        if (!verified || !verified->verified) {
+            co_return std::unexpected(
+                failure(errc::unauthorized,
+                        "ABI compatibility attestation is invalid",
+                        verified ? verified->reason : verified.error().message));
+        }
+        const auto* verdict = text_attribute(statement, "compatibility");
+        if (!verdict || *verdict != "incompatible") {
+            continue;
+        }
+        if (!allow) {
+            co_return std::unexpected(failure(errc::conflict,
+                                              "projection refused an incompatible library ABI",
+                                              to_string(statement.subject)));
+        }
+        allowed = true;
+    }
+    co_return allowed;
+}
+
+auto inspect_dependencies(std::span<const formats::package::file> files)
+    -> std::pair<std::vector<std::string>, std::vector<std::string>> {
+    auto needed = std::vector<std::string>{};
+    auto sonames = std::vector<std::string>{};
+    for (const auto& file : files) {
+        auto descriptor = extract_abi(file.bytes);
+        if (!descriptor) {
+            continue;
+        }
+        needed.insert(
+            needed.end(), descriptor->needed_libraries.begin(), descriptor->needed_libraries.end());
+        if (descriptor->install_name) {
+            sonames.push_back(*descriptor->install_name);
+        }
+    }
+    std::ranges::sort(needed);
+    needed.erase(std::unique(needed.begin(), needed.end()), needed.end());
+    std::ranges::sort(sonames);
+    sonames.erase(std::unique(sonames.begin(), sonames.end()), sonames.end());
+    return {std::move(needed), std::move(sonames)};
+}
+
+auto canonical_architecture(std::string_view value) -> std::string_view {
+    if (value == "amd64") {
+        return "x86_64";
+    }
+    if (value == "arm64") {
+        return "aarch64";
+    }
+    return value;
+}
+
+auto unique_digests(std::vector<digest> values) -> std::vector<digest> {
+    std::ranges::sort(values, [](const digest& left, const digest& right) {
+        return to_string(left) < to_string(right);
+    });
+    values.erase(std::unique(values.begin(), values.end(), same_digest), values.end());
+    return values;
+}
+
+auto metadata_is_safe(const package_metadata& metadata) -> bool {
+    const auto safe = [](std::string_view value) {
+        return value.find_first_of("\r\n") == std::string_view::npos &&
+               value.find('\0') == std::string_view::npos;
+    };
+    if (!safe(metadata.name) || !safe(metadata.version) || !safe(metadata.release) ||
+        !safe(metadata.architecture) || !safe(metadata.description) || !safe(metadata.maintainer) ||
+        !safe(metadata.licence) || !safe(metadata.homepage)) {
+        return false;
+    }
+    for (const auto* values : {&metadata.declared_dependencies,
+                               &metadata.provides,
+                               &metadata.conflicts,
+                               &metadata.replaces}) {
+        if (!std::ranges::all_of(*values, safe)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto component_is_safe(std::string_view value) -> bool {
+    return !value.empty() && value != "." && value != ".." &&
+           value.find_first_of("/\\") == std::string_view::npos;
+}
+
+auto options_are_safe(const projection_options& options) -> bool {
+    const auto safe = [](std::string_view value) {
+        return value.find_first_of("\r\n") == std::string_view::npos &&
+               value.find('\0') == std::string_view::npos;
+    };
+    for (const auto* values : {&options.pre_depends,
+                               &options.recommends,
+                               &options.breaks,
+                               &options.conffiles,
+                               &options.oci_entrypoint,
+                               &options.oci_command}) {
+        if (!std::ranges::all_of(*values, safe)) {
+            return false;
+        }
+    }
+    return std::ranges::all_of(options.conffiles, [](const auto& path) {
+        const auto value = std::filesystem::path{path};
+        return !value.empty() && !value.is_absolute() &&
+               std::ranges::none_of(value, [](const auto& component) { return component == ".."; });
+    });
+}
+
+auto trace_layers(repository& source, result_id selected, digest target)
+    -> runtime::task<std::map<std::string, std::uint8_t>> {
+    auto options = record_page_options{};
+    while (true) {
+        auto page = co_await source.traces(options);
+        if (!page) {
+            co_return std::unexpected(page.error());
+        }
+        for (const auto& trace : page->records) {
+            if (!std::ranges::contains(
+                    trace.actions, to_string(selected.value), [](const auto& action) {
+                        return to_string(action.result.value);
+                    })) {
+                continue;
+            }
+            co_return trace_output_layers(trace, target);
+        }
+        if (page->done || !page->next) {
+            break;
+        }
+        options.cursor = page->next;
+    }
+    co_return std::map<std::string, std::uint8_t>{};
+}
+
+} // namespace
+
+runtime::task<prepared_projection> prepare(repository& source, const projection_request& request) {
+    if (request.sources.empty()) {
+        co_return std::unexpected(failure(errc::invalid_argument, "projection has no source"));
+    }
+    if (request.metadata.name.empty() || request.metadata.version.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "projection requires package name and version"));
+    }
+    if (!metadata_is_safe(request.metadata)) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "projection metadata contains a control character"));
+    }
+    if (!component_is_safe(request.metadata.name) || !component_is_safe(request.metadata.version) ||
+        !component_is_safe(request.metadata.release)) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "package identity is not a safe path component"));
+    }
+    if (!options_are_safe(request.options)) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "projection options contain an invalid value"));
+    }
+    auto output = prepared_projection{.metadata = request.metadata, .options = request.options};
+    auto files = std::map<std::string, formats::package::file>{};
+    for (const auto& source_value : request.sources) {
+        auto tree = digest{};
+        if (const auto* result_id = std::get_if<liquid::result_id>(&source_value.value)) {
+            auto result = co_await build::result(source, *result_id);
+            if (!result) {
+                co_return std::unexpected(result.error());
+            }
+            if (!result->output_tree) {
+                co_return std::unexpected(failure(errc::unsupported,
+                                                  "source result has no install tree",
+                                                  to_string(result_id->value)));
+            }
+            auto abi = co_await check_abi(source, *result, request.options.allow_abi_break);
+            if (!abi) {
+                co_return std::unexpected(abi.error());
+            }
+            output.abi_break_allowed = output.abi_break_allowed || *abi;
+            auto action = co_await source.action(result->action);
+            if (!action) {
+                co_return std::unexpected(action.error());
+            }
+            if (output.metadata.architecture.empty()) {
+                output.metadata.architecture = action->platform.arch;
+            } else if (!action->platform.arch.empty() &&
+                       canonical_architecture(output.metadata.architecture) !=
+                           canonical_architecture(action->platform.arch)) {
+                co_return std::unexpected(
+                    failure(errc::conflict,
+                            "metadata architecture differs from the action platform",
+                            action->platform.arch));
+            } else if (!action->platform.arch.empty()) {
+                output.metadata.architecture = action->platform.arch;
+            }
+            if (output.options.source_date_epoch == 0 && result->finished_at) {
+                output.options.source_date_epoch =
+                    static_cast<std::uint64_t>(result->finished_at->time_since_epoch().count());
+            }
+            auto layers = co_await trace_layers(source, *result_id, result->action);
+            if (!layers) {
+                co_return std::unexpected(layers.error());
+            }
+            for (auto& [path, layer] : *layers) {
+                output.stability_layers.insert_or_assign(std::move(path), layer);
+            }
+            tree = *result->output_tree;
+            output.source_results.push_back(*result_id);
+            output.source_ids.push_back(to_string(result_id->value));
+            if (result->provenance) {
+                output.source_attestations.push_back(*result->provenance);
+            }
+            output.source_attestations.insert(
+                output.source_attestations.end(), result->sboms.begin(), result->sboms.end());
+        } else {
+            tree = std::get<digest>(source_value.value);
+            output.source_ids.push_back(to_string(tree));
+        }
+        auto collected = co_await collect_tree(source, tree, {}, files);
+        if (!collected) {
+            co_return std::unexpected(collected.error());
+        }
+    }
+    if (output.metadata.architecture.empty()) {
+        co_return std::unexpected(failure(
+            errc::invalid_argument, "tree-digest projection requires an architecture", "--arch"));
+    }
+    if (!component_is_safe(output.metadata.architecture)) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "package architecture is not a safe path component"));
+    }
+    if (output.metadata.description.empty()) {
+        output.metadata.description = output.metadata.name;
+    }
+    if (output.metadata.maintainer.empty()) {
+        output.metadata.maintainer = "unknown";
+    }
+    if (output.metadata.licence.empty()) {
+        output.metadata.licence = "NOASSERTION";
+    }
+    for (auto& [path, file] : files) {
+        output.files.push_back(std::move(file));
+    }
+    auto relocation_files = std::vector<build_detail::relocation_file>{};
+    relocation_files.reserve(output.files.size());
+    for (const auto& file : output.files) {
+        relocation_files.push_back({file.path, file.bytes});
+    }
+    auto relocation = co_await runtime::offload([files = std::move(relocation_files)] {
+        return build_detail::inspect_relocation(files, std::nullopt);
+    });
+    if (!relocation) {
+        co_return std::unexpected(relocation.error());
+    }
+    if (!*relocation) {
+        co_return std::unexpected(relocation->error());
+    }
+    if (!(**relocation).relocatable) {
+        co_return std::unexpected(build_detail::relocation_failure(**relocation));
+    }
+    auto inspected =
+        co_await runtime::offload([files = output.files] { return inspect_dependencies(files); });
+    if (!inspected) {
+        co_return std::unexpected(inspected.error());
+    }
+    output.needed = std::move(inspected->first);
+    output.sonames = std::move(inspected->second);
+    output.source_attestations = unique_digests(std::move(output.source_attestations));
+    co_return output;
+}
+
+runtime::task<digest> store_projection_attestation(repository& source,
+                                                   const prepared_projection& prepared,
+                                                   projection_target target,
+                                                   digest subject) {
+    auto statement = attestation{
+        .subject = subject,
+        .profile = "projection/1",
+        .at = std::chrono::sys_seconds{std::chrono::seconds{prepared.options.source_date_epoch}},
+        .subject_kind = attestation_subject_kind::artifact,
+        .attributes = {{"target", std::string{to_string(target)}},
+                       {"source_result", prepared.source_ids},
+                       {"normalisation", std::string{"epoch,uid=0,gid=0,modes,sorted"}},
+                       {"tool", "liquid/" + std::string{version_string()}}}};
+    auto signed_statement =
+        co_await repository_detail::build_access::sign_attestation(source, statement);
+    if (!signed_statement) {
+        co_return std::unexpected(signed_statement.error());
+    }
+    co_return co_await source.store_attestation(std::move(statement));
+}
+
+result<void> write_file(std::filesystem::path path, std::span<const std::byte> bytes) {
+    auto code = std::error_code{};
+    std::filesystem::create_directories(path.parent_path(), code);
+    if (code) {
+        return std::unexpected(failure(errc::io, code.message(), path.parent_path().string()));
+    }
+    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    output.close();
+    if (!output) {
+        return std::unexpected(failure(errc::io, "cannot write projected artifact", path.string()));
+    }
+    return {};
+}
+
+} // namespace liquid::projection_detail
+
+namespace liquid {
+
+std::string_view to_string(projection_target target) noexcept {
+    switch (target) {
+    case projection_target::oci_image:
+        return "oci";
+    case projection_target::deb:
+        return "deb";
+    case projection_target::rpm:
+        return "rpm";
+    case projection_target::apk:
+        return "apk";
+    case projection_target::helm_chart:
+        return "helm";
+    }
+    return "oci";
+}
+
+runtime::task<projection_report> project(repository& source, projection_request request) {
+    auto prepared = co_await projection_detail::prepare(source, request);
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
+    switch (request.target) {
+    case projection_target::deb:
+    case projection_target::rpm:
+    case projection_target::apk:
+        co_return co_await projection_detail::project_package(
+            source, request.target, std::move(*prepared));
+    case projection_target::oci_image:
+        co_return co_await projection_detail::project_oci(source, std::move(*prepared));
+    case projection_target::helm_chart:
+        co_return co_await projection_detail::project_helm(
+            source, std::move(*prepared), request.services);
+    }
+    co_return std::unexpected(error{errc::unsupported, "unknown projection target", "project"});
+}
+
+namespace {
+
+auto quote(std::string_view value) -> std::string {
+    auto output = std::string{"\""};
+    for (const auto character : value) {
+        switch (character) {
+        case '\\':
+        case '\"':
+            output.push_back('\\');
+            output.push_back(character);
+            break;
+        case '\b':
+            output += "\\b";
+            break;
+        case '\f':
+            output += "\\f";
+            break;
+        case '\n':
+            output += "\\n";
+            break;
+        case '\r':
+            output += "\\r";
+            break;
+        case '\t':
+            output += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(character) < 0x20) {
+                constexpr auto digits = std::string_view{"0123456789abcdef"};
+                const auto byte = static_cast<unsigned char>(character);
+                output += "\\u00";
+                output.push_back(digits[byte >> 4U]);
+                output.push_back(digits[byte & 0x0fU]);
+            } else {
+                output.push_back(character);
+            }
+        }
+    }
+    output.push_back('\"');
+    return output;
+}
+
+} // namespace
+
+result<std::string> projection_report_json(const projection_report& report) {
+    auto output = std::string{"{\"artifacts\":["};
+    for (auto index = std::size_t{}; index < report.artifacts.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const auto& artifact = report.artifacts[index];
+        output += "{\"path\":" + quote(artifact.path.generic_string()) +
+                  ",\"digest\":" + quote(to_string(artifact.digest)) +
+                  ",\"media_type\":" + quote(artifact.media_type) + "}";
+    }
+    output += "],\"attestations\":[";
+    for (auto index = std::size_t{}; index < report.attestations.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += quote(to_string(report.attestations[index]));
+    }
+    output += "],\"pinned\":[";
+    for (auto index = std::size_t{}; index < report.pinned.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += "{\"name\":" + quote(report.pinned[index].name) +
+                  ",\"digest\":" + quote(to_string(report.pinned[index].digest)) + "}";
+    }
+    output += "],\"dependencies\":[";
+    for (auto index = std::size_t{}; index < report.dependencies.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += "{\"value\":" + quote(report.dependencies[index].value) +
+                  ",\"declared\":" + (report.dependencies[index].declared ? "true" : "false") + "}";
+    }
+    output += "],\"abi_break_allowed\":";
+    output += report.abi_break_allowed ? "true}" : "false}";
+    return output;
+}
+
+} // namespace liquid

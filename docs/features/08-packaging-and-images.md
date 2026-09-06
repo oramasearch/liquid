@@ -3,9 +3,9 @@
 > Research: [10-os-packaging](../research/10-os-packaging/) ·
 > [11-container-images](../research/11-container-images/)
 >
-> **Status:** the `abi/1` input and compatibility verdict required by package projection are
-> implemented in issue #27. Issue #73 supplies checked, position-independent install trees.
-> Package-format projection and dependency metadata remain issue #28.
+> **Status:** Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm projection is implemented in issue
+> #28, including derived dependencies, ABI refusal, deterministic compression, and attached
+> attestations. Maintainer scripts and conflict transactions remain issue #80; Tier B remains #79.
 
 ## Projection, not translation
 

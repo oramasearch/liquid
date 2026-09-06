@@ -80,6 +80,7 @@ built binary under the build directory before CTest compares it with the committ
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
@@ -398,6 +399,14 @@ Recorded remote inputs and expected outputs hydrate through the repository's con
 a produced path opens that project's persistent cache. It verifies the result and attestation before
 writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible envelope, projected
 from the same canonical TAAP record.
+`project` accepts a result ID or install-tree digest. A bare tree also requires `--arch`; a result
+uses its action platform and refuses a conflicting override. Repeatable `--depends` values are
+additive to reader-derived dependencies. Helm services use
+`name=repository@sha256:digest[,port=N][,env=K=V][,volume=P]`. `--compat-gzip` selects liquid's
+deterministic gzip encoder for Debian and OCI; `--allow-abi-break` records an explicit override.
+Text output lists artifact and attestation digests, while `--json` adds pinned image references,
+dependency labels, and the ABI override bit. See [projection.md](../library/projection.md).
+
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, the outer
 action's status, its canonical `output_tree`, the disk hit rate, bytes transferred, bytes avoided,
 bytes rebuilt, and miss counts by reason. Repeatable `--input <name>=<result-or-tree-digest>` makes
