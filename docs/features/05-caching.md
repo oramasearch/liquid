@@ -56,6 +56,15 @@ users to configure around them:
 Nobody should have to discover `base_dir`, `-ffile-prefix-map` or
 `-fdebug-prefix-map`. The paths are stable because the sandbox is stable.
 
+**Implemented for content-addressed outputs (#26).** Result version 4 signs a canonical output-tree
+digest. Directory modes, deterministic `ar` headers, and hash-based Python bytecode are normalised
+before storage; ELF, Mach-O, PE, and text outputs rely on the fixed root and fixed reproducibility
+environment. The full per-kind contract is in
+[`library/build-engine.md`](../library/build-engine.md#output-normalisation). Named upstream output
+trees are folded below `deps/<name>/` in the action input tree. An upstream source change that
+rebuilds to the same tree therefore leaves the downstream candidate validation unchanged and stops
+the cascade.
+
 ## Manifests
 
 Generalising ccache's direct mode: **every action stores a manifest of what it

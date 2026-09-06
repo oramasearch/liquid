@@ -107,6 +107,57 @@ auto daemon_paths_json(const std::optional<liquid::daemon_status>& status) -> st
     return output;
 }
 
+auto flow_scope_name(liquid::flow_scope scope) -> std::string_view {
+    switch (scope) {
+    case liquid::flow_scope::actor:
+        return "actor";
+    case liquid::flow_scope::document:
+        return "document";
+    case liquid::flow_scope::repository:
+        return "repository";
+    }
+    return "repository";
+}
+
+auto flow_reason_name(liquid::flow_pause_reason reason) -> std::string_view {
+    switch (reason) {
+    case liquid::flow_pause_reason::none:
+        return "none";
+    case liquid::flow_pause_reason::persistence:
+        return "persistence";
+    case liquid::flow_pause_reason::consumers:
+        return "consumers";
+    }
+    return "none";
+}
+
+auto flow_json(const std::optional<liquid::daemon_status>& status) -> std::string {
+    auto buckets = std::string{"["};
+    if (status) {
+        for (std::size_t index = 0; index != status->flow.buckets.size(); ++index) {
+            const auto& bucket = status->flow.buckets[index];
+            buckets +=
+                std::format("{}{{\"scope\":{},\"key\":{},\"tokens\":{},\"rate\":{},\"burst\":{},"
+                            "\"rejected\":{}}}",
+                            index == 0 ? "" : ",",
+                            json_string(flow_scope_name(bucket.scope)),
+                            json_string(bucket.key),
+                            bucket.tokens,
+                            bucket.rate,
+                            bucket.burst,
+                            bucket.rejected);
+        }
+    }
+    buckets += ']';
+    return std::format("{{\"paused\":{},\"reason\":{},\"persistence_lag\":{},\"consumer_lag\":{},"
+                       "\"buckets\":{}}}",
+                       status && status->flow.paused ? "true" : "false",
+                       json_string(status ? flow_reason_name(status->flow.reason) : "none"),
+                       status ? status->flow.persistence_lag : 0,
+                       status ? status->flow.consumer_lag : 0,
+                       buckets);
+}
+
 auto graph_divergence_json(const std::optional<liquid::daemon_status>& status) -> std::string {
     if (!status || !status->last_graph_divergence) {
         return "null";
@@ -288,6 +339,7 @@ auto repo_status(int argc, char** argv) -> int {
             "directories\":{},\"head\":{},\"agents\":{{\"require_base\":{},\"actors\":{}}},"
             "\"capture\":{{\"state\":{},\"pending_drips\":{},"
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
+            "\"flow\":{},"
             "\"daemon\":{{\"available\":{},\"running\":{},"
             "\"pid\":{},\"graph_keys\":{},\"graph_values\":{},\"graph_memory\":{},"
             "\"graph_ceiling\":{},\"graph_validation_backlog\":{},"
@@ -309,6 +361,7 @@ auto repo_status(int argc, char** argv) -> int {
             daemon_current ? daemon_current->capture.overflow_count : 0,
             daemon_current ? daemon_current->capture.recrawl_count : 0,
             json_string(daemon_current ? daemon_current->capture.last_cursor.token : ""),
+            flow_json(daemon_current),
             daemon_current ? "true" : "false",
             daemon_current && daemon_current->running ? "true" : "false",
             daemon_current ? daemon_current->process_id : 0,
@@ -348,6 +401,12 @@ auto repo_status(int argc, char** argv) -> int {
                      daemon_current ? daemon_current->capture.recrawl_count : 0);
         std::println("capture_cursor={}",
                      daemon_current ? daemon_current->capture.last_cursor.token : "");
+        std::println("flow paused={} reason={} persistence_lag={} consumer_lag={}",
+                     daemon_current && daemon_current->flow.paused,
+                     flow_reason_name(daemon_current ? daemon_current->flow.reason
+                                                     : liquid::flow_pause_reason::none),
+                     daemon_current ? daemon_current->flow.persistence_lag : 0,
+                     daemon_current ? daemon_current->flow.consumer_lag : 0);
         std::println("daemon_running={}", daemon_current && daemon_current->running);
         if (daemon_current) {
             std::println("daemon_pid={}", daemon_current->process_id);

@@ -355,9 +355,15 @@ set_target_properties(liquid_metadata_objects PROPERTIES
 add_library(libliquid
   src/asn1.cpp
   src/abi.cpp
+  src/admission/policy.cpp
+  src/admission/review.cpp
+  src/admission/server.cpp
+  src/admission/source.cpp
+  src/attestation/image.cpp
   src/attestation/registry.cpp
   src/build/abi.cpp
   src/build/cache.cpp
+  src/build/content.cpp
   src/build/events.cpp
   src/build/executor.cpp
   src/build/distribution.cpp
@@ -366,6 +372,7 @@ add_library(libliquid
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
+  src/build/normalise.cpp
   src/build/plan.cpp
   src/build/provenance.cpp
   src/build/trace.cpp
@@ -381,20 +388,33 @@ add_library(libliquid
   src/daemon.cpp
   src/daemon/fanout.cpp
   src/drip.cpp
+  src/drive/client.cpp
   src/delta.cpp
+  src/edit.cpp
+  src/edit_codec.cpp
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
+  src/formats/hdf5/hdf5.cpp
   src/formats/binary/elf.cpp
   src/formats/binary/macho.cpp
   src/formats/binary/pe.cpp
   src/formats/json.cpp
+  src/formats/parquet/parquet.cpp
+  src/formats/registry.cpp
+  src/formats/sqlite/sqlite.cpp
+  src/formats/tar/tar.cpp
+  src/formats/zip/zip.cpp
   src/frontend/graph.cpp
   src/frontend/module.cpp
   src/frontend/symbols.cpp
+  src/frontend/syntax.cpp
+  src/flow_control.cpp
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
+  src/http1/client.cpp
+  src/http1/server.cpp
   src/http2/frame.cpp
   src/http2/grpc.cpp
   src/http2/hpack.cpp
@@ -404,7 +424,17 @@ add_library(libliquid
   src/git/object_store.cpp
   src/git/sha1.cpp
   src/identity.cpp
+  src/identity/custody/age.cpp
+  src/identity/custody/aws_kms.cpp
+  src/identity/custody/azure_kv.cpp
+  src/identity/custody/common.cpp
+  src/identity/custody/gcp_kms.cpp
+  src/identity/custody/http.cpp
+  src/identity/custody/lake.cpp
+  src/identity/custody/shamir.cpp
   src/identity/taap.cpp
+  src/node_store.cpp
+  src/node_store/service.cpp
   src/crypto/crypto.cpp
   src/crypto/signature.cpp
   src/object.cpp
@@ -415,6 +445,7 @@ add_library(libliquid
   src/reapi/messages.cpp
   src/reapi/remote_client.cpp
   src/reapi/server.cpp
+  src/serve/http.cpp
   src/workers/protocol.cpp
   src/workers/control.cpp
   src/workers/scheduler.cpp
@@ -422,6 +453,10 @@ add_library(libliquid
   src/x509.cpp
   src/repository/diff.cpp
   src/repository/merge.cpp
+  src/resolve/records.cpp
+  src/resolve/concretizer.cpp
+  src/resolve/resolve.cpp
+  src/resolve/spec.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
   src/runtime/runtime.cpp
@@ -530,12 +565,17 @@ if(LIQUID_BUILD_CLI)
     src/cli/daemon.cpp
     src/cli/compose.cpp
     src/cli/delta.cpp
+    src/cli/diff.cpp
+    src/cli/edit.cpp
+    src/cli/drive.cpp
     src/cli/gc.cpp
     src/cli/facts.cpp
     src/cli/git.cpp
     src/cli/history.cpp
     src/cli/identity.cpp
+    src/cli/keys.cpp
     src/cli/locks.cpp
+    src/cli/node_store.cpp
     src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/sbom.cpp
@@ -547,6 +587,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
+    src/cli/resolve.cpp
     src/cli/search.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp

@@ -1,10 +1,10 @@
 # Command-line implementation
 
 Each source file maps one command group to public libliquid calls. `wrap.cpp` parses build-wrapper
-options, calls `liquid::build::wrap`, prints action and cache counts, per-tier action and byte
-counts, phase attribution, the critical path, and record-derived miss details for `--explain`.
-It also prints incompatible library reports and applies `--fail-on-abi-break` after a successful
-build.
+options and repeatable named result/tree inputs, calls `liquid::build::wrap`, and prints the
+canonical output tree, action and cache counts, per-tier action and byte counts, phase attribution,
+the critical path, record-derived miss details for `--explain`, and incompatible library reports.
+It applies `--fail-on-abi-break` after a successful build.
 `trace.cpp` implements profiled build invocation, Chrome trace export, and `why-slow` entirely
 through the public observability API. Text and Chrome trace projections include the recorded
 execution decision and every cost-model input. `why.cpp` implements `liquid why` and `liquid cache
@@ -13,6 +13,10 @@ JSON forms. `wrap.cpp` also
 parses `--target`, prints the probe-start count, and exposes foreign-target errors from the library.
 `facts.cpp` implements list, show, and bundle export entirely through public build APIs. The commands
 never read the private action cache directly.
+
+`attestation.cpp` also parses `attest image`, delegates statement minting to libliquid, and prints
+the stored digest. `serve.cpp` parses admission policy, listener, TLS, source, and cache settings;
+the long-running webhook remains a public library operation.
 
 `trace.cpp` also prints the configured public plan for `build --plan`, starts `build [target]`
 through the daemon, and consumes `build_handle` for both repository and `build --events` streams,
@@ -27,6 +31,10 @@ storage directly.
 `anchor.cpp` parses `<path>:<line>@<change> --to <change>`, calls the public text-anchor mapper,
 and prints the target coordinate plus moved, approximate, and deleted state. It does not inspect
 repository storage or file contents.
+
+`diff.cpp` resolves each operand as a ref or change digest and calls public repository diff.
+`--text` opts into line hunks, `--formats` prints codec-tier container trees, an optional path
+filters the result, and `--json` emits the same nested values for tools.
 
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
@@ -50,10 +58,18 @@ directly.
 `delta.cpp` implements create, digest-checked apply, and fetch through the public delta API. A
 fetch can hydrate a patch or target registered with the store's configured remote sources.
 
+`keys.cpp` implements custody inspection, rewrap, data-key rotation, version revocation, and
+Shamir splitting entirely through the public keyring API. Credentials remain in provider-specific
+environment variables; command arguments contain only public custody URIs.
+
 `search.cpp` starts or attaches to the checkout daemon, parses optional ref, result-limit, and
 `--explain` selectors, and calls `repository::search` or `repository::plan_search`. Results include
 optional score and located path coordinates. Explain mode prints stable JSON with chosen and
 alternative costs plus every planner input. It does not read the index files directly.
+
+`resolve.cpp` parses root specs and universe, reuse, explanation, and JSON selectors. It calls only
+the public package-universe loader, resolver, and explanation projections. Text graphs are indented
+by dependency; conflict and package-choice explanations use the stable library formats.
 
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
@@ -62,6 +78,14 @@ byte, cursor, and per-ref outcome lines, and returns failure when any ref is ref
 `oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
+
+The same file maps `serve admission` flags and environment variables to the public admission
+options. The library owns policy loading, TLS, review decisions, control routes, and metrics; the
+CLI only prints listener state and the explicit insecure-HTTP warning.
+`drive.cpp` configures or reopens a public `drive_client`, prints the persisted three-tree and
+per-reference state, and attaches `--watch` to the checkout daemon after the first successful
+one-shot reconciliation. `history.cpp` lists node-following path versions and restores one as an
+ordinary repository drip through the public repository API.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
@@ -74,12 +98,15 @@ repeatable path and drip filters, and renders every applied or skipped report en
 `workers.cpp` implements the scheduler and worker daemons with flag-over-environment
 configuration. Long-running entry points run on the guarded process-wide runtime while the command
 thread waits for completion, keeping accept and polling loops live between I/O callbacks.
+`node_store.cpp` implements `node-store serve` plus the status, mount, unmount, and prefetch thin
+HTTP clients. Flags override the documented node-store environment variables.
 `wrap.cpp` selects the scheduler backend with `--scheduler` while `--remote` keeps the stock REAPI
 path.
 
 Repository status includes bytes still remote in both text and JSON. Build explanation renderers
 also name the non-hermetic-read reason and its path for remote-eligibility diagnostics.
-Status also projects daemon graph-validation backlog and the last divergence in text and JSON.
+Status also projects daemon graph-validation backlog, flow watermarks and buckets, and the last
+divergence in text and JSON. Push prints the peer's exhausted scope and retry delay on HTTP 429.
 Wrap output includes its graph backlog and last divergence record.
 
 `symbols.cpp` detects the language from the public registry's extension table, uses the compiler

@@ -572,6 +572,7 @@ result<digest> disk_cache::candidate_key(const action_input& input, digest sandb
     candidate.inputs = digest{input.inputs.alg, {}};
     candidate.outputs.clear();
     candidate.timeout.reset();
+    candidate.dependency_inputs.clear();
     auto encoded = objects::encode(objects::action_record{std::move(candidate), sandbox});
     if (!encoded) {
         return std::unexpected(encoded.error());
@@ -650,6 +651,9 @@ runtime::task<cache_lookup> disk_cache::lookup(const action_input& input, digest
         references.insert(references.end(), value->sboms.begin(), value->sboms.end());
         for (const auto& action_output : value->outputs) {
             references.push_back(action_output.blob);
+        }
+        if (value->output_tree) {
+            references.push_back(*value->output_tree);
         }
         for (const auto& reference : references) {
             auto present = co_await repository_detail::build_access::contains(source_, reference);

@@ -197,6 +197,9 @@ auto daemon_command(int argc, char** argv) -> int {
         }
         checkout = argv[1];
         auto options = liquid::daemon_options{};
+        if (const auto* token = std::getenv("LIQUID_TOKEN")) {
+            options.drive_bearer_token = token;
+        }
         for (auto index = 2; index < argc; ++index) {
             const auto argument = std::string_view{argv[index]};
             if ((argument == "--idle-ms" || argument == "--memory" ||

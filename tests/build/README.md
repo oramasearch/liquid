@@ -9,6 +9,11 @@ SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages
 results, attestations, traces, and result-scoped SBOMs.
 The SBOM finalization bound publishes 24 producer actions and gives one final action 96 reads and
 24 outputs; result creation and cache validation must complete within twenty seconds.
+`test_content.cpp` covers canonical output-tree paths and modes plus read-only named dependency
+folding. `test_normalise.cpp` proves two `ar` headers with different owner, group, mode, and time
+normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root
+binary and text kinds are unchanged, and tree modes preserve only portable executability. The
+provenance tests also enumerate the stored signed input/output claim.
 
 `test_abi.cpp` decodes digest-pinned ELF, Mach-O, and PE fixtures; extracts native shared-library
 exports; checks compatible additions, removals, changed signatures, object sizes, GNU symbol
@@ -52,6 +57,13 @@ node, runs tag queries for Python, Go, Rust, JavaScript, TypeScript, Java, and R
 unsupported behavior when no tag query exists, rejects a descriptor with a mismatched grammar ABI,
 and checks public registry metadata. `liquid-grammar-measure` reports mean nanoseconds over 100
 parses of each fixture.
+
+`test_edit.cpp` covers concrete syntax, compiler-record rename across two translation units,
+collision refusal, extract, move, node fingerprint refusal, exact after digests, whole-operation
+undo, daemon framing, and CLI JSON. It compiles edited sources with the configured compiler,
+including a copied `src/store/faults.cpp` and a two-file shared-header fixture.
+`liquid-edit-measure` indexes liquid's own source with tree-sitter and reports references, indexed
+files, touched files, text changes, elapsed milliseconds, and the separately sampled host load.
 
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
@@ -103,6 +115,15 @@ one compiler while preserving the object and link result, then make a semantic e
 compiler and linker and change the link result.
 The fixture registers a labelled smoke test, and the wrap scenario verifies its public target
 metadata.
+Its cross-project case compiles an upstream object twice across a comment-only source edit, imports
+both signed result claims into a downstream project, and asserts that the identical output tree
+causes zero downstream processes and a named unchanged-input explanation.
+
+`content-addressed-chain.cmake` is the opt-in `realworld` fixture. It fetches zlib 1.3.1 and libpng
+1.6.44 through pinned SHA-256 archives, builds zlib, builds libpng from zlib's named output tree,
+and links a small program from libpng's named output tree. It asserts the zero-process downstream
+comment-only rebuild and the changed-object link path, then prints all process counts and host load
+average.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.

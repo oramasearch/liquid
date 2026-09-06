@@ -26,12 +26,19 @@ stability, unique child creation, cleanup, and the failure diagnostic.
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
+Spec parsing, canonical package records, universe loading, solver dimensions, cancellation,
+explanations, optimisation, CLI output, and the generated scale workload live in `resolve/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
-eviction, collector reclamation, and range/full rehydration. `test_repository.cpp` pins the
-exact readability report for revisions written before and after rotation and its three disclosure
-statements.
+eviction, live-byte accounting, runtime source registration, hydration observation, collector
+reclamation, and range/full rehydration. `test_repository.cpp` pins the exact readability report
+for revisions written before and after rotation and its three disclosure statements.
+`test_node_store.cpp` checks local and operator status, readiness, metrics, attestation bytes,
+OpenAPI isolation, and the three MCP tool declarations. Its Linux FUSE case mounts two 64 MiB
+images that differ by one 4 MiB file, reads both, checks shared-chunk avoidance, prefetch,
+reference counts, budget eviction, and non-remote protection; macOS records the documented skip
+when macFUSE is absent.
 
 Retention coverage spans `store/`, `build/`, and `cli/`: persisted forever-ref reachability,
 mixed-cost size-cap eviction, rule counts, and rule/lease/expiry explanations all run in the default
@@ -39,13 +46,20 @@ portable suite.
 
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
+Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
+Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
-The `formats/` cases cover
-the strict JSON and `.env` codecs used by structured configuration encryption; `encryption/`
+The `formats/` cases cover the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
+decoders, exact Tier 1 repack, deterministic tar writing, volatile fields, malformed boundaries,
+nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs used by
+structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
-file writes, and key diffs.
+file writes, key diffs, v1/v2/v3 wrapped-key compatibility, age specification vectors, Shamir
+quorums, local and remote provider round trips, request authentication, and every ordered
+cross-provider rewrap with unchanged pack bytes. The remote provider doubles bind only to loopback
+and make no external requests.
 
 Repository tests cover persisted operation records and their public newest-first view, operation
 undo for writes, imported batches, records, and locks, skipped newer state, two-replica local
@@ -58,7 +72,10 @@ one repository without losing the other, and reopens by identifier. Tree-diff ca
 additions, removals, content and mode changes, `node_id` moves, opt-in text hunks, and stored
 conflict values. Text-anchor cases map unchanged and shifted lines, approximate replacements,
 deleted regions and files, and a renamed node in one unsorted batch. CLI scenario and
-command-documentation tests live in `cli/`. `test_runtime.cpp`
+command-documentation tests live in `cli/`. Flow-control cases pin the eleventh-write refusal and
+operation count, update-size rejection, cross-actor directory isolation, persisted configuration,
+daemon pause/resume and bucket status, peer HTTP 429 retry projection, and the status JSON fixture.
+`test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
@@ -67,7 +84,8 @@ and a synchronized replica whose signed write arrives before refusal. The CLI sc
 also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
-exclusion, and parse the CLI explanation contract. The opt-in measurement target records scan and
+exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI
+explanation contract. The opt-in measurement target records scan and
 index costs across working-set sizes.
 `liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and
 measures a fresh-process repository open for the automerge-cpp adoption comparison.
@@ -80,7 +98,10 @@ bytes across repeated pushes, pulls into an empty repository, and rejects a corr
 signature without changing state. It checks change-to-ref context, derives false fast-forward
 state for divergent history, applies mixed per-ref outcomes, preserves exact reasons, keeps
 all-refused and atomic pushes unchanged, retains uploaded objects, converts callback exceptions to
-refusals, and reads a legacy reply. Its CLI case starts the real `serve sync --allow-ref main`
+refusals, and reads a legacy reply. Metadata-only receipt verifies tree and blob records while
+leaving every payload chunk remote. Its CLI case starts the real `serve sync --allow-ref main`
+refusals, reads a legacy reply, and proves a flow-refused push leaves repository metadata
+unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
@@ -123,6 +144,9 @@ complete graph pass and requires zero query divergences.
 Portable build
 diagnostic cases cover the implemented miss categories, imported action history, cumulative byte
 statistics, recorded scheduling decisions and inputs, and the JSON forms of `why` and `cache stats`.
+They also cover canonical output normalisation, signed input/output claims, named dependency-tree
+folding, cross-project cascade termination, and an opt-in pinned zlib/libpng/program chain that
+records process counts and load average.
 Mount-backed observability coverage constructs a two-action sleeping dependency chain and verifies
 result timing, durable trace edges, critical-path queries, scheduling metadata, and Chrome
 trace-event JSON. Distribution coverage uses a second store to materialise source and toolchain

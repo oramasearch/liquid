@@ -238,6 +238,30 @@ auto position_value(const source_point& value) -> cbor_value {
     };
 }
 
+auto syntax_node_value(TSNode node, const char* field) -> cbor_value {
+    auto children = cbor_value::array{};
+    const auto count = ts_node_child_count(node);
+    children.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        children.push_back(syntax_node_value(ts_node_child(node, index),
+                                             ts_node_field_name_for_child(node, index)));
+    }
+    auto fields = cbor_value::map{
+        {"kind", std::string{ts_node_type(node)}},
+        {"named", ts_node_is_named(node)},
+        {"range",
+         cbor_value::map{
+             {"start", position_value(point(ts_node_start_byte(node), ts_node_start_point(node)))},
+             {"end", position_value(point(ts_node_end_byte(node), ts_node_end_point(node)))},
+         }},
+        {"children", std::move(children)},
+    };
+    if (field) {
+        fields.emplace_back("field", std::string{field});
+    }
+    return cbor_value{std::move(fields)};
+}
+
 auto identifier_range(TSNode node) -> source_point {
     return point(ts_node_end_byte(node), ts_node_end_point(node));
 }
@@ -682,6 +706,26 @@ auto encode_symbols(std::string_view language,
                     std::string_view grammar_digest,
                     const std::vector<syntax_symbol>& symbols) -> std::vector<std::uint8_t> {
     return encode_symbol_value(language, origin, grammar_digest, symbols);
+}
+
+auto encode_syntax_tree(std::string_view language, std::span<const std::uint8_t> source)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error> {
+    const auto* grammar = find_grammar(language);
+    if (!grammar) {
+        return std::unexpected(syntax_error{
+            syntax_error_code::unsupported,
+            "language is not in the configured grammar set",
+        });
+    }
+    auto tree = parse(*grammar, source);
+    if (!tree) {
+        return std::unexpected(tree.error());
+    }
+    return cbor_encode(cbor_value{cbor_value::map{
+        {"v", std::uint64_t{1}},
+        {"language", std::string{grammar->language}},
+        {"root", syntax_node_value(tree->root(), nullptr)},
+    }});
 }
 
 } // namespace liquid_frontend

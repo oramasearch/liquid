@@ -257,6 +257,23 @@ auto wrap(int argc, char** argv) -> int {
             options.target = value;
             continue;
         }
+        if (command.empty() && argument == "--input") {
+            if (++index == argc) {
+                return usage("wrap --input requires name=result-or-tree-digest");
+            }
+            const auto value = std::string_view{argv[index]};
+            const auto separator = value.find('=');
+            if (separator == std::string_view::npos || separator == 0 ||
+                separator + 1 == value.size()) {
+                return usage("wrap --input requires name=result-or-tree-digest");
+            }
+            auto source = liquid::parse_digest(value.substr(separator + 1));
+            if (!source) {
+                return usage("wrap --input requires name=result-or-tree-digest");
+            }
+            options.inputs.push_back({std::string{value.substr(0, separator)}, std::move(*source)});
+            continue;
+        }
         if (command.empty() && argument == "--")
             continue;
         command.emplace_back(argument);
@@ -270,13 +287,15 @@ auto wrap(int argc, char** argv) -> int {
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));
     if (!result)
         return fail(result.error());
-    std::println("actions={} hits={} misses={} processes_started={} probes_started={} outer={}",
+    std::println("actions={} hits={} misses={} processes_started={} probes_started={} outer={} "
+                 "output_tree={}",
                  result->actions,
                  result->hits,
                  result->misses,
                  result->processes_started,
                  result->probes_started,
-                 result->outer == liquid::cache_status::hit ? "hit" : "miss");
+                 result->outer == liquid::cache_status::hit ? "hit" : "miss",
+                 result->output_tree ? liquid::to_string(*result->output_tree) : "unavailable");
     std::println("disk_hit_rate={:.2f}% bytes_transferred={} bytes_avoided={} bytes_rebuilt={}",
                  hit_rate(*result),
                  result->cache.disk.bytes_transferred,

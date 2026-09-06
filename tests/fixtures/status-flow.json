@@ -1,0 +1,1 @@
+{"paused":false,"reason":"none","persistence_lag":0,"consumer_lag":0,"buckets":[{"scope":"repository","key":"repository","tokens":10000,"rate":10000,"burst":10000,"rejected":0}]}

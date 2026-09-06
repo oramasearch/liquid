@@ -21,6 +21,8 @@
 #endif
 
 #include "crypto/crypto.hpp"
+#include "identity/custody/common.hpp"
+#include "identity/custody/providers.hpp"
 #include "identity/key_version.hpp"
 #include "identity/taap.hpp"
 #include "monocypher-ed25519.h"
@@ -46,6 +48,14 @@ constexpr std::array<std::byte, 8> key_magic_v2{std::byte{'L'},
                                                 std::byte{2},
                                                 std::byte{0},
                                                 std::byte{0}};
+constexpr std::array<std::byte, 8> key_magic_v3{std::byte{'L'},
+                                                std::byte{'Q'},
+                                                std::byte{'K'},
+                                                std::byte{'E'},
+                                                std::byte{'Y'},
+                                                std::byte{3},
+                                                std::byte{0},
+                                                std::byte{0}};
 constexpr std::string_view key_wrap_context = "liquid store data key wrapping v1";
 constexpr std::size_t boxed_key_size = 24 + 16 + 32;
 
@@ -55,6 +65,11 @@ error key_error(errc code, std::string message, std::string context) {
 
 void put_u32(std::vector<std::byte>& out, std::uint32_t value) {
     for (unsigned index = 0; index != 4; ++index)
+        out.push_back(std::byte{static_cast<unsigned char>(value >> (index * 8U))});
+}
+
+void put_u16(std::vector<std::byte>& out, std::uint16_t value) {
+    for (unsigned index = 0; index != 2; ++index)
         out.push_back(std::byte{static_cast<unsigned char>(value >> (index * 8U))});
 }
 
@@ -69,6 +84,15 @@ std::uint32_t get_u32(std::span<const std::byte> bytes, std::size_t at) {
     std::uint32_t value = 0;
     for (unsigned index = 0; index != 4; ++index)
         value |= std::uint32_t(std::to_integer<unsigned char>(bytes[at + index])) << (index * 8U);
+    return value;
+}
+
+std::uint16_t get_u16(std::span<const std::byte> bytes, std::size_t at) {
+    if (at + 2 > bytes.size())
+        return 0;
+    std::uint16_t value = 0;
+    for (unsigned index = 0; index != 2; ++index)
+        value |= std::uint16_t(std::to_integer<unsigned char>(bytes[at + index])) << (index * 8U);
     return value;
 }
 
@@ -97,11 +121,19 @@ result<void> validate_argon2(argon2_parameters parameters) {
     return {};
 }
 
+struct wrapped_key_entry {
+    std::string custody;
+    std::vector<std::byte> parameters;
+    std::vector<std::byte> wrapped;
+    bool legacy{};
+};
+
 struct wrapped_key_file {
+    std::uint8_t format{3};
     std::array<std::byte, 16> salt{};
     argon2_parameters parameters{};
     std::uint64_t current_version{1};
-    std::map<std::uint64_t, std::vector<std::byte>> versions;
+    std::map<std::uint64_t, wrapped_key_entry> versions;
     std::set<std::uint64_t> revoked;
 };
 
@@ -110,13 +142,70 @@ result<wrapped_key_file> parse_wrapped_key_file(std::span<const std::byte> bytes
     constexpr std::size_t legacy_header_size = key_magic_v1.size() + 16 + 12;
     const bool legacy = bytes.size() == legacy_header_size + boxed_key_size &&
                         std::equal(key_magic_v1.begin(), key_magic_v1.end(), bytes.begin());
-    const bool current =
+    const bool version_two =
         bytes.size() >= 52 && std::equal(key_magic_v2.begin(), key_magic_v2.end(), bytes.begin());
-    if (!legacy && !current) {
+    const bool version_three =
+        bytes.size() >= 24 && std::equal(key_magic_v3.begin(), key_magic_v3.end(), bytes.begin());
+    if (!legacy && !version_two && !version_three) {
         return std::unexpected(
             key_error(errc::corrupt, "invalid wrapped data key", std::string(key_id)));
     }
     wrapped_key_file output;
+    if (version_three) {
+        output.format = 3;
+        output.current_version = get_u64(bytes, 8);
+        const auto version_count = get_u32(bytes, 16);
+        const auto revoked_count = get_u32(bytes, 20);
+        auto at = std::size_t{24};
+        for (auto index = std::uint32_t{}; index != version_count; ++index) {
+            if (bytes.size() - at < 18) {
+                return std::unexpected(key_error(
+                    errc::corrupt, "truncated wrapped key-version entry", std::string(key_id)));
+            }
+            const auto version = get_u64(bytes, at);
+            const auto custody_size = get_u16(bytes, at + 8);
+            const auto parameters_size = get_u32(bytes, at + 10);
+            const auto wrapped_size = get_u32(bytes, at + 14);
+            at += 18;
+            const auto payload_size =
+                static_cast<std::size_t>(custody_size) + parameters_size + wrapped_size;
+            if (version == 0 || custody_size == 0 || payload_size > bytes.size() - at ||
+                output.versions.contains(version)) {
+                return std::unexpected(key_error(
+                    errc::corrupt, "invalid wrapped key-version entry", std::string(key_id)));
+            }
+            auto entry = wrapped_key_entry{};
+            entry.custody =
+                std::string{reinterpret_cast<const char*>(bytes.data() + at), custody_size};
+            at += custody_size;
+            entry.parameters.assign(bytes.begin() + at, bytes.begin() + at + parameters_size);
+            at += parameters_size;
+            entry.wrapped.assign(bytes.begin() + at, bytes.begin() + at + wrapped_size);
+            at += wrapped_size;
+            output.versions.emplace(version, std::move(entry));
+        }
+        for (auto index = std::uint32_t{}; index != revoked_count; ++index) {
+            if (bytes.size() - at < 8) {
+                return std::unexpected(
+                    key_error(errc::corrupt, "truncated revoked key version", std::string(key_id)));
+            }
+            const auto version = get_u64(bytes, at);
+            at += 8;
+            if (version == 0 || output.versions.contains(version) ||
+                !output.revoked.insert(version).second) {
+                return std::unexpected(
+                    key_error(errc::corrupt, "invalid revoked key version", std::string(key_id)));
+            }
+        }
+        if (at != bytes.size() || output.current_version == 0 ||
+            (!output.versions.contains(output.current_version) &&
+             !output.revoked.contains(output.current_version))) {
+            return std::unexpected(
+                key_error(errc::corrupt, "invalid wrapped key-version table", std::string(key_id)));
+        }
+        return output;
+    }
+    output.format = legacy ? 1 : 2;
     std::copy_n(bytes.begin() + key_magic_v1.size(), output.salt.size(), output.salt.begin());
     output.parameters = {get_u32(bytes, 24), get_u32(bytes, 28), get_u32(bytes, 32)};
     auto valid = validate_argon2(output.parameters);
@@ -125,7 +214,9 @@ result<wrapped_key_file> parse_wrapped_key_file(std::span<const std::byte> bytes
             key_error(errc::corrupt, "invalid wrapped data-key parameters", std::string(key_id)));
     if (legacy) {
         output.versions.emplace(
-            1, std::vector<std::byte>{bytes.begin() + legacy_header_size, bytes.end()});
+            1,
+            wrapped_key_entry{.wrapped = {bytes.begin() + legacy_header_size, bytes.end()},
+                              .legacy = true});
         return output;
     }
     output.current_version = get_u64(bytes, 36);
@@ -147,7 +238,8 @@ result<wrapped_key_file> parse_wrapped_key_file(std::span<const std::byte> bytes
         }
         output.versions.emplace(
             version,
-            std::vector<std::byte>{bytes.begin() + at, bytes.begin() + at + boxed_key_size});
+            wrapped_key_entry{.wrapped = {bytes.begin() + at, bytes.begin() + at + boxed_key_size},
+                              .legacy = true});
         at += boxed_key_size;
     }
     for (std::uint32_t index = 0; index != revoked_count; ++index) {
@@ -167,7 +259,7 @@ result<wrapped_key_file> parse_wrapped_key_file(std::span<const std::byte> bytes
     return output;
 }
 
-std::vector<std::byte> encode_wrapped_key_file(const wrapped_key_file& wrapped) {
+std::vector<std::byte> encode_wrapped_key_file_v2(const wrapped_key_file& wrapped) {
     std::vector<std::byte> output(key_magic_v2.begin(), key_magic_v2.end());
     output.insert(output.end(), wrapped.salt.begin(), wrapped.salt.end());
     put_u32(output, wrapped.parameters.memory_kib);
@@ -176,9 +268,29 @@ std::vector<std::byte> encode_wrapped_key_file(const wrapped_key_file& wrapped) 
     put_u64(output, wrapped.current_version);
     put_u32(output, static_cast<std::uint32_t>(wrapped.versions.size()));
     put_u32(output, static_cast<std::uint32_t>(wrapped.revoked.size()));
-    for (const auto& [version, boxed] : wrapped.versions) {
+    for (const auto& [version, entry] : wrapped.versions) {
         put_u64(output, version);
-        output.insert(output.end(), boxed.begin(), boxed.end());
+        output.insert(output.end(), entry.wrapped.begin(), entry.wrapped.end());
+    }
+    for (const auto version : wrapped.revoked)
+        put_u64(output, version);
+    return output;
+}
+
+std::vector<std::byte> encode_wrapped_key_file(const wrapped_key_file& wrapped) {
+    std::vector<std::byte> output(key_magic_v3.begin(), key_magic_v3.end());
+    put_u64(output, wrapped.current_version);
+    put_u32(output, static_cast<std::uint32_t>(wrapped.versions.size()));
+    put_u32(output, static_cast<std::uint32_t>(wrapped.revoked.size()));
+    for (const auto& [version, entry] : wrapped.versions) {
+        put_u64(output, version);
+        put_u16(output, static_cast<std::uint16_t>(entry.custody.size()));
+        put_u32(output, static_cast<std::uint32_t>(entry.parameters.size()));
+        put_u32(output, static_cast<std::uint32_t>(entry.wrapped.size()));
+        const auto custody = std::as_bytes(std::span{entry.custody});
+        output.insert(output.end(), custody.begin(), custody.end());
+        output.insert(output.end(), entry.parameters.begin(), entry.parameters.end());
+        output.insert(output.end(), entry.wrapped.begin(), entry.wrapped.end());
     }
     for (const auto version : wrapped.revoked)
         put_u64(output, version);
@@ -1031,8 +1143,21 @@ passphrase_provider::~passphrase_provider() = default;
 passphrase_provider::passphrase_provider(passphrase_provider&&) noexcept = default;
 passphrase_provider& passphrase_provider::operator=(passphrase_provider&&) noexcept = default;
 
-result<std::array<std::byte, 32>> passphrase_provider::derive(std::span<const std::byte> salt,
-                                                              argon2_parameters parameters) const {
+runtime::task<key> key_provider::unwrap_legacy(std::span<const std::byte>,
+                                               std::span<const std::byte>,
+                                               argon2_parameters,
+                                               wrap_context context) {
+    co_return std::unexpected(key_error(errc::unauthorized,
+                                        "custody provider cannot read a v1 or v2 wrapped key",
+                                        custody_detail::reference(context)));
+}
+
+std::vector<std::byte> key_provider::parameters() const {
+    return {};
+}
+
+result<key> passphrase_provider::derive(std::span<const std::byte> salt,
+                                        argon2_parameters parameters) const {
     auto valid = validate_argon2(parameters);
     if (!valid)
         return std::unexpected(valid.error());
@@ -1042,7 +1167,7 @@ result<std::array<std::byte, 32>> passphrase_provider::derive(std::span<const st
             errc::invalid_argument, "invalid passphrase or salt length", "passphrase_provider"));
     }
     std::vector<std::byte> work(static_cast<std::size_t>(parameters.memory_kib) * 1024U);
-    std::array<std::byte, 32> output{};
+    key output{};
     const crypto_argon2_config config{
         CRYPTO_ARGON2_I, parameters.memory_kib, parameters.iterations, parameters.lanes};
     const crypto_argon2_inputs input{
@@ -1059,22 +1184,88 @@ result<std::array<std::byte, 32>> passphrase_provider::derive(std::span<const st
     return output;
 }
 
-result<std::array<std::byte, 32>>
-passphrase_provider::derive_kek(std::span<const std::byte> salt,
-                                argon2_parameters parameters) const {
-    return derive(salt, parameters);
+runtime::task<std::vector<std::byte>>
+passphrase_provider::wrap(std::span<const std::byte, 32> data_key, wrap_context context) {
+    auto salt = std::array<std::byte, 16>{};
+    auto random = crypto_detail::random_bytes(salt);
+    if (!random)
+        co_return std::unexpected(random.error());
+    const auto parameters = argon2_parameters{};
+    auto kek = derive(salt, parameters);
+    if (!kek)
+        co_return std::unexpected(kek.error());
+    auto wrapping = crypto_detail::derive_key(*kek, key_wrap_context);
+    crypto_detail::wipe(*kek);
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    auto boxed = crypto_detail::seal(
+        *wrapping, custody_detail::as_bytes(custody_detail::reference(context)), data_key);
+    crypto_detail::wipe(*wrapping);
+    if (!boxed)
+        co_return std::unexpected(boxed.error());
+    auto output = std::vector<std::byte>{salt.begin(), salt.end()};
+    put_u32(output, parameters.memory_kib);
+    put_u32(output, parameters.iterations);
+    put_u32(output, parameters.lanes);
+    output.insert(output.end(), boxed->begin(), boxed->end());
+    co_return output;
+}
+
+runtime::task<key> passphrase_provider::unwrap(std::span<const std::byte> wrapped,
+                                               wrap_context context) {
+    if (wrapped.size() != 16 + 12 + boxed_key_size) {
+        co_return std::unexpected(key_error(errc::unauthorized,
+                                            "cannot unwrap passphrase data key",
+                                            custody_detail::reference(context)));
+    }
+    const auto parameters =
+        argon2_parameters{get_u32(wrapped, 16), get_u32(wrapped, 20), get_u32(wrapped, 24)};
+    auto valid = validate_argon2(parameters);
+    if (!valid)
+        co_return std::unexpected(valid.error());
+    auto kek = derive(wrapped.first<16>(), parameters);
+    if (!kek)
+        co_return std::unexpected(kek.error());
+    auto wrapping = crypto_detail::derive_key(*kek, key_wrap_context);
+    crypto_detail::wipe(*kek);
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    auto opened = crypto_detail::open(*wrapping,
+                                      custody_detail::as_bytes(custody_detail::reference(context)),
+                                      wrapped.subspan(28));
+    crypto_detail::wipe(*wrapping);
+    if (!opened || opened->size() != key{}.size()) {
+        if (opened)
+            crypto_detail::wipe(*opened);
+        co_return std::unexpected(key_error(errc::unauthorized,
+                                            "cannot unwrap passphrase data key",
+                                            custody_detail::reference(context)));
+    }
+    auto output = key{};
+    std::ranges::copy(*opened, output.begin());
+    crypto_detail::wipe(*opened);
+    co_return output;
+}
+
+std::string_view passphrase_provider::custody_kind() const noexcept {
+    return "passphrase";
+}
+
+std::vector<std::byte> passphrase_provider::parameters() const {
+    return {};
 }
 
 struct key_file_provider::impl {
-    explicit impl(std::array<std::byte, 32> value) : key(value) {}
+    impl(key value, std::filesystem::path source) : key_bytes(value), path(std::move(source)) {}
     ~impl() {
-        crypto_wipe(key.data(), key.size());
+        crypto_wipe(key_bytes.data(), key_bytes.size());
     }
-    std::array<std::byte, 32> key;
+    key key_bytes;
+    std::filesystem::path path;
 };
 
-key_file_provider::key_file_provider(std::array<std::byte, 32> key) noexcept
-    : impl_(std::make_unique<impl>(key)) {}
+key_file_provider::key_file_provider(key key_bytes, std::filesystem::path path) noexcept
+    : impl_(std::make_unique<impl>(key_bytes, std::move(path))) {}
 key_file_provider::~key_file_provider() = default;
 key_file_provider::key_file_provider(key_file_provider&&) noexcept = default;
 key_file_provider& key_file_provider::operator=(key_file_provider&&) noexcept = default;
@@ -1100,21 +1291,59 @@ key_file_provider::open(std::filesystem::path path) {
         }
 #endif
         std::ifstream input(path, std::ios::binary);
-        std::array<std::byte, 32> key{};
-        input.read(reinterpret_cast<char*>(key.data()), static_cast<std::streamsize>(key.size()));
-        if (input.gcount() != static_cast<std::streamsize>(key.size()) || input.peek() != EOF) {
+        key key_bytes{};
+        input.read(reinterpret_cast<char*>(key_bytes.data()),
+                   static_cast<std::streamsize>(key_bytes.size()));
+        if (input.gcount() != static_cast<std::streamsize>(key_bytes.size()) ||
+            input.peek() != EOF) {
             co_return std::unexpected(key_error(
                 errc::invalid_argument, "key file must contain exactly 32 bytes", path.string()));
         }
-        co_return std::shared_ptr<key_file_provider>(new key_file_provider(key));
+        co_return std::shared_ptr<key_file_provider>(
+            new key_file_provider(key_bytes, std::move(path)));
     } catch (const std::exception& caught) {
         co_return std::unexpected(key_error(errc::io, caught.what(), path.string()));
     }
 }
 
-result<std::array<std::byte, 32>> key_file_provider::derive_kek(std::span<const std::byte>,
-                                                                argon2_parameters) const {
-    return impl_->key;
+runtime::task<std::vector<std::byte>>
+key_file_provider::wrap(std::span<const std::byte, 32> data_key, wrap_context context) {
+    auto wrapping = crypto_detail::derive_key(impl_->key_bytes, key_wrap_context);
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    auto output = crypto_detail::seal(
+        *wrapping, custody_detail::as_bytes(custody_detail::reference(context)), data_key);
+    crypto_detail::wipe(*wrapping);
+    co_return output;
+}
+
+runtime::task<key> key_file_provider::unwrap(std::span<const std::byte> wrapped,
+                                             wrap_context context) {
+    auto wrapping = crypto_detail::derive_key(impl_->key_bytes, key_wrap_context);
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    auto opened = crypto_detail::open(
+        *wrapping, custody_detail::as_bytes(custody_detail::reference(context)), wrapped);
+    crypto_detail::wipe(*wrapping);
+    if (!opened || opened->size() != key{}.size()) {
+        if (opened)
+            crypto_detail::wipe(*opened);
+        co_return std::unexpected(key_error(errc::unauthorized,
+                                            "cannot unwrap key-file data key",
+                                            custody_detail::reference(context)));
+    }
+    auto output = key{};
+    std::ranges::copy(*opened, output.begin());
+    crypto_detail::wipe(*opened);
+    co_return output;
+}
+
+std::string_view key_file_provider::custody_kind() const noexcept {
+    return "file";
+}
+
+std::vector<std::byte> key_file_provider::parameters() const {
+    return custody_detail::bytes(impl_->path.string());
 }
 
 namespace {
@@ -1191,6 +1420,34 @@ runtime::task<void> keyring::attach(std::filesystem::path keys_path) {
     }
 }
 
+runtime::task<key> passphrase_provider::unwrap_legacy(std::span<const std::byte> wrapped,
+                                                      std::span<const std::byte> salt,
+                                                      argon2_parameters parameters,
+                                                      wrap_context context) {
+    auto wrapping = derive_wrapping_key(derive(salt, parameters));
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    auto data = unwrap_key(*wrapping, wrapped, custody_detail::reference(context));
+    crypto_detail::wipe(*wrapping);
+    if (!data)
+        co_return std::unexpected(data.error());
+    co_return *data;
+}
+
+runtime::task<key> key_file_provider::unwrap_legacy(std::span<const std::byte> wrapped,
+                                                    std::span<const std::byte>,
+                                                    argon2_parameters,
+                                                    wrap_context context) {
+    auto wrapping = derive_wrapping_key(impl_->key_bytes);
+    if (!wrapping)
+        co_return std::unexpected(wrapping.error());
+    auto data = unwrap_key(*wrapping, wrapped, custody_detail::reference(context));
+    crypto_detail::wipe(*wrapping);
+    if (!data)
+        co_return std::unexpected(data.error());
+    co_return *data;
+}
+
 runtime::task<std::string> keyring::write_key(std::string key_id) {
     if (!valid_key_id(key_id)) {
         co_return std::unexpected(
@@ -1227,8 +1484,7 @@ runtime::task<std::string> keyring::write_key(std::string key_id) {
     co_return reference;
 }
 
-runtime::task<std::array<std::byte, 32>> keyring::data_key(std::string key_id,
-                                                           bool create_if_missing) {
+runtime::task<key> keyring::data_key(std::string key_id, bool create_if_missing) {
     auto parsed = identity_detail::parse_key_reference(key_id);
     if (!parsed)
         co_return std::unexpected(parsed.error());
@@ -1256,25 +1512,18 @@ runtime::task<std::array<std::byte, 32>> keyring::data_key(std::string key_id,
         auto data = crypto_detail::random_key();
         if (!data)
             co_return std::unexpected(data.error());
-        wrapped_key_file file;
-        auto random = crypto_detail::random_bytes(file.salt);
-        if (!random) {
-            crypto_detail::wipe(*data);
-            co_return std::unexpected(random.error());
-        }
-        auto wrapping =
-            derive_wrapping_key(provider->second->derive_kek(file.salt, file.parameters));
-        if (!wrapping) {
-            crypto_detail::wipe(*data);
-            co_return std::unexpected(wrapping.error());
-        }
-        auto boxed = crypto_detail::seal(*wrapping, {}, *data);
-        crypto_detail::wipe(*wrapping);
+        const auto context = wrap_context{parsed->key_id, 1};
+        auto boxed = co_await provider->second->wrap(*data, context);
         if (!boxed) {
             crypto_detail::wipe(*data);
             co_return std::unexpected(boxed.error());
         }
-        file.versions.emplace(1, std::move(*boxed));
+        wrapped_key_file file;
+        file.versions.emplace(1,
+                              wrapped_key_entry{std::string{provider->second->custody_kind()},
+                                                provider->second->parameters(),
+                                                std::move(*boxed),
+                                                false});
         auto written = co_await write_atomic(path, encode_wrapped_key_file(file));
         if (!written) {
             crypto_detail::wipe(*data);
@@ -1290,16 +1539,21 @@ runtime::task<std::array<std::byte, 32>> keyring::data_key(std::string key_id,
     auto file = parse_wrapped_key_file(*raw, parsed->key_id);
     if (!file)
         co_return std::unexpected(file.error());
-    const auto boxed = file->versions.find(version);
-    if (boxed == file->versions.end()) {
+    const auto entry = file->versions.find(version);
+    if (entry == file->versions.end()) {
         co_return std::unexpected(
             key_error(errc::unauthorized, "data key version is unavailable", reference));
     }
-    auto wrapping = derive_wrapping_key(provider->second->derive_kek(file->salt, file->parameters));
-    if (!wrapping)
-        co_return std::unexpected(wrapping.error());
-    auto data = unwrap_key(*wrapping, boxed->second, reference);
-    crypto_detail::wipe(*wrapping);
+    auto data = result<key>{std::unexpected(key_error(errc::internal, "unreachable", reference))};
+    if (entry->second.legacy) {
+        data = co_await provider->second->unwrap_legacy(
+            entry->second.wrapped, file->salt, file->parameters, {parsed->key_id, version});
+    } else if (entry->second.custody != provider->second->custody_kind()) {
+        data = std::unexpected(
+            key_error(errc::unauthorized, "custody provider kind does not match", reference));
+    } else {
+        data = co_await provider->second->unwrap(entry->second.wrapped, {parsed->key_id, version});
+    }
     if (!data)
         co_return std::unexpected(data.error());
     auto output = *data;
@@ -1337,36 +1591,36 @@ runtime::task<void> keyring::rewrap(std::string key_id,
         co_return std::unexpected(key_error(
             errc::unauthorized, "no held data key version can authenticate the KEK", key_id));
     }
-    auto old_wrapping =
-        derive_wrapping_key(provider->second->derive_kek(file->salt, file->parameters));
-    if (!old_wrapping)
-        co_return std::unexpected(old_wrapping.error());
-    auto new_wrapping = derive_wrapping_key(new_provider->derive_kek(file->salt, file->parameters));
-    if (!new_wrapping) {
-        crypto_detail::wipe(*old_wrapping);
-        co_return std::unexpected(new_wrapping.error());
-    }
     auto replacement = *file;
+    replacement.format = 3;
     replacement.versions.clear();
-    for (const auto& [version, boxed] : file->versions) {
+    for (const auto& [version, entry] : file->versions) {
         const auto reference = identity_detail::versioned_key_id(key_id, version);
-        auto data = unwrap_key(*old_wrapping, boxed, reference);
+        auto data =
+            result<key>{std::unexpected(key_error(errc::internal, "unreachable", reference))};
+        if (entry.legacy) {
+            data = co_await provider->second->unwrap_legacy(
+                entry.wrapped, file->salt, file->parameters, {key_id, version});
+        } else if (entry.custody != provider->second->custody_kind()) {
+            data = std::unexpected(
+                key_error(errc::unauthorized, "custody provider kind does not match", reference));
+        } else {
+            data = co_await provider->second->unwrap(entry.wrapped, {key_id, version});
+        }
         if (!data) {
-            crypto_detail::wipe(*old_wrapping);
-            crypto_detail::wipe(*new_wrapping);
             co_return std::unexpected(data.error());
         }
-        auto reboxed = crypto_detail::seal(*new_wrapping, {}, *data);
+        auto reboxed = co_await new_provider->wrap(*data, {key_id, version});
         crypto_detail::wipe(*data);
         if (!reboxed) {
-            crypto_detail::wipe(*old_wrapping);
-            crypto_detail::wipe(*new_wrapping);
             co_return std::unexpected(reboxed.error());
         }
-        replacement.versions.emplace(version, std::move(*reboxed));
+        replacement.versions.emplace(version,
+                                     wrapped_key_entry{std::string{new_provider->custody_kind()},
+                                                       new_provider->parameters(),
+                                                       std::move(*reboxed),
+                                                       false});
     }
-    crypto_detail::wipe(*old_wrapping);
-    crypto_detail::wipe(*new_wrapping);
     auto written = co_await write_atomic(path, encode_wrapped_key_file(replacement));
     if (!written)
         co_return std::unexpected(written.error());
@@ -1399,45 +1653,60 @@ runtime::task<rotation_report> keyring::rotate(std::string key_id) {
         co_return std::unexpected(key_error(
             errc::unauthorized, "no held data key version can authenticate the KEK", key_id));
     }
-    auto wrapping = derive_wrapping_key(provider->second->derive_kek(file->salt, file->parameters));
-    if (!wrapping)
-        co_return std::unexpected(wrapping.error());
-    const auto authentication = file->versions.contains(file->current_version)
-                                    ? file->versions.find(file->current_version)
-                                    : file->versions.begin();
-    const auto authentication_reference =
-        identity_detail::versioned_key_id(key_id, authentication->first);
-    auto authenticated = unwrap_key(*wrapping, authentication->second, authentication_reference);
-    if (!authenticated) {
-        crypto_detail::wipe(*wrapping);
-        co_return std::unexpected(authenticated.error());
-    }
-    crypto_detail::wipe(*authenticated);
     auto highest = file->current_version;
     if (!file->versions.empty())
         highest = std::max(highest, file->versions.rbegin()->first);
     if (!file->revoked.empty())
         highest = std::max(highest, *file->revoked.rbegin());
     if (highest == std::numeric_limits<std::uint64_t>::max()) {
-        crypto_detail::wipe(*wrapping);
         co_return std::unexpected(
             key_error(errc::invalid_argument, "key version space is exhausted", key_id));
     }
-    auto data = crypto_detail::random_key();
-    if (!data) {
-        crypto_detail::wipe(*wrapping);
-        co_return std::unexpected(data.error());
+    auto replacement = *file;
+    replacement.format = 3;
+    replacement.versions.clear();
+    for (const auto& [version, entry] : file->versions) {
+        const auto reference = identity_detail::versioned_key_id(key_id, version);
+        auto data =
+            result<key>{std::unexpected(key_error(errc::internal, "unreachable", reference))};
+        if (entry.legacy) {
+            data = co_await provider->second->unwrap_legacy(
+                entry.wrapped, file->salt, file->parameters, {key_id, version});
+        } else if (entry.custody != provider->second->custody_kind()) {
+            data = std::unexpected(
+                key_error(errc::unauthorized, "custody provider kind does not match", reference));
+        } else {
+            data = co_await provider->second->unwrap(entry.wrapped, {key_id, version});
+        }
+        if (!data)
+            co_return std::unexpected(data.error());
+        auto boxed = co_await provider->second->wrap(*data, {key_id, version});
+        crypto_detail::wipe(*data);
+        if (!boxed)
+            co_return std::unexpected(boxed.error());
+        replacement.versions.emplace(
+            version,
+            wrapped_key_entry{std::string{provider->second->custody_kind()},
+                              provider->second->parameters(),
+                              std::move(*boxed),
+                              false});
     }
-    auto boxed = crypto_detail::seal(*wrapping, {}, *data);
-    crypto_detail::wipe(*data);
-    crypto_detail::wipe(*wrapping);
-    if (!boxed)
-        co_return std::unexpected(boxed.error());
+    auto data = crypto_detail::random_key();
+    if (!data)
+        co_return std::unexpected(data.error());
     const auto previous = file->current_version;
     const auto next = highest + 1;
-    file->current_version = next;
-    file->versions.emplace(next, std::move(*boxed));
-    auto written = co_await write_atomic(path, encode_wrapped_key_file(*file));
+    auto boxed = co_await provider->second->wrap(*data, {key_id, next});
+    crypto_detail::wipe(*data);
+    if (!boxed)
+        co_return std::unexpected(boxed.error());
+    replacement.current_version = next;
+    replacement.versions.emplace(next,
+                                 wrapped_key_entry{std::string{provider->second->custody_kind()},
+                                                   provider->second->parameters(),
+                                                   std::move(*boxed),
+                                                   false});
+    auto written = co_await write_atomic(path, encode_wrapped_key_file(replacement));
     if (!written)
         co_return std::unexpected(written.error());
     co_return rotation_report{std::move(key_id), previous, next, encryption_limits()};
@@ -1471,10 +1740,130 @@ runtime::task<void> keyring::revoke(std::string key_id, std::uint64_t version) {
             key_error(errc::not_found, "data key version does not exist", reference));
     }
     file->revoked.insert(version);
-    auto written = co_await write_atomic(path, encode_wrapped_key_file(*file));
+    auto encoded =
+        file->format < 3 ? encode_wrapped_key_file_v2(*file) : encode_wrapped_key_file(*file);
+    auto written = co_await write_atomic(path, std::move(encoded));
     if (!written)
         co_return std::unexpected(written.error());
     co_return result<void>{};
+}
+
+runtime::task<std::vector<custody_record>> keyring::show(std::string key_id) {
+    if (!key_id.empty() && !valid_key_id(key_id)) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "invalid key id", std::move(key_id)));
+    }
+    if (impl_->keys_path.empty()) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "keyring is not attached to a store", key_id));
+    }
+    auto paths = std::vector<std::filesystem::path>{};
+    if (!key_id.empty()) {
+        paths.push_back(impl_->keys_path / (key_id + ".wrapped"));
+    } else {
+        std::error_code code;
+        for (const auto& entry : std::filesystem::directory_iterator(impl_->keys_path, code)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".wrapped")
+                paths.push_back(entry.path());
+        }
+        if (code)
+            co_return std::unexpected(
+                key_error(errc::io, code.message(), impl_->keys_path.string()));
+        std::ranges::sort(paths);
+    }
+    auto output = std::vector<custody_record>{};
+    for (const auto& path : paths) {
+        auto raw = co_await store_detail::read_file(path);
+        if (!raw)
+            co_return std::unexpected(raw.error());
+        const auto id = path.stem().string();
+        auto file = parse_wrapped_key_file(*raw, id);
+        if (!file)
+            co_return std::unexpected(file.error());
+        for (const auto& [version, entry] : file->versions) {
+            output.push_back({id,
+                              version,
+                              entry.legacy ? "legacy" : entry.custody,
+                              entry.parameters,
+                              version == file->current_version,
+                              false});
+        }
+        for (const auto version : file->revoked) {
+            output.push_back({id, version, "revoked", {}, version == file->current_version, true});
+        }
+    }
+    co_return output;
+}
+
+runtime::task<std::shared_ptr<key_provider>> key_provider_from_uri(std::string custody_uri) {
+    const auto separator = custody_uri.find(':');
+    if (separator == std::string::npos) {
+        co_return std::unexpected(
+            key_error(errc::invalid_argument, "custody URI has no scheme", custody_uri));
+    }
+    const auto kind = custody_uri.substr(0, separator);
+    auto parameters = custody_uri.substr(separator + 1);
+    if (kind == "passphrase") {
+        if (!parameters.empty()) {
+            co_return std::unexpected(key_error(errc::invalid_argument,
+                                                "passphrase custody URI must not contain a secret",
+                                                "passphrase:"));
+        }
+        auto passphrase = custody_detail::environment("LIQUID_PASSPHRASE");
+        if (!passphrase)
+            co_return std::unexpected(passphrase.error());
+        co_return std::make_shared<passphrase_provider>(std::move(*passphrase));
+    }
+    if (kind == "file")
+        co_return co_await key_file_provider::open(std::move(parameters));
+    auto provider = result<std::shared_ptr<key_provider>>{
+        std::unexpected(key_error(errc::invalid_argument, "unsupported custody URI", custody_uri))};
+    if (kind == "age")
+        provider = custody_detail::make_age_provider(std::move(parameters));
+    else if (kind == "aws-kms")
+        provider = custody_detail::make_aws_kms_provider(std::move(parameters));
+    else if (kind == "gcp-kms")
+        provider = custody_detail::make_gcp_kms_provider(std::move(parameters));
+    else if (kind == "azure-kv")
+        provider = custody_detail::make_azure_kv_provider(std::move(parameters));
+    else if (kind == "lake")
+        provider = custody_detail::make_lake_provider(std::move(parameters));
+    else if (kind == "shamir")
+        provider = custody_detail::make_shamir_provider(std::move(parameters));
+    if (!provider)
+        co_return std::unexpected(provider.error());
+    co_return *provider;
+}
+
+result<custody_split> split_custody(std::uint8_t threshold, std::uint8_t shares) {
+    return custody_detail::make_shamir_split(threshold, shares);
+}
+
+runtime::task<std::shared_ptr<keyring>> keyring::open(std::filesystem::path keys_path) {
+    auto output = std::make_shared<keyring>();
+    auto attached = co_await output->attach(std::move(keys_path));
+    if (!attached)
+        co_return std::unexpected(attached.error());
+    auto records = co_await output->show();
+    if (!records)
+        co_return std::unexpected(records.error());
+    auto configured = std::set<std::string>{};
+    for (const auto& record : *records) {
+        if (record.revoked || !configured.insert(record.key_id).second)
+            continue;
+        auto uri = record.custody == "legacy"
+                       ? std::string{"passphrase:"}
+                       : record.custody + ":" + custody_detail::text(record.parameters);
+        auto provider = co_await key_provider_from_uri(std::move(uri));
+        if (!provider)
+            continue;
+        auto added = output->add(record.key_id, std::move(*provider));
+        if (!added)
+            co_return std::unexpected(added.error());
+        if (output->impl_->default_key.empty())
+            output->impl_->default_key = record.key_id;
+    }
+    co_return output;
 }
 
 } // namespace liquid

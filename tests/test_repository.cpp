@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -44,6 +47,19 @@ private:
 auto content(std::string value) -> std::vector<std::byte> {
     return {reinterpret_cast<const std::byte*>(value.data()),
             reinterpret_cast<const std::byte*>(value.data() + value.size())};
+}
+
+auto format_fixture(std::string_view name) -> std::vector<std::byte> {
+    const auto path = std::filesystem::path{LIQUID_FORMAT_FIXTURES} / name;
+    auto input = std::ifstream{path, std::ios::binary};
+    EXPECT_TRUE(input) << path;
+    const auto characters = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+    auto output = std::vector<std::byte>{};
+    output.reserve(characters.size());
+    for (const auto character : characters) {
+        output.push_back(std::byte{static_cast<unsigned char>(character)});
+    }
+    return output;
 }
 
 auto physical_copies(const std::filesystem::path& packs, const liquid::digest& id) -> std::size_t {
@@ -134,6 +150,69 @@ auto peak_rss_bytes() -> std::uint64_t {
 #endif
 #endif
 }
+
+auto wait_for(std::chrono::milliseconds duration) -> liquid::runtime::task<void> {
+    auto [delay_error] = co_await liquid::runtime::delay(duration);
+    if (delay_error) {
+        co_return std::unexpected(
+            liquid::error{liquid::errc::internal, delay_error.message(), "repository test"});
+    }
+    co_return {};
+}
+
+auto retry_after_ms(std::string_view context) -> std::uint64_t {
+    constexpr auto prefix = std::string_view{"retry_after_ms="};
+    const auto start = context.find(prefix);
+    if (start == std::string_view::npos) {
+        return 0;
+    }
+    auto value = std::uint64_t{};
+    const auto number = context.substr(start + prefix.size());
+    const auto end = number.find(' ');
+    const auto selected = number.substr(0, end);
+    const auto parsed = std::from_chars(selected.data(), selected.data() + selected.size(), value);
+    return parsed.ec == std::errc{} ? value : 0;
+}
+
+class scoped_liquid_home {
+public:
+    explicit scoped_liquid_home(const std::filesystem::path& path) {
+        if (const auto* configured = std::getenv("LIQUID_HOME")) {
+            previous_ = configured;
+        }
+        set(path);
+    }
+
+    scoped_liquid_home(const scoped_liquid_home&) = delete;
+    auto operator=(const scoped_liquid_home&) -> scoped_liquid_home& = delete;
+
+    ~scoped_liquid_home() {
+        if (previous_) {
+            static_cast<void>(set_environment(*previous_));
+            return;
+        }
+#ifdef _WIN32
+        static_cast<void>(_putenv_s("LIQUID_HOME", ""));
+#else
+        static_cast<void>(unsetenv("LIQUID_HOME"));
+#endif
+    }
+
+    auto set(const std::filesystem::path& path) -> void {
+        ASSERT_EQ(set_environment(path), 0);
+    }
+
+private:
+    static auto set_environment(const std::filesystem::path& path) -> int {
+#ifdef _WIN32
+        return _putenv_s("LIQUID_HOME", path.string().c_str());
+#else
+        return setenv("LIQUID_HOME", path.string().c_str(), 1);
+#endif
+    }
+
+    std::optional<std::string> previous_;
+};
 
 auto encryption_keys() -> std::shared_ptr<liquid::keyring> {
     auto keys = std::make_shared<liquid::keyring>();
@@ -407,6 +486,76 @@ TEST(Repository, SuppliedStoreHostsRepositoriesAndDeduplicatesTheirContent) {
     auto store_still_open = liquid::runtime::block_on(shared_store.contains(*expected));
     ASSERT_TRUE(store_still_open);
     EXPECT_TRUE(*store_still_open);
+}
+
+TEST(RepositoryFlow, eleventh_immediate_write_is_rejected_without_an_operation) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.flow.per_actor = {.rate_per_s = 10, .burst = 10};
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created) << (created ? "" : created.error().message);
+    for (auto index = 0; index != 10; ++index) {
+        auto written = liquid::runtime::block_on(
+            created->write("file-" + std::to_string(index), content("value")));
+        ASSERT_TRUE(written) << (written ? "" : written.error().message);
+    }
+    auto refused = liquid::runtime::block_on(created->write("file-10", content("value")));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::busy);
+    EXPECT_NE(refused.error().context.find("scope=actor"), std::string::npos);
+    const auto retry = retry_after_ms(refused.error().context);
+    ASSERT_GT(retry, 0U);
+    auto operations = liquid::runtime::block_on(created->operations());
+    ASSERT_TRUE(operations);
+    EXPECT_EQ(operations->size(), 10U);
+
+    ASSERT_TRUE(liquid::runtime::block_on(wait_for(std::chrono::milliseconds{retry + 5})));
+    EXPECT_TRUE(liquid::runtime::block_on(created->write("file-10", content("value"))));
+}
+
+TEST(RepositoryFlow, oversized_update_is_rejected_before_an_operation) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.flow.max_update_bytes = 4;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created);
+    auto refused = liquid::runtime::block_on(created->write("file", content("12345")));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    EXPECT_NE(refused.error().message.find("max_update_bytes"), std::string::npos);
+    auto operations = liquid::runtime::block_on(created->operations());
+    ASSERT_TRUE(operations);
+    EXPECT_TRUE(operations->empty());
+}
+
+TEST(RepositoryFlow, document_bucket_is_shared_by_actors_and_isolated_by_directory) {
+    temporary_repository location;
+    const auto first_home = location.path().parent_path() / "flow-identity-first";
+    const auto second_home = location.path().parent_path() / "flow-identity-second";
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
+    auto identity_home = scoped_liquid_home{first_home};
+    auto options = liquid::repository_options{};
+    options.flow.per_document = {.rate_per_s = 10, .burst = 1};
+    auto first = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("one/seed", content("seed"))));
+    ASSERT_TRUE(liquid::runtime::block_on(wait_for(std::chrono::milliseconds{1005})));
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("two/seed", content("seed"))));
+
+    identity_home.set(second_home);
+    auto second = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->flow_configuration(), options.flow);
+    ASSERT_TRUE(liquid::runtime::block_on(wait_for(std::chrono::milliseconds{1005})));
+    ASSERT_TRUE(liquid::runtime::block_on(first->write("one/first", content("one"))));
+    auto same_document = liquid::runtime::block_on(second->write("one/second", content("two")));
+    ASSERT_FALSE(same_document);
+    EXPECT_EQ(same_document.error().code, liquid::errc::busy);
+    EXPECT_NE(same_document.error().context.find("scope=document"), std::string::npos);
+    EXPECT_TRUE(liquid::runtime::block_on(second->write("two/second", content("two"))));
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
 }
 
 void expect_sha256(const liquid::digest& value) {
@@ -781,6 +930,65 @@ TEST(Repository, diff_reports_path_changes_and_optional_text_hunks) {
         *tree_changes, [](const auto& entry) { return !entry.line_hunks.has_value(); }));
 }
 
+TEST(Repository, format_diff_reportsZipMembersAndHdf5Datasets) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("archive.zip", format_fixture("archive-a.zip"))));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("measurements.h5", format_fixture("sample-a.h5"))));
+    auto before = liquid::runtime::block_on(repository.cut("before format changes"));
+    ASSERT_TRUE(before) << before.error().message;
+
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("archive.zip", format_fixture("archive-b.zip"))));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("measurements.h5", format_fixture("sample-b.h5"))));
+    auto after = liquid::runtime::block_on(repository.cut("after format changes"));
+    ASSERT_TRUE(after) << after.error().message;
+
+    auto changes = liquid::runtime::block_on(
+        repository.diff(*before, *after, liquid::tree_diff_options{.formats = true}));
+    ASSERT_TRUE(changes) << changes.error().message;
+    ASSERT_EQ(changes->size(), 2);
+    const auto archive = std::ranges::find(*changes, "archive.zip", &liquid::tree_diff_entry::path);
+    ASSERT_NE(archive, changes->end());
+    ASSERT_TRUE(archive->container);
+    EXPECT_EQ(archive->container->codec, "zip");
+    ASSERT_EQ(archive->container->entries.size(), 1);
+    EXPECT_EQ(archive->container->entries.front().path, "deflated.txt");
+    const auto hdf5 =
+        std::ranges::find(*changes, "measurements.h5", &liquid::tree_diff_entry::path);
+    ASSERT_NE(hdf5, changes->end());
+    ASSERT_TRUE(hdf5->container);
+    EXPECT_EQ(hdf5->container->codec, "hdf5");
+    ASSERT_EQ(hdf5->container->entries.size(), 1);
+    EXPECT_EQ(hdf5->container->entries.front().path, "measurements/chunked");
+}
+
+TEST(Repository, formatEntriesAreStoredOnceAndRetainedWithTheirContainers) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("first.zip", format_fixture("archive-a.zip"))));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("second.zip", format_fixture("archive-b.zip"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.cut("store format entries")));
+    const auto payload = content("shared vendored payload\n");
+    auto id = liquid::hash(liquid::algorithm::blake3, payload);
+    ASSERT_TRUE(id) << id.error().message;
+    const auto packs = location.path() / ".liquid-store" / "packs";
+    EXPECT_EQ(physical_copies(packs, *id), 1);
+
+    auto collected = liquid::runtime::block_on(repository.collect());
+    ASSERT_TRUE(collected) << collected.error().message;
+    EXPECT_EQ(physical_copies(packs, *id), 1);
+}
+
 TEST(Repository, text_anchors_follow_hunks_and_node_identity_moves) {
     temporary_repository location;
     auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
@@ -890,6 +1098,54 @@ TEST(Repository, diff_surfaces_recorded_conflict_values) {
     EXPECT_TRUE(has_change(*same, liquid::tree_diff_kind::conflicted));
     EXPECT_TRUE(same->old_conflicts.empty());
     EXPECT_EQ(same->new_conflicts.size(), 2U);
+}
+
+TEST(Repository, path_history_follows_moves_and_restore_appends_a_drip) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created);
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("notes.txt", content("first"), {.mode = 0100755})));
+    auto first = liquid::runtime::block_on(repository.cut("first version"));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("notes.txt", content("second"))));
+    auto second = liquid::runtime::block_on(repository.cut("second version"));
+    ASSERT_TRUE(second);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.move("notes.txt", "renamed.txt")));
+    auto moved = liquid::runtime::block_on(repository.cut("rename notes"));
+    ASSERT_TRUE(moved);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.remove("renamed.txt")));
+    auto removed = liquid::runtime::block_on(repository.cut("remove notes"));
+    ASSERT_TRUE(removed);
+
+    auto history = liquid::runtime::block_on(repository.history("renamed.txt"));
+    ASSERT_TRUE(history) << history.error().message;
+    ASSERT_EQ(history->size(), 4U);
+    EXPECT_TRUE(history->at(0).deleted);
+    EXPECT_EQ(liquid::to_string(history->at(0).change.value), liquid::to_string(removed->value));
+    EXPECT_EQ(history->at(1).path, "renamed.txt");
+    EXPECT_EQ(liquid::to_string(history->at(1).change.value), liquid::to_string(moved->value));
+    EXPECT_EQ(history->at(2).path, "notes.txt");
+    EXPECT_EQ(liquid::to_string(history->at(2).change.value), liquid::to_string(second->value));
+    EXPECT_EQ(liquid::to_string(history->at(3).change.value), liquid::to_string(first->value));
+
+    const auto drips_before = repository.status()->pending_drips;
+    auto restored = liquid::runtime::block_on(repository.restore("renamed.txt", *first));
+    ASSERT_TRUE(restored) << restored.error().message;
+    auto contents = liquid::runtime::block_on(repository.read("renamed.txt"));
+    ASSERT_TRUE(contents);
+    EXPECT_EQ(text(*contents), "first");
+    auto root = liquid::runtime::block_on(repository.root());
+    ASSERT_TRUE(root);
+    const auto restored_entry =
+        std::ranges::find(root->entries, "renamed.txt", &liquid::tree_entry::name);
+    ASSERT_NE(restored_entry, root->entries.end());
+    EXPECT_EQ(restored_entry->mode, 0100755U);
+    EXPECT_EQ(repository.status()->pending_drips, drips_before + 1);
+    auto log = liquid::runtime::block_on(repository.log());
+    ASSERT_TRUE(log);
+    EXPECT_EQ(liquid::to_string(log->front().id.value), liquid::to_string(removed->value));
 }
 
 TEST(Repository, write_modes_and_nested_references_are_preserved) {
@@ -1577,6 +1833,13 @@ TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_val
     ASSERT_TRUE(history);
     ASSERT_FALSE(history->empty());
     EXPECT_EQ(history->front().conflicts.size(), 1U);
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(left_path.path()));
+    ASSERT_TRUE(reopened);
+    auto reopened_conflicts = liquid::runtime::block_on(reopened->conflicts());
+    ASSERT_TRUE(reopened_conflicts);
+    ASSERT_EQ(reopened_conflicts->size(), 1U);
+    EXPECT_EQ(reopened_conflicts->front().path, "a.txt");
+    EXPECT_EQ(reopened_conflicts->front().refs.size(), 3U);
     ASSERT_TRUE(liquid::runtime::block_on(left->write("a.txt", content("resolved"))));
     ASSERT_TRUE(liquid::runtime::block_on(left->cut("resolve conflict")));
     auto resolved = liquid::runtime::block_on(left->conflicts());

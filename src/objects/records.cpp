@@ -704,6 +704,10 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
     auto chunk_sizes = cbor::value::array{};
     for (const auto size : sizes)
         chunk_sizes.push_back(cbor::value{size});
+    auto format_entries = cbor::value::array{};
+    for (const auto& entry : value.format_entries) {
+        format_entries.push_back(encode_digest(entry));
+    }
     const auto has_content = value.content.alg == algorithm::blake3 ||
                              value.content.alg == algorithm::sha256 ||
                              value.content.alg == algorithm::blake3_keyed;
@@ -712,11 +716,15 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
             error{errc::invalid_argument, "remote blob requires a digest and source", "blob"});
     }
     if (!has_content && !value.remote) {
-        return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
-                                 {"kind", "blob"},
-                                 {"size", cbor::value{value.size}},
-                                 {"chunks", std::move(chunks)},
-                                 {"chunk_sizes", std::move(chunk_sizes)}}));
+        auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{1}}},
+                                       {"kind", "blob"},
+                                       {"size", cbor::value{value.size}},
+                                       {"chunks", std::move(chunks)},
+                                       {"chunk_sizes", std::move(chunk_sizes)}};
+        if (!format_entries.empty()) {
+            fields.emplace_back("format_entries", std::move(format_entries));
+        }
+        return cbor::encode(cbor::value{std::move(fields)});
     }
     auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{2}}},
                                    {"kind", "blob"},
@@ -724,6 +732,9 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
                                    {"size", cbor::value{value.size}},
                                    {"chunks", std::move(chunks)},
                                    {"chunk_sizes", std::move(chunk_sizes)}};
+    if (!format_entries.empty()) {
+        fields.emplace_back("format_entries", std::move(format_entries));
+    }
     if (value.remote) {
         fields.emplace_back("remote",
                             map({{"source", cbor::value{value.remote->source}},
@@ -944,6 +955,9 @@ auto encode_result_value(const action_result& value, bool include_signature)
     if (value.record_version < 1 || value.record_version > 4) {
         return std::unexpected(corrupt("unsupported result record version"));
     }
+    if (value.record_version < 4 && value.output_tree) {
+        return std::unexpected(corrupt("result output tree does not match record version"));
+    }
     if (value.record_version < 4 && (!value.abis.empty() || !value.abi_compatibility.empty())) {
         return std::unexpected(corrupt("ABI references require result record version 4"));
     }
@@ -1002,6 +1016,9 @@ auto encode_result_value(const action_result& value, bool include_signature)
     if (value.schedule) {
         fields.emplace_back("schedule", encode_schedule(*value.schedule));
     }
+    if (value.output_tree) {
+        fields.emplace_back("output_tree", encode_digest(*value.output_tree));
+    }
     if (include_signature) {
         fields.emplace_back("sig", byte_string(value.sig));
     }
@@ -1020,15 +1037,24 @@ auto encode(const sandbox_record& value) -> result<std::vector<std::byte>> {
     auto environment = cbor::value::array{};
     for (const auto& name : value.fixed_environment)
         environment.emplace_back(name);
-    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
-                             {"kind", "sandbox"},
-                             {"mechanism", cbor::value{value.mechanism}},
-                             {"work_root", cbor::value{value.work_root}},
-                             {"toolchain_root", cbor::value{value.toolchain_root}},
-                             {"home_root", cbor::value{value.home_root}},
-                             {"temporary_root", cbor::value{value.temporary_root}},
-                             {"fixed_environment", cbor::value{std::move(environment)}},
-                             {"network", cbor::value{value.network}}}));
+    auto normalisers = cbor::value::array{};
+    for (const auto& rule : value.output_normalisers) {
+        normalisers.emplace_back(rule);
+    }
+    auto fields = cbor::value::map{
+        {"v", cbor::value{value.output_normalisers.empty() ? std::uint64_t{1} : std::uint64_t{2}}},
+        {"kind", "sandbox"},
+        {"mechanism", cbor::value{value.mechanism}},
+        {"work_root", cbor::value{value.work_root}},
+        {"toolchain_root", cbor::value{value.toolchain_root}},
+        {"home_root", cbor::value{value.home_root}},
+        {"temporary_root", cbor::value{value.temporary_root}},
+        {"fixed_environment", cbor::value{std::move(environment)}},
+        {"network", cbor::value{value.network}}};
+    if (!value.output_normalisers.empty()) {
+        fields.emplace_back("output_normalisers", cbor::value{std::move(normalisers)});
+    }
+    return cbor::encode(cbor::value{std::move(fields)});
 }
 
 auto encode(const action_index_root& value) -> result<std::vector<std::byte>> {
@@ -1143,6 +1169,7 @@ auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
     const auto* size = find(*source, "size");
     const auto* chunks = find(*source, "chunks");
     const auto* chunk_sizes = find(*source, "chunk_sizes");
+    const auto* format_entries = find(*source, "format_entries");
     const auto* n = size ? std::get_if<std::uint64_t>(&size->data) : nullptr;
     const auto* values = chunks ? std::get_if<cbor::value::array>(&chunks->data) : nullptr;
     if (!n || !values)
@@ -1182,6 +1209,19 @@ auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
             return std::unexpected(corrupt("invalid blob content digest"));
         }
         output.content = *content;
+    }
+    if (format_entries) {
+        const auto* entries = std::get_if<cbor::value::array>(&format_entries->data);
+        if (!entries) {
+            return std::unexpected(corrupt("invalid blob format entries"));
+        }
+        for (const auto& entry : *entries) {
+            auto decoded = decode_digest(entry);
+            if (!decoded) {
+                return std::unexpected(corrupt("invalid blob format entry"));
+            }
+            output.format_entries.push_back(*decoded);
+        }
     }
     if (remote_value) {
         const auto* source_value = find(*remote_value, "source");
@@ -1622,6 +1662,7 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* abis_value = find(*source, "abis");
     const auto* abi_compatibility_value = find(*source, "abi_compatibility");
     const auto* schedule_value = find(*source, "schedule");
+    const auto* output_tree_value = find(*source, "output_tree");
     const auto* outputs =
         output_values ? std::get_if<cbor::value::array>(&output_values->data) : nullptr;
     const auto* manifest =
@@ -1734,6 +1775,16 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
             return std::unexpected(schedule.error());
         }
         output.schedule = std::move(*schedule);
+    }
+    if (*version < 4 && output_tree_value) {
+        return std::unexpected(corrupt("result output tree does not match record version"));
+    }
+    if (output_tree_value) {
+        auto output_tree = decode_digest(*output_tree_value);
+        if (!output_tree) {
+            return std::unexpected(corrupt("invalid result output tree"));
+        }
+        output.output_tree = *output_tree;
     }
     for (const auto& item : *outputs) {
         const auto* path_value = find(item, "path");
