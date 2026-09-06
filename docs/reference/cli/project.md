@@ -5,19 +5,19 @@
 ## Synopsis
 
 ```text
-liquid project <oci|deb|rpm|apk|helm|macos-pkg|macos-dmg|msix|winget> <result|install-tree|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap|macos-pkg|macos-dmg|msix|winget> <result|tree|installer> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
 
-Project a recorded build result or install tree into an OCI image, package, or Helm chart.
+Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or bundled-runtime artifact.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
-| `--name` | `<name>` | Set the package, image, or chart name. | required |
-| `--version` | `<version>` | Set the package, image, or chart version. | required |
+| `--name` | `<name>` | Set the projected artifact name. | liquid-os for OS targets |
+| `--version` | `<version>` | Set the projected artifact version. | commit epoch for OS targets |
 | `--arch` | `<arch>` | Set the target architecture. | source architecture |
 | `--out` | `<dir>` | Write projected artifacts below this directory. | projection |
 | `--depends` | `<dependency>` | Declare a package dependency; repeatable. | none |
@@ -28,6 +28,9 @@ Project a recorded build result or install tree into an OCI image, package, or H
 | `--executable` | `<path>` | Set the packaged application executable. | derived from name |
 | `--entitlements` | `<path>` | Record macOS signing entitlements. | none |
 | `--installer-url` | `<url>` | Set the winget installer URL. | required for winget |
+| `--ref` | `<name>` | Set the OSTree ref. | required for OS targets |
+| `--overlay` | `[path=]<tree>` | Overlay a tree at an optional relative path; repeatable. | none |
+| `--mode` | `<archive-z2\|bare-user>` | Select the OSTree repository mode. | archive-z2 |
 | `--compat-gzip` | — | Use gzip-compatible package compression. | false |
 | `--allow-abi-break` | — | Permit an incompatible ABI projection. | false |
 | `--json` | — | Write stable JSON instead of text. | false |

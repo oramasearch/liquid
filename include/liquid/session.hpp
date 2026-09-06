@@ -65,6 +65,50 @@ struct LIQUID_EXPORT semantic_lease {
 
 using lease_authorizer = std::function<runtime::task<void>(semantic_lease requested)>;
 
+struct LIQUID_EXPORT lock_rule {
+    std::string name;
+    std::vector<std::string> paths;
+
+    auto operator==(const lock_rule&) const -> bool = default;
+};
+
+struct LIQUID_EXPORT lock_config {
+    std::vector<lock_rule> rules;
+
+    auto operator==(const lock_config&) const -> bool = default;
+};
+
+enum class lock_authority : std::uint8_t {
+    advisory,
+    lake,
+};
+
+struct LIQUID_EXPORT exclusive_lock {
+    std::string path;
+    liquid::actor holder;
+    std::chrono::sys_seconds since{};
+    std::string reason;
+    lock_authority authority{lock_authority::advisory};
+
+    auto operator==(const exclusive_lock& other) const -> bool {
+        return path == other.path && holder.taap_id == other.holder.taap_id &&
+               holder.key_fingerprint == other.holder.key_fingerprint && since == other.since &&
+               reason == other.reason && authority == other.authority;
+    }
+};
+
+enum class lock_operation : std::uint8_t {
+    acquire,
+    release,
+};
+
+struct LIQUID_EXPORT lock_authorization_request {
+    lock_operation operation{lock_operation::acquire};
+    exclusive_lock value;
+};
+
+using lock_authorizer = std::function<runtime::task<void>(lock_authorization_request requested)>;
+
 enum class presence_activity : std::uint8_t {
     editing,
     reading,
@@ -78,6 +122,15 @@ struct LIQUID_EXPORT presence {
     std::optional<frontend_source_range> range;
     presence_activity activity{presence_activity::idle};
     std::chrono::sys_seconds at{};
+};
+
+struct LIQUID_EXPORT line_attribution {
+    std::uint64_t line{};
+    std::string text;
+    liquid::actor by;
+    session_id session;
+    change_id change;
+    bool agent{};
 };
 
 struct LIQUID_EXPORT session_options {

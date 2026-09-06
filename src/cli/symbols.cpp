@@ -15,6 +15,7 @@
 namespace liquid_cli {
 
 auto frontend_module_path(bool compiler) -> std::filesystem::path;
+auto print_tier(unsigned level, std::string_view mechanism) -> void;
 
 namespace {
 
@@ -267,8 +268,11 @@ auto symbols(int argc, char** argv) -> int {
         if (!stored) {
             return fail(stored.error());
         }
+        const auto compiler_origin = record.origin == liquid::symbol_origin::compiler;
+        print_tier(compiler_origin ? 3U : 2U,
+                   compiler_origin ? "frontend(clang-cpp)" : "grammar(" + record.grammar + ")");
         std::println("origin={} record={}",
-                     record.origin == liquid::symbol_origin::compiler ? "compiler" : "syntactic",
+                     compiler_origin ? "compiler" : "syntactic",
                      liquid::to_string(*stored));
         for (const auto& occurrence : record.occurrences) {
             std::println("{} {} {} {}:{}:{}",

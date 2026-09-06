@@ -1,0 +1,36 @@
+source hdf5-1.14.0 {
+    digest: sha256:9d00a3ee5d3f54e0b1db1f6440b6a4b50614fe2a282fe5eb0697ee1c96d0c3c6
+    kind: archive
+    url: "https://example.invalid/hdf5-1.14.0.tar.gz"
+}
+
+package hdf5 {
+    versions: [1.14.0]
+    variant mpi {
+        default: true
+        values: [true, false]
+    }
+    depends_on zlib {
+        type: link
+    }
+    when "hdf5+mpi" {
+        depends_on mpi {
+            type: link
+            version: "3:"
+            virtual: true
+        }
+    }
+    conflicts {
+        constraint: spec "hdf5~mpi"
+        message: "MPI-disabled HDF5 is excluded"
+    }
+}
+
+build hdf5 {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/9d00a3ee5d3f54e0b1db1f6440b6a4b50614fe2a282fe5eb0697ee1c96d0c3c6 -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["hdf5-1.14.0"]
+    install {
+        layout: prefix
+    }
+}

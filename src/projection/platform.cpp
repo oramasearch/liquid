@@ -976,12 +976,12 @@ runtime::task<projection_report> project_winget(repository& source,
         co_return std::unexpected(
             failure(errc::invalid_argument, "winget projection requires one installer path"));
     }
-    const auto* path = std::get_if<std::filesystem::path>(&request.sources.front().value);
-    if (!path) {
+    const auto& path = request.sources.front().path;
+    if (path.empty()) {
         co_return std::unexpected(
             failure(errc::invalid_argument, "winget source must be an MSIX file"));
     }
-    auto installer = co_await runtime::offload([path = *path] { return installer_digest(path); });
+    auto installer = co_await runtime::offload([path] { return installer_digest(path); });
     if (!installer) {
         co_return std::unexpected(installer.error());
     }

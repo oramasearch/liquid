@@ -1,5 +1,9 @@
 # Supply chain and signing
 
+> **Status:** hardware-held FIDO2 and PIV identity keys and signed `k`-of-`n` release approval are
+> implemented by liquid #81. Keyless signing and TUF client metadata verification remain separate
+> work.
+
 > Research: [13-supply-chain-security](../research/13-supply-chain-security/) ·
 > [05-autotools](../research/05-autotools-and-configure-era/)
 >
@@ -68,6 +72,10 @@ key correctly, so do not require them to.
 **Keys where they are wanted**: long-lived keys, hardware tokens (PIV, FIDO2), and
 **threshold signing** for organisations that need multi-party release approval.
 
+liquid owns the bounded CTAP2 and PIV command layers over operating-system HID and PC/SC
+transports. It does not link libfido2 or OpenSC. This is liquid-bridge decision 21, decided by Steve
+on 2026-09-05. The same transport interfaces accept protocol-level software doubles for CI.
+
 Signed: changes, artifacts, cache entries, images, attestations and deployments —
 by one signing layer, not five.
 
@@ -91,6 +99,12 @@ Signing artifacts is not enough. TUF-style **role separation** (root, targets,
 snapshot, timestamp) with threshold signing and explicit key-compromise recovery
 defends against attacks signatures miss entirely: freeze attacks (serving a stale
 index so clients never see a security update), rollback, and mix-and-match.
+
+The implemented release layer is TUF-style independent signing: a signed `release_policy/1` names
+the role, threshold, allowed TAAP identities, and expiry, while `release_approval/1` binds each
+independent signature to the artifact and exact policy. See
+[`../library/release-approval.md`](../library/release-approval.md). TUF metadata consumption remains
+#186.
 
 ## Verifying inputs, not just signing outputs
 

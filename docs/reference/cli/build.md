@@ -50,4 +50,4 @@ liquid build --plan
 
 ## Exit status
 
-0 on success, 1 on an operation failure, and 2 for invalid usage.
+0 on success, 1 on an operation failure, 2 for invalid usage, and 69 when offline mode refuses a required network operation.

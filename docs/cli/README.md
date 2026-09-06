@@ -5,14 +5,32 @@ directory unless a command names another repository; `wrap` instead snapshots th
 tree into its project cache. One-shot commands run library operations through `runtime::block_on`;
 `serve sync` awaits them on its listener executor. The CLI does not read repository storage directly.
 
-`init` imports regular files already present in its target directory through
-`repository::import_tree`; the local-tree form of `import` uses the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
+`init` lowers lock rules from `liquid.liquid`, or the first sorted top-level `.liquid` file, before
+it imports regular files through `repository::import_tree`; the local-tree form of `import` uses
+the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
 it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
 its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
 available, but daemon attachment returns the documented unsupported result because the current
 Corosio revision has no named-pipe transport.
 
+`clone <url|drive-folder> [<dir>]` creates a plain checkout through the public drive client. A
+configured drive folder supplies its persisted remote URL; an endpoint URL is used directly. When
+`dir` is omitted, the last endpoint path component is used, with `repository` as the fallback.
+Clone pins the repository root, so every pulled file is materialized even when it exceeds the
+drive client's ordinary on-demand hydration threshold. The remote remains configured for later
+`drive status` and synchronization.
+
 Focused command contracts: [`build`](build-events.md) plans and events, and [`test`](test.md).
+
+## Offline operation
+
+Local commands do not require a network. The `liquid-offline` CTest suite sets
+`LIQUID_OFFLINE=1` inside liquid's network-denied sandbox and runs the complete `liquid-cli` test
+label. A command whose selected mode requires a network refuses before its handler starts, writes
+`liquid <verb>: needs the network for <reason>` to standard error, and exits 69. The complete
+allowlist is push, pull, remote execution, and the remote cache. Local wrapping, builds, cache
+inspection, repository operations, generated documentation, and artifact operations continue
+against local state.
 
 ## Commands and options
 
@@ -30,15 +48,20 @@ built binary under the build directory before CTest compares it with the committ
 | Command | Usage | Description | Availability |
 |---|---|---|---|
 | `version` | `version [--json]` | Print the library version. | available |
+| `tiers` | `tiers [--json\|--markdown] [--language <name>\|--format <name>]` | Print declared language, format, and platform support. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
+| `clone` | `clone <url\|drive-folder> [<dir>] [--json]` | Clone, configure, and fully materialize a repository. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `inspect` | `inspect <path\|digest> [--json]` | Show the selected format codec, tier, and decoded entry tree. | available |
 | `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
+| `blame` | `blame <path> [--json]` | Show the session and change that last wrote each line. | available on macOS and Linux |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
+| `registry` | `registry trust <pin <root.json>\|show>` | Pin or inspect the current repository's trusted TUF root. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `config` | `config check <file\|dir> \| config lower <file> [--json] [--trace] \| config format <file>` | Check, lower, trace, or canonically format `.liquid` configuration. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
@@ -58,17 +81,19 @@ built binary under the build directory before CTest compares it with the committ
 | `diff` | `diff <a> <b> [path] [--text] [--formats] [--json]` | Compare refs or change digests, optionally decoding changed containers. | available |
 | `ops` | `ops [--json]` | Alias for `log --ops`. | available |
 | `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
-| `lock` | `lock <path>` | Advisory-lock a path. | available |
-| `unlock` | `unlock <path>` | Remove an advisory lock. | available |
+| `lock` | `lock <path> [--reason <text>]` | Acquire configured exclusive checkout for a path. | available |
+| `unlock` | `unlock <path>` | Release exclusive checkout held by the current identity. | available |
 | `session` | `session start <delegation>`, `session write <id> <path> --from <file>`, `session publish <id> [--message <text>]`, or `session discard <id>` | Manage a persisted private speculative replica. | available |
 | `compact` | `compact --epoch [--min-ack-peers <count>]` | Write and record a compact repository epoch. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
-| `import` | `import <path>` or `import git <path>` | Import a local tree or Git repository. | available |
+| `import` | `import <path>`, `import git <path>`, or `import spack <export.json> --into <repository> [--report] [--json]` | Import a local tree, Git repository, or Spack universe. | available |
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
-| `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `identity` | `identity [show\|rotate [--to software\|fido2\|piv:9c]] [--json]` | Show or rotate the device identity and select its key custody. | available |
+| `sign` | `sign <drip\|change\|artifact> <digest>` | Sign a canonical digest value with the current identity backend. | available |
+| `release` | `release policy set --threshold <k> --signer <id>...` or `release <approve\|verify> <artifact>` | Manage signed threshold release approval. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
 | `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
@@ -87,6 +112,8 @@ built binary under the build directory before CTest compares it with the committ
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `project` | `project <oci\|deb\|rpm\|apk\|helm\|macos-pkg\|macos-dmg\|msix\|winget> <result\|install-tree\|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--json]` | Project a checked tree into a package or image, or an MSIX into winget manifests. Platform installers are unsigned and include a signing request. | available on the target platform; winget is portable |
 | `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into a native package, image, ecosystem recipe, or bundled-runtime format. | available |
+| `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm> <result\|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2\|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked tree into packages, OCI or bootc images, an OSTree commit, or a Helm chart. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
@@ -106,6 +133,30 @@ built binary under the build directory before CTest compares it with the committ
 | `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 
 ## Output and errors
+
+`lock` prints the acquired path and `unlock` prints the released path. Acquisition requires a
+matching `.liquid` lock rule. A conflicting write reports the holder identity, acquisition time,
+and reason; [exclusive checkout locks](../library/locks.md) defines offline and connected authority.
+Commands that use a lower support level print one shared line before the affected result:
+
+```text
+tier: <n> (<mechanism>)
+```
+
+Machine-readable output carries the same information as
+`"tier":{"level":<n>,"mechanism":"<mechanism>"}`. `diff` reports `text` for its
+Tier 0 source fallback and `format(<codec>)` for decoded containers; `symbols` reports either the
+grammar digest at Tier 2 or compiler module at Tier 3; archive search reports an unknown member as
+Tier 3 `format(opaque)`; and `wrap` names Linux namespaces, macOS `sandbox-exec`, or Windows's
+unsupported backend. The helper in `src/cli/tier.cpp` owns this spelling.
+
+`inspect` from #70 and the later structural-diff and container-search work in #68 and #69 must use
+the same helper when they register their richer behavior. They add declarations to the existing
+registries rather than maintaining command-local support lists.
+
+`tiers` reads those registries at invocation time. `--json` is the stable machine form,
+`--markdown` emits the marked language/platform and format blocks checked into the feature specs,
+and one `--language` or `--format` selector narrows the result.
 
 `status`, `data list`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`,
 and `cache stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
@@ -261,6 +312,17 @@ sets `approximate`; and a removed line or file sets `deleted`.
 `history` follows the same stable node through moves. `--restore` appends an ordinary working-tree
 drip from the selected change and leaves prior changes and refs untouched. See
 [`history.md`](history.md).
+`clone` accepts `LIQUID_TOKEN` as a bearer credential and does not persist it. Text output names
+the remote and absolute landing path. `--json` writes one object with `path`, `remote`,
+`objects_received`, and `bytes_received`. An existing non-empty destination is refused before any
+network request. HTTP authentication and repository lookup errors retain the library error names
+`unauthorized` and `not_found`; a non-empty destination is `already_exists`. Failed transfers
+remove clone-created target state and preserve an existing empty target directory.
+`blame` resolves the current head and asks the checkout daemon for the public attribution query.
+Its line-oriented form prints one-based line, change, session, actor, agent marker, and text.
+`--json` emits a version-1 object with `path`, `change`, and the same values under `lines`; strings
+use JSON escaping and empty files produce an empty array. The command refuses directories, missing
+paths, and non-UTF-8 content. See [`../library/multiplayer.md`](../library/multiplayer.md).
 `drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
 counts, conflicts, per-path outcomes, and per-reference outcomes. `drive status` also prints the
 hydration threshold, folder-pin rule, pending upload count, non-local byte hydration debt, last
@@ -322,9 +384,25 @@ under a random Shamir KEK and prints the `n` shares once.
 
 Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
 `aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
-`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+`lake:<base-url>/<key>`, `shamir:<threshold>/<share-count>`, and `tpm:pcrs=<list>`. Secret credentials and Shamir
 shares are supplied through the environment described in
 [the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
+
+## Hardware identity and release approval
+
+`identity rotate --to software|fido2|piv:9c` creates a linked successor identity document while
+preserving the TAAP identity. `identity show` includes the active algorithm and custody. FIDO2
+prompts through the selected HID authenticator; PIV uses digital-signature slot `9c` through the OS
+PC/SC service. `sign <drip|change|artifact> <digest>` prints the canonical signature object as hex
+and the signer identity.
+
+`release policy set --threshold <k> --signer <id>...` signs the repository's release role and
+writes `.liquid/release/policy.cbor`. `--role` defaults to `targets`; `--not-after` accepts an RFC
+3339 UTC expiry. `release approve <artifact>` writes the current identity's approval, and `release
+verify <artifact>` counts distinct valid allowed identities, prints missing identities, and exits 1
+when the policy threshold is not met. See
+[`../library/release-approval.md`](../library/release-approval.md) for the signed profiles and trust
+models.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
 Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
 is itself the package directory. Specs containing spaces must be passed as one quoted argument.
@@ -433,13 +511,30 @@ Recorded remote inputs and expected outputs hydrate through the repository's con
 a produced path opens that project's persistent cache. It verifies the result and attestation before
 writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible envelope, projected
 from the same canonical TAAP record.
-`project` accepts a result ID or install-tree digest. A bare tree also requires `--arch`; a result
-uses its action platform and refuses a conflicting override. Repeatable `--depends` values are
-additive to reader-derived dependencies. Helm services use
+`project` accepts a result ID or tree digest. Package, OCI, and bootc projections from a bare tree
+also require `--arch`; a result uses its action platform and refuses a conflicting override.
+Repeatable `--depends` values are additive to reader-derived dependencies. Helm services use
 `name=repository@sha256:digest[,port=N][,env=K=V][,volume=P]`. `--compat-gzip` selects liquid's
 deterministic gzip encoder for Debian and OCI; `--allow-abi-break` records an explicit override.
 Text output lists artifact and attestation digests, while `--json` adds pinned image references,
-dependency labels, and the ABI override bit. See [projection.md](../library/projection.md).
+dependency labels, and the ABI override bit. Homebrew and PKGBUILD emit ecosystem recipes beside
+their payload archives; AppImage, Flatpak, and Snap emit bundled-runtime layouts. Formats without
+an attachment mechanism place DSSE evidence in `<artifact>.attestations.json`. See
+[projection.md](../library/projection.md).
+
+The OS forms use the first digest as the base root and accept repeatable overlays. A bare overlay
+replaces matching paths at the root; `--overlay <path>=<tree-digest>` mounts it below a declared
+relative path. `SOURCE_DATE_EPOCH` supplies the commit time.
+
+```text
+liquid project ostree <base-tree> --overlay <tree> --ref <name> --out <repo>
+liquid project ostree <base-tree> --ref <name> --mode bare-user --out <repo>
+liquid project bootc <base-tree> --overlay usr/local=<tree> --ref <name> --arch x86_64 --out <layout>
+```
+
+OSTree accepts `archive-z2` and `bare-user`; bootc always writes an OCI layout. Text output prints
+`commit: <sha256-hex>` before the artifact line. The bootc artifact line carries the OCI manifest
+digest, while OSTree's artifact digest is the commit checksum. JSON includes `ostree_commit`.
 
 `macos-pkg`, `macos-dmg`, and `msix` use the same checked-tree input and add platform identity
 metadata. The package is reproducible; the disk image reports that it is not. `winget` instead
@@ -566,11 +661,24 @@ Successful wrapping prints one `abi-break:` line for every incompatible rebuilt 
 the previous blob and at most the first three sorted changes. It normally preserves the build exit
 status. `--fail-on-abi-break` changes a successful wrap to status 1 when any such event occurs.
 
+## Spack package import
+
+`liquid import spack <export.json> --into <packages-repository>` imports `spack-export/1`, writes
+formatter-canonical package documents and solver records, and saves `import-report.json`. The
+default success line reports package, translated-field, loss, and newly pinned patch counts.
+`--report` prints the full human-readable report; `--json` selects its stable JSON projection.
+
+With no export path, `liquid import spack --report --into <packages-repository>` reads the saved
+report without importing again. Patch URLs without a digest are accepted only over HTTPS and are
+hashed before their digest enters a package document. See
+[`import-spack.md`](../library/import-spack.md) for the exporter and mapping contract.
+
 ## Examples
 
 ```sh
 liquid version --json
 liquid init .
+LIQUID_TOKEN="$token" liquid clone https://lake.example/repositories/project ./project
 liquid status --json
 liquid daemon
 liquid daemon --shutdown
@@ -600,9 +708,15 @@ liquid materialise /tmp/liquid-checkout src
 liquid gc --dry-run .
 liquid import ../source-tree
 liquid import git ../source-repository
+liquid import spack spack-export.json --into ../packages --report
+liquid import spack --report --into ../packages --json
 liquid export git ../exported-repository main
 liquid retain explain blake3:<object-digest>
-liquid identity rotate
+liquid identity rotate --to fido2
+liquid sign artifact blake3:<artifact-digest>
+liquid release policy set --threshold 2 --signer <taap-id-a> --signer <taap-id-b>
+liquid release approve blake3:<artifact-digest>
+liquid release verify blake3:<artifact-digest>
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
 liquid attest image registry.example/app@sha256:<image-digest> --tree blake3:<tree-digest> --result blake3:<result-digest>
@@ -648,6 +762,8 @@ liquid facts export
 liquid serve reapi --listen 127.0.0.1:8980
 liquid history src/main.cpp
 liquid history src/main.cpp --restore blake3:<change-digest>
+liquid blame src/main.cpp
+liquid blame src/main.cpp --json
 liquid drive sync ~/Documents https://lake.live/api/repositories/example
 liquid drive status ~/Documents
 liquid drive pin ~/Documents/Projects
@@ -673,8 +789,12 @@ creates, applies, and fetches a delta through the built executable and compares 
 by digest. `docs-links` applies the repository link check as a CTest.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.
+`tiers-docs` compares both marked feature blocks byte for byte with `liquid tiers --markdown`, and
+`cli-tiers-json` pins ordering, filters, C++'s Tier 3 frontend, and repeat-run byte stability.
 `cli-secret` round-trips raw CBOR and base64 through the executable and checks that stderr never
 contains the value.
+`cli-blame` creates a repository, invokes the daemon-backed text and JSON forms, and checks their
+stable fields.
 `tests/test_daemon.cpp` runs start-on-first-status through the built CLI and verifies that a library
 client attaches to the same process.
 The privileged Linux build fixtures also invoke `replay --json` for an indexed action and require

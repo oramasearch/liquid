@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -26,11 +27,23 @@ enum class projection_target : std::uint8_t {
     macos_dmg,
     msix,
     winget_manifest,
+    ostree_commit,
+    bootc_image,
+    homebrew,
+    pkgbuild,
+    appimage,
+    flatpak,
+    snap,
 };
 
 enum class platform_signing_system : std::uint8_t {
     macos,
     windows,
+};
+
+enum class ostree_repository_mode : std::uint8_t {
+    archive_z2,
+    bare_user,
 };
 
 struct LIQUID_EXPORT package_metadata {
@@ -53,7 +66,8 @@ struct LIQUID_EXPORT package_metadata {
 };
 
 struct LIQUID_EXPORT projection_source {
-    std::variant<result_id, digest, std::filesystem::path> value;
+    std::variant<result_id, digest> value;
+    std::filesystem::path path;
 };
 
 struct LIQUID_EXPORT projection_service {
@@ -78,6 +92,8 @@ struct LIQUID_EXPORT projection_options {
     std::vector<std::string> oci_command;
     std::filesystem::path entitlements;
     std::string installer_url;
+    std::string ostree_ref;
+    ostree_repository_mode ostree_mode{ostree_repository_mode::archive_z2};
 };
 
 struct LIQUID_EXPORT projection_request {
@@ -121,6 +137,7 @@ struct LIQUID_EXPORT projection_report {
     std::vector<digest> attestations;
     std::vector<pinned_artifact> pinned;
     std::vector<projection_dependency> dependencies;
+    std::optional<digest> ostree_commit;
     bool abi_break_allowed{};
 };
 
@@ -161,5 +178,6 @@ sign_platform(repository& source, std::filesystem::path artifact, platform_signi
 verify_platform_signature(std::filesystem::path artifact);
 [[nodiscard]] LIQUID_EXPORT std::string_view to_string(projection_target target) noexcept;
 [[nodiscard]] LIQUID_EXPORT std::string_view to_string(platform_signing_system platform) noexcept;
+[[nodiscard]] LIQUID_EXPORT std::string_view to_string(ostree_repository_mode mode) noexcept;
 
 } // namespace liquid

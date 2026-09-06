@@ -1,8 +1,10 @@
 #include <charconv>
+#include <cstdlib>
 #include <filesystem>
 #include <print>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "liquid/projection.hpp"
 #include "liquid/repository.hpp"
@@ -24,6 +26,12 @@ auto usage(std::string_view message) -> int {
 auto target(std::string_view value) -> liquid::result<liquid::projection_target> {
     if (value == "oci") {
         return liquid::projection_target::oci_image;
+    }
+    if (value == "ostree") {
+        return liquid::projection_target::ostree_commit;
+    }
+    if (value == "bootc") {
+        return liquid::projection_target::bootc_image;
     }
     if (value == "deb") {
         return liquid::projection_target::deb;
@@ -49,8 +57,51 @@ auto target(std::string_view value) -> liquid::result<liquid::projection_target>
     if (value == "winget") {
         return liquid::projection_target::winget_manifest;
     }
+    if (value == "homebrew") {
+        return liquid::projection_target::homebrew;
+    }
+    if (value == "pkgbuild") {
+        return liquid::projection_target::pkgbuild;
+    }
+    if (value == "appimage") {
+        return liquid::projection_target::appimage;
+    }
+    if (value == "flatpak") {
+        return liquid::projection_target::flatpak;
+    }
+    if (value == "snap") {
+        return liquid::projection_target::snap;
+    }
     return std::unexpected(liquid::error{
         liquid::errc::invalid_argument, "unknown project target", std::string{value}});
+}
+
+auto ostree_mode(std::string_view value) -> liquid::result<liquid::ostree_repository_mode> {
+    if (value == "archive-z2") {
+        return liquid::ostree_repository_mode::archive_z2;
+    }
+    if (value == "bare-user") {
+        return liquid::ostree_repository_mode::bare_user;
+    }
+    return std::unexpected(liquid::error{liquid::errc::invalid_argument,
+                                         "ostree mode must be archive-z2 or bare-user",
+                                         std::string{value}});
+}
+
+auto source_epoch() -> liquid::result<std::uint64_t> {
+    const auto* value = std::getenv("SOURCE_DATE_EPOCH");
+    if (value == nullptr) {
+        return std::uint64_t{};
+    }
+    const auto text = std::string_view{value};
+    auto output = std::uint64_t{};
+    const auto [end, code] = std::from_chars(text.data(), text.data() + text.size(), output);
+    if (code != std::errc{} || end != text.data() + text.size()) {
+        return std::unexpected(liquid::error{liquid::errc::invalid_argument,
+                                             "SOURCE_DATE_EPOCH must be an unsigned integer",
+                                             std::string{text}});
+    }
+    return output;
 }
 
 auto service(std::string_view value) -> liquid::result<liquid::projection_service> {
@@ -113,20 +164,27 @@ auto service(std::string_view value) -> liquid::result<liquid::projection_servic
 
 auto project(int argc, char** argv) -> int {
     if (argc < 2) {
-        return usage("project <target> <result|install-tree|installer> --name N --version V");
+        return usage(
+            "project <target> <result|tree|installer> --name N --version V [target options]");
     }
     auto selected = target(argv[0]);
     if (!selected) {
         return fail(selected.error());
     }
-    auto source_id = liquid::result<liquid::digest>{};
+    auto sources = std::vector<liquid::projection_source>{};
     if (*selected != liquid::projection_target::winget_manifest) {
-        source_id = liquid::parse_digest(argv[1]);
+        auto source_id = liquid::parse_digest(argv[1]);
         if (!source_id) {
             return fail(source_id.error());
         }
+        sources.push_back({.value = *source_id});
     }
-    auto request = liquid::projection_request{.target = *selected};
+    auto epoch = source_epoch();
+    if (!epoch) {
+        return fail(epoch.error());
+    }
+    auto request =
+        liquid::projection_request{.target = *selected, .options = {.source_date_epoch = *epoch}};
     auto json = false;
     for (auto index = 2; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
@@ -142,7 +200,8 @@ auto project(int argc, char** argv) -> int {
             argument == "--out" || argument == "--depends" || argument == "--service" ||
             argument == "--identifier" || argument == "--publisher" ||
             argument == "--display-name" || argument == "--executable" ||
-            argument == "--entitlements" || argument == "--installer-url") {
+            argument == "--entitlements" || argument == "--installer-url" || argument == "--ref" ||
+            argument == "--overlay" || argument == "--mode") {
             auto parsed = value(argument);
             if (!parsed) {
                 return fail(parsed.error());
@@ -169,6 +228,27 @@ auto project(int argc, char** argv) -> int {
                 request.options.entitlements = std::move(*parsed);
             } else if (argument == "--installer-url") {
                 request.options.installer_url = std::move(*parsed);
+            } else if (argument == "--ref") {
+                request.options.ostree_ref = std::move(*parsed);
+            } else if (argument == "--overlay") {
+                const auto equals = parsed->find('=');
+                const auto digest_text = equals == std::string::npos
+                                             ? std::string_view{*parsed}
+                                             : std::string_view{*parsed}.substr(equals + 1);
+                auto overlay = liquid::parse_digest(digest_text);
+                if (!overlay) {
+                    return fail(overlay.error());
+                }
+                sources.push_back({.value = *overlay,
+                                   .path = equals == std::string::npos
+                                               ? std::filesystem::path{}
+                                               : std::filesystem::path{parsed->substr(0, equals)}});
+            } else if (argument == "--mode") {
+                auto mode = ostree_mode(*parsed);
+                if (!mode) {
+                    return fail(mode.error());
+                }
+                request.options.ostree_mode = *mode;
             } else {
                 auto parsed_service = service(*parsed);
                 if (!parsed_service) {
@@ -198,14 +278,16 @@ auto project(int argc, char** argv) -> int {
         return fail(repository.error());
     }
     if (*selected == liquid::projection_target::winget_manifest) {
-        request.sources.push_back({std::filesystem::path{argv[1]}});
+        request.sources.push_back({.path = std::filesystem::path{argv[1]}});
     } else {
-        auto result_page =
-            liquid::runtime::block_on(repository->results({.id = liquid::result_id{*source_id}}));
-        if (result_page && !result_page->records.empty()) {
-            request.sources.push_back({liquid::result_id{*source_id}});
-        } else {
-            request.sources.push_back({*source_id});
+        for (auto& source : sources) {
+            const auto candidate = std::get<liquid::digest>(source.value);
+            auto result_page = liquid::runtime::block_on(
+                repository->results({.id = liquid::result_id{candidate}}));
+            if (result_page && !result_page->records.empty()) {
+                source.value = liquid::result_id{candidate};
+            }
+            request.sources.push_back(std::move(source));
         }
     }
     auto report = liquid::runtime::block_on(liquid::project(*repository, std::move(request)));
@@ -219,6 +301,10 @@ auto project(int argc, char** argv) -> int {
         }
         std::println("{}", *encoded);
         return 0;
+    }
+    if (report->ostree_commit) {
+        const auto checksum = liquid::to_string(*report->ostree_commit);
+        std::println("commit: {}", checksum.substr(checksum.find(':') + 1));
     }
     for (const auto& artifact : report->artifacts) {
         std::println("artifact: {} {} {}",

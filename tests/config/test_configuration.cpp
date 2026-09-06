@@ -243,6 +243,21 @@ TEST(ConfigurationLanguage, package_target_source_and_when_lower_to_typed_record
     EXPECT_EQ(lowered->targets.front().install_layout, "prefix");
 }
 
+TEST(ConfigurationLanguage, lock_path_patterns_lower_to_repository_rules) {
+    const auto text = std::string{"lock generated-assets {\n"
+                                  "  paths: [path \"assets/**\", path \"models/*.bin\"]\n"
+                                  "}\n"};
+    auto parsed = liquid::parse_configuration(text, "locks.liquid");
+    ASSERT_TRUE(parsed) << parsed.error().message;
+    EXPECT_TRUE(liquid::check(*parsed).empty());
+    auto lowered = liquid::lower(*parsed);
+    ASSERT_TRUE(lowered) << lowered.error().message;
+    ASSERT_EQ(lowered->locks.rules.size(), 1U);
+    EXPECT_EQ(lowered->locks.rules.front().name, "generated-assets");
+    EXPECT_EQ(lowered->locks.rules.front().paths,
+              (std::vector<std::string>{"assets/**", "models/*.bin"}));
+}
+
 TEST(ConfigurationLanguage, includes_are_local_and_lower_with_the_document) {
     const auto root = liquid::test::fixture_path("liquid-configuration-includes");
     auto code = std::error_code{};
@@ -366,6 +381,23 @@ TEST(ConfigurationSources, digest_mismatch_never_enters_the_store) {
     EXPECT_FALSE(absent);
 }
 #endif
+
+TEST(ConfigurationSources, declared_content_already_in_store_skips_download) {
+    const auto path = liquid::test::fixture_path("liquid-configuration-source-present");
+    auto repository = liquid::runtime::block_on(liquid::repository::create(path));
+    ASSERT_TRUE(repository) << repository.error().message;
+    auto stored = liquid::runtime::block_on(liquid::repository_detail::build_access::put_record(
+        *repository, bytes("already verified source"), liquid::algorithm::sha256));
+    ASSERT_TRUE(stored) << stored.error().message;
+    const auto value = liquid::source{.name = "present",
+                                      .url = "https://example.invalid/not-requested",
+                                      .content = *stored,
+                                      .kind = liquid::source_kind::file,
+                                      .origin = {.file = "source.liquid"}};
+    auto fetched = liquid::runtime::block_on(repository->fetch_source(value));
+    ASSERT_TRUE(fetched) << fetched.error().message;
+    EXPECT_EQ(liquid::to_string(*fetched), liquid::to_string(*stored));
+}
 
 #if LIQUID_BUILD_HAS_FUSE
 TEST(ConfigurationGenerators, shell_output_lowers_with_verified_result_origin) {

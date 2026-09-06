@@ -1,0 +1,27 @@
+source python-1.18.0 {
+    digest: sha256:e8c7d40d5ac74bbaf546af9b8377bef0f4ca43407ce4d1a7cf5dff0d11d49e41
+    kind: archive
+    url: "https://example.invalid/python-1.18.0.tar.gz"
+}
+
+package python {
+    versions: [1.18.0]
+    depends_on openssl {
+        type: link
+    }
+    depends_on sqlite {
+        type: link
+    }
+    depends_on libffi {
+        type: link
+    }
+}
+
+build python {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/e8c7d40d5ac74bbaf546af9b8377bef0f4ca43407ce4d1a7cf5dff0d11d49e41 -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["python-1.18.0"]
+    install {
+        layout: prefix
+    }
+}

@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid import <path> | import git <path>
+liquid import <path> | import git <path> | import spack <export.json> --into <repository> [--report] [--json] | import spack --report [--into <repository>] [--json]
 ```
 
 ## Description

@@ -18,13 +18,13 @@ checked, transactions roll back, commit metadata and incremental saves exist, re
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
 checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, #30, #41, #195's history/conflict persistence, and #205.**
+**Status: implemented for liquid #2, #3, #30, #41, #42, #195's history/conflict persistence, and #205.**
 The private automerge-cpp wrapper, canonical CBOR codec, versioned sync framing and drip journal
 are implemented. Repository creation and opening, working-tree reads and writes, recorded moves
 and removals, snapshots and changes, references, composition, persisted conflict values, path
-history and restore, session-scoped operation inversion, historical document reads, advisory locks,
-and repository status are implemented over either a repository-local store or a caller-owned store
-shared by multiple repositories.
+history and restore, session-scoped operation inversion, historical document reads, exclusive
+checkout locks, and repository status are implemented over either a repository-local store or a
+caller-owned store shared by multiple repositories.
 
 ## The two layers, precisely
 
@@ -154,7 +154,7 @@ The **repository document** (one per repository; directories are their own docum
   "repo":    repo_id (bytes),  "format": 1,
   "tree":    map                 # the working tree: the current change in progress
   "refs":    map name → change_id text        # "main" → "blake3:…"
-  "locks":   map path-pattern → { by: actor, since: time, authority: "advisory"|"lake" }   # liquid #42
+  "locks":   [{ path, holder: actor, since: time, reason, authority: "advisory"|"lake" } …]
   "nested":  map path → { repo_id, pinned: change_id text }                              # nest/split
   "config":  {
     "encrypt": { "paths": [ { "path": glob, "key_id": text,
@@ -239,7 +239,7 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `operations()` / `undo(op_id)` | every mutation appends an `op` record to `ops` (`{ id, kind, from, to, at, by, session, inverse }`). `operations()` returns them newest first; `undo` applies the selected inverse as a new operation and returns applied and skipped paths. Undo never rewrites history. |
 | `preview_edit(request, attribution)` / `apply_edit(preview)` | Preview records exact range-local replacements and file digests. Apply checks every input before writing one drip per file, then groups every entry effect into one attributed `structural_edit` operation so one undo restores the complete edit. |
 | `undo_session(session, options)` | reverses the matching session newest first, optionally restricted to paths or drip IDs. Each touched directory is one wrapper transaction; candidates are published only after every transaction succeeds. |
-| `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
+| `lock(path, reason)` / `unlock(path)` / `locks()` | A configured path pattern permits acquisition; the repository stores the holder, time, reason, and advisory or lake authority. Writes by the holder continue. A write by another actor is refused with the complete lock details before a transaction opens. Signed offline claims reconcile through conflict values; an injected connected callback asks lake before acquisition or release. |
 | `fork_session(options)` / `open_session(id)` | Fork the current repository document at a recorded change into `sessions/<id>` on the same store. Content chunks remain shared; only the private repository document, directory checkpoints, and journal are distinct. Session writes never enter the shared drip journal. |
 | `session::publish(options)` / `discard()` | Diff the private head against its fork tree, validate every scope and the fork-point base, then persist the net result once with one signed `publish` drip per touched directory. Atomic publication restores all candidate documents on failure. Publish or discard closes the private state; discard also releases its leases. |
 | `lease(claim, ttl)` / `release(claim)` / `leases()` | Persist file, symbol, or byte-range intent in `leases`. Symbol claims resolve through the recorded symbol ranges. Overlapping claims and writes by another actor/session return `errc::locked` naming the holder. Expired claims are removed on observation. |

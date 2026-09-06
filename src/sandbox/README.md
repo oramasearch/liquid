@@ -4,6 +4,9 @@ Platform launchers enforce the fixed action environment and isolate network and 
 Ordinary build and wrap requests deny network access. PostgreSQL data lifecycle requests and wraps
 whose fixed environment contains a repository-resolved session branch use the same launcher with
 an explicit network capability; callers cannot enable it through an ordinary `action_input`.
+The offline CLI proof selects a network-only request: macOS preserves ordinary access to the test
+tree and local Unix-domain IPC while `sandbox-exec` denies IP networking, and Linux enters a
+separate network namespace.
 The profile does not add executable-specific permissions: data actions invoke their recorded
 installed PostgreSQL clients through the pre-existing installed-tool roots, while an ordinary
 action remains unable to execute an arbitrary external binary.

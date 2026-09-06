@@ -37,6 +37,8 @@ the public encoder.
 | `image_provenance/1` | artifact | `image:text`, `tree:text` | `result:text` | none |
 | `projection/1` | artifact | `target:text`, `source_result:text_list`, `normalisation:text`, `tool:text` | none | none |
 | `platform_signature/1` | artifact | `platform:text`, `unsigned_digest:text`, `signed_digest:text`, `signing_identity:text`, `verification:text` | `notarization_ticket:text`, `timestamp_response:text` | none |
+| `release_policy/1` | repository | `role:text`, `threshold:unsigned_integer`, `signers:text_list`, `not_after:text` | none | none |
+| `release_approval/1` | artifact | `policy:text`, `release:text` | none | none |
 
 `*` marks a field that may be represented by a salted disclosure commitment rather than its
 plaintext value. A required field is satisfied by its committed value when the profile permits it.
@@ -100,6 +102,10 @@ response. The sidecar is signed by the local TAAP identity and `liquid sign veri
 signature, both digest bindings, and `pkgutil`, `codesign`, or `signtool` before returning success;
 an attested notary ticket also requires a fresh `spctl` assessment.
 See [projection.md](projection.md#unsigned-projection-and-platform-signing).
+`release_policy/1` and `release_approval/1` implement independent-signature release authorization.
+The policy binds a repository role, threshold, allowed TAAP identities, and expiry; each approval
+binds one artifact to the complete signed policy. Distinct counting, compromise-time rejection,
+and TUF alignment are specified in [release-approval.md](release-approval.md).
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's

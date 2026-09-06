@@ -5,12 +5,13 @@
 ## Synopsis
 
 ```text
-liquid sign <macos|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize] | sign verify <artifact>
+liquid sign <drip|change|artifact> <digest> | sign <macos|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize] | sign verify <artifact>
 ```
 
 ## Description
 
-Sign outside the projection sandbox and write a platform_signature/1 attestation.
+Sign canonical digests with the current software, FIDO2, or PIV identity key, or sign an installer
+outside the projection sandbox and write a platform_signature/1 attestation.
 
 ## Options
 

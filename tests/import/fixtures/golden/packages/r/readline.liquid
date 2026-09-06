@@ -1,0 +1,21 @@
+source readline-1.10.0 {
+    digest: sha256:50dd511f586a79a292a98721ef9d81a0226705486b488c19798c084cdfe03cf6
+    kind: archive
+    url: "https://example.invalid/readline-1.10.0.tar.gz"
+}
+
+package readline {
+    versions: [1.10.0]
+    depends_on ncurses {
+        type: link
+    }
+}
+
+build readline {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/50dd511f586a79a292a98721ef9d81a0226705486b488c19798c084cdfe03cf6 -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["readline-1.10.0"]
+    install {
+        layout: prefix
+    }
+}

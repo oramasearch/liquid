@@ -1,0 +1,21 @@
+source openmpi-1.13.0 {
+    digest: sha256:091a078c5e7093808e5fb423a806b252c336b3a97381ee864b06df1799a5a6b7
+    kind: archive
+    url: "https://example.invalid/openmpi-1.13.0.tar.gz"
+}
+
+package openmpi {
+    versions: [1.13.0]
+    provides mpi {
+        version: "3:5"
+    }
+}
+
+build openmpi {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/091a078c5e7093808e5fb423a806b252c336b3a97381ee864b06df1799a5a6b7 -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["openmpi-1.13.0"]
+    install {
+        layout: prefix
+    }
+}
