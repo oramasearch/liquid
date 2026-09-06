@@ -63,8 +63,11 @@ byte, cursor, and per-ref outcome lines, and returns failure when any ref is ref
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
 
-The public command table, replay output contract, and user-facing examples live in
-[`docs/cli/README.md`](../../docs/cli/README.md).
+The CLI-internal metadata and validator live in `metadata.hpp` and `arguments.cpp`. Every command
+passes through the typed option allow-list before its handler interprets values. `docs.cpp` renders
+the same table as command help, Markdown, stable JSON, and man pages. The generated reference lives
+in [`docs/reference/cli/`](../../docs/reference/cli/); the replay output contract and contributor
+notes remain in [`docs/cli/README.md`](../../docs/cli/README.md).
 
 `history.cpp` implements `ops` through the public operation-log API. Its JSON form includes the
 operation session. `repo.cpp` implements `log --ops` through the signed drip API. Undo accepts one

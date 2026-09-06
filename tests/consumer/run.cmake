@@ -22,6 +22,13 @@ execute_process(
 if(NOT install_result EQUAL 0)
   message(FATAL_ERROR "consumer install failed\n${install_output}\n${install_error}")
 endif()
+if(LIQUID_CONSUMER_HAS_CLI)
+  foreach(page IN ITEMS liquid.1 liquid-docs.1 liquid-wrap.1)
+    if(NOT EXISTS "${LIQUID_CONSUMER_INSTALL_DIR}/share/man/man1/${page}")
+      message(FATAL_ERROR "consumer install is missing share/man/man1/${page}")
+    endif()
+  endforeach()
+endif()
 
 set(configure_command
   "${CMAKE_COMMAND}"

@@ -513,12 +513,15 @@ if(LIQUID_BUILD_CLI)
   add_executable(liquid-cli
     src/main.cpp
     src/cli/abi.cpp
+    src/cli/arguments.cpp
     src/cli/anchor.cpp
     src/cli/attestation.cpp
     src/cli/capture.cpp
     src/cli/daemon.cpp
     src/cli/compose.cpp
     src/cli/delta.cpp
+    src/cli/diff.cpp
+    src/cli/docs.cpp
     src/cli/gc.cpp
     src/cli/facts.cpp
     src/cli/git.cpp
@@ -545,6 +548,18 @@ if(LIQUID_BUILD_CLI)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE
     liquid::liquid Boost::corosio Boost::http)
+  target_include_directories(liquid-cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  set(LIQUID_MAN_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/man)
+  add_custom_command(
+    OUTPUT ${LIQUID_MAN_DIRECTORY}/generated.stamp
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_MAN_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIQUID_MAN_DIRECTORY}
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format man --out ${LIQUID_MAN_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E touch ${LIQUID_MAN_DIRECTORY}/generated.stamp
+    DEPENDS liquid-cli
+    VERBATIM)
+  add_custom_target(liquid-man-pages ALL
+    DEPENDS ${LIQUID_MAN_DIRECTORY}/generated.stamp)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -605,6 +620,9 @@ foreach(LIQUID_BOOST_LIBRARY
 endforeach()
 if(LIQUID_BUILD_CLI)
   install(TARGETS liquid-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(DIRECTORY ${LIQUID_MAN_DIRECTORY}/
+    DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
+    FILES_MATCHING PATTERN "*.1")
 endif()
 install(EXPORT liquidTargets NAMESPACE liquid::
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/liquid)

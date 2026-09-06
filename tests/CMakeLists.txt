@@ -4,6 +4,12 @@ set(LIQUID_HTTP2_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/http2/grpc.cpp
   ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
 
+find_program(LIQUID_PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
+add_test(NAME docs-links
+  COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/check-links.py
+    ${PROJECT_SOURCE_DIR})
+
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
   test_drip.cpp
@@ -239,13 +245,44 @@ if(LIQUID_BUILD_CLI)
   add_test(NAME cli-help-docs
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
-      -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
+      -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/reference/cli/README.md
+      -DLIQUID_CLI_REFERENCE=${PROJECT_SOURCE_DIR}/docs/reference/cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-reference-docs
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_REFERENCE_SOURCE=${PROJECT_SOURCE_DIR}/docs/reference/cli
+      -DLIQUID_REFERENCE_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/cli-reference
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/reference-docs.cmake)
+  add_test(NAME cli-docs-json
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format json)
+  set_tests_properties(cli-docs-json PROPERTIES
+    PASS_REGULAR_EXPRESSION "^\\{\"schema_version\":1,\"commands\":\\[")
+  add_test(NAME cli-man-pages
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_MAN_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/cli-man-pages
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/man-pages.cmake)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME guides-run
+      COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/guides/run.py
+        --liquid $<TARGET_FILE:liquid-cli>
+        --guides ${PROJECT_SOURCE_DIR}/docs/guides
+        --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/build/wrap
+        --work ${CMAKE_CURRENT_BINARY_DIR}/guides-run)
+    set_tests_properties(guides-run PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  endif()
   add_test(NAME cli-delta
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_DELTA_ROOT=${CMAKE_CURRENT_BINARY_DIR}/delta-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/delta.cmake)
+  add_test(NAME cli-diff
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_DIFF_ROOT=${CMAKE_CURRENT_BINARY_DIR}/diff-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/diff.cmake)
   add_test(NAME cli-why-json
     COMMAND ${CMAKE_COMMAND} -E env
       LIQUID_WRAP_CACHE=${CMAKE_CURRENT_BINARY_DIR}/why-cli-cache
@@ -514,4 +551,5 @@ add_test(NAME consumer-project-build
     -DLIQUID_CONSUMER_GENERATOR=${CMAKE_GENERATOR}
     -DLIQUID_CONSUMER_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     -DLIQUID_CONSUMER_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    -DLIQUID_CONSUMER_HAS_CLI=${LIQUID_BUILD_CLI}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/consumer/run.cmake)

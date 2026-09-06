@@ -46,7 +46,8 @@ one repository without losing the other, and reopens by identifier. Tree-diff ca
 additions, removals, content and mode changes, `node_id` moves, opt-in text hunks, and stored
 conflict values. Text-anchor cases map unchanged and shifted lines, approximate replacements,
 deleted regions and files, and a renamed node in one unsorted batch. CLI scenario and
-command-documentation tests live in `cli/`. `test_runtime.cpp`
+command-documentation tests live in `cli/`. Marked guide blocks run through `guides/run.py` on
+Linux, and `docs/check-links.py` checks the documentation tree on every platform. `test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
