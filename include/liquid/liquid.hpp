@@ -1,6 +1,7 @@
 #pragma once
 // Umbrella header for libliquid. Everything under include/liquid/ is the public API.
 #include "liquid/abi.hpp"
+#include "liquid/admission.hpp"
 #include "liquid/asn1.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/build.hpp"

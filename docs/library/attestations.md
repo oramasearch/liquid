@@ -33,6 +33,7 @@ the public encoder.
 | `abi_compatibility/1` | library | `compatible_with:text`, `compatibility:text` | `notes:text` | none |
 | `scan_result/1` | drip | fixed record fields `detectors:text_list`, `findings:unsigned_integer`, `allowances:text_list` | none | maximum attestation age: 24 hours |
 | `reproducibility/1` | artifact | `verified_by:text`, `sandbox:text`, `agreement:boolean` | `differing_outputs:text_list` | none |
+| `image_provenance/1` | artifact | `image:text`, `tree:text` | `result:text` | none |
 
 `*` marks a field that may be represented by a salted disclosure commitment rather than its
 plaintext value. A required field is satisfied by its committed value when the profile permits it.
@@ -60,6 +61,9 @@ library has an earlier descriptor for the same output path. The current library 
 `compatible_with` names the earlier blob, `compatibility` records the deterministic verdict, and
 `notes` records the change count. The repository device identity signs it through the same issuer
 path as provenance and SBOM claims. [abi.md](abi.md) defines extraction and verdict rules.
+`image_provenance/1` uses the OCI image's SHA-256 digest as its subject. `image` is the complete
+digest-pinned reference, `tree` is its `io.liquid.tree` digest, and optional `result` is the build
+result projected into the image. [`admission.md`](admission.md) defines its minting and policy use.
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's

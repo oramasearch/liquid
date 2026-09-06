@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <limits>
@@ -24,6 +25,7 @@
 #include <boost/http.hpp>
 #include <boost/http/server/http_worker.hpp>
 
+#include "liquid/admission.hpp"
 #include "liquid/error.hpp"
 #include "liquid/reapi.hpp"
 #include "liquid/repository.hpp"
@@ -419,11 +421,86 @@ auto serve_reapi(int argc, char** argv) -> int {
     return served ? 0 : fail(served.error());
 }
 
+auto environment(std::string_view name) -> std::string {
+    const auto* value = std::getenv(std::string{name}.c_str());
+    return value ? value : std::string{};
+}
+
+auto serve_admission(int argc, char** argv) -> int {
+    auto options = liquid::admission_options{};
+    options.policy = environment("LIQUID_ADMISSION_POLICY");
+    if (auto value = environment("LIQUID_ADMISSION_LISTEN"); !value.empty()) {
+        options.listen = std::move(value);
+    }
+    if (auto value = environment("LIQUID_CONTROL_LISTEN"); !value.empty()) {
+        options.control_listen = std::move(value);
+    }
+    options.tls_certificate = environment("LIQUID_ADMISSION_TLS_CERT");
+    options.tls_key = environment("LIQUID_ADMISSION_TLS_KEY");
+    options.attestation_source = environment("LIQUID_ADMISSION_ATTESTATION_SOURCE");
+    options.log_cache = environment("LIQUID_ADMISSION_LOG_CACHE");
+    auto source_flag = false;
+    auto store_flag = false;
+    for (auto index = 1; index < argc; ++index) {
+        const auto argument = std::string_view{argv[index]};
+        if (argument == "--insecure-http") {
+            options.insecure_http = true;
+            continue;
+        }
+        if (++index == argc) {
+            return usage("serve admission received an incomplete option");
+        }
+        if (argument == "--policy") {
+            options.policy = argv[index];
+        } else if (argument == "--listen") {
+            options.listen = argv[index];
+        } else if (argument == "--control-listen") {
+            options.control_listen = argv[index];
+        } else if (argument == "--tls-cert") {
+            options.tls_certificate = argv[index];
+        } else if (argument == "--tls-key") {
+            options.tls_key = argv[index];
+        } else if (argument == "--attestation-source") {
+            options.attestation_source = argv[index];
+            source_flag = true;
+        } else if (argument == "--store") {
+            options.store = argv[index];
+            store_flag = true;
+        } else if (argument == "--log-cache") {
+            options.log_cache = argv[index];
+        } else {
+            return usage("serve admission received an unknown option");
+        }
+    }
+    if (options.policy.empty()) {
+        return usage("serve admission requires --policy <file>");
+    }
+    if (source_flag && store_flag) {
+        return usage("serve admission accepts only one of --store and --attestation-source");
+    }
+    if (store_flag) {
+        options.attestation_source.clear();
+    }
+    if (!options.insecure_http && (options.tls_certificate.empty() || options.tls_key.empty())) {
+        return usage("serve admission requires --tls-cert and --tls-key or --insecure-http");
+    }
+    if (options.insecure_http) {
+        std::println(stderr, "warning: admission insecure HTTP is enabled");
+    }
+    std::println("admission listening on {}", options.listen);
+    std::println("admission control listening on {}", options.control_listen);
+    auto served = liquid::runtime::block_on(liquid::serve_admission(std::move(options)));
+    return served ? 0 : fail(served.error());
+}
+
 } // namespace
 
 auto serve(int argc, char** argv) -> int {
     if (argc >= 1 && std::string_view{argv[0]} == "reapi") {
         return serve_reapi(argc, argv);
+    }
+    if (argc >= 1 && std::string_view{argv[0]} == "admission") {
+        return serve_admission(argc, argv);
     }
     auto options = parse_options(argc, argv);
     if (!options) {
