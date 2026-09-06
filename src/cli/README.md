@@ -75,6 +75,9 @@ by dependency; conflict and package-choice explanations use the stable library f
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`deploy.cpp` implements deployment creation, listing, rollback, and status through the public
+deployment API. It resolves the operator control-plane URL from `--control`, `LIQUID_CONTROL_PLANE`,
+or persisted repository configuration, and passes `LIQUID_TOKEN` only as a bearer credential.
 `review.cpp` implements lake review listing, display, creation, anchored comments, state updates,
 branch protections, and the polling watch entirely through `forge_client`. It reads `LIQUID_TOKEN`
 for the bearer and pins both line-oriented text and JSON output without exposing the token.

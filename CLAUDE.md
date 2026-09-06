@@ -150,6 +150,10 @@ Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA a
 3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
 anchors and historical certificate validation.
 
+Liquid #84 adds an operator-control-plane deployment client with digest-pinned interim OCI images,
+named environments, status readback, and rollback. It uses liquid's HTTP client and neither links
+Zetta nor lake code; the provisional wire contract is `contracts/control-plane/openapi.json`.
+
 ### Vocabulary — use these words exactly
 
 | Term | Meaning |

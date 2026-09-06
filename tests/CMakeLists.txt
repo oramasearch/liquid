@@ -9,6 +9,7 @@ add_executable(liquid-tests
   test_asn1.cpp
   test_drip.cpp
   test_delta.cpp
+  test_deploy.cpp
   test_daemon.cpp
   test_error.cpp
   test_forge.cpp

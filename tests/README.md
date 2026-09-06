@@ -8,6 +8,9 @@ coverage uses the private Corosio connection adapter.
 documented envelope error; bearer isolation; HTTPS with the committed certificate; rebase anchor
 mapping; polling review events; and the built CLI's pinned JSON. `support/forge_double` provides the
 installable in-memory server used by those cases and downstream liquify tests.
+`test_deploy.cpp` covers digest-pinned control-plane deployment creation, action-key reuse,
+rollback to a prior deployment or change, readiness projection, persisted deployment configuration,
+and control-plane envelope failures.
 
 Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
 identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
