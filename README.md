@@ -82,6 +82,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > stable JSON, and installed man-page reference from that table. Executable guides cover an
 > existing wrapped build, a first repository and sync peer, and the current keys-and-encryption
 > boundary. CI renders the complete documentation tree as a downloadable static-site artifact.
+> The repository-backed TUF client verifies Lake root rotation, timestamp, snapshot, targets, and
+> complete target bytes before registry or drive clients may accept them. `liquid registry trust`
+> pins or displays the out-of-band root.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
@@ -299,6 +302,8 @@ and Zetta's.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/deploy.md`](docs/library/deploy.md) — operator control-plane deployment records, digest-pinned interim images, rollback, status, and contract boundary.
+- [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
+- [`docs/library/tuf.md`](docs/library/tuf.md) — TUF root bootstrap, metadata update verification, rollback protection, and target acceptance.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
 - [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.
