@@ -73,6 +73,7 @@ that the table and `liquid --help` name the same commands.
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
 | `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
+| `edit` | `edit <rename\|extract\|move\|apply> ... [--json] [--apply] [--agent <name>]` | Preview or apply a structural edit through the daemon. | available on macOS and Linux |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
 | `serve` | `serve admission --policy <file> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>]` | Serve image admission and its control API. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
@@ -173,6 +174,14 @@ changed tree entry. `--text` computes line hunks, and `--formats` prints the con
 codec and observed tier followed by indented added, removed, or modified logical entries. Nested
 containers are indented again. An optional path selects that entry or subtree. `--json` returns an
 array whose entries carry `path`, `changes`, and an optional recursive `container` value.
+`edit rename <path>:<line>:<column> <new-name>`, `edit extract
+<path>:<start-line>-<end-line> <name> [--value]`, and `edit move
+<path>:<line>:<column> <to-path> [--at <line>]` construct their public libliquid requests. `edit
+apply <edits.cbor>` reads a canonical tree-edit request. All four preview through the checkout
+daemon. Text output is a unified diff followed by refusals; `--json` prints the versioned preview
+record. `--apply` applies that same preview, and `--agent` records the caller name. Any refusal
+exits 1 without applying accepted changes from the same preview. See
+[`../library/edit.md`](../library/edit.md) for collision, stale-node, and undo behavior.
 ## Key custody
 
 `keys show [key-id]` prints one line per held or revoked data-key version. `keys rewrap <key-id>

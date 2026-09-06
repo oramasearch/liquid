@@ -123,6 +123,9 @@ enumeration used by CLI record views.
 Liquid #66 adds content-addressed compiler and syntactic-fallback symbol records derived from
 recorded compile actions, graph retrieval,
 repository access, and the `liquid symbols` command.
+Liquid #205 adds optional concrete syntax to frontend ABI v1 and implemented C/C++ structural
+rename, extract, move, and tree-edit previews and applies through libliquid, the local daemon, and
+`liquid edit`, with attributed grouped undo.
 Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
 approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,

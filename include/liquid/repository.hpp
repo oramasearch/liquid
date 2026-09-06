@@ -15,6 +15,7 @@
 
 #include "liquid/abi.hpp"
 #include "liquid/build.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/format.hpp"
@@ -327,10 +328,6 @@ struct LIQUID_EXPORT readability_report {
     std::vector<std::string> limits;
 };
 
-struct LIQUID_EXPORT op_id {
-    digest value;
-};
-
 struct LIQUID_EXPORT operation_record {
     op_id id;
     std::string kind;
@@ -502,6 +499,9 @@ public:
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
     [[nodiscard]] runtime::task<digest> store_symbols(symbol_record value);
     [[nodiscard]] runtime::task<symbol_record> symbols(digest id);
+    [[nodiscard]] runtime::task<edit_preview> preview_edit(edit_request request,
+                                                           edit_attribution attribution);
+    [[nodiscard]] runtime::task<edit_result> apply_edit(const edit_preview& preview);
     [[nodiscard]] runtime::task<void> set_policy(policy_config policy);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);

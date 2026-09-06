@@ -13,5 +13,8 @@ Clang static target for applications that register a descriptor at link time.
 Both bundled modules implement the `symbols` ABI operation. Their origin label distinguishes the
 compiler module from tree-sitter syntax fallback; the record is in
 [`docs/library/symbols.md`](../../docs/library/symbols.md).
+The optional ABI v1 `syntax` operation returns the complete concrete tree as canonical CBOR.
+Tree-sitter implements it for every configured grammar; Clang leaves its descriptor pointer null.
+Shared encoding and traversal live in `common/syntax.cpp`.
 Grammar distribution, trust, subset/mirror controls, and maintenance are documented in
 [`docs/library/grammars.md`](../../docs/library/grammars.md).
