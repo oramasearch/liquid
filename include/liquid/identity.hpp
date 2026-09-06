@@ -117,6 +117,22 @@ struct LIQUID_EXPORT argon2_parameters {
     std::uint32_t lanes{1};
 };
 
+using key = std::array<std::byte, 32>;
+
+struct LIQUID_EXPORT wrap_context {
+    std::string key_id;
+    std::uint64_t version{};
+};
+
+struct LIQUID_EXPORT custody_record {
+    std::string key_id;
+    std::uint64_t version{};
+    std::string custody;
+    std::vector<std::byte> parameters;
+    bool current{};
+    bool revoked{};
+};
+
 struct LIQUID_EXPORT rotation_report {
     std::string key_id;
     std::uint64_t previous_version{};
@@ -133,9 +149,18 @@ public:
     key_provider(const key_provider&) = delete;
     key_provider& operator=(const key_provider&) = delete;
 
+    [[nodiscard]] virtual runtime::task<std::vector<std::byte>>
+    wrap(std::span<const std::byte, 32> data_key, wrap_context context) = 0;
+    [[nodiscard]] virtual runtime::task<key> unwrap(std::span<const std::byte> wrapped,
+                                                    wrap_context context) = 0;
+    [[nodiscard]] virtual std::string_view custody_kind() const noexcept = 0;
+
 protected:
-    [[nodiscard]] virtual result<std::array<std::byte, 32>>
-    derive_kek(std::span<const std::byte> salt, argon2_parameters parameters) const = 0;
+    [[nodiscard]] virtual std::vector<std::byte> parameters() const;
+    [[nodiscard]] virtual runtime::task<key> unwrap_legacy(std::span<const std::byte> wrapped,
+                                                           std::span<const std::byte> salt,
+                                                           argon2_parameters parameters,
+                                                           wrap_context context);
 
     friend class keyring;
 };
@@ -149,12 +174,21 @@ public:
     passphrase_provider(const passphrase_provider&) = delete;
     passphrase_provider& operator=(const passphrase_provider&) = delete;
 
-    [[nodiscard]] result<std::array<std::byte, 32>> derive(std::span<const std::byte> salt,
-                                                           argon2_parameters parameters = {}) const;
+    [[nodiscard]] result<key> derive(std::span<const std::byte> salt,
+                                     argon2_parameters parameters = {}) const;
+
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    wrap(std::span<const std::byte, 32> data_key, wrap_context context) override;
+    [[nodiscard]] runtime::task<key> unwrap(std::span<const std::byte> wrapped,
+                                            wrap_context context) override;
+    [[nodiscard]] std::string_view custody_kind() const noexcept override;
 
 protected:
-    [[nodiscard]] result<std::array<std::byte, 32>>
-    derive_kek(std::span<const std::byte> salt, argon2_parameters parameters) const override;
+    [[nodiscard]] std::vector<std::byte> parameters() const override;
+    [[nodiscard]] runtime::task<key> unwrap_legacy(std::span<const std::byte> wrapped,
+                                                   std::span<const std::byte> salt,
+                                                   argon2_parameters parameters,
+                                                   wrap_context context) override;
 
 private:
     struct impl;
@@ -172,18 +206,40 @@ public:
     key_file_provider(const key_file_provider&) = delete;
     key_file_provider& operator=(const key_file_provider&) = delete;
 
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    wrap(std::span<const std::byte, 32> data_key, wrap_context context) override;
+    [[nodiscard]] runtime::task<key> unwrap(std::span<const std::byte> wrapped,
+                                            wrap_context context) override;
+    [[nodiscard]] std::string_view custody_kind() const noexcept override;
+
 protected:
-    [[nodiscard]] result<std::array<std::byte, 32>>
-    derive_kek(std::span<const std::byte> salt, argon2_parameters parameters) const override;
+    [[nodiscard]] std::vector<std::byte> parameters() const override;
+    [[nodiscard]] runtime::task<key> unwrap_legacy(std::span<const std::byte> wrapped,
+                                                   std::span<const std::byte> salt,
+                                                   argon2_parameters parameters,
+                                                   wrap_context context) override;
 
 private:
-    explicit key_file_provider(std::array<std::byte, 32> key) noexcept;
+    explicit key_file_provider(key key_bytes, std::filesystem::path path) noexcept;
     struct impl;
     std::unique_ptr<impl> impl_;
 };
 
+struct LIQUID_EXPORT custody_split {
+    std::shared_ptr<key_provider> provider;
+    std::vector<std::string> shares;
+};
+
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::shared_ptr<key_provider>>
+key_provider_from_uri(std::string custody_uri);
+[[nodiscard]] LIQUID_EXPORT result<custody_split> split_custody(std::uint8_t threshold,
+                                                                std::uint8_t shares);
+
 class LIQUID_EXPORT keyring {
 public:
+    [[nodiscard]] static runtime::task<std::shared_ptr<keyring>>
+    open(std::filesystem::path keys_path);
+
     keyring();
     ~keyring();
     keyring(keyring&&) noexcept;
@@ -198,12 +254,12 @@ public:
                                              std::shared_ptr<key_provider> new_provider);
     [[nodiscard]] runtime::task<rotation_report> rotate(std::string key_id);
     [[nodiscard]] runtime::task<void> revoke(std::string key_id, std::uint64_t version);
+    [[nodiscard]] runtime::task<std::vector<custody_record>> show(std::string key_id = {});
 
 private:
     [[nodiscard]] runtime::task<void> attach(std::filesystem::path keys_path);
     [[nodiscard]] runtime::task<std::string> write_key(std::string key_id);
-    [[nodiscard]] runtime::task<std::array<std::byte, 32>> data_key(std::string key_id,
-                                                                    bool create_if_missing);
+    [[nodiscard]] runtime::task<key> data_key(std::string key_id, bool create_if_missing);
 
     struct impl;
     std::unique_ptr<impl> impl_;
