@@ -29,6 +29,9 @@ descriptor for its path, stores `abi/1`, and issues `abi_compatibility/1`.
 signature-valid input/output claims consumed by dependency resolution. `normalise.cpp` classifies
 collected artifacts and applies directory-mode, deterministic-archive, and hash-based Python
 bytecode rules on the runtime compute pool before storage.
+`relocation.cpp` scans materialised or repository-backed install trees on the runtime compute pool,
+uses the binary readers for runtime paths, and reports stable file offsets. `wrap.cpp` invokes it
+before install-result publication and records an explicit waiver in the saved scheduling reason.
 `policy.cpp` validates and digests repository policy, walks source and toolchain input trees, verifies
 subject-indexed attestations, counts distinct approved issuers, and produces refusal or warning
 reports before cache lookup and execution.
@@ -55,6 +58,8 @@ execution and wrapping demand persisted `action_result` graph nodes before the d
 wrapper primes a node for every discovered tool action; after an upstream miss, the child hook
 checks a condition over the producer's output bytes before accepting a downstream hit, giving
 unchanged objects early cutoff without hiding a changed object from the linker.
+Install mode adds build-system prefix and relative-loader conventions, stages through `DESTDIR`,
+and publishes the logical prefix as an unrooted install tree.
 Refreshed saved actions retain their prior dependency order so invalidated producer outputs are
 known before any dependent plan is accepted.
 The exec-time hook is found relative to the running binary in a build tree or the installed

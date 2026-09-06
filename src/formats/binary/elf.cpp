@@ -15,6 +15,8 @@ constexpr auto sht_dynsym = std::uint32_t{11};
 constexpr auto shn_undef = std::uint16_t{0};
 constexpr auto dt_needed = std::uint64_t{1};
 constexpr auto dt_soname = std::uint64_t{14};
+constexpr auto dt_rpath = std::uint64_t{15};
+constexpr auto dt_runpath = std::uint64_t{29};
 
 auto malformed(std::string message) -> error {
     return {errc::corrupt, std::move(message), "ELF"};
@@ -862,7 +864,7 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
             if (!tag || !value || *tag == 0) {
                 break;
             }
-            if (*tag != dt_needed && *tag != dt_soname) {
+            if (*tag != dt_needed && *tag != dt_soname && *tag != dt_rpath && *tag != dt_runpath) {
                 continue;
             }
             auto name = text(
@@ -870,10 +872,16 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
             if (!name) {
                 continue;
             }
+            const auto string_offset = sections[dynamic->link].offset + *value;
             if (*tag == dt_soname) {
+                output.path_references.push_back({path_kind::install_name, *name, string_offset});
                 output.install_name = std::move(*name);
-            } else {
+            } else if (*tag == dt_needed) {
+                output.path_references.push_back({path_kind::needed_library, *name, string_offset});
                 output.needed_libraries.push_back(std::move(*name));
+            } else {
+                output.path_references.push_back(
+                    {path_kind::runtime_search_path, std::move(*name), string_offset});
             }
         }
     }

@@ -87,10 +87,17 @@ owning issue in `error::context`.
 | `liquid/vfs.hpp` | #6, #235 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS, including drive xattrs and policy hydration; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #26, #27, #57, #60, #56, #58, #61, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, content-addressed outputs, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, named upstream result/tree inputs, canonical output-tree claims, signature-valid `known_outputs` enumeration, complete configured plan entries that preserve named input trees, stable JSON event projection, move-only build handles and subscriptions, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
 | `liquid/daemon.hpp` | #21, #23, #32, #85, #193, #195, #200, #205 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured hot-update and drive sync, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, structural-edit preview/apply, repository and direct-action build stream forwarding, attach, and shutdown |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #26, #27, #57, #60, #56, #58, #61, #73, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, content-addressed and relocation-checked outputs, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, named upstream result/tree inputs, canonical output-tree claims, relocation findings and reports, install-prefix wrapper conventions and waiver, signature-valid `known_outputs` enumeration, complete configured plan entries that preserve named input trees, stable JSON event projection, move-only build handles and subscriptions, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
+| `liquid/daemon.hpp` | #21, #23, #193, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #27, #57, #60, #56, #58, #61, #73, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, relocation-checked outputs, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, relocation findings and reports, install-prefix wrapper conventions and waiver, complete configured plan entries and stable JSON projection, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
+| `liquid/daemon.hpp` | #21, #23, #85, #193, #200, #205 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, structural-edit preview/apply, repository and direct-action build stream forwarding, attach, and shutdown |
+| `liquid/daemon.hpp` | #21, #23, #193, #195, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured drive sync, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
+| `liquid/daemon.hpp` | #21, #23, #85, #193, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/forge.hpp` | #201 | implemented | plain review, comment, mapped-anchor, branch-protection, and polling-event values plus a move-only coroutine client and watch; HTTP and JSON remain private |
 | `liquid/secret.hpp` | #204 | implemented | X25519 sealing keys, exact deployment scopes, canonical-CBOR sealed-secret encode/decode, synchronous seal/unseal, keypair generation, and coroutine-native Lake public-key fetch |
 | `liquid/sync.hpp` | #160, #165, #177, #189, #202, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, whole-graph and metadata-only `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull, node stores, and lake clients |
 | `liquid/sync.hpp` | #85, #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, peer flow rejection and retry reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
@@ -665,6 +672,45 @@ in [sync.md](sync.md); pack frames remain private wire data.
 `receive_metadata` accepts tree roots, stores only tree and blob records, registers blob content at
 the session's remote source and instance, and reports fetched record counts plus bytes still remote.
 
+### `liquid/forge.hpp`
+
+```cpp
+enum class forge_review_state : std::uint8_t { open, approved, closed };
+struct forge_review { std::string id; change_id change; forge_review_state state;
+                      std::vector<std::string> reviewers;
+                      std::chrono::sys_seconds created, updated; };
+struct forge_comment { std::string id, review; std::optional<actor> author; std::string body;
+                       text_anchor anchor; std::optional<mapped_anchor> mapped;
+                       std::chrono::sys_seconds created; };
+struct forge_branch_protection { std::string pattern;
+  bool required_review, required_verification, fast_forward_only;
+  std::vector<std::string> allowed_pushers; };
+struct forge_client_options { std::string bearer_token;
+                              std::chrono::milliseconds poll_interval{2000}; };
+enum class forge_event_kind : std::uint8_t { review_updated, comment_added, head_moved };
+struct forge_event { forge_event_kind kind; std::optional<forge_review> review;
+                     std::optional<forge_comment> comment; std::optional<change_id> head; };
+class forge_watch { public: runtime::task<forge_event> next(); };
+class forge_client {
+ public:
+  explicit forge_client(std::string lake_repository_url, forge_client_options = {});
+  runtime::task<std::vector<forge_review>> list_reviews(std::optional<forge_review_state> = {});
+  runtime::task<forge_review> get_review(std::string id);
+  runtime::task<forge_review> create_review(change_id, std::vector<std::string> reviewers = {});
+  runtime::task<forge_review> set_review_state(std::string id, forge_review_state);
+  runtime::task<std::vector<forge_comment>> list_comments(std::string review);
+  runtime::task<forge_comment> create_comment(std::string review, std::string body, text_anchor);
+  runtime::task<std::vector<forge_comment>>
+    advance_anchors(repository&, std::string review, change_id target);
+  runtime::task<std::vector<forge_branch_protection>> branch_protections();
+  runtime::task<forge_watch> watch(std::string review);
+};
+```
+
+All operations await network or repository work on the caller runtime. `watch::next()` delays and
+polls through Capy, and its repository pull, review update, and comment event ordering is pinned in
+[forge-client.md](forge-client.md). No operation blocks inside a coroutine.
+
 ### `liquid/delta.hpp`
 
 ```cpp
@@ -1123,6 +1169,9 @@ under `src/vfs/`; see [`vfs.md`](vfs.md).
 ### `liquid/build.hpp`
 
 ```cpp
+struct relocation_finding { std::string file; std::uint64_t offset; std::string context; };
+struct relocation_report { bool relocatable; std::vector<relocation_finding> findings; };
+struct relocation_check_options { std::optional<std::filesystem::path> install_prefix; };
 enum class cache_status : std::uint8_t { miss, hit, divergent };
 enum class cache_miss_reason { input_changed, command_changed, environment_changed,
   toolchain_changed, sandbox_changed, never_built, divergent_result_quarantined, unknown,
@@ -1272,6 +1321,8 @@ runtime::task<result_id> execute(repository&, action_input, remote_executor&);
 runtime::task<std::vector<result_id>> execute_batch(repository&, std::vector<action_input>,
                                                     remote_executor&);
 runtime::task<action_result> result(repository&, result_id);
+runtime::task<relocation_report> relocation_check(std::filesystem::path,
+                                                  relocation_check_options = {});
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
 result<std::filesystem::path> wrap_cache_directory(const std::filesystem::path&);
 runtime::task<verify_report> verify(repository&, verify_options = {});
@@ -1353,8 +1404,10 @@ turn an unsatisfied `refuse` rule into `errc::unauthorized` before lookup or san
 Configure facts are immutable content-addressed records. Their exact key is compiler content,
 explicit sysroot-tree content, and target triple; lookup does not admit partial matches.
 `facts_export` returns a `fact-bundle/1` JSON record for later transport layers. `wrap_options`
-accepts optional target and fact-directory fields, and a foreign target never executes an uncached
-probe.
+accepts optional target, fact-directory, and install-prefix fields. `relocation_check` scans a
+materialised output tree on the runtime compute pool and returns stable file, byte-offset, and
+context findings; install-mode wrapper publication turns a hit into `errc::invalid_argument` unless
+the recorded waiver is set. A foreign target never executes an uncached probe.
 
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 

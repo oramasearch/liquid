@@ -37,6 +37,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
+> shared HTTP/1.1 client, `serve sync` adapter, and lake forge review client with its polling event
+> stream and installable double are implemented. VFS full materialisation works on every platform;
 > HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
 > policy reload, local or node-store evidence lookup, metrics, REST, OpenAPI, and MCP. Complete
@@ -128,6 +130,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > direct named inputs mount upstream bytes read-only below `deps/<name>/`; an identical normalised
 > upstream tree stops the downstream cascade. Directory modes, `ar` headers, and Python bytecode
 > are normalised before storage, with the rule set bound into the sandbox digest.
+> `wrap --install-prefix` stages a canonical `bin/lib/include/share` install tree with relative ELF
+> or Mach-O lookup paths. Publication rejects embedded sandbox or install prefixes and absolute
+> binary or package-metadata paths; an explicit waiver is retained in result diagnostics.
 > `liquid provenance` verifies the result-bound TAAP attestation and `--dsse` projects it as an
 > in-toto Statement. `liquid sbom` verifies and prints SPDX 2.3 or CycloneDX 1.5; foreign binaries
 > use distinctly marked local composition analysis. `liquid why` explains output, action, and result
@@ -260,6 +265,7 @@ and Zetta's.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
 - [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.
 - [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, conflicts, transfer resume, path history, and daemon watching.
 - [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, per-path device state, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, path history, and daemon watching.
@@ -294,6 +300,7 @@ and Zetta's.
 - [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
 - [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
+- [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 
 | | |
@@ -382,6 +389,7 @@ library, never the other way round).
 |---|---|
 | `liquid::liquid` (`libliquid`) | the library: `libliquid.a`, or `libliquid.so`/`.dylib` with `-DBUILD_SHARED_LIBS=ON`; symbols hidden by default, `LIQUID_EXPORT` marks the API |
 | `liquid-cli` → `liquid` | the command-line binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
+| `liquid_forge_double`, `liquid-forge-double` | installable in-memory lake forge target and standalone integration-test server |
 | `liquid-tests` | GoogleTest; on by default only when liquid is the top-level project |
 
 ### Build

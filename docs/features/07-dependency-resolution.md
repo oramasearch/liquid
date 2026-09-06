@@ -8,7 +8,8 @@
 > **Status:** implemented by issue #25: the public spec parser, canonical package and
 > concretised-spec records, package-universe loading, CDCL concretizer, lexicographic optimisation,
 > minimal attributed conflict cores, explanations, and `liquid resolve`. Issue #27 supplies the ABI
-> compatibility facts accepted by `resolve_options`.
+> compatibility facts accepted by `resolve_options`. Issue #73 implements relocatable install trees
+> and their publication check.
 
 ## A dependency is a configured build, not a version
 
@@ -131,10 +132,13 @@ substitution, and hot-update classification ([14](14-hot-update.md)).
 
 ## Relocation
 
-Solved by construction, not by patching binaries afterwards. Spack's RPATH rewriting
-is fragile — embedded paths survive in scripts, `.pc` files and hard-coded strings.
-liquid either builds position-independent-by-construction artifacts or uses a fixed
-content-addressed store path, and decides this before building rather than after.
+**Decision: position-independent artifacts by construction.** Liquid does not patch binaries and
+does not require a fixed content-addressed install path. The virtual build root is a sandbox
+address, not an install address; published install trees contain only relative references. ELF
+uses `$ORIGIN`, Mach-O uses `@rpath` and `@loader_path`, PE keeps DLLs beside executables, and
+installed metadata derives its prefix from its own location. Publication rejects embedded build
+or install prefixes and absolute binary or package-metadata paths. The complete rules, wrapper
+conventions, check, and waiver are in [relocation.md](../library/relocation.md).
 
 ## Configuration language
 

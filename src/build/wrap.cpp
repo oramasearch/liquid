@@ -37,6 +37,7 @@
 #include "build/normalise.hpp"
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
+#include "build/relocation.hpp"
 #include "build/repository_access.hpp"
 #include "build/tests.hpp"
 #include "build/trace.hpp"
@@ -59,6 +60,7 @@ namespace liquid::build {
 namespace {
 
 constexpr auto virtual_root = std::string_view{"/liquid/work"};
+constexpr auto install_staging_root = std::string_view{"out/prefix"};
 
 static_assert(build_detail::restored_output_files_in_flight == 1);
 
@@ -1094,7 +1096,8 @@ runtime::task<saved_action> publish_action(repository& source,
                                            int exit,
                                            std::chrono::sys_seconds started_at,
                                            std::chrono::sys_seconds finished_at,
-                                           bool publish) {
+                                           bool publish,
+                                           const wrap_options* publication_options) {
     const auto hash_started = std::chrono::steady_clock::now();
     auto output_paths = co_await collect_action_outputs(source, writes);
     if (!output_paths)
@@ -1144,6 +1147,37 @@ runtime::task<saved_action> publish_action(repository& source,
         auto tree_outputs = co_await collect_action_outputs(source, *complete_outputs);
         if (!tree_outputs) {
             co_return std::unexpected(tree_outputs.error());
+        }
+        if (publication_options && publication_options->install_prefix) {
+            const auto install_root = std::filesystem::path{install_staging_root} /
+                                      publication_options->install_prefix->relative_path();
+            auto install_outputs = std::vector<action_output>{};
+            for (const auto& output : *tree_outputs) {
+                const auto relative =
+                    std::filesystem::path{output.path}.lexically_relative(install_root);
+                if (relative.empty() || relative == ".." || *relative.begin() == "..") {
+                    continue;
+                }
+                auto installed = output;
+                installed.path = relative.generic_string();
+                install_outputs.push_back(std::move(installed));
+            }
+            if (!install_outputs.empty()) {
+                auto relocation = co_await build_detail::relocation_check(
+                    source, install_outputs, publication_options->install_prefix);
+                if (!relocation) {
+                    co_return std::unexpected(relocation.error());
+                }
+                if (!relocation->relocatable && !publication_options->allow_embedded_prefix) {
+                    co_return std::unexpected(build_detail::relocation_failure(*relocation));
+                }
+                if (publication_options->allow_embedded_prefix) {
+                    value.schedule->reason +=
+                        "; relocation check waived by --allow-embedded-prefix (" +
+                        std::to_string(relocation->findings.size()) + " findings)";
+                }
+                tree_outputs = std::move(install_outputs);
+            }
         }
         auto output_tree = co_await build_detail::store_output_tree(source, *tree_outputs);
         if (!output_tree) {
@@ -1198,7 +1232,58 @@ auto fixed_environment(const wrap_options& options) -> std::map<std::string, std
         environment["CMAKE_BUILD_PARALLEL_LEVEL"] = std::to_string(options.jobs);
         environment["MAKEFLAGS"] = "-j" + std::to_string(options.jobs);
     }
+    if (options.install_prefix) {
+        environment["DESTDIR"] = std::string{virtual_root} + "/" + install_staging_root.data();
+        environment["CMAKE_INSTALL_PREFIX"] = options.install_prefix->generic_string();
+        environment["LIQUID_INSTALL_TREE"] = std::string{install_staging_root};
+#if defined(__APPLE__)
+        environment["LDFLAGS"] = "-Wl,-rpath,@loader_path/../lib";
+#else
+        environment["LDFLAGS"] = "-Wl,-rpath,$ORIGIN/../lib -Wl,-z,origin -Wl,--enable-new-dtags";
+#endif
+        if (options.allow_embedded_prefix) {
+            environment["LIQUID_ALLOW_EMBEDDED_PREFIX"] = "1";
+        }
+    }
     return environment;
+}
+
+auto contains_argument(const std::vector<std::string>& command, std::string_view prefix) -> bool {
+    return std::ranges::any_of(command, [&](const auto& argument) {
+        return std::string_view{argument}.starts_with(prefix);
+    });
+}
+
+void apply_install_conventions(std::vector<std::string>& command, const wrap_options& options) {
+    if (!options.install_prefix || command.empty()) {
+        return;
+    }
+    const auto program = std::filesystem::path{command.front()}.filename().string();
+    if (program == "cmake" && !contains_argument(command, "--build") &&
+        !contains_argument(command, "--install") && !contains_argument(command, "-P")) {
+        if (!contains_argument(command, "-DCMAKE_INSTALL_PREFIX=")) {
+            command.push_back("-DCMAKE_INSTALL_PREFIX=" + options.install_prefix->generic_string());
+        }
+#if defined(__APPLE__)
+        if (!contains_argument(command, "-DCMAKE_INSTALL_NAME_DIR=")) {
+            command.push_back("-DCMAKE_INSTALL_NAME_DIR=@rpath");
+        }
+        if (!contains_argument(command, "-DCMAKE_INSTALL_RPATH=")) {
+            command.push_back("-DCMAKE_INSTALL_RPATH=@loader_path/../lib");
+        }
+#else
+        if (!contains_argument(command, "-DCMAKE_BUILD_RPATH_USE_ORIGIN=")) {
+            command.push_back("-DCMAKE_BUILD_RPATH_USE_ORIGIN=ON");
+        }
+        if (!contains_argument(command, "-DCMAKE_INSTALL_RPATH=")) {
+            command.push_back("-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib");
+        }
+#endif
+    }
+    if ((program == "configure" || program == "configure.ac") &&
+        !contains_argument(command, "--prefix=")) {
+        command.push_back("--prefix=" + options.install_prefix->generic_string());
+    }
 }
 
 auto apply_cached_variables(std::vector<std::string>& command,
@@ -2314,6 +2399,9 @@ execute_observed_run(repository& source,
     environment["LIQUID_WRAP_PLAN"] = plan_path.string();
     environment["LIQUID_WRAP_ROOT"] = mount.string();
     environment["LIQUID_WRAP_TRACE"] = trace.string();
+    if (options.install_prefix) {
+        environment["DESTDIR"] = (mount / install_staging_root).string();
+    }
 #else
     environment["LD_PRELOAD"] = "/liquid/wrap-hook.so";
     environment["LIQUID_WRAP_PLAN"] = "/liquid/plan";
@@ -2544,7 +2632,8 @@ runtime::task<void> publish_observed_run(repository& source,
                                                  0,
                                                  run.started_at,
                                                  run.finished_at,
-                                                 options.cache);
+                                                 options.cache,
+                                                 nullptr);
         if (!published) {
             static_cast<void>(remove_run(run.directory));
             co_return std::unexpected(stage_error("publishing wrapped action", published.error()));
@@ -2602,7 +2691,8 @@ runtime::task<void> publish_observed_run(repository& source,
                                                report.exit,
                                                run.started_at,
                                                run.finished_at,
-                                               options.cache);
+                                               options.cache,
+                                               &options);
     if (!outer_saved) {
         static_cast<void>(remove_run(run.directory));
         co_return std::unexpected(stage_error("publishing outer wrap action", outer_saved.error()));
@@ -2882,6 +2972,17 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     const auto wrap_started = std::chrono::steady_clock::now();
     if (command.empty() || command.front().empty())
         co_return std::unexpected(wrap_error(errc::invalid_argument, "wrap command is empty"));
+    if (options.allow_embedded_prefix && !options.install_prefix) {
+        co_return std::unexpected(
+            wrap_error(errc::invalid_argument, "embedded-prefix waiver requires --install-prefix"));
+    }
+    if (options.install_prefix &&
+        (!options.install_prefix->is_absolute() ||
+         options.install_prefix->lexically_normal() != *options.install_prefix)) {
+        co_return std::unexpected(wrap_error(errc::invalid_argument,
+                                             "install prefix must be an absolute normalized path",
+                                             *options.install_prefix));
+    }
     auto code = std::error_code{};
     working_tree = std::filesystem::canonical(working_tree, code);
     if (code || !std::filesystem::is_directory(working_tree))
@@ -2900,6 +3001,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!facts_key)
         co_return std::unexpected(facts_key.error());
     auto action_environment = fixed_environment(options);
+    apply_install_conventions(command, options);
     const auto fact_variables = build_detail::cached_variables(facts, *facts_key);
     apply_cached_variables(command, action_environment, fact_variables);
     if (build_detail::foreign_target(*facts_key))

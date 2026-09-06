@@ -14,6 +14,7 @@
 
 #include "../temporary_directory.hpp"
 #include "build/cache.hpp"
+#include "build/materialise.hpp"
 #include "build/repository_access.hpp"
 #include "formats/json.hpp"
 #include "liquid/build.hpp"
@@ -1170,6 +1171,94 @@ TEST(BuildWrap, foreign_target_refuses_an_uncached_probe_before_compiler_entry) 
 
 TEST(BuildWrap, mount_backed_scenarios_are_skipped_without_linux_fuse) {
     GTEST_SKIP() << "liquid wrap mount scenarios require Linux FUSE";
+}
+
+#endif
+
+#if LIQUID_BUILD_HAS_FUSE && (defined(__linux__) || defined(__APPLE__))
+
+TEST(BuildWrap, installed_cmake_tree_moves_and_embedded_prefix_policy_is_recorded) {
+#if defined(__linux__)
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+#endif
+    if (!available("cmake") || !available("ninja") || !available("clang")) {
+        GTEST_SKIP() << "cmake, ninja, or clang is absent";
+    }
+    wrap_directory fixture{"relocation"};
+    const auto prefix = std::filesystem::path{"/opt/liquid-relocation"};
+    const auto options = [&](bool allow = false) {
+        return liquid::wrap_options{.cache = true,
+                                    .verify = false,
+                                    .cache_directory = fixture.cache(),
+                                    .fact_directory = fixture.cache().parent_path() / "facts",
+                                    .install_prefix = prefix,
+                                    .allow_embedded_prefix = allow};
+    };
+    auto configured = liquid::runtime::block_on(liquid::build::wrap(
+        fixture.project(), {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"}, options()));
+    ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
+    ASSERT_EQ(configured->exit, 0);
+    auto built = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), {"cmake", "--build", "build"}, options()));
+    ASSERT_TRUE(built) << built.error().message << ": " << built.error().context;
+    ASSERT_EQ(built->exit, 0);
+    auto installed = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), {"cmake", "--install", "build"}, options()));
+    ASSERT_TRUE(installed) << installed.error().message << ": " << installed.error().context;
+    ASSERT_EQ(installed->exit, 0);
+    ASSERT_TRUE(installed->output_tree);
+
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(repository) << repository.error().message;
+    const auto first = fixture.project().parent_path() / "installed-x";
+    const auto second = fixture.project().parent_path() / "installed-y";
+    auto materialised = liquid::runtime::block_on(
+        liquid::build_detail::materialise_tree(*repository, *installed->output_tree, first));
+    ASSERT_TRUE(materialised) << materialised.error().message;
+    auto code = std::error_code{};
+    std::filesystem::copy(first, second, std::filesystem::copy_options::recursive, code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::remove_all(first, code);
+    ASSERT_FALSE(code) << code.message();
+    const auto program_output = fixture.project().parent_path() / "relocation-output";
+    const auto run = shell_quote((second / "bin/relocation-tool").string()) + " >" +
+                     shell_quote(program_output.string());
+    ASSERT_EQ(std::system(run.c_str()), 0);
+    auto input = std::ifstream{program_output};
+    auto text = std::string{};
+    std::getline(input, text);
+    EXPECT_EQ(text, "73");
+    auto clean = liquid::runtime::block_on(
+        liquid::build::relocation_check(second, {.install_prefix = prefix}));
+    ASSERT_TRUE(clean) << clean.error().message;
+    EXPECT_TRUE(clean->relocatable);
+
+    const auto installed_relative = "out/prefix/opt/liquid-relocation/share/embedded.txt";
+    const auto dirty_command = std::vector<std::string>{
+        "/bin/sh",
+        "-c",
+        "mkdir -p out/prefix/opt/liquid-relocation/share && printf '/opt/liquid-relocation\\n' "
+        "> out/prefix/opt/liquid-relocation/share/embedded.txt"};
+    auto waived = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), dirty_command, options(true)));
+    ASSERT_TRUE(waived) << waived.error().message << ": " << waived.error().context;
+    auto explanation = liquid::runtime::block_on(
+        liquid::build::why(fixture.project(), installed_relative, fixture.cache()));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    ASSERT_TRUE(explanation->schedule);
+    EXPECT_NE(explanation->schedule->reason.find("relocation check waived"), std::string::npos);
+
+    auto rejected_command = dirty_command;
+    rejected_command.back() =
+        "printf '/liquid/work/rejected\\n' > " + std::string{installed_relative};
+    auto rejected = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(), std::move(rejected_command), options()));
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error().code, liquid::errc::invalid_argument);
+    EXPECT_NE(rejected.error().message.find("embedded.txt@"), std::string::npos);
 }
 
 #endif

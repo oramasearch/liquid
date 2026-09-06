@@ -3,13 +3,16 @@
 **What.** The HTTP/1.1 protocol used by libliquid clients and lake to exchange repository
 metadata and content. lake's `docs/api/sync.md` mirrors this page.
 
-**Status: implemented by liquid #160, #165, #177, #189, and used by #195.** Metadata export and import are
+**Status: implemented by liquid #160, #165, #177, #189, #195, and the shared request factoring in
+#201.** Metadata export and import are
 bounded by caller-provided spans. Imports verify the selected metadata before changing repository
 state, while reference authorization and application are reported per ref. Content negotiation and
 transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
 owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
-The endpoint shares one private Corosio HTTP client with admission evidence and transparency
-lookups, so URL, TLS, request, and response handling have a single implementation inside libliquid.
+The endpoint, [forge client](forge-client.md), admission evidence, transparency lookups, and
+sealed-secret key lookup share the private `src/http1/client.cpp` transport for socket, TLS,
+request, and response handling. `src/net/http_client.*` supplies URL decomposition and reusable
+request values; forge owns its JSON request and lake-envelope mapping over that transport.
 
 ## Repository URL and requests
 
