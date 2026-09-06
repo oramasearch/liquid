@@ -53,8 +53,10 @@ it.
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
 > metadata also retains verified Lake transparency checkpoints: the public client verifies signed
-> witness-quorum checkpoints, all entry and parent hash tiles, exact TAAP inclusion, consistency,
-> and identity scans before callers trust a log response.
+> witness-quorum checkpoints, all full and partial entry and parent hash tiles, exact TAAP
+> inclusion, consistency, and identity scans before callers trust a log response. Liquid #83 makes
+> consistency use the same complete tile walk and reauthenticates cached tile bytes through the
+> selected checkpoint.
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
@@ -64,8 +66,8 @@ it.
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
 > atomically reloaded named policy sets at `/admit/<policy>`, structured CBOR/JSON decisions in
 > AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
-> metrics, REST, OpenAPI, and MCP. Complete
-> transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and proofs before log mode accepts a record.
+> metrics, REST, OpenAPI, and MCP. The shared transparency client now provides complete inclusion
+> verification; the admission lake adapter remains fail-closed until it calls that verifier.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
 > per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the
