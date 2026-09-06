@@ -14,6 +14,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
 | [`search`](search.md) | search paths and contents | available |
 | [`resolve`](resolve.md) | concretise package specifications | available |
+| [`project`](project.md) | project a build into an installable package, image, or chart | available |
 | [`log`](log.md) | show or verify change, signed drip, or timestamp history | available |
 | [`cut`](cut.md) | cut the working change | available |
 | [`refs`](refs.md) | list repository references | available |

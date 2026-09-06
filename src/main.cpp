@@ -138,6 +138,17 @@ constexpr auto flags_history = std::to_array<flag>({
 constexpr auto flags_drive = std::to_array<flag>({
     {"--watch", {}, "Continue synchronizing after the first successful transfer.", "false"},
 });
+constexpr auto flags_project = std::to_array<flag>({
+    {"--name", "<name>", "Set the package, image, or chart name.", "required"},
+    {"--version", "<version>", "Set the package, image, or chart version.", "required"},
+    {"--arch", "<arch>", "Set the target architecture.", "source architecture"},
+    {"--out", "<dir>", "Write projected artifacts below this directory.", "projection"},
+    {"--depends", "<dependency>", "Declare a package dependency; repeatable.", "none"},
+    {"--service", "<value>", "Add a Helm service declaration; repeatable.", "none"},
+    {"--compat-gzip", {}, "Use gzip-compatible package compression.", "false"},
+    {"--allow-abi-break", {}, "Permit an incompatible ABI projection.", "false"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
 constexpr auto flags_data = std::to_array<flag>({
     {"--session",
      "<id>",
@@ -440,6 +451,11 @@ constexpr auto commands = std::to_array<command>({
      "[--compat-gzip] [--allow-abi-break] [--json]",
      "project a build into an installable package, image, or chart",
      "available",
+     flags_project,
+     "Project a recorded build result or install tree into an OCI image, package, or Helm chart.",
+     "liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json",
+     normal_exit,
+     argument_policy::ordinary,
      liquid_cli::project},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps",
