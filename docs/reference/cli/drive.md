@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid drive <sync <folder> <remote> [--watch]|status [folder]>
+liquid drive <sync <folder> <remote> [--watch]|status [folder]|pin <path>|unpin <path>>
 ```
 
 ## Description
