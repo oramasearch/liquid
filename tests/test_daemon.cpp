@@ -89,6 +89,12 @@ public:
         co_return {};
     }
 
+    liquid::runtime::task<void> deliver_locks(std::vector<liquid::exclusive_lock> values) override {
+        std::lock_guard lock(mutex_);
+        locks_.push_back(std::move(values));
+        co_return {};
+    }
+
     [[nodiscard]] auto deliveries() const -> std::uint64_t {
         std::lock_guard lock(mutex_);
         return deliveries_;
@@ -99,12 +105,23 @@ public:
         return presence_.size();
     }
 
+    [[nodiscard]] auto lock_update_count() const -> std::size_t {
+        std::lock_guard lock(mutex_);
+        return locks_.size();
+    }
+
+    [[nodiscard]] auto latest_lock_count() const -> std::size_t {
+        std::lock_guard lock(mutex_);
+        return locks_.empty() ? 0U : locks_.back().size();
+    }
+
 private:
     std::string name_;
     std::vector<std::string>& order_;
     mutable std::mutex mutex_;
     std::uint64_t deliveries_{};
     std::vector<liquid::presence> presence_;
+    std::vector<std::vector<liquid::exclusive_lock>> locks_;
 };
 
 class stalled_target final : public liquid::daemon_target {
@@ -195,6 +212,24 @@ TEST(DaemonFanout, presence_reaches_every_local_target_without_advancing_drip_st
     EXPECT_TRUE(fanout.replay_cursor().token.empty());
 }
 
+TEST(DaemonFanout, locks_reach_every_local_target_without_advancing_drip_state) {
+    temporary_repository fixture;
+    auto order = std::vector<std::string>{};
+    auto first = std::make_shared<recording_target>("first", order);
+    auto second = std::make_shared<recording_target>("second", order);
+    auto fanout =
+        liquid::daemon_detail::fanout{fixture.path() / "lock-fanout-state", {first, second}};
+    ASSERT_TRUE(fanout.load());
+    auto locks = std::vector<liquid::exclusive_lock>{
+        {.path = "assets/model.bin", .reason = "large binary update"}};
+    auto delivered = liquid::runtime::block_on(fanout.deliver_locks(std::move(locks)));
+    ASSERT_TRUE(delivered) << delivered.error().message;
+    EXPECT_EQ(first->lock_update_count(), 1U);
+    EXPECT_EQ(second->lock_update_count(), 1U);
+    EXPECT_EQ(first->latest_lock_count(), 1U);
+    EXPECT_TRUE(fanout.replay_cursor().token.empty());
+}
+
 #ifndef _WIN32
 
 TEST(Daemon, single_instance_attach_and_shutdown) {
@@ -219,6 +254,38 @@ TEST(Daemon, single_instance_attach_and_shutdown) {
     EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
     EXPECT_TRUE(
         std::filesystem::exists(location.path() / ".liquid" / "daemon" / "query-graph" / "ROOT"));
+}
+
+TEST(Daemon, lock_and_unlock_publish_the_current_lock_set) {
+    auto repository_options = liquid::repository_options{};
+    repository_options.locks.rules.push_back({"generated", {"generated/**"}});
+    temporary_repository location{repository_options};
+    auto order = std::vector<std::string>{};
+    auto target = std::make_shared<recording_target>("editor", order);
+    auto daemon_options = options();
+    daemon_options.targets.push_back(target);
+    auto started =
+        liquid::runtime::block_on(liquid::daemon::start(location.path(), daemon_options));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+
+    auto locked =
+        liquid::runtime::block_on(started->lock("generated/archive.zip", "regenerate archive"));
+    ASSERT_TRUE(locked) << locked.error().message;
+    EXPECT_EQ(target->lock_update_count(), 1U);
+    EXPECT_EQ(target->latest_lock_count(), 1U);
+    auto repository = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(repository) << repository.error().message;
+    auto locks = liquid::runtime::block_on(repository->locks());
+    ASSERT_TRUE(locks) << locks.error().message;
+    ASSERT_EQ(locks->size(), 1U);
+    EXPECT_EQ(locks->front().reason, "regenerate archive");
+
+    auto unlocked = liquid::runtime::block_on(started->unlock("generated/archive.zip"));
+    ASSERT_TRUE(unlocked) << unlocked.error().message;
+    EXPECT_EQ(target->lock_update_count(), 2U);
+    EXPECT_EQ(target->latest_lock_count(), 0U);
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
 }
 
 TEST(Daemon, exits_when_idle_and_refuses_late_attach) {

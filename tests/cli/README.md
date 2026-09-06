@@ -16,6 +16,8 @@ The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, a
 names.
 `configuration.cmake` checks a directory, lowers source origins in text and JSON, and formats the
 same document twice to pin idempotence.
+`locks.cmake` lowers a repository lock rule during initialization, then acquires with an explicit
+reason and releases through the checkout daemon.
 The help/documentation comparison also pins the `scheduler` and `worker` command names.
 The scenario also pins `remote_bytes` in the status JSON contract.
 It maps an anchor from the imported change through a later rename and checks the returned path and

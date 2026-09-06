@@ -1,5 +1,8 @@
 # Tests
 
+Exclusive checkout coverage spans repository holder/refusal/release and offline-sync cases,
+configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
+
 The default suite covers the public library surface and the local store. Focused garbage
 collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS

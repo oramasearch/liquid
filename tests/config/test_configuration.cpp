@@ -243,6 +243,21 @@ TEST(ConfigurationLanguage, package_target_source_and_when_lower_to_typed_record
     EXPECT_EQ(lowered->targets.front().install_layout, "prefix");
 }
 
+TEST(ConfigurationLanguage, lock_path_patterns_lower_to_repository_rules) {
+    const auto text = std::string{"lock generated-assets {\n"
+                                  "  paths: [path \"assets/**\", path \"models/*.bin\"]\n"
+                                  "}\n"};
+    auto parsed = liquid::parse_configuration(text, "locks.liquid");
+    ASSERT_TRUE(parsed) << parsed.error().message;
+    EXPECT_TRUE(liquid::check(*parsed).empty());
+    auto lowered = liquid::lower(*parsed);
+    ASSERT_TRUE(lowered) << lowered.error().message;
+    ASSERT_EQ(lowered->locks.rules.size(), 1U);
+    EXPECT_EQ(lowered->locks.rules.front().name, "generated-assets");
+    EXPECT_EQ(lowered->locks.rules.front().paths,
+              (std::vector<std::string>{"assets/**", "models/*.bin"}));
+}
+
 TEST(ConfigurationLanguage, includes_are_local_and_lower_with_the_document) {
     const auto root = liquid::test::fixture_path("liquid-configuration-includes");
     auto code = std::error_code{};
