@@ -12,6 +12,8 @@ results, and carries the canonical native record in typed auxiliary metadata so 
 ABI references and other fields REAPI does not model.
 Scheduler mode enables Execution and Operations on the same server, dispatches the private worker
 protocol, and writes an ActionCache entry only after a signed completion is accepted.
+Server-side action execution uses the same fixed `SOURCE_DATE_EPOCH` and `ZERO_AR_DATE` environment
+as local and wrapped actions, keeping archive timestamps outside output identity.
 The scheduler client uploads its prepared native graph directly instead of issuing one large
 FindMissingBlobs request; content addressing keeps repeated writes idempotent.
 Normal connection closure, including the transport's lowercase EOF spelling, is not logged as a

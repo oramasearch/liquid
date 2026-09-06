@@ -119,25 +119,26 @@ public:
           cache_(repository_root_ / "LIQUID_VFS" / "chunks"),
           queue_(std::make_shared<request_queue>()), sink_(std::move(sink)),
           snapshot_root_(std::move(snapshot_root)) {
-        if (!snapshot_root_) {
-            for (auto& output : initial_outputs) {
-                modification_times_.insert_or_assign(std::move(output), 2'000'000'000);
-            }
-            return;
-        }
         for (auto& output : initial_outputs) {
             const auto directory = output.ends_with('/');
             auto path = std::filesystem::path{directory ? output.substr(0, output.size() - 1)
                                                         : std::move(output)};
+            const auto normalized = path.generic_string();
+            modification_times_.insert_or_assign(normalized, 2'000'000'000);
+            if (!snapshot_root_) {
+                continue;
+            }
+            if (!options_.read_only) {
+                current_entries_.insert_or_assign(normalized, directory);
+                continue;
+            }
             auto parent = path.parent_path();
             while (!parent.empty()) {
                 virtual_entries_.insert_or_assign(parent.generic_string(), node_kind::tree);
                 parent = parent.parent_path();
             }
-            const auto normalized = path.generic_string();
             virtual_entries_.insert_or_assign(normalized,
                                               directory ? node_kind::tree : node_kind::blob);
-            modification_times_.insert_or_assign(normalized, 2'000'000'000);
         }
     }
 
@@ -311,8 +312,14 @@ public:
     }
 
     auto entry(std::string path) -> runtime::task<repository_detail::vfs_entry> {
+        if (deleted_path(path)) {
+            co_return std::unexpected(
+                error{errc::not_found, "entry was removed during execution", path});
+        }
         auto value = result<repository_detail::vfs_entry>{};
-        if (snapshot_root_) {
+        if (current_path(path)) {
+            value = co_await repository_detail::vfs_access::entry(source_, path);
+        } else if (snapshot_root_) {
             value = co_await repository_detail::vfs_access::entry(source_, *snapshot_root_, path);
         } else {
             value = co_await repository_detail::vfs_access::entry(source_, path);
@@ -333,7 +340,10 @@ public:
 
     auto children(std::string path) -> runtime::task<std::vector<repository_detail::vfs_entry>> {
         auto values = result<std::vector<repository_detail::vfs_entry>>{};
-        if (snapshot_root_) {
+        const auto current_directory = current_path(path);
+        if (current_directory) {
+            values = co_await repository_detail::vfs_access::children(source_, path);
+        } else if (snapshot_root_) {
             values =
                 co_await repository_detail::vfs_access::children(source_, *snapshot_root_, path);
         } else {
@@ -347,9 +357,36 @@ public:
             }
             values = std::vector<repository_detail::vfs_entry>{};
         }
+        if (!current_directory && current_below(path)) {
+            std::erase_if(*values, [this, &path](const auto& entry) {
+                const auto candidate = path.empty() ? entry.name : path + "/" + entry.name;
+                return current_path(candidate) || current_below(candidate);
+            });
+            auto current = co_await repository_detail::vfs_access::children(source_, path);
+            if (current) {
+                for (auto& entry : *current) {
+                    const auto candidate = path.empty() ? entry.name : path + "/" + entry.name;
+                    if (!current_path(candidate) && !current_below(candidate)) {
+                        continue;
+                    }
+                    std::erase_if(*values,
+                                  [&entry](const auto& value) { return value.name == entry.name; });
+                    values->push_back(std::move(entry));
+                }
+            } else if (current.error().code != errc::not_found) {
+                co_return std::unexpected(current.error());
+            }
+        }
+        std::erase_if(*values, [this, &path](const auto& entry) {
+            const auto candidate = path.empty() ? entry.name : path + "/" + entry.name;
+            return deleted_path(candidate);
+        });
         for (const auto& [candidate, kind] : virtual_entries_) {
             const auto candidate_path = std::filesystem::path{candidate};
             if (candidate_path.parent_path().generic_string() != path) {
+                continue;
+            }
+            if (deleted_path(candidate)) {
                 continue;
             }
             const auto name = candidate_path.filename().generic_string();
@@ -369,6 +406,24 @@ public:
 
     auto read_only() const -> bool {
         return options_.read_only;
+    }
+
+    auto immutable(std::string_view path) const -> bool {
+        return path == "deps" || path.starts_with("deps/");
+    }
+
+    void mark_current(std::string path, bool recursive = false) {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        deleted_entries_.erase(path);
+        current_entries_.insert_or_assign(std::move(path), recursive);
+    }
+
+    void mark_deleted(std::string path, bool recursive = false) {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        std::erase_if(current_entries_, [&path](const auto& value) {
+            return value.first == path || value.first.starts_with(path + "/");
+        });
+        deleted_entries_.insert_or_assign(std::move(path), recursive);
     }
 
     void captured() {
@@ -398,6 +453,32 @@ public:
 
 private:
     static auto make_operations() -> fuse_operations;
+
+    static auto path_matches(std::string_view path, std::string_view root, bool recursive) -> bool {
+        return path == root || (recursive && path.starts_with(std::string{root} + "/"));
+    }
+
+    auto current_path(std::string_view path) const -> bool {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        return std::ranges::any_of(current_entries_, [&path](const auto& value) {
+            return path_matches(path, value.first, value.second);
+        });
+    }
+
+    auto current_below(std::string_view path) const -> bool {
+        const auto prefix = path.empty() ? std::string{} : std::string{path} + "/";
+        auto lock = std::scoped_lock{overlay_mutex_};
+        return std::ranges::any_of(current_entries_, [&prefix](const auto& value) {
+            return value.first.starts_with(prefix);
+        });
+    }
+
+    auto deleted_path(std::string_view path) const -> bool {
+        auto lock = std::scoped_lock{overlay_mutex_};
+        return std::ranges::any_of(deleted_entries_, [&path](const auto& value) {
+            return path_matches(path, value.first, value.second);
+        });
+    }
 
     void set_ready(error failure) {
         {
@@ -435,6 +516,9 @@ private:
     observation_sink sink_;
     std::optional<digest> snapshot_root_;
     std::map<std::string, node_kind, std::less<>> virtual_entries_;
+    mutable std::mutex overlay_mutex_;
+    std::map<std::string, bool, std::less<>> current_entries_;
+    std::map<std::string, bool, std::less<>> deleted_entries_;
     std::atomic_uint64_t writes_captured_{};
     mutable std::mutex modification_mutex_;
     std::map<std::string, std::int64_t, std::less<>> modification_times_;
@@ -505,14 +589,16 @@ open_request(fuse_backend* state, std::string path, std::int64_t pid, int flags)
         co_return fuse_error(entry.error());
     if (entry->kind != node_kind::blob)
         co_return -EISDIR;
-    if (state->read_only() && (flags & (O_WRONLY | O_RDWR)) != 0) {
+    const auto writing = (flags & (O_WRONLY | O_RDWR)) != 0;
+    if ((state->read_only() || state->immutable(path)) && writing) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
-    if (!state->read_only() && (flags & O_TRUNC) != 0) {
+    if (!state->read_only() && !state->immutable(path) && (flags & O_TRUNC) != 0) {
         auto written = co_await state->source().write(path, {}, {.mode = entry->mode});
         if (!written)
             co_return fuse_error(written.error());
+        state->mark_current(path);
         state->cache().invalidate(entry->node);
         state->captured();
         state->touch(path);
@@ -541,7 +627,7 @@ runtime::task<int> read_request(fuse_backend* state,
 
 runtime::task<int>
 create_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -549,6 +635,7 @@ create_request(fuse_backend* state, std::string path, std::int64_t pid, std::uin
     auto written = co_await state->source().write(path, {}, {.mode = file_mode});
     if (!written)
         co_return fuse_error(written.error());
+    state->mark_current(path);
     state->captured();
     state->touch(path);
     state->observe(observed_operation::write, std::move(path), pid);
@@ -560,7 +647,7 @@ runtime::task<int> write_request(fuse_backend* state,
                                  std::int64_t pid,
                                  std::uint64_t offset,
                                  std::vector<std::byte> input) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -580,6 +667,7 @@ runtime::task<int> write_request(fuse_backend* state,
         co_await state->source().write(path, std::move(*contents), {.mode = entry->mode});
     if (!written)
         co_return fuse_error(written.error());
+    state->mark_current(path);
     state->cache().invalidate(entry->node);
     state->captured();
     state->touch(path);
@@ -589,7 +677,7 @@ runtime::task<int> write_request(fuse_backend* state,
 
 runtime::task<int>
 remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool directory) {
-    if (state->read_only())
+    if (state->read_only() || state->immutable(path))
         co_return -EROFS;
     auto entry = co_await state->entry(path);
     if (!entry)
@@ -608,6 +696,7 @@ remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool dir
     auto removed = co_await state->source().remove(path);
     if (!removed)
         co_return fuse_error(removed.error());
+    state->mark_deleted(path, directory);
     state->cache().invalidate(entry->node);
     state->captured();
     state->touch(path);
@@ -617,7 +706,7 @@ remove_request(fuse_backend* state, std::string path, std::int64_t pid, bool dir
 
 runtime::task<int>
 rename_request(fuse_backend* state, std::string from, std::string to, std::int64_t pid) {
-    if (state->read_only())
+    if (state->read_only() || state->immutable(from) || state->immutable(to))
         co_return -EROFS;
     if (from == to)
         co_return 0;
@@ -647,6 +736,9 @@ rename_request(fuse_backend* state, std::string from, std::string to, std::int64
     auto moved = co_await state->source().move(from, to);
     if (!moved)
         co_return fuse_error(moved.error());
+    const auto recursive = source->kind != node_kind::blob;
+    state->mark_deleted(from, recursive);
+    state->mark_current(to, recursive);
     state->captured();
     state->touch(from);
     state->touch(to);
@@ -657,7 +749,7 @@ rename_request(fuse_backend* state, std::string from, std::string to, std::int64
 
 runtime::task<int>
 mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -665,6 +757,7 @@ mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
         state->source(), path, static_cast<std::uint32_t>(S_IFDIR) | (mode & 0777U));
     if (!created)
         co_return fuse_error(created.error());
+    state->mark_current(path, true);
     state->captured();
     state->touch(path);
     state->observe(observed_operation::write, std::move(path), pid);
@@ -673,7 +766,7 @@ mkdir_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
 
 runtime::task<int>
 truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint64_t size) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -688,6 +781,7 @@ truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::u
         co_await state->source().write(path, std::move(*contents), {.mode = entry->mode});
     if (!written)
         co_return fuse_error(written.error());
+    state->mark_current(path);
     state->cache().invalidate(entry->node);
     state->captured();
     state->touch(path);
@@ -697,7 +791,7 @@ truncate_request(fuse_backend* state, std::string path, std::int64_t pid, std::u
 
 runtime::task<int>
 chmod_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint32_t mode) {
-    if (state->read_only()) {
+    if (state->read_only() || state->immutable(path)) {
         state->observe(observed_operation::write, std::move(path), pid, {}, true);
         co_return -EROFS;
     }
@@ -709,6 +803,7 @@ chmod_request(fuse_backend* state, std::string path, std::int64_t pid, std::uint
         state->source(), path, static_cast<std::uint32_t>(type) | (mode & 0777U));
     if (!changed)
         co_return fuse_error(changed.error());
+    state->mark_current(path, entry->kind != node_kind::blob);
     state->captured();
     state->touch(path);
     state->observe(observed_operation::write, std::move(path), pid);
@@ -979,14 +1074,13 @@ runtime::task<std::shared_ptr<backend>> start_observed_fuse(repository& source,
         co_return std::unexpected(prepared.error());
     if (!*prepared)
         co_return std::unexpected(prepared->error());
-    auto state =
-        std::make_shared<fuse_backend>(source,
-                                       std::move(mountpoint),
-                                       std::move(*root),
-                                       mount_options{.read_only = read_only},
-                                       std::move(sink),
-                                       std::move(outputs),
-                                       read_only ? std::optional{std::move(tree)} : std::nullopt);
+    auto state = std::make_shared<fuse_backend>(source,
+                                                std::move(mountpoint),
+                                                std::move(*root),
+                                                mount_options{.read_only = read_only},
+                                                std::move(sink),
+                                                std::move(outputs),
+                                                std::move(tree));
     auto initialised = co_await state->initialise_cache();
     if (!initialised)
         co_return std::unexpected(initialised.error());
