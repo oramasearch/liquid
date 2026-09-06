@@ -386,6 +386,8 @@ class blob_write_through {
                                   std::span<const digest> chunks,
                                   std::span<const std::uint64_t> chunk_sizes) = 0;
 };
+using hydration_observer = std::function<runtime::task<void>(
+    digest content, digest chunk, std::uint64_t bytes, bool content_complete)>;
 struct store_options {
   algorithm hash_algorithm{algorithm::blake3};
   std::uint64_t pack_size{};
@@ -394,6 +396,7 @@ struct store_options {
   bool durable{};
   std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
   std::shared_ptr<blob_write_through> write_through;
+  hydration_observer on_hydration;
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -416,6 +419,9 @@ class store {                          // the chunk store: chunks, packs, liquid
  public:
   static runtime::task<store> open(std::filesystem::path, store_options = {});
   runtime::task<digest> put(std::vector<std::byte>);              // chunked, deduplicated, indexed
+  runtime::task<void> register_remote_source(
+      std::string, std::shared_ptr<remote_blob_source>);          // add/replace after open
+  runtime::task<std::uint64_t> local_bytes();                     // live unique raw chunk bytes
   runtime::task<digest> put_file(std::filesystem::path);          // streams from disk; a 40 GB file never sits in memory
   runtime::task<void> get_to_file(digest, std::filesystem::path); // streams to disk
   runtime::task<std::vector<std::byte>> get(digest);              // verified on read
