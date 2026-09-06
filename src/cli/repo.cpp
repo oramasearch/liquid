@@ -20,6 +20,8 @@ namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
 auto history_operations(int argc, char** argv) -> int;
+auto log_timestamps(int argc, char** argv) -> int;
+auto verify_log_timestamps(int argc, char** argv) -> int;
 
 namespace {
 
@@ -418,6 +420,12 @@ auto repo_status(int argc, char** argv) -> int {
 }
 
 auto repo_log(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "timestamps") {
+        return log_timestamps(argc - 1, argv + 1);
+    }
+    if (argc >= 1 && std::string_view{argv[0]} == "verify") {
+        return verify_log_timestamps(argc - 1, argv + 1);
+    }
     auto json = false;
     auto ops = false;
     for (auto index = 0; index < argc; ++index) {
@@ -427,7 +435,7 @@ auto repo_log(int argc, char** argv) -> int {
         } else if (argument == "--ops") {
             ops = true;
         } else {
-            return usage("log accepts only --ops and --json");
+            return usage("log accepts --ops, --json, timestamps <log-url>, or verify --timestamps");
         }
     }
     auto repository = open_repository();
