@@ -239,6 +239,12 @@ auto find_program(std::string_view name) -> result<std::filesystem::path> {
     if (const auto* configured = std::getenv("LIQUID_POSTGRES_BIN")) {
         roots.emplace_back(configured);
     }
+    roots.emplace_back("/opt/homebrew/opt/postgresql@18/bin");
+    roots.emplace_back("/opt/homebrew/opt/postgresql@17/bin");
+    roots.emplace_back("/opt/homebrew/bin");
+    for (auto version = 18; version >= 14; --version) {
+        roots.emplace_back("/usr/lib/postgresql/" + std::to_string(version) + "/bin");
+    }
     if (const auto* path = std::getenv("PATH")) {
         auto paths = std::stringstream{path};
         for (auto item = std::string{}; std::getline(paths, item, ':');) {
@@ -246,12 +252,6 @@ auto find_program(std::string_view name) -> result<std::filesystem::path> {
                 roots.emplace_back(item);
             }
         }
-    }
-    roots.emplace_back("/opt/homebrew/opt/postgresql@18/bin");
-    roots.emplace_back("/opt/homebrew/opt/postgresql@17/bin");
-    roots.emplace_back("/opt/homebrew/bin");
-    for (auto version = 18; version >= 14; --version) {
-        roots.emplace_back("/usr/lib/postgresql/" + std::to_string(version) + "/bin");
     }
     roots.emplace_back("/usr/bin");
     for (const auto& root : roots) {

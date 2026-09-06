@@ -18,6 +18,7 @@ Scheduler protocol, duplicate-join, size-class placement, and one-requeue covera
 `workers/`.
 `test_data.cpp` starts a private PostgreSQL cluster when `initdb`, `pg_ctl`, and the client tools
 are available. A root-run container supplies `LIQUID_TEST_POSTGRES_URL` instead. The integration
+fixture prefers versioned PostgreSQL binary directories before Debian's wrapper scripts. The
 case proves branch writes leave the base and sibling branch unchanged, session environments select
 their own URLs through a sandboxed client action, discard removes the database, quiet-base promote
 replaces it, changed-base promote is refused, records/configuration persist, and status exposes live
