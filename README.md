@@ -17,7 +17,7 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
-> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
 > as a thin client of it; liquify and lake link the same library. The public error, digest, identity
 > document codec, and signature decoder APIs are implemented, including BLAKE3, SHA-256, and keyed
@@ -166,7 +166,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > returns a documented unsupported result until Corosio provides named-pipe transport. The daemon
 > uses issue #20's public graph interface for persistence, invalidation, and resident-value bounds.
 > It also performs #23 clean validation during idle slices and reports validation backlog and the
-> last divergence.
+> last divergence. Issue #85 persists actor, directory-document, and repository token buckets;
+> rejects over-budget writes before a CRDT transaction opens; applies the same author limits to
+> pushes; and reports persistence lag, consumer lag, watermarks, and rejection counts.
 
 > **Phase 4 local search and cost planning are implemented.** `liquid search`,
 > `repository::search`, and `repository::plan_search` select BM25F, verified positional trigrams,
@@ -202,8 +204,8 @@ and Zetta's.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
+- [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
-- [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 - [`docs/library/gc.md`](docs/library/gc.md) — leased roots, retention rules, cost-aware result eviction, epoch marking, reference extraction, and crash-safe sweep ordering.
@@ -213,7 +215,7 @@ and Zetta's.
 - [`docs/library/identity.md`](docs/library/identity.md) — TAAP/1 identities, local custody, signatures, and verification.
 - [`docs/library/vfs.md`](docs/library/vfs.md) — lazy chunk hydration, FUSE mounts, full materialisation, and platform support.
 - [`docs/library/git-interop.md`](docs/library/git-interop.md) — local Git import/export, identity mapping, and compatibility reporting.
-- [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, cursor delivery, coalescing, recovery, and telemetry.
+- [`docs/library/capture.md`](docs/library/capture.md) — watcher-backed local change capture, write buckets, cursor delivery, coalescing, recovery, and telemetry.
 - [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md) — inline detectors, repository exceptions, signed scan attestations, verified redaction, and measured cost.
 - [`docs/library/attestations.md`](docs/library/attestations.md) — registered TAAP schemas, profile-keyed verification, freshness, and selective disclosure.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, public build streams and ordering, JSON projection, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.

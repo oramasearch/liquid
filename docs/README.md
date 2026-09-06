@@ -14,7 +14,7 @@ notes so that each claim has a clear role.
 | [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, #18 scheduling, #16 REAPI interoperability, and #63's scheduler and workers. |
 | [`library/workers.md`](library/workers.md) | Scheduler and worker protocol, bounded requeue, TAAP result identity, configuration, control endpoints, and deployment shape. |
 | [`api/README.md`](api/README.md) | Scheduler and worker network capability maps. |
-| [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, build-stream forwarding, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
+| [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, flow watermarks, in-process consumer lag, build-stream forwarding, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
 | [`library/frontends.md`](library/frontends.md) | The versioned frontend C ABI, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
 | [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
 | [`library/search.md`](library/search.md) | Issues #22 and #67's BM25F, positional-trigram, and mapped-scan executors; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
@@ -26,12 +26,12 @@ notes so that each claim has a clear role.
 | [`library/sbom.md`](library/sbom.md) | Graph-derived SPDX and CycloneDX SBOMs, signed records, distinct foreign-binary inference, and verification. |
 | [`library/abi.md`](library/abi.md) | ELF, Mach-O, and PE ABI descriptors, compatibility rules, automatic signed comparisons, public access, and CLI use. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10's local executor: fixed environment, observed-mount manifest, Linux namespace enforcement, and platform limits. |
-| [`library/api-map.md`](library/api-map.md) | The implemented and declared public headers of libliquid for Phase 1, the rules every one obeys, dependency provenance, what is deliberately internal, and the ABI policy. |
+| [`library/api-map.md`](library/api-map.md) | The implemented and declared public headers of libliquid, including flow configuration and status, the rules every one obeys, dependency provenance, what is deliberately internal, and the ABI policy. |
 | [`library/hash-agility.md`](library/hash-agility.md) | Digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits. |
 | [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
 | [`library/http2.md`](library/http2.md) | Private Corosio HTTP/2 framing, HPACK, gRPC envelopes, and h2c/TLS ALPN interoperability proof. |
+| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/transparency.md`](library/transparency.md) | RFC 3161 timestamp and RFC 4998 evidence verification design, trust policy, and implementation notes. |
-| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
@@ -42,10 +42,10 @@ notes so that each claim has a clear role.
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
 | [`library/identity.md`](library/identity.md) | TAAP/1 identity documents, public canonical-CBOR codecs, rotation, signatures, and verification. |
 | [`library/vfs.md`](library/vfs.md) | Lazy chunk hydration, FUSE mounts, the request queue, full materialisation, and platform coverage. |
-| [`library/capture.md`](library/capture.md) | Change capture, watcher recovery, coalescing, cursor delivery, and telemetry. |
+| [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
-| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, flow status and retry output, retention explanations, capture, examples, and verification. |
 | [`cli/build-events.md`](cli/build-events.md) | The `liquid build --plan` and `--events` JSON-lines schemas, daemon operations, ordering, exit status, and edit behavior. |
 | [`cli/test.md`](cli/test.md) | CMake/native test discovery, filtering, cached action behavior, output, and exit status. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |

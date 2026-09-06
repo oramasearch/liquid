@@ -402,6 +402,7 @@ add_executable(liquid-header-tests
   headers/delta.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/flow.cpp
   headers/frontend.cpp
   headers/git.cpp
   headers/graph.cpp

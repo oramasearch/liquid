@@ -33,6 +33,7 @@
 #include "build/wrap.hpp"
 #include "daemon/fanout.hpp"
 #include "encoding/cbor.hpp"
+#include "flow_control.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/repository.hpp"
@@ -130,6 +131,30 @@ auto strings_value(const std::vector<std::string>& values) -> cbor::value {
         output.emplace_back(value);
     }
     return cbor::value{std::move(output)};
+}
+
+auto flow_scope_name(flow_scope scope) -> std::string_view {
+    switch (scope) {
+    case flow_scope::actor:
+        return "actor";
+    case flow_scope::document:
+        return "document";
+    case flow_scope::repository:
+        return "repository";
+    }
+    return "repository";
+}
+
+auto flow_reason_name(flow_pause_reason reason) -> std::string_view {
+    switch (reason) {
+    case flow_pause_reason::none:
+        return "none";
+    case flow_pause_reason::persistence:
+        return "persistence";
+    case flow_pause_reason::consumers:
+        return "consumers";
+    }
+    return "none";
 }
 
 auto decode_strings(const cbor::value& source, std::string_view name)
@@ -721,6 +746,17 @@ auto status_value(const daemon_status& status) -> cbor::value {
                                {"deliveries", cbor::value{target.deliveries}},
                                {"last_error", cbor::value{target.last_error.value_or("")}}}));
     }
+    auto buckets = cbor::value::array{};
+    for (const auto& bucket : status.flow.buckets) {
+        buckets.push_back(
+            map({{"scope", cbor::value{std::string{flow_scope_name(bucket.scope)}}},
+                 {"key", cbor::value{bucket.key}},
+                 {"tokens_milli",
+                  cbor::value{static_cast<std::uint64_t>(std::max(0.0, bucket.tokens) * 1000.0)}},
+                 {"rate", cbor::value{bucket.rate}},
+                 {"burst", cbor::value{bucket.burst}},
+                 {"rejected", cbor::value{bucket.rejected}}}));
+    }
     return map(
         {{"v", cbor::value{std::uint64_t{1}}},
          {"running", cbor::value{status.running}},
@@ -736,6 +772,12 @@ auto status_value(const daemon_status& status) -> cbor::value {
          {"capture_overflow", cbor::value{status.capture.overflow_count}},
          {"capture_recrawl", cbor::value{status.capture.recrawl_count}},
          {"capture_cursor", cbor::value{status.capture.last_cursor.token}},
+         {"flow",
+          map({{"paused", cbor::value{status.flow.paused}},
+               {"reason", cbor::value{std::string{flow_reason_name(status.flow.reason)}}},
+               {"persistence_lag", cbor::value{status.flow.persistence_lag}},
+               {"consumer_lag", cbor::value{status.flow.consumer_lag}},
+               {"buckets", cbor::value{std::move(buckets)}}})},
          {"graph_keys", cbor::value{status.graph_keys}},
          {"graph_values", cbor::value{status.graph_values}},
          {"graph_memory", cbor::value{status.graph_memory_bytes}},
@@ -816,6 +858,7 @@ auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
     const auto* capture_overflow = unsigned_field(*decoded, "capture_overflow");
     const auto* capture_recrawl = unsigned_field(*decoded, "capture_recrawl");
     const auto* capture_cursor = text_field(*decoded, "capture_cursor");
+    const auto* flow_value = field(*decoded, "flow");
     const auto* invalidated =
         invalidated_value ? std::get_if<cbor::value::array>(&invalidated_value->data) : nullptr;
     const auto* targets =
@@ -823,7 +866,7 @@ auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
     if (!running || !pid || !endpoint || !last_drip || !invalidated || !targets || !graph_keys ||
         !graph_values || !graph_memory || !graph_ceiling || !graph_validation_backlog ||
         !last_graph_divergence_value || !capture_state || !capture_pending || !capture_overflow ||
-        !capture_recrawl || !capture_cursor) {
+        !capture_recrawl || !capture_cursor || !flow_value) {
         return std::unexpected(failure(errc::corrupt, "invalid daemon status"));
     }
     auto output = daemon_status{.running = *running,
@@ -841,6 +884,41 @@ auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
                                 .graph_memory_bytes = *graph_memory,
                                 .graph_memory_ceiling = *graph_ceiling,
                                 .graph_validation_backlog = *graph_validation_backlog};
+    const auto* flow_paused = bool_field(*flow_value, "paused");
+    const auto* flow_reason = text_field(*flow_value, "reason");
+    const auto* persistence_lag = unsigned_field(*flow_value, "persistence_lag");
+    const auto* consumer_lag = unsigned_field(*flow_value, "consumer_lag");
+    const auto* buckets_value = field(*flow_value, "buckets");
+    const auto* buckets =
+        buckets_value ? std::get_if<cbor::value::array>(&buckets_value->data) : nullptr;
+    if (!flow_paused || !flow_reason || !persistence_lag || !consumer_lag || !buckets) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon flow status"));
+    }
+    output.flow.paused = *flow_paused;
+    output.flow.reason = *flow_reason == "persistence" ? flow_pause_reason::persistence
+                         : *flow_reason == "consumers" ? flow_pause_reason::consumers
+                                                       : flow_pause_reason::none;
+    output.flow.persistence_lag = *persistence_lag;
+    output.flow.consumer_lag = *consumer_lag;
+    for (const auto& value : *buckets) {
+        const auto* scope = text_field(value, "scope");
+        const auto* key = text_field(value, "key");
+        const auto* tokens = unsigned_field(value, "tokens_milli");
+        const auto* rate = unsigned_field(value, "rate");
+        const auto* burst = unsigned_field(value, "burst");
+        const auto* rejected = unsigned_field(value, "rejected");
+        if (!scope || !key || !tokens || !rate || !burst || !rejected) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon flow bucket"));
+        }
+        output.flow.buckets.push_back({.scope = *scope == "actor"      ? flow_scope::actor
+                                                : *scope == "document" ? flow_scope::document
+                                                                       : flow_scope::repository,
+                                       .key = *key,
+                                       .tokens = static_cast<double>(*tokens) / 1000.0,
+                                       .rate = *rate,
+                                       .burst = *burst,
+                                       .rejected = *rejected});
+    }
     if (!std::holds_alternative<cbor::null>(last_graph_divergence_value->data)) {
         auto divergence = decode_validation(*last_graph_divergence_value);
         if (!divergence) {
@@ -1147,8 +1225,13 @@ struct service_state {
     std::uint64_t next_build{};
     std::mutex queue_mutex;
     std::mutex completion_mutex;
+    std::mutex flow_mutex;
     std::deque<daemon_delivery> queue;
     std::optional<error> completion_error;
+    flow_config flow_configuration;
+    std::shared_ptr<flow_detail::controller> flow_limits;
+    std::map<std::string, std::uint64_t> consumer_lags;
+    flow_pause_reason flow_pause{flow_pause_reason::none};
     std::atomic<bool> stopping{};
     std::atomic<bool> stopped{};
     std::atomic<std::int64_t> last_activity_ns{};
@@ -1167,13 +1250,11 @@ struct service_state {
 };
 
 auto current_status(const std::shared_ptr<service_state>& state) -> daemon_status {
-    auto capture_cursor = journal_cursor{};
     auto current_capture = capture_status{};
     if (state->capture_handle) {
         auto status = state->capture_handle->status();
         if (status) {
             current_capture = *status;
-            capture_cursor = status->last_cursor;
         }
     }
     const auto graph_status = state->query_graph.statistics();
@@ -1183,22 +1264,65 @@ auto current_status(const std::shared_ptr<service_state>& state) -> daemon_statu
 #else
     const auto process_id = static_cast<std::uint64_t>(::getpid());
 #endif
+    auto targets = state->fanout->target_status();
+    auto consumer_lag = std::uint64_t{};
+    for (const auto& target : targets) {
+        consumer_lag = std::max(consumer_lag, target.behind);
+    }
+    auto flow = flow_status{};
+    {
+        std::lock_guard lock(state->flow_mutex);
+        for (const auto& [name, behind] : state->consumer_lags) {
+            static_cast<void>(name);
+            consumer_lag = std::max(consumer_lag, behind);
+        }
+        const auto persistence_lag = current_capture.pending_drips;
+        const auto consumer_high = std::min(state->flow_configuration.pause_above,
+                                            state->flow_configuration.max_unacknowledged);
+        if (state->flow_pause == flow_pause_reason::persistence &&
+            persistence_lag <= state->flow_configuration.resume_below) {
+            state->flow_pause = flow_pause_reason::none;
+        }
+        if (state->flow_pause == flow_pause_reason::consumers &&
+            consumer_lag <= state->flow_configuration.resume_below) {
+            state->flow_pause = flow_pause_reason::none;
+        }
+        if (consumer_lag > consumer_high) {
+            state->flow_pause = flow_pause_reason::consumers;
+        } else if (persistence_lag > state->flow_configuration.pause_above) {
+            state->flow_pause = flow_pause_reason::persistence;
+        }
+        state->flow_limits->set_pause(state->flow_pause);
+        flow = {.paused = state->flow_pause != flow_pause_reason::none,
+                .reason = state->flow_pause,
+                .persistence_lag = persistence_lag,
+                .consumer_lag = consumer_lag,
+                .buckets = state->flow_limits->status()};
+    }
     return {.running = !state->stopped.load(std::memory_order_acquire),
             .process_id = process_id,
             .endpoint = state->endpoint.string(),
             .last_drip = state->fanout->last_drip(),
             .invalidated_paths = state->fanout->invalidated_paths(),
-            .targets = state->fanout->target_status(capture_cursor),
+            .targets = std::move(targets),
             .capture = std::move(current_capture),
             .graph_keys = graph_status.keys,
             .graph_values = graph_status.resident_values,
             .graph_memory_bytes = graph_status.resident_value_bytes,
             .graph_memory_ceiling = graph_status.memory_ceiling,
             .graph_validation_backlog = validation_status.backlog,
-            .last_graph_divergence = validation_status.last_divergence};
+            .last_graph_divergence = validation_status.last_divergence,
+            .flow = std::move(flow)};
 }
 
 auto service_state::enqueue(daemon_delivery delivery) -> void {
+    auto observed = fanout->observe(delivery.cursor);
+    if (!observed) {
+        std::lock_guard lock(completion_mutex);
+        completion_error = observed.error();
+        stopping.store(true, std::memory_order_release);
+        return;
+    }
     {
         std::lock_guard lock(queue_mutex);
         queue.push_back(std::move(delivery));
@@ -1416,6 +1540,7 @@ runtime::task<void> proxy_build_events(std::filesystem::path endpoint,
 runtime::task<void> run_service(std::shared_ptr<service_state> state) {
     auto retry_after = std::chrono::steady_clock::time_point::min();
     while (!state->stopping.load(std::memory_order_acquire)) {
+        static_cast<void>(current_status(state));
         if (std::chrono::steady_clock::now() >= retry_after) {
             if (auto delivery = state->dequeue()) {
                 auto delivered = co_await state->fanout->deliver(*delivery);
@@ -1481,6 +1606,19 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                 auto changed = *operation == "pause" ? co_await state->capture_handle->pause()
                                                      : co_await state->capture_handle->resume();
                 response = changed ? encode_acknowledgement() : encode_error(changed.error());
+            } else if (*operation == "consumer_lag") {
+                const auto* name = text_field(*decoded, "name");
+                const auto* behind = unsigned_field(*decoded, "behind");
+                if (!name || name->empty() || !behind) {
+                    response = encode_error(
+                        failure(errc::invalid_argument, "invalid consumer lag report"));
+                } else {
+                    {
+                        std::lock_guard lock(state->flow_mutex);
+                        state->consumer_lags.insert_or_assign(*name, *behind);
+                    }
+                    response = encode_acknowledgement();
+                }
             } else if (*operation == "build_start" || *operation == "build_next" ||
                        *operation == "build_plan" || *operation == "build_repository") {
                 response = co_await process_build_request(state, *decoded, *operation);
@@ -1593,6 +1731,13 @@ runtime::task<daemon> daemon::start(std::filesystem::path checkout, daemon_optio
         }
         state->endpoint = std::move(*endpoint);
         state->options = std::move(options);
+        auto flow_repository = co_await repository::open(state->checkout);
+        if (!flow_repository) {
+            co_return std::unexpected(flow_repository.error());
+        }
+        state->flow_configuration = flow_repository->flow_configuration();
+        state->flow_limits = flow_detail::shared_controller(state->checkout.generic_string(),
+                                                            state->flow_configuration);
         state->options.capture.exclude.push_back(".liquid-store/**");
         state->options.capture.exclude.push_back("LIQUID_REPO");
         state->options.capture.exclude.push_back("LIQUID_JOURNAL");
@@ -1801,6 +1946,40 @@ runtime::task<void> daemon::resume_capture() {
 #else
     auto response = co_await runtime::offload(
         [endpoint = impl_->endpoint] { return request(endpoint, "resume"); });
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    if (!*response) {
+        co_return std::unexpected(response->error());
+    }
+    auto decoded = decode_payload(**response, 1);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    co_return {};
+#endif
+}
+
+runtime::task<void> daemon::report_consumer_lag(std::string name, std::uint64_t behind) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(name);
+    static_cast<void>(behind);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map({{"v", std::uint64_t{1}},
+                                     {"op", "consumer_lag"},
+                                     {"name", std::move(name)},
+                                     {"behind", behind}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await runtime::offload(
+        [endpoint = impl_->endpoint, request_frame = std::move(*frame)]() mutable {
+            return request(endpoint, std::move(request_frame));
+        });
     if (!response) {
         co_return std::unexpected(response.error());
     }
