@@ -45,6 +45,19 @@ auto content(std::string value) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(value.data() + value.size())};
 }
 
+auto format_fixture(std::string_view name) -> std::vector<std::byte> {
+    const auto path = std::filesystem::path{LIQUID_FORMAT_FIXTURES} / name;
+    auto input = std::ifstream{path, std::ios::binary};
+    EXPECT_TRUE(input) << path;
+    const auto characters = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+    auto output = std::vector<std::byte>{};
+    output.reserve(characters.size());
+    for (const auto character : characters) {
+        output.push_back(std::byte{static_cast<unsigned char>(character)});
+    }
+    return output;
+}
+
 auto physical_copies(const std::filesystem::path& packs, const liquid::digest& id) -> std::size_t {
     auto copies = std::size_t{};
     for (const auto& entry : std::filesystem::directory_iterator(packs)) {
@@ -686,6 +699,65 @@ TEST(Repository, diff_reports_path_changes_and_optional_text_hunks) {
     EXPECT_EQ(tree_changes->size(), changes->size());
     EXPECT_TRUE(std::ranges::all_of(
         *tree_changes, [](const auto& entry) { return !entry.line_hunks.has_value(); }));
+}
+
+TEST(Repository, format_diff_reportsZipMembersAndHdf5Datasets) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("archive.zip", format_fixture("archive-a.zip"))));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("measurements.h5", format_fixture("sample-a.h5"))));
+    auto before = liquid::runtime::block_on(repository.cut("before format changes"));
+    ASSERT_TRUE(before) << before.error().message;
+
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("archive.zip", format_fixture("archive-b.zip"))));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        repository.write("measurements.h5", format_fixture("sample-b.h5"))));
+    auto after = liquid::runtime::block_on(repository.cut("after format changes"));
+    ASSERT_TRUE(after) << after.error().message;
+
+    auto changes = liquid::runtime::block_on(
+        repository.diff(*before, *after, liquid::tree_diff_options{.formats = true}));
+    ASSERT_TRUE(changes) << changes.error().message;
+    ASSERT_EQ(changes->size(), 2);
+    const auto archive = std::ranges::find(*changes, "archive.zip", &liquid::tree_diff_entry::path);
+    ASSERT_NE(archive, changes->end());
+    ASSERT_TRUE(archive->container);
+    EXPECT_EQ(archive->container->codec, "zip");
+    ASSERT_EQ(archive->container->entries.size(), 1);
+    EXPECT_EQ(archive->container->entries.front().path, "deflated.txt");
+    const auto hdf5 =
+        std::ranges::find(*changes, "measurements.h5", &liquid::tree_diff_entry::path);
+    ASSERT_NE(hdf5, changes->end());
+    ASSERT_TRUE(hdf5->container);
+    EXPECT_EQ(hdf5->container->codec, "hdf5");
+    ASSERT_EQ(hdf5->container->entries.size(), 1);
+    EXPECT_EQ(hdf5->container->entries.front().path, "measurements/chunked");
+}
+
+TEST(Repository, formatEntriesAreStoredOnceAndRetainedWithTheirContainers) {
+    temporary_repository location;
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("first.zip", format_fixture("archive-a.zip"))));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(repository.write("second.zip", format_fixture("archive-b.zip"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.cut("store format entries")));
+    const auto payload = content("shared vendored payload\n");
+    auto id = liquid::hash(liquid::algorithm::blake3, payload);
+    ASSERT_TRUE(id) << id.error().message;
+    const auto packs = location.path() / ".liquid-store" / "packs";
+    EXPECT_EQ(physical_copies(packs, *id), 1);
+
+    auto collected = liquid::runtime::block_on(repository.collect());
+    ASSERT_TRUE(collected) << collected.error().message;
+    EXPECT_EQ(physical_copies(packs, *id), 1);
 }
 
 TEST(Repository, text_anchors_follow_hunks_and_node_identity_moves) {

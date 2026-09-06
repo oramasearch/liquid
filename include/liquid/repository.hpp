@@ -15,8 +15,10 @@
 
 #include "liquid/abi.hpp"
 #include "liquid/build.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/format.hpp"
 #include "liquid/flow.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
@@ -208,8 +210,32 @@ enum class tree_diff_kind : std::uint8_t {
     conflicted,
 };
 
+enum class container_diff_kind : std::uint8_t {
+    added,
+    removed,
+    modified,
+};
+
+struct container_diff;
+
+struct LIQUID_EXPORT container_diff_entry {
+    std::string path;
+    container_diff_kind kind{container_diff_kind::modified};
+    std::optional<digest> old_digest;
+    std::optional<digest> new_digest;
+    std::shared_ptr<container_diff> nested;
+};
+
+struct LIQUID_EXPORT container_diff {
+    std::string codec;
+    format_tier tier{format_tier::chunk_only};
+    std::vector<container_diff_entry> entries;
+    bool truncated{};
+};
+
 struct LIQUID_EXPORT tree_diff_options {
     bool text{};
+    bool formats{};
 };
 
 struct LIQUID_EXPORT tree_diff_entry {
@@ -223,6 +249,7 @@ struct LIQUID_EXPORT tree_diff_entry {
     std::optional<digest> old_blob;
     std::optional<digest> new_blob;
     std::optional<std::vector<line_change>> line_hunks;
+    std::optional<container_diff> container;
     std::vector<digest> old_conflicts;
     std::vector<digest> new_conflicts;
 };
@@ -314,10 +341,6 @@ struct LIQUID_EXPORT revision_readability {
 struct LIQUID_EXPORT readability_report {
     std::vector<revision_readability> revisions;
     std::vector<std::string> limits;
-};
-
-struct LIQUID_EXPORT op_id {
-    digest value;
 };
 
 struct LIQUID_EXPORT operation_record {
@@ -491,6 +514,9 @@ public:
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
     [[nodiscard]] runtime::task<digest> store_symbols(symbol_record value);
     [[nodiscard]] runtime::task<symbol_record> symbols(digest id);
+    [[nodiscard]] runtime::task<edit_preview> preview_edit(edit_request request,
+                                                           edit_attribution attribution);
+    [[nodiscard]] runtime::task<edit_result> apply_edit(const edit_preview& preview);
     [[nodiscard]] runtime::task<void> set_policy(policy_config policy);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);

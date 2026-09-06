@@ -111,6 +111,14 @@ typedef int (*liquid_frontend_symbols_from_output_v1)(void* module_context,
                                                       liquid_frontend_owned_bytes_v1* symbols_cbor,
                                                       liquid_frontend_error_v1* error);
 
+typedef int (*liquid_frontend_syntax_v1)(void* module_context,
+                                         const char* language,
+                                         liquid_frontend_bytes_v1 blob,
+                                         liquid_frontend_bytes_v1 context_cbor,
+                                         const liquid_frontend_callbacks_v1* callbacks,
+                                         liquid_frontend_owned_bytes_v1* syntax_cbor,
+                                         liquid_frontend_error_v1* error);
+
 typedef void (*liquid_frontend_destroy_v1)(void* module_context);
 
 typedef struct liquid_frontend_module_v1 {
@@ -128,6 +136,7 @@ typedef struct liquid_frontend_module_v1 {
     liquid_frontend_destroy_v1 destroy;
     const liquid_frontend_language_metadata_v1* language_metadata;
     size_t language_metadata_count;
+    liquid_frontend_syntax_v1 syntax;
 } liquid_frontend_module_v1;
 
 typedef const liquid_frontend_module_v1* (*liquid_frontend_entrypoint_v1)(void);

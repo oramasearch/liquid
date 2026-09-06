@@ -277,6 +277,16 @@ TEST(FrontendModule, clang_loads_dynamically_and_registers_statically) {
     EXPECT_EQ(linked->languages(), dynamic->languages());
 }
 
+TEST(FrontendModule, older_v1_descriptor_without_syntax_remains_loadable) {
+    auto descriptor = *liquid_frontend_get_module_v1();
+    descriptor.struct_size = offsetof(liquid_frontend_module_v1, syntax);
+    auto linked = liquid::frontend_module::linked(&descriptor);
+    ASSERT_TRUE(linked) << linked.error().message;
+    auto syntax = linked->syntax("c++", bytes("int value = 1;\n"));
+    ASSERT_FALSE(syntax);
+    EXPECT_EQ(syntax.error().code, liquid::errc::unsupported);
+}
+
 #if defined(__APPLE__) || defined(__linux__)
 TEST(FrontendModule, clang_shared_object_exports_only_the_v1_entrypoint) {
 #if defined(__APPLE__)
@@ -331,6 +341,27 @@ TEST(FrontendModule, tree_sitter_fallback_discovers_a_c_definition) {
     EXPECT_EQ(found->range.start.column, 1U);
     EXPECT_EQ(found->range.end.byte, source.size() - 1);
     EXPECT_EQ(found->range.end.line, 3U);
+}
+
+TEST(FrontendModule, tree_sitter_exposes_canonical_concrete_syntax) {
+    auto module = liquid::frontend_module::load(LIQUID_TREE_SITTER_FRONTEND);
+    ASSERT_TRUE(module) << module.error().message;
+    const auto source = std::string{"int answer(void) {\n    return 42;\n}\n"};
+    auto syntax = module->syntax("c", bytes(source));
+    ASSERT_TRUE(syntax) << syntax.error().message;
+    EXPECT_EQ(syntax->language, "c");
+    EXPECT_EQ(syntax->root.kind, "translation_unit");
+    const auto* literal = syntax->root.node_at(source.find("42"));
+    ASSERT_NE(literal, nullptr);
+    EXPECT_EQ(literal->kind, "number_literal");
+    const auto* function = literal->enclosing("function_definition");
+    ASSERT_NE(function, nullptr);
+    EXPECT_EQ(function->range.start.byte, 0U);
+    auto unsupported = liquid::frontend_module::load(LIQUID_CLANG_FRONTEND);
+    ASSERT_TRUE(unsupported);
+    auto unavailable = unsupported->syntax("c++", bytes(source));
+    ASSERT_FALSE(unavailable);
+    EXPECT_EQ(unavailable.error().code, liquid::errc::unsupported);
 }
 
 TEST(FrontendGraph, body_edit_runs_one_action_and_reassembles) {

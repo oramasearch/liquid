@@ -13,7 +13,8 @@
 **Status:** the demand-driven query graph in #20, per-checkout daemon in #21, continuous clean
 validation in #23, per-definition frontend granularity in #65, local search index in #22, symbol
 records in #66, measured search planner in #67, public build/test streams in #193, the configured
-drive target in #195, and public configured-build plans plus one-call repository builds in #200 are
+drive target in #195, public configured-build plans plus one-call repository builds in #200, and
+structural editing in #205 are
 implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
 bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
@@ -75,6 +76,11 @@ version-1 framed CBOR connection. Each server session owns its repository, handl
 until `build_finished`; an attached in-process consumer receives decoded public `build_event`
 values rather than protocol types. This is the interface liquify uses for inline build and test
 results.
+
+Structural editing uses `edit_preview` and `edit_apply` operations on that same framed connection.
+Their payload is the canonical public request or preview record; their response is the canonical
+preview or result record. The daemon calls repository tasks against its checkout, preserving graph
+and capture ownership rather than creating a second editing service.
 
 Issue #200 adds `build_plan` and `build_repository` beside that direct-action path. The first
 returns complete configured action inputs, producer dependencies, and validated hit state. The

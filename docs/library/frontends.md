@@ -7,11 +7,12 @@ registry and tag-query syntax discovery. The query graph
 keys compiler work by the canonical unit and action fingerprints, so changing one function body
 does not invalidate its neighbours.
 
-**Status.** The ABI, loader, registry, graph coordinator, bundled tree-sitter fallback, and bundled
-Clang C++ module are implemented. The CMake fixture compiles two definition objects with the
+**Status.** The ABI, loader, registry, graph coordinator, bundled tree-sitter fallback, concrete
+syntax operation, and bundled Clang C++ module are implemented. The CMake fixture compiles two definition objects with the
 configured Clang, changes one body, executes one new action, and assembles the translation unit
 again. Its header change executes both actions because both units read that header. Liquid #66 adds
 the `symbols` ABI operation and graph query; its record is documented in [`symbols.md`](symbols.md).
+Liquid #205 adds the optional `syntax` operation used by structural edits.
 The grammar distribution decision, complete inventory, and maintenance process are in
 [`grammars.md`](grammars.md).
 
@@ -22,6 +23,11 @@ third-party type. A dynamic module exports exactly `liquid_frontend_get_module_v
 linked module passes the same descriptor to `frontend_module::linked`. The descriptor registers a
 module name and one or more language names, then supplies these operations:
 
+The format registry follows the same module pattern in the separately versioned
+[`format_abi.h`](../../include/liquid/format_abi.h): one C descriptor, canonical-CBOR operation
+values, owned bytes, and progress/cancellation callbacks. The two descriptors remain purpose-built
+because their operation sets differ.
+
 | Operation | Input | Canonical-CBOR result |
 |---|---|---|
 | `units` | language, source blob, context | array of unit maps |
@@ -29,11 +35,35 @@ module name and one or more language names, then supplies these operations:
 | `assemble` | array of unit fingerprints and output byte strings, context | translation-unit output map |
 | `symbols` | language, source blob, context | derived symbol-action description |
 | `symbols_from_output` | language, source blob, symbol-action stdout | per-translation-unit symbol output map |
+| `syntax` | language, source blob, context | concrete syntax tree |
 
 Every operation receives progress and cancellation callbacks. Return values use caller-independent
 owned bytes with an explicit release callback. ABI status values distinguish invalid input,
 unsupported operations, cancellation, and internal failure. The loader rejects the wrong ABI
-version, an incomplete descriptor, invalid owned bytes, malformed values, and non-canonical CBOR.
+version, an incomplete required descriptor prefix, invalid owned bytes, malformed values, and
+non-canonical CBOR. `syntax` is appended to the descriptor and is optional: an older v1 descriptor
+or a null pointer returns `errc::unsupported`, so ABI v1 remains v1.
+
+A syntax result is:
+
+```text
+{
+  v: 1,
+  language: text,
+  root: {
+    kind: text,
+    named: bool,
+    field?: text,
+    range: { start: { byte, line, column }, end: { byte, line, column } },
+    children: [ node ]
+  }
+}
+```
+
+The tree includes named and anonymous concrete nodes. `decode_syntax_tree` validates canonical
+CBOR and child containment. `syntax_node::node_at(byte)` returns the deepest containing node, and
+`enclosing(kind)` walks from a node toward the root. The tree-sitter module implements the
+operation for every configured grammar, including C and C++; the Clang module returns unsupported.
 
 ABI v1 modules may append `language_metadata` after the original descriptor fields. Each metadata
 row identifies a registered language as `frontend` or `grammar`; grammar rows also carry the

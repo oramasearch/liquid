@@ -35,6 +35,7 @@
 #include "encoding/cbor.hpp"
 #include "flow_control.hpp"
 #include "liquid/drive.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/hot_update.hpp"
@@ -1671,6 +1672,64 @@ process_build_request(const std::shared_ptr<service_state>& state,
     co_return response;
 }
 
+runtime::task<std::vector<std::byte>>
+process_edit_request(const std::shared_ptr<service_state>& state,
+                     const cbor::value& request_value,
+                     std::string_view operation) {
+    const auto* record_value = field(request_value, "record");
+    const auto* record =
+        record_value ? std::get_if<cbor::value::bytes>(&record_value->data) : nullptr;
+    if (!record) {
+        co_return encode_error(failure(errc::invalid_argument, "missing daemon edit record"));
+    }
+    auto source = co_await repository::open(state->checkout);
+    if (!source) {
+        co_return encode_error(source.error());
+    }
+    if (operation == "edit_preview") {
+        auto request = decode_edit_request(*record);
+        const auto* tool = text_field(request_value, "tool");
+        const auto* edit_operation = text_field(request_value, "operation");
+        const auto* agent = text_field(request_value, "agent");
+        if (!request || !tool || tool->empty() || !edit_operation || edit_operation->empty() ||
+            !agent) {
+            co_return encode_error(
+                request ? failure(errc::invalid_argument, "invalid daemon edit attribution")
+                        : request.error());
+        }
+        auto attribution = edit_attribution{*tool, *edit_operation, std::nullopt};
+        if (!agent->empty()) {
+            attribution.agent = *agent;
+        }
+        auto preview = co_await source->preview_edit(std::move(*request), std::move(attribution));
+        if (!preview) {
+            co_return encode_error(preview.error());
+        }
+        auto encoded = encode_edit_preview(*preview);
+        if (!encoded) {
+            co_return encode_error(encoded.error());
+        }
+        co_return encode_success(
+            map({{"v", std::uint64_t{1}},
+                 {"preview", cbor::value::bytes{encoded->begin(), encoded->end()}}}));
+    }
+    auto preview = decode_edit_preview(*record);
+    if (!preview) {
+        co_return encode_error(preview.error());
+    }
+    auto applied = co_await source->apply_edit(*preview);
+    if (!applied) {
+        co_return encode_error(applied.error());
+    }
+    auto encoded = encode_edit_result(*applied);
+    if (!encoded) {
+        co_return encode_error(encoded.error());
+    }
+    co_return encode_success(
+        map({{"v", std::uint64_t{1}},
+             {"result", cbor::value::bytes{encoded->begin(), encoded->end()}}}));
+}
+
 runtime::task<std::vector<std::byte>> send_daemon_request(std::filesystem::path endpoint,
                                                           std::vector<std::byte> frame) {
     auto response = co_await runtime::offload(
@@ -1828,6 +1887,8 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
             } else if (*operation == "build_start" || *operation == "build_next" ||
                        *operation == "build_plan" || *operation == "build_repository") {
                 response = co_await process_build_request(state, *decoded, *operation);
+            } else if (*operation == "edit_preview" || *operation == "edit_apply") {
+                response = co_await process_edit_request(state, *decoded, *operation);
             } else {
                 response = encode_error(
                     failure(errc::invalid_argument, "unknown daemon request", *operation));
@@ -2238,6 +2299,84 @@ runtime::task<build_handle> daemon::build(action_input input) {
                        }
                    });
     co_return std::move(stream.handle);
+#endif
+}
+
+runtime::task<edit_preview> daemon::preview_edit(edit_request request_value,
+                                                 edit_attribution attribution) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(request_value);
+    static_cast<void>(attribution);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto record = encode_edit_request(request_value);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    auto frame = encode_request(map({{"v", std::uint64_t{1}},
+                                     {"op", "edit_preview"},
+                                     {"record", cbor::value::bytes{record->begin(), record->end()}},
+                                     {"tool", attribution.tool},
+                                     {"operation", attribution.operation},
+                                     {"agent", attribution.agent.value_or("")}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    const auto* preview_value = field(*decoded, "preview");
+    const auto* preview =
+        preview_value ? std::get_if<cbor::value::bytes>(&preview_value->data) : nullptr;
+    if (!preview) {
+        co_return std::unexpected(failure(errc::corrupt, "missing daemon edit preview"));
+    }
+    co_return decode_edit_preview(*preview);
+#endif
+}
+
+runtime::task<edit_result> daemon::apply_edit(edit_preview preview) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(preview);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto record = encode_edit_preview(preview);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    auto frame =
+        encode_request(map({{"v", std::uint64_t{1}},
+                            {"op", "edit_apply"},
+                            {"record", cbor::value::bytes{record->begin(), record->end()}}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    const auto* result_value = field(*decoded, "result");
+    const auto* result =
+        result_value ? std::get_if<cbor::value::bytes>(&result_value->data) : nullptr;
+    if (!result) {
+        co_return std::unexpected(failure(errc::corrupt, "missing daemon edit result"));
+    }
+    co_return decode_edit_result(*result);
 #endif
 }
 

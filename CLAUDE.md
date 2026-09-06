@@ -78,6 +78,9 @@ publication, per-drip search fan-out target, public working/ref query API, and `
 Liquid #67 adds measured selection among BM25F, verified trigrams, and parallel mapped scans,
 cursor-based stale-index exclusion, common located hit records, the public executed-plan API, and
 `liquid search --explain`.
+Liquid #29 adds the versioned format-codec C ABI and registry; dependency-free ZIP, tar, HDF5,
+Parquet, and SQLite readers; deterministic tar output; opt-in container diff; archive search; and
+content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
@@ -125,6 +128,9 @@ records, a separately versioned cooperative C runtime on macOS arm64 and Linux x
 restart hooks, reconstructible process composition, and a drip-driven daemon target. Tier 2 remains
 conditional on a compatible #27 ABI descriptor referenced by the signed build result; absent that
 proof, an additive interface is tier 3.
+Liquid #205 adds optional concrete syntax to frontend ABI v1 and implemented C/C++ structural
+rename, extract, move, and tree-edit previews and applies through libliquid, the local daemon, and
+`liquid edit`, with attributed grouped undo.
 Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
 approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
