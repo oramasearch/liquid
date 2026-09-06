@@ -309,9 +309,11 @@ container. Uncompressed tar has a deterministic writer, while hard or unsupporte
 retain honest tiers and opaque reasons ([`formats.md`](formats.md)).
 
 **Projection.** Tier A package and image projection is implemented. One checked install tree
-projects to deterministic `.deb`, `.rpm`, `.apk`, OCI image layouts, and digest-pinned Helm charts.
-Binary readers derive package relationships, incompatible ABI verdicts refuse by default, and
-signed `projection/1`, source provenance, and SBOM statements accompany OCI artifacts
+projects to deterministic `.deb`, `.rpm`, `.apk`, Homebrew bottles, Arch recipes, OCI image
+layouts, digest-pinned Helm charts, pinned-runtime AppImages, Flatpak build directories, and
+Snaps. Binary readers derive package relationships; incompatible ABI and relocation verdicts
+refuse by default; and signed `projection/1`, source provenance, and SBOM statements accompany
+every artifact
 ([`projection.md`](projection.md)).
 
 **Dependency resolution** is implemented. Canonical `package/1` and fully bound
