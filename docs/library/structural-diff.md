@@ -74,8 +74,8 @@ lock mechanically reindents its committed sample and must return an empty format
 script. Separate tests cover comment changes, fallback labels, CLI text and JSON, ABI tail
 compatibility, and one parse per blob across a build followed by a diff.
 
-The own-source measurement imported `origin/main` and a second tree containing this change's 16
-production source files, then ran a cold-cache comparison with:
+The own-source measurement imported `a675cb9` (the pre-merge `origin/main`) and a second tree
+containing this change's 16 production source files, then ran a cold-cache comparison with:
 
 ```text
 liquid diff before after --structural
