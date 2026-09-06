@@ -12,10 +12,11 @@ on each desktop platform.
 
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
-| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, PostgreSQL server/client, Autoconf, Automake, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount and PostgreSQL data-branch scenarios, `liquid version` |
+| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, PostgreSQL server/client, Autoconf, Automake, GNU `time`, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount and PostgreSQL data-branch scenarios, `liquid version` |
 | macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario, `liquid version` |
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
+| Linux self-host | `ubuntu-24.04` | Clang 19, CMake, Ninja, libfuse3 | CMake bootstrap, two `liquid wrap` builds, 100% second-run disk hits, byte-identical static library and CLI, shared libliquid build |
 
 Every static or shared CTest run includes `consumer-project-build`. It installs the already-built
 parent artifacts into a test-local prefix, configures a separate CMake project against that package
@@ -60,7 +61,7 @@ classes of Linux difference: libc++ supplies some standard headers transitively 
 does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
 `std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same
 toolchain the Linux jobs use (Ubuntu 24.04, Clang 19, CMake 3.31, Ninja, libfuse3, PostgreSQL,
-Autoconf, Automake). Build it once
+Autoconf, Automake, and GNU `time` at `/usr/bin/time` for ad-hoc measurements). Build it once
 and run the whole suite against a worktree; `--privileged` with `/dev/fuse` lets the mount and
 sandbox tests run for real:
 
@@ -111,6 +112,14 @@ path now passes `-f` and the mountpoint through `fuse_parse_cmdline`, gives `fus
 allocated loop configuration, and issues one offloaded fresh-path lookup after `fuse_exit` during
 an explicit unmount. The uncached lookup wakes the blocked libfuse worker without blocking the runtime
 executor. A successful named run reports one passed test and no skipped tests.
+
+For a Linux self-host measurement, bind-mount the checkout at `/liquid/work` and set
+`LIQUID_WRAP_CACHE=/liquid/work/.liquid-build/self-host-cache`; both the wrapped build tree and
+the cache then live on the host bind mount rather than Docker's writable layer. Run
+`bash tools/linux-ci/self-host-memory.sh <log> <wrap command>` inside the container to sample
+the cgroup-v2 `memory.current` and `memory.stat` fields plus `VmRSS`/`VmHWM` for the wrapper and
+its descendants every ten seconds. Keep the log with the self-host result, particularly on a
+memory-limit failure.
 
 `BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
 The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.
