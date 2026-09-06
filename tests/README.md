@@ -150,6 +150,12 @@ unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
+The clone cases pull through an HTTP sync endpoint, force full hydration of a file above the
+ordinary drive threshold, confirm the persisted remote and stable JSON, and configure and build a
+small CMake project inside the checkout. A second clone resolves that checkout as a configured
+drive-folder source. Separate calls pin optional destination naming, `LIQUID_TOKEN` authentication,
+and the `already_exists`, `unauthorized`, and `not_found` refusal names while confirming failed
+clones leave no partial target.
 
 Drive coverage persists policy and per-path state across reopen, checks folder inheritance and
 explicit overrides, retains lazy placeholders, records peer failure reasons, queues repository

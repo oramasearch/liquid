@@ -16,6 +16,7 @@ auto set_executable(std::filesystem::path path) -> void;
 auto frontend_module_path(bool compiler) -> std::filesystem::path;
 
 auto repo_init(int argc, char** argv) -> int;
+auto clone(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
 auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
@@ -429,6 +430,18 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_init},
+    {"clone",
+     "clone <url|drive-folder> [<dir>] [--json]",
+     "clone and materialize a repository",
+     "available",
+     flag_json,
+     "Create a repository from a sync endpoint or configured drive folder, persist its remote, "
+     "and materialize every file.",
+     "liquid clone https://lake.example.invalid/repositories/example ./example --json",
+     "0 on success, 1 when authorization, repository lookup, target validation, or transfer "
+     "fails, and 2 for invalid usage.",
+     argument_policy::ordinary,
+     liquid_cli::clone},
     {"status",
      "status [--json]",
      "show repository status",

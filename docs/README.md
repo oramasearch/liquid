@@ -121,6 +121,7 @@ for what is implemented today.
 
 | Page | What it contains |
 |---|---|
+| [`cli/README.md`](cli/README.md) | Command-line commands, repository cloning, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync and pin state, path history, flow status and retry output, examples, and verification. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync and pin state, path history and blame, flow status and retry output, examples, and verification. |
 | [`cli/build-events.md`](cli/build-events.md) | The `liquid build --plan` and `--events` JSON-lines schemas, daemon operations, ordering, exit status, and edit behavior. |
 | [`cli/test.md`](cli/test.md) | CMake/native test discovery, filtering, cached action behavior, output, and exit status. |
