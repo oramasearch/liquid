@@ -1,9 +1,11 @@
 #include "formats/builtin.hpp"
+#include "formats/tar/writer.hpp"
 
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <string>
@@ -425,14 +427,13 @@ auto append_member(std::vector<std::byte>& output,
     return {};
 }
 
-auto deterministic_tar(const format_tree& tree) -> result<std::vector<std::byte>> {
-    auto entries = tree.entries;
-    std::ranges::sort(entries, {}, &format_entry::path);
+auto deterministic_tar(std::vector<formats::tar::entry> entries, std::uint64_t mtime)
+    -> result<std::vector<std::byte>> {
+    std::ranges::sort(entries, {}, &formats::tar::entry::path);
     auto output = std::vector<std::byte>{};
-    const auto mtime = source_date_epoch();
     for (const auto& entry : entries) {
         auto name = entry.path;
-        const auto directory = entry.kind == format_entry_kind::directory;
+        const auto directory = entry.directory;
         if (directory && !name.ends_with('/')) {
             name.push_back('/');
         }
@@ -446,7 +447,7 @@ auto deterministic_tar(const format_tree& tree) -> result<std::vector<std::byte>
             }
         }
         const auto header_name = name.size() <= 100 ? name : name.substr(0, 100);
-        const auto mode = directory ? 0755U : 0644U;
+        const auto mode = directory ? 0755U : entry.mode;
         auto appended = append_member(output,
                                       header_name,
                                       directory ? '5' : '0',
@@ -464,8 +465,11 @@ auto deterministic_tar(const format_tree& tree) -> result<std::vector<std::byte>
 
 class tar_backend final : public codec_backend {
 public:
-    auto recognise(std::span<const std::byte> blob, std::string_view)
+    auto recognise(std::span<const std::byte> blob, std::string_view path)
         -> result<std::optional<format_recognition>> override {
+        if (std::filesystem::path{path}.extension() == ".apk") {
+            return std::optional<format_recognition>{};
+        }
         if (blob.size() >= 2 && blob[0] == std::byte{0x1f} && blob[1] == std::byte{0x8b}) {
             return std::optional<format_recognition>{format_recognition{
                 format_tier::semantic_verbatim, "gzip compressor settings cannot be recovered"}};
@@ -509,7 +513,15 @@ public:
         if (!tree.original.empty()) {
             return tree.original;
         }
-        return deterministic_tar(tree);
+        auto entries = std::vector<formats::tar::entry>{};
+        entries.reserve(tree.entries.size());
+        for (const auto& entry : tree.entries) {
+            entries.push_back({.path = entry.path,
+                               .bytes = entry.bytes,
+                               .mode = 0644,
+                               .directory = entry.kind == format_entry_kind::directory});
+        }
+        return deterministic_tar(std::move(entries), source_date_epoch());
     }
 
     auto volatile_fields() const -> std::span<const std::string_view> override {
@@ -559,3 +571,13 @@ auto tar_module() -> const liquid_format_module_v1* {
 }
 
 } // namespace liquid::formats::detail
+
+namespace liquid::formats::tar {
+
+auto write(std::span<const entry> entries, std::uint64_t source_date_epoch)
+    -> result<std::vector<std::byte>> {
+    return detail::deterministic_tar(std::vector<entry>{entries.begin(), entries.end()},
+                                     source_date_epoch);
+}
+
+} // namespace liquid::formats::tar

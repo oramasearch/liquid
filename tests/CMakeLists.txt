@@ -20,6 +20,7 @@ add_executable(liquid-tests
   test_identity.cpp
   test_node_store.cpp
   test_object.cpp
+  test_projection.cpp
   test_remote.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
@@ -83,6 +84,7 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
     ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
   if(APPLE)
@@ -110,7 +112,7 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
-gtest_discover_tests(liquid-tests)
+gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME desktop-nautilus-badge-mapping
@@ -164,6 +166,7 @@ endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
   LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_PROJECTION_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/projection"
   LIQUID_ABI_FIXTURE_V1="$<TARGET_FILE:liquid-abi-fixture-v1>"
   LIQUID_ABI_FIXTURE_ADDED="$<TARGET_FILE:liquid-abi-fixture-added>"
   LIQUID_ABI_FIXTURE_BREAK="$<TARGET_FILE:liquid-abi-fixture-break>"
@@ -172,6 +175,11 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+find_program(LIQUID_HELM_EXECUTABLE helm)
+if(LIQUID_HELM_EXECUTABLE)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_HELM_EXECUTABLE="${LIQUID_HELM_EXECUTABLE}")
+endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"
@@ -244,7 +252,7 @@ if(UNIX)
     liquid-hot-demo
     liquid-hot-demo-patch
     liquid-hot-demo-restart-hook)
-  gtest_discover_tests(liquid-hot-demo-tests)
+  gtest_discover_tests(liquid-hot-demo-tests DISCOVERY_TIMEOUT 120)
 endif()
 
 if(LIQUID_BUILD_CLI)
@@ -408,7 +416,7 @@ add_executable(liquid-vfs-queue-tests
   ${PROJECT_SOURCE_DIR}/src/vfs/request_queue.cpp)
 target_include_directories(liquid-vfs-queue-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-vfs-queue-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-vfs-queue-tests)
+gtest_discover_tests(liquid-vfs-queue-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -447,7 +455,7 @@ endif()
 add_executable(liquid-store-large-tests test_store_large.cpp)
 target_include_directories(liquid-store-large-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-store-large-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large)
+gtest_discover_tests(liquid-store-large-tests PROPERTIES LABELS large DISCOVERY_TIMEOUT 120)
 
 # The 40 GiB run takes about ten minutes and 40 GiB of disk: it is registered only when
 # LIQUID_LARGE_TESTS=ON (configure with it, then `ctest -L large-40g`).
@@ -456,7 +464,7 @@ if(LIQUID_LARGE_TESTS)
   add_executable(liquid-store-40g-tests test_store_40g.cpp)
   target_include_directories(liquid-store-40g-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
   target_link_libraries(liquid-store-40g-tests PRIVATE liquid::liquid GTest::gtest_main)
-  gtest_discover_tests(liquid-store-40g-tests PROPERTIES LABELS large-40g)
+  gtest_discover_tests(liquid-store-40g-tests PROPERTIES LABELS large-40g DISCOVERY_TIMEOUT 120)
 endif()
 
 # The index is private implementation code.  Compile its two private sources
@@ -474,7 +482,7 @@ target_include_directories(liquid-index-tests PRIVATE
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
 target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main Boost::corosio libzstd_static)
-gtest_discover_tests(liquid-index-tests)
+gtest_discover_tests(liquid-index-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-crypto-tests
   crypto/test_aead.cpp
@@ -486,7 +494,7 @@ target_include_directories(liquid-crypto-tests PRIVATE
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
 target_link_libraries(liquid-crypto-tests PRIVATE liquid_blake3 liquid_monocypher GTest::gtest_main)
-gtest_discover_tests(liquid-crypto-tests)
+gtest_discover_tests(liquid-crypto-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-store-sim-tests
   store/test_gc_sim_regression.cpp
@@ -496,7 +504,7 @@ target_include_directories(liquid-store-sim-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/store
   ${CMAKE_CURRENT_SOURCE_DIR}/sim)
 target_link_libraries(liquid-store-sim-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
+gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-header-tests
   headers/abi.cpp
@@ -523,6 +531,7 @@ add_executable(liquid-header-tests
   headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp
+  headers/projection.cpp
   headers/remote.cpp
   headers/repository.cpp
   headers/resolve.cpp
@@ -553,7 +562,7 @@ target_compile_definitions(liquid-cbor-tests PRIVATE
   LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-cbor-tests PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp GTest::gtest_main)
-gtest_discover_tests(liquid-cbor-tests)
+gtest_discover_tests(liquid-cbor-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-format-tests
   formats/test_dotenv.cpp
@@ -569,7 +578,7 @@ target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_ma
 add_library(liquid-format-test-module MODULE formats/module.c)
 target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_dependencies(liquid-format-tests liquid-format-test-module)
-gtest_discover_tests(liquid-format-tests)
+gtest_discover_tests(liquid-format-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-encryption-tests
   encryption/test_custody.cpp
@@ -593,14 +602,14 @@ target_compile_definitions(liquid-encryption-tests PRIVATE
   LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-encryption-tests PRIVATE
   liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main)
-gtest_discover_tests(liquid-encryption-tests)
+gtest_discover_tests(liquid-encryption-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-crdt-tests crdt/test_document.cpp crdt/test_journal.cpp)
 target_sources(liquid-crdt-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 target_include_directories(liquid-crdt-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-crdt-tests PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp GTest::gtest_main)
-gtest_discover_tests(liquid-crdt-tests)
+gtest_discover_tests(liquid-crdt-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-crdt-measure EXCLUDE_FROM_ALL crdt/measure_document.cpp)
 target_sources(liquid-crdt-measure PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
@@ -627,7 +636,7 @@ target_include_directories(liquid-record-tests PRIVATE ${PROJECT_SOURCE_DIR}/src
 target_compile_definitions(liquid-record-tests PRIVATE
   LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-record-tests PRIVATE liquid::liquid GTest::gtest_main)
-gtest_discover_tests(liquid-record-tests)
+gtest_discover_tests(liquid-record-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-git-tests
   git/test_object_store.cpp
@@ -635,7 +644,7 @@ add_executable(liquid-git-tests
   ${PROJECT_SOURCE_DIR}/src/git/sha1.cpp)
 target_include_directories(liquid-git-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-git-tests PRIVATE liquid::liquid GTest::gtest_main ZLIB::ZLIB)
-gtest_discover_tests(liquid-git-tests)
+gtest_discover_tests(liquid-git-tests DISCOVERY_TIMEOUT 120)
 
 option(LIQUID_REALWORLD_TESTS "Register the opt-in real-world Git interoperability check" OFF)
 set(LIQUID_REALWORLD_GIT_DIRECTORY "" CACHE PATH "Checkout to import in the real-world Git check")

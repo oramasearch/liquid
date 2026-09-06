@@ -26,3 +26,9 @@ Every new codec adds a real fixture and passes the common cases in `tests/format
 unpack, canonicalisation, logical comparison, every truncation boundary, recursion limits, and a
 byte-identical repack assertion whenever recognition reports Tier 1. Supported and unsupported
 subsets belong in `docs/library/formats.md` in the same change.
+
+`deb/`, `rpm/`, and `apk/` contain issue #28's Tier A writers and bounded round-trip readers.
+`package/` owns common hashes, deterministic zstd, tar, and cpio construction. `deflate/` owns the
+deterministic RFC 1951 and gzip write path; zlib is used only for bounded read-side inflation.
+These package readers register as semantic-verbatim codecs. Their projection rules are documented
+in `docs/library/projection.md`.
