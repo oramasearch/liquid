@@ -245,7 +245,8 @@ auto fanout::target_status(const journal_cursor& capture_cursor) const
                           .cursor = value.cursor,
                           .behind = capture_end > target_end ? capture_end - target_end : 0,
                           .deliveries = value.deliveries,
-                          .last_error = value.last_error});
+                          .last_error = value.last_error,
+                          .detail = target->detail()});
     }
     return output;
 }

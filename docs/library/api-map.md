@@ -61,6 +61,8 @@ owning issue in `error::context`.
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
 | `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
+| `liquid/hot_abi.h` | #32 | implemented on macOS arm64 and Linux x86_64; unsupported result on Windows | versioned C runtime ABI for stable entry registration, local patch receipt, explicit quiescence, direct patch application, cleanup, and diagnostics |
+| `liquid/hot_update.hpp` | #32 | implemented | build evidence, tier and outcome values, deterministic classification, canonical patch codecs, signed patch creation and verification, cooperative apply, sandboxed restart, and composition status |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
@@ -1256,6 +1258,51 @@ class keyring {
 };
 ```
 
+### `liquid/hot_abi.h` and `liquid/hot_update.hpp`
+
+```c
+#define LIQUID_HOT_ABI_VERSION 1u
+uint32_t liquid_hot_abi_version(void);
+liquid_hot_status liquid_hot_register(const char* symbol, void** entry_slot);
+liquid_hot_status liquid_hot_listen(const char* endpoint);
+liquid_hot_status liquid_hot_apply(const void* patch_bytes, size_t patch_size);
+liquid_hot_status liquid_hot_quiescent(void);
+void liquid_hot_close(void);
+const char* liquid_hot_last_error(void);
+```
+
+The standalone C header is separately versioned from libliquid. Registration records stable
+function-pointer slots; loading and symbol resolution may queue replacements, while only
+`liquid_hot_quiescent` changes the registered slots.
+
+```cpp
+enum class hot_update_tier : std::uint8_t { tier_0, tier_1, tier_2, tier_3, tier_4 };
+enum class hot_update_outcome : std::uint8_t { patched, restart };
+
+namespace hot_update {
+runtime::task<digest> record_evidence(repository&, hot_update_build_evidence);
+runtime::task<hot_update_plan> classify(repository&, result_id old, result_id next);
+runtime::task<hot_update_patch_creation> create_patch(repository&, hot_update_plan,
+                                                       std::vector<std::byte> object);
+runtime::task<hot_update_patch_creation> create_patch(repository&, hot_update_plan);
+runtime::task<hot_update_patch> verify_patch(repository&, digest record);
+runtime::task<hot_update_apply_result> apply(repository&, digest record,
+                                             std::filesystem::path endpoint);
+runtime::task<hot_update_apply_result> record_outcome(repository&, hot_update_plan);
+runtime::task<hot_update_apply_result> restart(repository&, hot_update_plan,
+                                               std::filesystem::path working_tree,
+                                               std::vector<std::string> hook);
+runtime::task<hot_update_composition> status(repository&, result_id target);
+}
+```
+
+The record codecs and JSON projections are public pure functions. `repository_options::hot_update`
+persists the restart argument vector and `{name, endpoint}` targets;
+`repository::hot_update_configuration()` returns the effective stored value. Full evidence rules,
+records, and supported runtime targets are in [hot-update.md](hot-update.md). Tier-2 classification
+accepts only ABI descriptor records referenced by the corresponding signed `action_result` and
+verified against the old result's descriptor with `diff_abi`.
+
 ### `liquid/daemon.hpp`
 
 ```cpp
@@ -1265,10 +1312,11 @@ class daemon_target {
   virtual ~daemon_target() = default;
   virtual std::string name() const = 0;
   virtual runtime::task<void> deliver(daemon_delivery) = 0;
+  virtual std::optional<std::string> detail() const;
 };
 struct daemon_target_status {
   std::string name; journal_cursor cursor; std::uint64_t behind, deliveries;
-  std::optional<std::string> last_error;
+  std::optional<std::string> last_error, detail;
 };
 struct daemon_status {
   bool running; std::uint64_t process_id; std::string endpoint;

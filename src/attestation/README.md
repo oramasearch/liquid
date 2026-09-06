@@ -9,3 +9,5 @@ typed SLSA v1 predicate.
 `sbom/1` validates the format, canonical record digest, derived and inferred flags, and component
 claims used by SPDX/CycloneDX generation.
 `delta/1` validates source, target, algorithm, and delta-record digest claims for artifact delivery.
+`hot_update/1` validates the old and new results, tier, changed symbols, patch object and record,
+and the patched or restart outcome.

@@ -12,6 +12,7 @@
 #include "liquid/git.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/hot_update.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/object.hpp"
 #include "liquid/reapi.hpp"

@@ -46,6 +46,14 @@ repository at no cost. Linux arm64 verification is deferred until a suitable run
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
 `-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
 
+The hot-update demo builds a loadable definition object and drives one `liquid-hot-demo` process
+through `value=1` and `value=2`, proving tier-1 redirection at its Capy resumption boundary on
+macOS arm64 and Linux x86_64. The tier-3 case executes the restart hook through the ordinary build
+sandbox and verifies the appended outcome, old result, new result, and tier arguments. Linux CI
+always has libfuse3 for that test. A macOS machine needs macFUSE; without it the restart-hook case
+reports the same explicit skip as the other sandbox-dependent tests. Classification and the live
+tier-1 path still execute.
+
 The Linux jobs install `libfuse3-dev`, `fuse3`, Autoconf, and Automake. Configuration requires the `fuse3`
 pkg-config package on Linux, and the mount test exercises a 64 MiB repository through libfuse3
 when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device, the test reports

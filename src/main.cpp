@@ -62,6 +62,7 @@ auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto hot_update(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -237,6 +238,11 @@ constexpr auto commands = std::to_array<command>({
      "show compiler or syntactic symbols for a source path",
      "available",
      liquid_cli::symbols},
+    {"hot-update",
+     "hot-update <classify|apply|status> ...",
+     "classify, apply, or inspect runtime updates",
+     "available on macOS arm64 and Linux x86_64",
+     liquid_cli::hot_update},
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "

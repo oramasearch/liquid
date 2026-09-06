@@ -84,3 +84,7 @@ Wrap output includes its graph backlog and last divergence record.
 
 `symbols.cpp` loads the compiler frontend when installed, falls back to tree-sitter, and presents
 the public symbol record without inspecting private repository storage.
+
+`hot_update.cpp` classifies two recorded builds from public hot-update evidence and prints the
+tier, outcome, symbols, and evidence records. Its status view verifies every signed patch before
+showing the base artifact plus its patch composition.

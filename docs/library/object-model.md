@@ -60,6 +60,12 @@ action      { v, kind:"action", inputs:digest(tree), command:[text...], cwd, env
               platform, toolchain:digest(tree), sandbox:digest, timeout_s?, remote_eligible? }
 result      { v, kind:"result", action:digest, outputs, manifest, producer, provenance?, sboms?, sig }
 sbom        { v, kind:"sbom", format:text, document:bytes }
+hot-update-evidence { v:1, kind:"hot-update-evidence", result, artifact, changed_input,
+                      units:[{kind,name,signature,source,output}...], abi_descriptor? }
+patch       { v:1, kind:"patch", supersedes:result_id, target:result_id, tier:1|2,
+              symbols:[text...], object:digest }
+hot-update-outcome { v:1, kind:"hot-update-outcome", supersedes:result_id,
+                     target:result_id, tier:0|3|4, outcome:"patched"|"restart", symbols, evidence }
 query-graph { v:1, kind:"query-graph", nodes:[digest(query-node)…] }
 query-node  { v:1, kind:"query-node", key, fingerprint, durability,
               dependencies:[{key,fingerprint}…], value:digest }
@@ -96,6 +102,9 @@ readable.
 - Each result's `sboms` array reaches signed `sbom/1` attestations. Their `document` attribute
   reaches a canonical `sbom` record containing the base SPDX or CycloneDX JSON. See
   [`sbom.md`](sbom.md).
+- Hot-update evidence is associated with its result in repository metadata. Signed patch records
+  form a `supersedes` chain back to the base artifact; restart records preserve the classifier
+  evidence for the non-patching outcome. See [`hot-update.md`](hot-update.md).
 - A `repo` record identifies a repository independently of where it lives; `repo_id` is 16 random
   bytes minted at `create`.
 

@@ -66,6 +66,7 @@ that the table and `liquid --help` name the same commands.
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
 | `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
+| `hot-update` | `hot-update <classify\|apply\|status> ...` | Classify, apply, or inspect runtime updates. | available on macOS arm64 and Linux x86_64 |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
@@ -90,6 +91,9 @@ chunk. Its `daemon` object reports availability, process id, the last triggered 
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
 adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
 successful delivery count.
+The `hot-update` target also emits `daemon_target_detail=<name> <detail>` after a successful
+delivery. Its detail names the configured build target, `patched` or `restart` outcome, tier, and
+content-addressed record.
 `push` and `pull` print metadata item, object, byte, and cursor counts. `push` then prints exactly
 one line per requested ref:
 
@@ -270,6 +274,12 @@ current project's wrap repository.
 `retain explain` applies persisted `config.retention` rules, evaluates reachability without
 deleting data, and prints the matching rule, lease ID, and expiry for a retained digest. A digest
 outside every live root is reported as due for eviction by the next collection.
+`hot-update classify <old> <new> [--json]` prints the tier, first-class outcome, changed symbols,
+evidence records, and reason. Missing frontend evidence is tier 4 rather than a command error.
+`hot-update apply <patch> --endpoint <path>` verifies the `hot_update/1` signature before sending
+the object to the program's local endpoint. `hot-update status <result> [--json]` walks the signed
+chain and lists the original artifact followed by each patch in application order. Configuration
+and safety rules are in [`../library/hot-update.md`](../library/hot-update.md).
 `sbom` accepts a produced path and exactly one output-format flag. In a liquid repository or
 wrapped project it verifies and prints the result-bound `sbom/1` attestation and its graph-derived
 SPDX 2.3 or CycloneDX 1.5 document. A regular file with no producing result uses local ELF,
@@ -338,6 +348,9 @@ liquid sbom build/output.o --spdx
 liquid sbom /usr/bin/tool --cyclonedx
 liquid abi show build/libexample.so --json
 liquid abi diff blake3:<old-result>:build/libexample.so blake3:<new-result>:build/libexample.so --json
+liquid hot-update classify blake3:<old-result> blake3:<new-result> --json
+liquid hot-update apply blake3:<patch-record> --endpoint .liquid/demo.sock
+liquid hot-update status blake3:<new-result> --json
 liquid wrap cmake -S . -B build -G Ninja
 liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
 liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081

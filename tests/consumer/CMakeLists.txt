@@ -9,4 +9,4 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(liquid CONFIG REQUIRED)
 
 add_executable(liquid-consumer main.cpp)
-target_link_libraries(liquid-consumer PRIVATE liquid::liquid)
+target_link_libraries(liquid-consumer PRIVATE liquid::liquid liquid::hot)

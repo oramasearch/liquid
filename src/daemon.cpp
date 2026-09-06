@@ -35,6 +35,7 @@
 #include "encoding/cbor.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/hot_update.hpp"
 #include "liquid/repository.hpp"
 #include "search/index.hpp"
 
@@ -719,7 +720,8 @@ auto status_value(const daemon_status& status) -> cbor::value {
                                {"cursor", cbor::value{target.cursor.token}},
                                {"behind", cbor::value{target.behind}},
                                {"deliveries", cbor::value{target.deliveries}},
-                               {"last_error", cbor::value{target.last_error.value_or("")}}}));
+                               {"last_error", cbor::value{target.last_error.value_or("")}},
+                               {"detail", cbor::value{target.detail.value_or("")}}}));
     }
     return map(
         {{"v", cbor::value{std::uint64_t{1}}},
@@ -868,16 +870,19 @@ auto decode_status(std::span<const std::byte> frame) -> result<daemon_status> {
         const auto* behind = unsigned_field(value, "behind");
         const auto* deliveries = unsigned_field(value, "deliveries");
         const auto* last_error = text_field(value, "last_error");
+        const auto* detail = text_field(value, "detail");
         if (!name || !cursor || !behind || !deliveries || !last_error) {
             return std::unexpected(failure(errc::corrupt, "invalid daemon target status"));
         }
-        output.targets.push_back({.name = *name,
-                                  .cursor = {*cursor},
-                                  .behind = *behind,
-                                  .deliveries = *deliveries,
-                                  .last_error = last_error->empty()
-                                                    ? std::optional<std::string>{}
-                                                    : std::optional<std::string>{*last_error}});
+        output.targets.push_back(
+            {.name = *name,
+             .cursor = {*cursor},
+             .behind = *behind,
+             .deliveries = *deliveries,
+             .last_error = last_error->empty() ? std::optional<std::string>{}
+                                               : std::optional<std::string>{*last_error},
+             .detail = !detail || detail->empty() ? std::optional<std::string>{}
+                                                  : std::optional<std::string>{*detail}});
     }
     return output;
 }
@@ -919,6 +924,177 @@ public:
 
 private:
     graph& graph_;
+};
+
+class hot_update_target final : public daemon_target {
+public:
+    explicit hot_update_target(std::filesystem::path checkout) : checkout_(std::move(checkout)) {}
+
+    auto name() const -> std::string override {
+        return "hot-update";
+    }
+
+    auto detail() const -> std::optional<std::string> override {
+        std::lock_guard lock(mutex_);
+        return detail_;
+    }
+
+    runtime::task<void> deliver(daemon_delivery) override {
+        auto source = co_await repository::open(checkout_);
+        if (!source && source.error().code == errc::not_found) {
+            source = co_await repository::open_build(checkout_);
+        }
+        if (!source) {
+            co_return std::unexpected(source.error());
+        }
+        const auto config = source->hot_update_configuration();
+        if (config.targets.empty()) {
+            set_detail("not configured");
+            co_return {};
+        }
+        auto descriptions = std::vector<std::string>{};
+        for (const auto& configured : config.targets) {
+            auto delivered = co_await update(*source, config, configured);
+            if (!delivered) {
+                co_return std::unexpected(delivered.error());
+            }
+            descriptions.push_back(std::move(*delivered));
+        }
+        auto description = std::string{};
+        for (const auto& value : descriptions) {
+            description += description.empty() ? value : "; " + value;
+        }
+        set_detail(std::move(description));
+        co_return {};
+    }
+
+private:
+    static auto result_key(std::string_view name) -> std::string {
+        return "hot_update/current/" + std::string{name};
+    }
+
+    static auto evidence_key(result_id value) -> std::string {
+        return "hot_update/evidence/" + to_string(value.value);
+    }
+
+    static auto encoded(std::string_view value) -> std::vector<std::byte> {
+        return {reinterpret_cast<const std::byte*>(value.data()),
+                reinterpret_cast<const std::byte*>(value.data() + value.size())};
+    }
+
+    static auto decoded(std::span<const std::byte> value) -> std::string_view {
+        return {reinterpret_cast<const char*>(value.data()), value.size()};
+    }
+
+    runtime::task<std::string> update(repository& source,
+                                      const hot_update_config& config,
+                                      const hot_update_target_config& configured) {
+        auto handle = source.build(build_target{configured.name});
+        if (!handle) {
+            co_return std::unexpected(handle.error());
+        }
+        auto events = handle->events();
+        if (!events) {
+            co_return std::unexpected(events.error());
+        }
+        auto results = std::vector<result_id>{};
+        while (true) {
+            auto event = co_await events->next();
+            if (!event) {
+                co_return std::unexpected(event.error());
+            }
+            if (!*event) {
+                break;
+            }
+            if ((**event).result) {
+                results.push_back(*(**event).result);
+            }
+        }
+        auto summary = co_await handle->wait();
+        if (!summary) {
+            co_return std::unexpected(summary.error());
+        }
+        if (summary->exit != 0 || summary->failures != 0) {
+            co_return std::unexpected(
+                failure(errc::io, "hot-update target build failed", configured.name));
+        }
+        if (results.empty()) {
+            co_return std::unexpected(
+                failure(errc::not_found, "hot-update target produced no result", configured.name));
+        }
+        auto target = results.back();
+        for (auto iterator = results.rbegin(); iterator != results.rend(); ++iterator) {
+            auto evidence = co_await source.metadata(evidence_key(*iterator));
+            if (!evidence) {
+                co_return std::unexpected(evidence.error());
+            }
+            if (*evidence) {
+                target = *iterator;
+                break;
+            }
+        }
+        auto current = co_await source.metadata(result_key(configured.name));
+        if (!current) {
+            co_return std::unexpected(current.error());
+        }
+        if (!*current) {
+            auto stored = co_await source.set_metadata(result_key(configured.name),
+                                                       encoded(to_string(target.value)));
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+            co_return configured.name + " baseline=" + to_string(target.value);
+        }
+        auto previous_digest = parse_digest(decoded(**current));
+        if (!previous_digest) {
+            co_return std::unexpected(previous_digest.error());
+        }
+        auto plan = co_await hot_update::classify(source, result_id{*previous_digest}, target);
+        if (!plan) {
+            co_return std::unexpected(plan.error());
+        }
+        auto record = digest{};
+        if (plan->tier == hot_update_tier::tier_0) {
+            auto unchanged = co_await hot_update::record_outcome(source, *plan);
+            if (!unchanged) {
+                co_return std::unexpected(unchanged.error());
+            }
+            record = unchanged->record;
+        } else if (plan->outcome == hot_update_outcome::patched) {
+            auto patch = co_await hot_update::create_patch(source, *plan);
+            if (!patch) {
+                co_return std::unexpected(patch.error());
+            }
+            auto applied = co_await hot_update::apply(source, patch->record, configured.endpoint);
+            if (!applied) {
+                co_return std::unexpected(applied.error());
+            }
+            record = applied->record;
+        } else {
+            auto restarted =
+                co_await hot_update::restart(source, *plan, checkout_, config.restart_hook);
+            if (!restarted) {
+                co_return std::unexpected(restarted.error());
+            }
+            record = restarted->record;
+        }
+        auto stored = co_await source.set_metadata(result_key(configured.name),
+                                                   encoded(to_string(target.value)));
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        co_return configured.name + " outcome=" + std::string{to_string(plan->outcome)} +
+            " tier=" + std::string{to_string(plan->tier)} + " record=" + to_string(record);
+    }
+
+    auto set_detail(std::string value) -> void {
+        std::lock_guard lock(mutex_);
+        detail_ = std::move(value);
+    }
+
+    std::filesystem::path checkout_;
+    mutable std::mutex mutex_;
+    std::optional<std::string> detail_;
 };
 
 #ifndef _WIN32
@@ -1615,8 +1791,16 @@ runtime::task<daemon> daemon::start(std::filesystem::path checkout, daemon_optio
             co_return std::unexpected(loaded_graph.error());
         }
         state->query_graph = std::move(*loaded_graph);
+        auto repository_config = co_await repository::open(state->checkout);
+        if (!repository_config) {
+            co_return std::unexpected(repository_config.error());
+        }
+        const auto hot_update_config = repository_config->hot_update_configuration();
         auto targets = std::vector<std::shared_ptr<daemon_target>>{};
         targets.push_back(std::make_shared<graph_target>(state->query_graph));
+        if (!hot_update_config.targets.empty()) {
+            targets.push_back(std::make_shared<hot_update_target>(state->checkout));
+        }
         if (state->options.targets.empty()) {
             targets.push_back(search_detail::make_daemon_target(state->checkout));
             targets.push_back(std::make_shared<no_op_target>("collaborators"));
