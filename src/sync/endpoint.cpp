@@ -104,6 +104,22 @@ auto status_error(unsigned status, std::string context, std::span<const std::byt
     return sync_error(code, "sync endpoint returned HTTP " + std::to_string(status), context);
 }
 
+auto flow_rejection(std::span<const std::byte> body)
+    -> std::optional<std::pair<std::uint64_t, std::string>> {
+    auto decoded = cbor::decode(body);
+    if (!decoded) {
+        return std::nullopt;
+    }
+    const auto* retry_value = cbor_field(*decoded, "retry_after_ms");
+    const auto* scope_value = cbor_field(*decoded, "scope");
+    const auto* retry = retry_value ? std::get_if<std::uint64_t>(&retry_value->data) : nullptr;
+    const auto* scope = scope_value ? std::get_if<std::string>(&scope_value->data) : nullptr;
+    if (!retry || !scope) {
+        return std::nullopt;
+    }
+    return std::pair{*retry, *scope};
+}
+
 auto endpoint_target(const net_detail::parsed_url& url, std::string_view suffix) -> std::string {
     auto output = url.path == "/" ? std::string{} : url.path;
     output += suffix;
@@ -281,6 +297,15 @@ runtime::task<sync_report> sync_endpoint::push(repository& source) {
         co_return std::unexpected(response.error());
     }
     if (response->status < 200 || response->status >= 300) {
+        if (response->status == 429) {
+            if (auto rejected = flow_rejection(response->body)) {
+                co_return sync_report{.cursor = impl_->options.cursor,
+                                      .metadata_items = document.items.size(),
+                                      .sent = *sent,
+                                      .retry_after_ms = rejected->first,
+                                      .exhausted_scope = std::move(rejected->second)};
+            }
+        }
         co_return std::unexpected(status_error(response->status, "push", response->body));
     }
     auto incoming = sync_detail::decode_metadata(response->body);

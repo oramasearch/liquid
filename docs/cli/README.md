@@ -27,6 +27,10 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, timestamp, or recorded operation history and verify timestamp evidence. | available |
+| `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
+| `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]>` | Synchronize or inspect a configured drive folder. | available |
+| `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
@@ -51,11 +55,13 @@ that the table and `liquid --help` name the same commands.
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
+| `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
@@ -67,12 +73,15 @@ that the table and `liquid --help` name the same commands.
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
 | `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
+| `edit` | `edit <rename\|extract\|move\|apply> ... [--json] [--apply] [--agent <name>]` | Preview or apply a structural edit through the daemon. | available on macOS and Linux |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
+| `serve` | `serve admission --policy <file> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>]` | Serve image admission and its control API. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
 | `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
 | `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
+| `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 
 ## Output and errors
 
@@ -90,7 +99,9 @@ Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
 adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
-successful delivery count.
+successful delivery count. The top-level JSON `flow` object pins paused state, reason, persistence
+lag, consumer lag, and bucket rows. Text output presents the same high-level values on one `flow`
+line; each bucket row in JSON includes scope, key, current tokens, rate, burst, and rejected count.
 `push` and `pull` print metadata item, object, byte, and cursor counts. `push` then prints exactly
 one line per requested ref:
 
@@ -125,6 +136,9 @@ watch event. The built-binary test pins an opened review as:
 ```json
 {"id":"review-1","change":"blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262","state":"open","reviewers":[],"created":1788537601,"updated":1788537601}
 ```
+An HTTP 429 flow refusal prints
+`flow_rejected scope=<actor|document|repository> retry_after_ms=<count>` and exits with status 1;
+the cursor does not advance.
 
 `log timestamps <log-url>` reads lake's current `transparency_checkpoint`, uses its checkpoint
 digest to read `timestamp_evidence`, and prints the checkpoint digest, signature digest, digest
@@ -144,6 +158,14 @@ Lake checkpoint, tile, and proof authentication remains the separate `#207` veri
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
 sets `approximate`; and a removed line or file sets `deleted`.
+`history` follows the same stable node through moves. `--restore` appends an ordinary working-tree
+drip from the selected change and leaves prior changes and refs untouched. See
+[`history.md`](history.md).
+`drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
+counts, conflicts, per-path outcomes, and per-reference outcomes. Refusal reasons are verbatim and
+make the command exit with status 1 without advancing the base. `drive status` reads the persisted
+state without contacting the server. `--watch` performs one sync and then attaches to the checkout
+daemon. See [`drive.md`](drive.md).
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
@@ -151,6 +173,13 @@ pattern; `*` matches any sequence and `?` one character. Supplying the flag refu
 all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
 there is no built-in authentication policy, so the default is appropriate for local use; network
 services embed the public server with their own authorization callback.
+`serve admission` loads the JSON policy documented in
+[`../library/admission.md`](../library/admission.md). Its admission listener defaults to
+`0.0.0.0:8443`, its control listener to `127.0.0.1:8083`, and TLS is required unless tests select
+`--insecure-http`. The environment forms are `LIQUID_ADMISSION_POLICY`,
+`LIQUID_ADMISSION_LISTEN`, `LIQUID_CONTROL_LISTEN`, `LIQUID_ADMISSION_TLS_CERT`,
+`LIQUID_ADMISSION_TLS_KEY`, `LIQUID_ADMISSION_ATTESTATION_SOURCE`, and
+`LIQUID_ADMISSION_LOG_CACHE`; flags win.
 `version --json` is also available for scripts and returns
 `{"version":"0.0.1","grammar":"sha256:<canonical-lock-digest>"}`. Text output is line-oriented
 and stable. A library
@@ -161,6 +190,51 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`edit rename <path>:<line>:<column> <new-name>`, `edit extract
+<path>:<start-line>-<end-line> <name> [--value]`, and `edit move
+<path>:<line>:<column> <to-path> [--at <line>]` construct their public libliquid requests. `edit
+apply <edits.cbor>` reads a canonical tree-edit request. All four preview through the checkout
+daemon. Text output is a unified diff followed by refusals; `--json` prints the versioned preview
+record. `--apply` applies that same preview, and `--agent` records the caller name. Any refusal
+exits 1 without applying accepted changes from the same preview. See
+[`../library/edit.md`](../library/edit.md) for collision, stale-node, and undo behavior.
+## Key custody
+
+`keys show [key-id]` prints one line per held or revoked data-key version. `keys rewrap <key-id>
+--to <custody-uri>` moves all held versions to another provider without touching pack files.
+`keys rotate <key-id>` creates the next data-key version and prints the version transition followed
+by the three encryption disclosure statements. `keys revoke <key-id> <version>` removes local
+custody for that version. `keys split <key-id> --threshold <k> --shares <n>` moves the held versions
+under a random Shamir KEK and prints the `n` shares once.
+
+Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
+`aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
+`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+shares are supplied through the environment described in
+[the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
+`resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
+Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
+is itself the package directory. Specs containing spaces must be passed as one quoted argument.
+Text output prints each selected spec and digest, with dependencies indented beneath their root.
+`--json` prints the stable graph, including selection reasons, or conflict object. An unsatisfiable request prints its minimal
+attributed core and exits 1. `--explain` appends the reason list for every selected package;
+`--why <package>` prints only that package's explanation. With `--reuse`, `<path>/reuse.txt` must
+contain one already built concretised-spec digest per line; blank lines and lines beginning with
+`#` are ignored.
+## Node store commands
+
+`liquid node-store serve --root <path>` runs both node-store listeners. Optional flags are
+`--listen <unix://path>`, `--control-listen <address>`, and `--budget-bytes <count>`. Their
+environment defaults are `LIQUID_NODE_STORE_ROOT`, `LIQUID_NODE_STORE_LISTEN`,
+`LIQUID_CONTROL_LISTEN`, and `LIQUID_NODE_STORE_BUDGET_BYTES`; flags win. The issue #202 spelling
+includes the `serve` subcommand. The k0s #14 integration must use this spelling.
+
+`liquid node-store status [--control <address>] [--json]` reads the TCP `/v1` status.
+`liquid node-store mount <tree> --store <url> [--socket <path>]`, `unmount <tree>`, and
+`prefetch <tree>` are thin clients of the local Unix listener. The mount command reads an optional
+bearer from `LIQUID_TOKEN` and never prints it. The socket defaults to
+`/run/liquid/node-store.sock`, or to `LIQUID_NODE_STORE_LISTEN` with its `unix://` prefix removed.
 
 `write` is the scripted-agent file path. `--base` names the change the caller read and may append
 the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read
@@ -229,8 +303,16 @@ a produced path opens that project's persistent cache. It verifies the result an
 writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible envelope, projected
 from the same canonical TAAP record.
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, the outer
-action's status, the disk hit rate, bytes transferred, bytes avoided, bytes rebuilt, and miss counts
-by reason. Its observability line names wall and critical-path durations, achieved parallelism, the
+action's status, its canonical `output_tree`, the disk hit rate, bytes transferred, bytes avoided,
+bytes rebuilt, and miss counts by reason. Repeatable `--input <name>=<result-or-tree-digest>` makes
+an upstream output tree available read-only below `deps/<name>/`. A result input must be signed and
+carry an output tree; a tree digest names those bytes directly. The dependency tree is folded into
+the action input, so a rebuild with a different source tree but the same normalised output tree is
+an exact downstream input match. `liquid why` reports that hit as `input deps/<name> unchanged:
+same normalised tree after upstream rebuild` when imported signed results establish both
+input/output claims.
+
+The observability line names wall and critical-path durations, achieved parallelism, the
 totals for queued, sandbox, exec, hash, and store phases, bytes served versus rebuilt, and the
 persisted trace digest. Following `critical_action` lines are the longest dependent chain, not a
 list sorted only by individual duration. `--explain` adds the
@@ -362,6 +444,7 @@ liquid retain explain blake3:<object-digest>
 liquid identity rotate
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
+liquid attest image registry.example/app@sha256:<image-digest> --tree blake3:<tree-digest> --result blake3:<result-digest>
 liquid delta create release-1.tar release-2.tar
 liquid delta apply blake3:<delta-record> release-1.tar release-2.tar
 liquid delta fetch blake3:<target> release-1.tar release-2.tar
@@ -379,6 +462,7 @@ liquid sbom /usr/bin/tool --cyclonedx
 liquid abi show build/libexample.so --json
 liquid abi diff blake3:<old-result>:build/libexample.so blake3:<new-result>:build/libexample.so --json
 liquid wrap cmake -S . -B build -G Ninja
+liquid wrap --input zlib=blake3:<result-or-tree-digest> cmake --build build
 liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
 liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081
 liquid wrap --scheduler 127.0.0.1:50051 make -j8
@@ -398,6 +482,10 @@ liquid facts list
 liquid facts show blake3:<fact-digest>
 liquid facts export
 liquid serve reapi --listen 127.0.0.1:8980
+liquid history src/main.cpp
+liquid history src/main.cpp --restore blake3:<change-digest>
+liquid drive sync ~/Documents https://lake.live/api/repositories/example
+liquid drive status ~/Documents
 liquid pause
 liquid resume
 liquid watch
@@ -406,9 +494,10 @@ liquid watch
 ## How to verify
 
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
-two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
-combines it, reads JSON history and signed drips through `log --ops`, reads recorded operations
-through `ops`, undoes a selected session path, verifies a locked mutation is
+two repositories, imports files, cuts changes, moves a path, lists and restores its stable-node
+history, nests a repository, splits a subtree, combines it, reads JSON history and signed drips
+through `log --ops`, checks writer-base validation from the restored change, reads recorded
+operations through `ops`, undoes a selected session path, and verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.

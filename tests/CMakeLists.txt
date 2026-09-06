@@ -15,11 +15,13 @@ add_executable(liquid-tests
   test_hash.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_node_store.cpp
   test_object.cpp
   test_remote.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  resolve/test_resolution.cpp
   workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
@@ -35,6 +37,7 @@ add_executable(liquid-tests
   test_transparency.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
+  admission/test_review.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp
   scan/test_redaction.cpp
@@ -58,6 +61,8 @@ add_executable(liquid-tests
   build/test_policy.cpp
   build/test_facts.cpp
   build/test_graph.cpp
+  build/test_content.cpp
+  build/test_normalise.cpp
   build/test_provenance.cpp
   build/test_why.cpp
   build/test_sbom.cpp
@@ -66,8 +71,15 @@ add_executable(liquid-tests
   build/test_wrap.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
+if(BUILD_SHARED_LIBS)
+  target_sources(liquid-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/build/content.cpp
+    ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
+    ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    ${PROJECT_SOURCE_DIR}/src/store/references.cpp)
+endif()
 if(UNIX)
-  target_sources(liquid-tests PRIVATE test_sync.cpp)
+  target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid
@@ -136,17 +148,24 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+if(UNIX)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"
+    LIQUID_ADMISSION_TLS_CERT="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
+    LIQUID_ADMISSION_TLS_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem")
+endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TLS_CERTIFICATE="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
   LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
   LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
-  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp)
+  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
     LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
     LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
+    LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
     LIQUID_GRAMMAR_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/grammars"
     LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
     LIQUID_NM="${CMAKE_NM}")
@@ -288,6 +307,14 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
+  target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-keys
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_KEYS_FIXTURE=$<TARGET_FILE:liquid-keys-cli-fixture>
+      -DLIQUID_KEYS_ROOT=${CMAKE_CURRENT_BINARY_DIR}/keys-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/keys.cmake)
   add_test(NAME cli-sbom-spdx
     COMMAND $<TARGET_FILE:liquid-cli> sbom $<TARGET_FILE:liquid-build-fixture> --spdx)
   set_tests_properties(cli-sbom-spdx PROPERTIES
@@ -324,6 +351,12 @@ add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
 if(LIQUID_BUILD_FRONTENDS)
+  add_executable(liquid-edit-measure edit_measure.cpp)
+  target_link_libraries(liquid-edit-measure PRIVATE liquid::liquid)
+  target_compile_definitions(liquid-edit-measure PRIVATE
+    LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>")
+  add_dependencies(liquid-edit-measure liquid-frontend-tree-sitter)
+
   add_executable(liquid-frontend-measure frontend_measure.cpp)
   target_sources(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp)
   if(NOT UNIX)
@@ -400,23 +433,29 @@ gtest_discover_tests(liquid-store-sim-tests PROPERTIES LABELS sim-long)
 
 add_executable(liquid-header-tests
   headers/abi.cpp
+  headers/admission.cpp
   headers/attestation.cpp
   headers/build.cpp
   headers/daemon.cpp
   headers/drip.cpp
+  headers/edit.cpp
   headers/delta.cpp
+  headers/drive.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/flow.cpp
   headers/frontend.cpp
   headers/git.cpp
   headers/graph.cpp
   headers/hash.cpp
   headers/identity.cpp
   headers/liquid.cpp
+  headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp
   headers/remote.cpp
   headers/repository.cpp
+  headers/resolve.cpp
   headers/runtime.cpp
   headers/store.cpp
   headers/sync.cpp
@@ -449,16 +488,25 @@ target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_ma
 gtest_discover_tests(liquid-format-tests)
 
 add_executable(liquid-encryption-tests
+  encryption/test_custody.cpp
   encryption/test_leaf.cpp
   encryption/test_repository_leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp
   ${PROJECT_SOURCE_DIR}/src/encryption/leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
-  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp
+  ${PROJECT_SOURCE_DIR}/src/hash/sha256.c
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/age.cpp
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/common.cpp)
+if(UNIX)
+  target_sources(liquid-encryption-tests PRIVATE encryption/test_remote_custody.cpp)
+endif()
 target_include_directories(liquid-encryption-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
+target_compile_definitions(liquid-encryption-tests PRIVATE
+  LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-encryption-tests PRIVATE
   liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main)
 gtest_discover_tests(liquid-encryption-tests)
@@ -517,6 +565,16 @@ if(LIQUID_REALWORLD_TESTS)
       -DLIQUID_REALWORLD_GIT_DIRECTORY=${LIQUID_REALWORLD_GIT_DIRECTORY}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/git/realworld.cmake)
   set_tests_properties(git-realworld PROPERTIES LABELS realworld)
+endif()
+
+option(LIQUID_CONTENT_CHAIN_TESTS "Register the opt-in content-addressed build chain" OFF)
+if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
+  add_test(NAME content-addressed-build-chain
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONTENT_CHAIN_ROOT=${CMAKE_CURRENT_BINARY_DIR}/content-addressed-build-chain
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/build/content-addressed-chain.cmake)
+  set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
 endif()
 
 add_executable(liquid-repository-scenario repository/scenario.cpp)

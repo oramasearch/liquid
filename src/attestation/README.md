@@ -9,3 +9,6 @@ typed SLSA v1 predicate.
 `sbom/1` validates the format, canonical record digest, derived and inferred flags, and component
 claims used by SPDX/CycloneDX generation.
 `delta/1` validates source, target, algorithm, and delta-record digest claims for artifact delivery.
+`image_provenance/1` validates a digest-pinned image reference, its `io.liquid.tree` digest, and an
+optional producing result. `image.cpp` mints that record with the device identity into a selected
+store.

@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -159,7 +160,8 @@ bool valid_algorithm(unsigned char value) {
 } // namespace
 
 store_backend::store_backend(std::filesystem::path root, store_options options)
-    : root_(std::move(root)), options_(std::move(options)), index_(root_ / "index") {}
+    : root_(std::move(root)), options_(std::move(options)),
+      remote_sources_(options_.remote_sources), index_(root_ / "index") {}
 
 runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesystem::path root,
                                                                   store_options options) {
@@ -197,6 +199,23 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
             auto saved = co_await write_file(marker, std::move(bytes));
             if (!saved)
                 co_return std::unexpected(saved.error());
+        }
+        if (!options.keys && !options.custody.empty()) {
+            auto keys = std::make_shared<keyring>();
+            for (const auto& [key_id, uri] : options.custody) {
+                auto provider = co_await key_provider_from_uri(uri);
+                if (!provider)
+                    co_return std::unexpected(provider.error());
+                auto added = keys->add(key_id, std::move(*provider));
+                if (!added)
+                    co_return std::unexpected(added.error());
+            }
+            const auto default_key =
+                options.write_key.empty() ? options.custody.begin()->first : options.write_key;
+            auto selected = keys->set_default_key_id(default_key);
+            if (!selected)
+                co_return std::unexpected(selected.error());
+            options.keys = std::move(keys);
         }
         auto result =
             std::unique_ptr<store_backend>(new store_backend(std::move(root), std::move(options)));
@@ -1386,8 +1405,8 @@ store_backend::hydrate_remote_chunk(const blob& value, std::size_t index, std::u
     if (*local) {
         co_return co_await load_chunk(value.chunks[index]);
     }
-    const auto source = options_.remote_sources.find(value.remote->source);
-    if (source == options_.remote_sources.end() || !source->second) {
+    const auto source = remote_sources_.find(value.remote->source);
+    if (source == remote_sources_.end() || !source->second) {
         co_return std::unexpected(store_error(
             errc::unavailable, "remote blob source is unavailable", value.remote->source));
     }
@@ -1415,14 +1434,25 @@ store_backend::hydrate_remote_chunk(const blob& value, std::size_t index, std::u
                                               "remote chunk failed digest verification",
                                               to_string(value.chunks[index])));
     }
-    auto [lock_error, guard] = co_await mutation_.scoped_lock();
-    if (lock_error) {
-        co_return std::unexpected(
-            store_error(errc::busy, lock_error.message(), "remote chunk hydration"));
+    {
+        auto [lock_error, guard] = co_await mutation_.scoped_lock();
+        if (lock_error) {
+            co_return std::unexpected(
+                store_error(errc::busy, lock_error.message(), "remote chunk hydration"));
+        }
+        auto stored = co_await store_chunk(value.chunks[index], bytes);
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
     }
-    auto stored = co_await store_chunk(value.chunks[index], bytes);
-    if (!stored) {
-        co_return std::unexpected(stored.error());
+    if (options_.on_hydration) {
+        auto observed = co_await options_.on_hydration(value.content,
+                                                       value.chunks[index],
+                                                       value.chunk_sizes[index],
+                                                       index + 1 == value.chunks.size());
+        if (!observed) {
+            co_return std::unexpected(observed.error());
+        }
     }
     co_return bytes;
 }
@@ -1447,6 +1477,9 @@ runtime::task<std::vector<std::byte>> store_backend::get_remote(const blob& valu
     if (!actual || actual->alg != value.content.alg || actual->bytes != value.content.bytes) {
         co_return std::unexpected(store_error(
             errc::corrupt, "remote object failed digest verification", to_string(value.content)));
+    }
+    if (options_.on_remote_access) {
+        options_.on_remote_access(value.content);
     }
     co_return output;
 }
@@ -1480,6 +1513,9 @@ store_backend::read_remote(const blob& value, std::uint64_t offset, std::span<st
     if (copied != wanted) {
         co_return std::unexpected(store_error(
             errc::corrupt, "remote chunk list does not cover range", to_string(value.content)));
+    }
+    if (options_.on_remote_access) {
+        options_.on_remote_access(value.content);
     }
     co_return copied;
 }
@@ -1652,6 +1688,21 @@ runtime::task<blob_availability> store_backend::has(digest id) {
     co_return blob_availability::local;
 }
 
+runtime::task<void>
+store_backend::register_remote_source(std::string id, std::shared_ptr<remote_blob_source> source) {
+    if (id.empty() || !source) {
+        co_return std::unexpected(store_error(
+            errc::invalid_argument, "invalid remote blob source", "store::register_remote_source"));
+    }
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(
+            store_error(errc::busy, lock_error.message(), "store::register_remote_source"));
+    }
+    remote_sources_.insert_or_assign(std::move(id), std::move(source));
+    co_return result<void>{};
+}
+
 runtime::task<void> store_backend::register_remote(blob value) {
     if (!value.remote || value.remote->source.empty() ||
         (value.content.alg != algorithm::blake3 && value.content.alg != algorithm::sha256) ||
@@ -1678,6 +1729,39 @@ runtime::task<void> store_backend::register_remote(blob value) {
 
 runtime::task<void> store_backend::evict(digest id) {
     co_return co_await collector(*this).evict(id);
+}
+
+runtime::task<std::uint64_t> store_backend::local_bytes() {
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(
+            store_error(errc::busy, lock_error.message(), "store::local_bytes"));
+    }
+    auto seen = std::set<std::string>{};
+    auto bytes = std::uint64_t{};
+    for (const auto& [unused, pack] : packs_) {
+        for (const auto& entry : pack.entries) {
+            const auto key = to_string(entry.id);
+            if (seen.contains(key)) {
+                continue;
+            }
+            auto location = index_.find(entry.id);
+            if (!location) {
+                co_return std::unexpected(location.error());
+            }
+            if (!*location) {
+                continue;
+            }
+            const auto& active = **location;
+            if (active.pack_id != entry.location.pack_id ||
+                active.offset != entry.location.offset) {
+                continue;
+            }
+            seen.insert(key);
+            bytes += entry.raw_length;
+        }
+    }
+    co_return bytes;
 }
 
 result<std::uint64_t> store_backend::remote_bytes(digest blob_record) const {
