@@ -404,6 +404,14 @@ add_library(libliquid
   src/git/object_store.cpp
   src/git/sha1.cpp
   src/identity.cpp
+  src/identity/custody/age.cpp
+  src/identity/custody/aws_kms.cpp
+  src/identity/custody/azure_kv.cpp
+  src/identity/custody/common.cpp
+  src/identity/custody/gcp_kms.cpp
+  src/identity/custody/http.cpp
+  src/identity/custody/lake.cpp
+  src/identity/custody/shamir.cpp
   src/identity/taap.cpp
   src/node_store.cpp
   src/node_store/service.cpp
@@ -544,6 +552,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/git.cpp
     src/cli/history.cpp
     src/cli/identity.cpp
+    src/cli/keys.cpp
     src/cli/locks.cpp
     src/cli/node_store.cpp
     src/cli/policy.cpp
