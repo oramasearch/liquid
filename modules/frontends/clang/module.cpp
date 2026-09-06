@@ -605,6 +605,7 @@ const liquid_frontend_module_v1 module = {
     nullptr,
     nullptr,
     0,
+    nullptr,
 };
 
 } // namespace

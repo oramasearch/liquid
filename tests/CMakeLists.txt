@@ -139,6 +139,7 @@ if(UNIX)
 endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+  LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
   LIQUID_ABI_FIXTURE_V1="$<TARGET_FILE:liquid-abi-fixture-v1>"
   LIQUID_ABI_FIXTURE_ADDED="$<TARGET_FILE:liquid-abi-fixture-added>"
   LIQUID_ABI_FIXTURE_BREAK="$<TARGET_FILE:liquid-abi-fixture-break>"
@@ -156,12 +157,13 @@ endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
-  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp)
+  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
     LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
     LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
+    LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
     LIQUID_GRAMMAR_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/grammars"
     LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
     LIQUID_NM="${CMAKE_NM}")
@@ -278,6 +280,15 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_DELTA_ROOT=${CMAKE_CURRENT_BINARY_DIR}/delta-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/delta.cmake)
+  add_executable(liquid-format-diff-fixture cli/format_diff_fixture.cpp)
+  target_link_libraries(liquid-format-diff-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-format-diff
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_FORMAT_DIFF_FIXTURE=$<TARGET_FILE:liquid-format-diff-fixture>
+      -DLIQUID_FORMAT_DIFF_ROOT=${CMAKE_CURRENT_BINARY_DIR}/format-diff-cli
+      -DLIQUID_FORMAT_FIXTURES=${PROJECT_SOURCE_DIR}/tests/fixtures/formats
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/format-diff.cmake)
   add_test(NAME cli-why-json
     COMMAND ${CMAKE_COMMAND} -E env
       LIQUID_WRAP_CACHE=${CMAKE_CURRENT_BINARY_DIR}/why-cli-cache
@@ -346,6 +357,12 @@ add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
 if(LIQUID_BUILD_FRONTENDS)
+  add_executable(liquid-edit-measure edit_measure.cpp)
+  target_link_libraries(liquid-edit-measure PRIVATE liquid::liquid)
+  target_compile_definitions(liquid-edit-measure PRIVATE
+    LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>")
+  add_dependencies(liquid-edit-measure liquid-frontend-tree-sitter)
+
   add_executable(liquid-frontend-measure frontend_measure.cpp)
   target_sources(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp)
   if(NOT UNIX)
@@ -427,10 +444,12 @@ add_executable(liquid-header-tests
   headers/build.cpp
   headers/daemon.cpp
   headers/drip.cpp
+  headers/edit.cpp
   headers/delta.cpp
   headers/drive.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/format.cpp
   headers/flow.cpp
   headers/frontend.cpp
   headers/git.cpp
@@ -457,6 +476,10 @@ add_executable(liquid-frontend-c-header headers/frontend_abi.c)
 target_include_directories(liquid-frontend-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME public-frontend-c-header COMMAND liquid-frontend-c-header)
 
+add_executable(liquid-format-c-header headers/format_abi.c)
+target_include_directories(liquid-format-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-format-c-header COMMAND liquid-format-c-header)
+
 add_executable(liquid-cbor-tests encoding/test_cbor.cpp)
 target_sources(liquid-cbor-tests PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 target_include_directories(liquid-cbor-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -469,10 +492,17 @@ gtest_discover_tests(liquid-cbor-tests)
 add_executable(liquid-format-tests
   formats/test_dotenv.cpp
   formats/test_json.cpp
+  formats/test_registry.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
 target_include_directories(liquid-format-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(liquid-format-tests PRIVATE
+  LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_FORMAT_TEST_MODULE="$<TARGET_FILE:liquid-format-test-module>")
 target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_main)
+add_library(liquid-format-test-module MODULE formats/module.c)
+target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_dependencies(liquid-format-tests liquid-format-test-module)
 gtest_discover_tests(liquid-format-tests)
 
 add_executable(liquid-encryption-tests

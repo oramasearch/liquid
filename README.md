@@ -91,6 +91,11 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > validated hit state. `repository::build()` and the daemon start the whole selected build in one
 > call, `repository::root_digest()` exposes the current tree record, and `liquid build --plan`
 > prints the daemon plan schema as JSON Lines.
+> Liquid #205 adds canonical structural-edit records and repository/daemon tasks for C and C++
+> rename, extract, move, and concrete-tree edits. Previews contain minimal text changes and
+> refusals; apply verifies file digests, writes one drip per file, and records one attributed
+> operation for whole-edit undo. The bundled tree-sitter frontend now exposes concrete syntax, and
+> `liquid edit` previews or applies through the checkout daemon.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
@@ -202,6 +207,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > session-scoped `wrap` receives branch URLs in a network-enabled sandbox. The reflink capability
 > selector is implemented; local cluster control metadata remains required for that lifecycle fast
 > path.
+> **Phase 5 now includes the format registry and its first five codecs.** ZIP, tar, HDF5, Parquet,
+> and SQLite are decoded without format-vendor libraries through a versioned C module ABI. Format
+> trees drive opt-in repository and CLI container diffs, archive entries use `!/` paths in search,
+> and Tier 1 and Tier 2 entries are retained as deduplicated blobs beside the verbatim container.
+> Uncompressed tar has a deterministic writer, while hard or unsupported format surfaces retain
+> honest tiers and opaque reasons.
 > **Phase 5 dependency resolution is implemented.** Canonical
 > `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
 > concrete dependencies, compiler and target constraints, conflicts, and patches. The public
@@ -258,6 +269,9 @@ and Zetta's.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, public build streams and ordering, JSON projection, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
 - [`docs/library/data-branching.md`](docs/library/data-branching.md) — the decided per-session PostgreSQL data-branch lifecycle, guarded promotion, template-copy baseline, and local reflink fast path.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
+- [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
+- [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
+- [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
 - [`docs/library/workers.md`](docs/library/workers.md) — scheduler and worker protocol, bounded requeue, signed results, operations, control endpoints, and deployment shape.

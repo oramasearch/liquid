@@ -2,9 +2,11 @@
 #include "liquid/store.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <chrono>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <map>
@@ -20,6 +22,7 @@
 #include "build/repository_access.hpp"
 #include "crdt/document.hpp"
 #include "data/repository_access.hpp"
+#include "edit_codec.hpp"
 #include "encoding/cbor.hpp"
 #include "encryption/leaf.hpp"
 #include "flow_control.hpp"
@@ -113,6 +116,77 @@ struct repository_document {
 
 auto failure(errc code, std::string message, std::string context = {}) -> error {
     return {code, std::move(message), std::move(context)};
+}
+
+void collect_format_entry_bytes(const format_tree& tree,
+                                std::vector<std::vector<std::byte>>& output) {
+    if (tree.tier == format_tier::chunk_only) {
+        return;
+    }
+    for (const auto& entry : tree.entries) {
+        if (entry.kind != format_entry_kind::directory) {
+            output.push_back(entry.bytes);
+        }
+        if (entry.nested) {
+            collect_format_entry_bytes(*entry.nested, output);
+        }
+    }
+}
+
+auto unpack_format_entries(std::span<const std::byte> contents, std::string path)
+    -> result<std::vector<std::vector<std::byte>>> {
+    auto tree = format_registry::global().unpack(contents, path);
+    if (!tree) {
+        if (tree.error().code == errc::not_found) {
+            return std::vector<std::vector<std::byte>>{};
+        }
+        return std::unexpected(tree.error());
+    }
+    auto output = std::vector<std::vector<std::byte>>{};
+    collect_format_entry_bytes(*tree, output);
+    return output;
+}
+
+auto store_format_entries(store& objects, std::span<const std::byte> contents, std::string path)
+    -> runtime::task<std::vector<digest>> {
+    auto unpacked = co_await runtime::offload(
+        [contents, path = std::move(path)] { return unpack_format_entries(contents, path); });
+    if (!unpacked) {
+        co_return std::unexpected(unpacked.error());
+    }
+    if (!*unpacked) {
+        co_return std::unexpected(unpacked->error());
+    }
+    auto output = std::vector<digest>{};
+    output.reserve((**unpacked).size());
+    for (auto& entry : **unpacked) {
+        auto stored = co_await objects.put(std::move(entry));
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        if (std::ranges::none_of(output, [&](const digest& value) {
+                return value.alg == stored->alg && value.bytes == stored->bytes;
+            })) {
+            output.push_back(*stored);
+        }
+    }
+    co_return output;
+}
+
+auto format_file_candidate(std::string_view repository_path, const std::filesystem::path& source)
+    -> bool {
+    auto& registry = format_registry::global();
+    if (!registry.find_by_extension(repository_path).empty()) {
+        return true;
+    }
+    auto input = std::ifstream{source, std::ios::binary};
+    if (!input) {
+        return false;
+    }
+    auto prefix = std::array<std::byte, 512>{};
+    input.read(reinterpret_cast<char*>(prefix.data()), static_cast<std::streamsize>(prefix.size()));
+    const auto size = static_cast<std::size_t>(input.gcount());
+    return !registry.find_by_magic(std::span{prefix}.first(size)).empty();
 }
 auto bytes(std::span<const std::byte> value) -> cbor::value {
     return cbor::value{cbor::value::bytes{value.begin(), value.end()}};
@@ -4057,6 +4131,14 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
         co_return std::unexpected(prepared.error());
     }
     contents = std::move(*prepared);
+    auto format_entries = std::vector<digest>{};
+    if (!encryption_rule) {
+        auto stored_entries = co_await store_format_entries(impl_->objects, contents, path);
+        if (!stored_entries) {
+            co_return std::unexpected(stored_entries.error());
+        }
+        format_entries = std::move(*stored_entries);
+    }
     auto content = encryption_rule && encryption_rule->mode == encryption_mode::file
                        ? co_await repository_detail::store_access::put_encrypted(
                              impl_->objects, std::move(contents), encryption_rule->key_id)
@@ -4068,6 +4150,7 @@ repository::write(std::string path, std::vector<std::byte> contents, write_optio
     auto record = impl_->objects.blob_for(*content);
     if (!record)
         co_return std::unexpected(record.error());
+    record->format_entries = std::move(format_entries);
     co_return co_await impl_->record_blob(std::move(path),
                                           std::move(*record),
                                           std::move(options),
@@ -4090,6 +4173,18 @@ repository::write_file(std::string path, std::filesystem::path source, write_opt
         auto contents = co_await store_detail::read_file(source);
         if (!contents)
             co_return std::unexpected(contents.error());
+        co_return co_await write(std::move(path), std::move(*contents), std::move(options));
+    }
+    auto candidate =
+        co_await runtime::offload([path, source] { return format_file_candidate(path, source); });
+    if (!candidate) {
+        co_return std::unexpected(candidate.error());
+    }
+    if (*candidate) {
+        auto contents = co_await store_detail::read_file(source);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
         co_return co_await write(std::move(path), std::move(*contents), std::move(options));
     }
     auto content = co_await impl_->objects.put_file(std::move(source));
@@ -5394,6 +5489,100 @@ runtime::task<symbol_record> repository::symbols(digest id) {
         co_return std::unexpected(encoded.error());
     }
     co_return decode_symbols(*encoded);
+}
+
+runtime::task<edit_result> repository::apply_edit(const edit_preview& preview) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto encoded_preview = encode_edit_preview(preview);
+    if (!encoded_preview) {
+        co_return std::unexpected(encoded_preview.error());
+    }
+    if (preview.changes.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "edit preview contains no accepted changes"));
+    }
+    auto prepared = std::vector<std::pair<std::string, std::vector<std::byte>>>{};
+    prepared.reserve(preview.changes.size());
+    for (const auto& file : preview.changes) {
+        auto before = co_await read(file.path);
+        if (!before && before.error().code != errc::not_found) {
+            co_return std::unexpected(before.error());
+        }
+        auto current = before ? std::move(*before) : std::vector<std::byte>{};
+        auto current_digest = hash(algorithm::blake3, current);
+        if (!current_digest) {
+            co_return std::unexpected(current_digest.error());
+        }
+        if (!same_digest(*current_digest, file.before)) {
+            co_return std::unexpected(
+                failure(errc::conflict, "structural edit preview is stale", file.path));
+        }
+        auto after = edit_detail::apply_changes(file, current);
+        if (!after) {
+            co_return std::unexpected(after.error());
+        }
+        prepared.emplace_back(file.path, std::move(*after));
+    }
+    const auto operation_start = impl_->current.operations.size();
+    const auto drip_start = impl_->current.drips.size();
+    for (auto& [path, contents] : prepared) {
+        auto written = co_await write(path, std::move(contents));
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+    }
+    auto grouped = stored_operation{};
+    auto operation_id = random_operation_id(impl_->hash_algorithm);
+    if (!operation_id) {
+        co_return std::unexpected(operation_id.error());
+    }
+    grouped.id = *operation_id;
+    grouped.kind = "structural_edit";
+    grouped.from = to_string(preview.id);
+    grouped.to = preview.attribution.tool + ":" + preview.attribution.operation;
+    if (preview.attribution.agent) {
+        grouped.to += ":" + *preview.attribution.agent;
+    }
+    for (auto index = operation_start; index < impl_->current.operations.size(); ++index) {
+        auto& operation = impl_->current.operations[index];
+        grouped.entries.insert(grouped.entries.end(),
+                               std::make_move_iterator(operation.entries.begin()),
+                               std::make_move_iterator(operation.entries.end()));
+    }
+    impl_->current.operations.erase(impl_->current.operations.begin() +
+                                        static_cast<std::ptrdiff_t>(operation_start),
+                                    impl_->current.operations.end());
+    impl_->record_operation(std::move(grouped));
+    auto saved = co_await impl_->checkpoint_or_journal();
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    auto result_value = edit_result{.operation = *operation_id};
+    result_value.drips.reserve(impl_->current.drips.size() - drip_start);
+    for (auto index = drip_start; index < impl_->current.drips.size(); ++index) {
+        auto id = hash(impl_->hash_algorithm, impl_->current.drips[index].body);
+        if (!id) {
+            co_return std::unexpected(id.error());
+        }
+        result_value.drips.push_back({*id});
+    }
+    for (const auto& file : preview.changes) {
+        auto after = co_await read(file.path);
+        if (!after) {
+            co_return std::unexpected(after.error());
+        }
+        auto actual = hash(algorithm::blake3, *after);
+        if (!actual) {
+            co_return std::unexpected(actual.error());
+        }
+        if (!same_digest(*actual, file.after)) {
+            co_return std::unexpected(
+                failure(errc::internal, "applied edit differs from its preview", file.path));
+        }
+    }
+    co_return result_value;
 }
 
 runtime::task<void> repository::set_policy(policy_config policy) {
