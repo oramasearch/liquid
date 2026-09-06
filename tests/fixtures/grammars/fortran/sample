@@ -1,0 +1,3 @@
+program sample
+    print *, 42
+end program sample

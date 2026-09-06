@@ -98,7 +98,9 @@ repository's regular files. Daemon coverage injects a stale cached query and obs
 validation backlog and divergence status.
 Frontend tests load the Clang implementation as a separate shared object, register the same ABI
  statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
- to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
+ to discover C definitions. Grammar coverage recomputes every locked parser/scanner/query digest,
+parses one committed sample per configured language without error nodes, checks required tag-query
+unit discovery and ABI rejection, and exercises the public grammar metadata registry. The CMake frontend fixture compiles two C++ definition objects, proves a
  body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
  before assembly. The registered `frontend-one-function-measure` CTest performs the same
  one-definition edit against liquid's own tree with the configured compiler, asserts the action and

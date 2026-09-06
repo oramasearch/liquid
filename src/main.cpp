@@ -335,7 +335,9 @@ int main(int argc, char** argv) {
             return usage_error("version accepts only --json");
         }
         if (argc == 3) {
-            std::println("{{\"version\":\"{}\"}}", liquid::version_string());
+            std::println("{{\"version\":\"{}\",\"grammar\":\"{}\"}}",
+                         liquid::version_string(),
+                         liquid::grammar_digest());
             return 0;
         }
         std::println("liquid {}", liquid::version_string());

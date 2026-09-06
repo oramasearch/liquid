@@ -149,6 +149,7 @@ TEST(Symbols, TreeSitterFallbackLabelsSyntacticResults) {
     ASSERT_TRUE(decoded);
     const auto value = *decoded;
     EXPECT_EQ(value.origin, liquid::symbol_origin::syntactic);
+    EXPECT_TRUE(value.grammar.starts_with("sha256:"));
     EXPECT_TRUE(has_definition(value, "fallback"));
 }
 
