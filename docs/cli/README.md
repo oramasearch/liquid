@@ -39,6 +39,7 @@ built binary under the build directory before CTest compares it with the committ
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
 | `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
+| `blame` | `blame <path> [--json]` | Show the session and change that last wrote each line. | available on macOS and Linux |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
 | `registry` | `registry trust <pin <root.json>\|show>` | Pin or inspect the current repository's trusted TUF root. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
@@ -283,6 +284,11 @@ sets `approximate`; and a removed line or file sets `deleted`.
 `history` follows the same stable node through moves. `--restore` appends an ordinary working-tree
 drip from the selected change and leaves prior changes and refs untouched. See
 [`history.md`](history.md).
+`blame` resolves the current head and asks the checkout daemon for the public attribution query.
+Its line-oriented form prints one-based line, change, session, actor, agent marker, and text.
+`--json` emits a version-1 object with `path`, `change`, and the same values under `lines`; strings
+use JSON escaping and empty files produce an empty array. The command refuses directories, missing
+paths, and non-UTF-8 content. See [`../library/multiplayer.md`](../library/multiplayer.md).
 `drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
 counts, conflicts, per-path outcomes, and per-reference outcomes. `drive status` also prints the
 hydration threshold, folder-pin rule, pending upload count, non-local byte hydration debt, last
@@ -670,6 +676,8 @@ liquid facts export
 liquid serve reapi --listen 127.0.0.1:8980
 liquid history src/main.cpp
 liquid history src/main.cpp --restore blake3:<change-digest>
+liquid blame src/main.cpp
+liquid blame src/main.cpp --json
 liquid drive sync ~/Documents https://lake.live/api/repositories/example
 liquid drive status ~/Documents
 liquid drive pin ~/Documents/Projects
@@ -699,6 +707,8 @@ and fetches a delta through the built executable and compares the produced files
 `cli-tiers-json` pins ordering, filters, C++'s Tier 3 frontend, and repeat-run byte stability.
 `cli-secret` round-trips raw CBOR and base64 through the executable and checks that stderr never
 contains the value.
+`cli-blame` creates a repository, invokes the daemon-backed text and JSON forms, and checks their
+stable fields.
 `tests/test_daemon.cpp` runs start-on-first-status through the built CLI and verifies that a library
 client attaches to the same process.
 The privileged Linux build fixtures also invoke `replay --json` for an indexed action and require

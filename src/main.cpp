@@ -84,6 +84,7 @@ auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
 auto tiers(int argc, char** argv) -> int;
 auto registry(int argc, char** argv) -> int;
+auto blame(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -567,6 +568,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::path_history},
+    {"blame",
+     "blame <path> [--json]",
+     "show the session and change that last wrote each line",
+     "available on macOS and Linux",
+     flag_json,
+     "Show per-line operation attribution for a path at the current change.",
+     "liquid blame src/main.cpp --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::blame},
     {"drive",
      "drive <sync <folder> <remote> [--watch]|status [folder]|pin <path>|unpin <path>>",
      "synchronize a drive folder",

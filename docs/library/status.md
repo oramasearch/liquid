@@ -42,10 +42,12 @@ live.
 change cuts, references, snapshots, historical document state, composition, conflict values,
 operation- and session-scoped local-intent undo, advisory locks, private speculative agent
 sessions, semantic file/symbol/range leases, transient presence, compaction epochs, scoped
-delegation attribution, status, public tree/change diff, edit-surviving text anchors, paged result,
+delegation attribution, stable-node per-line attribution, status, public tree/change diff,
+edit-surviving text anchors, paged result,
 attestation, trace, and SBOM enumeration, one-drip streaming file writes and tree imports, and
 caller-stated write bases with stale-reasoning refusal, disjoint re-validation, and forced
-re-planning records are implemented ([`object-model.md`](object-model.md)). TAAP/1 identities with
+re-planning records are implemented ([`object-model.md`](object-model.md),
+[`multiplayer.md`](multiplayer.md)). TAAP/1 identities with
 rotation and signed drips and changes, the internal CRDT metadata document, canonical CBOR codec,
 and drip journal are implemented behind libliquid. Directory CRDT checkpoints prefer compact bytes
 with checked full-history fallback and reopen as sync-capable documents; remote changes are
@@ -236,7 +238,8 @@ reports the query and inputs on divergence, and evicts the offending value.
 action are `action_result` graph nodes.
 
 **Frontends.** A versioned C frontend ABI loads replaceable shared or static language modules
-outside libliquid ([`frontends.md`](frontends.md)). The bundled tree-sitter fallback fetches 49
+outside libliquid, and the native liquify plugin descriptor accepts a versioned presence, lease,
+and attribution event callback table ([`frontends.md`](frontends.md)). The bundled tree-sitter fallback fetches 49
 exact-commit grammars under archive and per-file SHA-256 checks, registers their extensions, and
 discovers units from pinned tag queries where upstream supplies them; syntactic records and
 `liquid version --json` carry the grammar-lock digest. The distribution decision and inventory are

@@ -27,6 +27,11 @@ Text-anchor mapping reuses one change-level text diff, indexes anchors by their 
 walks each matched path's line hunks in order. It follows renames through `node_id`, shifts lines
 for earlier count changes, marks replacements approximate, and marks removed regions deleted.
 
+Per-line attribution also follows the file's stable `node_id`. It walks first-parent changes in
+oldest-first order, applies text hunks to carry unchanged ownership forward, and binds changed
+lines to the matching operation group and session. Stored operation records carry the delegated
+agent marker; older documents decode an absent marker as a human operation.
+
 At every cut and configured drip interval, cached directory documents are compact-saved and
 immediately load-checked. A state that does not round-trip in compact form falls back to complete
 upstream history bytes. Stored documents reopen sync-capable. The repository marker is published

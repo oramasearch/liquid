@@ -85,6 +85,7 @@ struct stored_operation {
     session_id session;
     actor by;
     std::chrono::sys_seconds at;
+    bool agent{};
 };
 struct persisted_drip {
     actor author;
@@ -490,6 +491,7 @@ auto encode_repository_document(const repository_document& value)
                  {"node", bytes(operation.node)},
                  {"by", actor_value(operation.by)},
                  {"at", cbor::value{operation.at.time_since_epoch().count()}},
+                 {"agent", cbor::value{operation.agent}},
                  {"session", bytes(operation.session.bytes)},
                  {"prior",
                   operation.prior ? encode_entry(*operation.prior) : cbor::value{cbor::null{}}},
@@ -907,6 +909,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         const auto* node = find(item, "node");
         const auto* by = find(item, "by");
         const auto* at = find(item, "at");
+        const auto* agent = find(item, "agent");
         const auto* prior = find(item, "prior");
         const auto* session = find(item, "session");
         const auto* entry_effects = find(item, "entries");
@@ -975,6 +978,14 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         decoded_operation.prior = std::move(previous);
         decoded_operation.by = std::move(operation_actor);
         decoded_operation.at = operation_time;
+        if (agent) {
+            const auto* marked = std::get_if<bool>(&agent->data);
+            if (!marked) {
+                return std::unexpected(failure(
+                    errc::corrupt, "invalid operation agent marker", "repository document"));
+            }
+            decoded_operation.agent = *marked;
+        }
         if (session) {
             const auto* raw = std::get_if<cbor::value::bytes>(&session->data);
             if (!raw || raw->size() != decoded_operation.session.bytes.size()) {
@@ -3837,6 +3848,7 @@ struct repository::impl {
         operation.session = session;
         operation.by = current_actor();
         operation.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        operation.agent = acting_delegation.has_value();
         if (operation.kind == "write" || operation.kind == "mkdir") {
             auto parts = split_path(operation.from);
             auto* after = parts ? lookup(current.root, *parts) : nullptr;
@@ -3858,6 +3870,7 @@ struct repository::impl {
         operation.session = session;
         operation.by = signing_key.identity();
         operation.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        operation.agent = acting_delegation.has_value();
         current.operations.push_back(std::move(operation));
     }
     runtime::task<undo_report> apply_undo(std::vector<stored_operation> operations,
@@ -6556,6 +6569,257 @@ runtime::task<std::vector<operation_record>> repository::operations(log_options)
     }
     co_return output;
 }
+
+namespace {
+
+struct attribution_operation_group {
+    std::vector<const stored_operation*> operations;
+    const stored_operation* record{};
+};
+
+struct attribution_source {
+    actor by;
+    session_id session;
+    bool agent{};
+};
+
+auto attribution_groups(const repository_document& document)
+    -> std::map<std::string, attribution_operation_group> {
+    auto output = std::map<std::string, attribution_operation_group>{};
+    auto pending = std::vector<const stored_operation*>{};
+    for (const auto& operation : document.operations) {
+        if (operation.kind != "record" || !operation.head_after) {
+            pending.push_back(&operation);
+            continue;
+        }
+        output.insert_or_assign(to_string(operation.head_after->value),
+                                attribution_operation_group{pending, &operation});
+        pending.clear();
+    }
+    return output;
+}
+
+auto operation_affects(const stored_operation& operation,
+                       const node_id& node,
+                       std::string_view old_path,
+                       std::string_view new_path) -> bool {
+    if (operation.node == node || operation.from == old_path || operation.from == new_path ||
+        operation.to == old_path || operation.to == new_path) {
+        return true;
+    }
+    return std::ranges::any_of(operation.entries, [&](const stored_entry_effect& effect) {
+        const auto same_node = [&](const std::optional<working_entry>& entry) {
+            return entry && entry->node == node;
+        };
+        return effect.path == old_path || effect.path == new_path || same_node(effect.before) ||
+               same_node(effect.after);
+    });
+}
+
+auto content_operation(const stored_operation& operation) -> bool {
+    return !operation.entries.empty() || operation.kind == "write" || operation.kind == "import" ||
+           operation.kind == "structural_edit" || operation.kind == "undo" ||
+           operation.kind == "redaction";
+}
+
+auto source_for_change(const std::map<std::string, attribution_operation_group>& groups,
+                       const change& value,
+                       const node_id& node,
+                       std::string_view old_path,
+                       std::string_view new_path) -> attribution_source {
+    const auto found = groups.find(to_string(value.id.value));
+    if (found == groups.end()) {
+        return {.by = value.author};
+    }
+    const auto& operations = found->second.operations;
+    auto selected = static_cast<const stored_operation*>(nullptr);
+    for (auto operation = operations.rbegin(); operation != operations.rend(); ++operation) {
+        if (content_operation(**operation) &&
+            operation_affects(**operation, node, old_path, new_path)) {
+            selected = *operation;
+            break;
+        }
+    }
+    if (!selected) {
+        for (auto operation = operations.rbegin(); operation != operations.rend(); ++operation) {
+            if (content_operation(**operation)) {
+                selected = *operation;
+                break;
+            }
+        }
+    }
+    selected = selected ? selected : found->second.record;
+    return selected ? attribution_source{selected->by, selected->session, selected->agent}
+                    : attribution_source{.by = value.author};
+}
+
+auto text_lines(std::span<const std::byte> bytes) -> std::vector<std::string> {
+    const auto source = std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    auto output = std::vector<std::string>{};
+    for (auto offset = std::size_t{}; offset < source.size();) {
+        const auto newline = source.find('\n', offset);
+        const auto end = newline == std::string_view::npos ? source.size() : newline;
+        output.emplace_back(source.substr(offset, end - offset));
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        offset = newline + 1;
+    }
+    return output;
+}
+
+auto apply_attribution_hunks(std::span<const line_attribution> previous,
+                             std::span<const std::string> lines,
+                             std::span<const line_change> hunks,
+                             const attribution_source& source,
+                             const change_id& change_value)
+    -> result<std::vector<line_attribution>> {
+    auto output = std::vector<line_attribution>{};
+    output.reserve(lines.size());
+    auto old_offset = std::size_t{};
+    auto new_offset = std::size_t{};
+    for (const auto& hunk : hunks) {
+        if (hunk.old_line == 0 || hunk.new_line == 0) {
+            return std::unexpected(failure(errc::corrupt, "invalid attribution line hunk"));
+        }
+        const auto old_start = static_cast<std::size_t>(hunk.old_line - 1);
+        const auto new_start = static_cast<std::size_t>(hunk.new_line - 1);
+        if (old_start < old_offset || new_start < new_offset || old_start > previous.size() ||
+            new_start > lines.size() || old_start - old_offset != new_start - new_offset ||
+            hunk.old_count > previous.size() - old_start ||
+            hunk.new_count > lines.size() - new_start) {
+            return std::unexpected(failure(errc::corrupt, "inconsistent attribution line hunk"));
+        }
+        output.insert(output.end(),
+                      previous.begin() + static_cast<std::ptrdiff_t>(old_offset),
+                      previous.begin() + static_cast<std::ptrdiff_t>(old_start));
+        for (auto index = std::size_t{}; index < hunk.new_count; ++index) {
+            output.push_back({.text = lines[new_start + index],
+                              .by = source.by,
+                              .session = source.session,
+                              .change = change_value,
+                              .agent = source.agent});
+        }
+        old_offset = old_start + static_cast<std::size_t>(hunk.old_count);
+        new_offset = new_start + static_cast<std::size_t>(hunk.new_count);
+    }
+    output.insert(
+        output.end(), previous.begin() + static_cast<std::ptrdiff_t>(old_offset), previous.end());
+    if (output.size() != lines.size()) {
+        return std::unexpected(failure(errc::corrupt, "attribution line count does not match"));
+    }
+    for (auto index = std::size_t{}; index < output.size(); ++index) {
+        output[index].line = index + 1;
+        output[index].text = lines[index];
+    }
+    return output;
+}
+
+auto snapshot_entry(repository& source, liquid::tree current, std::span<const std::string> path)
+    -> runtime::task<tree_entry> {
+    for (auto index = std::size_t{}; index < path.size(); ++index) {
+        const auto found = std::ranges::find(current.entries, path[index], &tree_entry::name);
+        if (found == current.entries.end()) {
+            co_return std::unexpected(failure(errc::not_found, "path does not exist", path[index]));
+        }
+        if (index + 1 == path.size()) {
+            if (found->kind != node_kind::blob) {
+                co_return std::unexpected(
+                    failure(errc::invalid_argument, "attribution path is not a file", found->name));
+            }
+            co_return *found;
+        }
+        if (found->kind != node_kind::tree) {
+            co_return std::unexpected(failure(errc::not_found, "path does not exist", path[index]));
+        }
+        auto child = co_await source.tree(found->ref);
+        if (!child) {
+            co_return std::unexpected(child.error());
+        }
+        current = std::move(*child);
+    }
+    co_return std::unexpected(failure(errc::invalid_argument, "attribution path is empty"));
+}
+
+} // namespace
+
+runtime::task<std::vector<line_attribution>> repository::attribution(std::string path,
+                                                                     change_id change_value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    auto target = co_await at(change_value);
+    if (!target) {
+        co_return std::unexpected(target.error());
+    }
+    auto target_entry = co_await snapshot_entry(*this, target->root, *parts);
+    if (!target_entry) {
+        co_return std::unexpected(target_entry.error());
+    }
+    auto history = co_await log({.from = change_value, .first_parent = true});
+    if (!history) {
+        co_return std::unexpected(history.error());
+    }
+    std::ranges::reverse(*history);
+    const auto groups = attribution_groups(impl_->current);
+    auto output = std::vector<line_attribution>{};
+    auto previous = std::optional<change_id>{};
+    for (const auto& revision : *history) {
+        auto differences = result<std::vector<tree_diff_entry>>{};
+        if (previous) {
+            differences = co_await diff(*previous, revision.id, {.text = true});
+        } else {
+            auto snapshot = co_await at(revision.id);
+            if (!snapshot) {
+                co_return std::unexpected(snapshot.error());
+            }
+            differences = co_await diff(liquid::tree{}, std::move(snapshot->root), {.text = true});
+        }
+        if (!differences) {
+            co_return std::unexpected(differences.error());
+        }
+        previous = revision.id;
+        const auto changed =
+            std::ranges::find(*differences, target_entry->node, &tree_diff_entry::node);
+        if (changed == differences->end()) {
+            continue;
+        }
+        if (!changed->new_blob) {
+            output.clear();
+            continue;
+        }
+        if (!changed->line_hunks) {
+            if (changed->old_blob && changed->new_blob &&
+                same_digest(*changed->old_blob, *changed->new_blob)) {
+                continue;
+            }
+            co_return std::unexpected(
+                failure(errc::unsupported, "attribution requires UTF-8 text", changed->path));
+        }
+        auto contents = co_await blob(*changed->new_blob);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
+        auto lines = text_lines(*contents);
+        const auto source = source_for_change(groups,
+                                              revision,
+                                              target_entry->node,
+                                              changed->old_path.value_or(changed->path),
+                                              changed->path);
+        auto attributed =
+            apply_attribution_hunks(output, lines, *changed->line_hunks, source, revision.id);
+        if (!attributed) {
+            co_return std::unexpected(attributed.error());
+        }
+        output = std::move(*attributed);
+    }
+    co_return output;
+}
+
 runtime::task<undo_report> repository::undo(op_id operation) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
