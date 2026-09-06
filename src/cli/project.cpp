@@ -37,8 +37,24 @@ auto target(std::string_view value) -> liquid::result<liquid::projection_target>
     if (value == "helm") {
         return liquid::projection_target::helm_chart;
     }
+    if (value == "homebrew") {
+        return liquid::projection_target::homebrew;
+    }
+    if (value == "pkgbuild") {
+        return liquid::projection_target::pkgbuild;
+    }
+    if (value == "appimage") {
+        return liquid::projection_target::appimage;
+    }
+    if (value == "flatpak") {
+        return liquid::projection_target::flatpak;
+    }
+    if (value == "snap") {
+        return liquid::projection_target::snap;
+    }
     return std::unexpected(liquid::error{liquid::errc::invalid_argument,
-                                         "project target must be oci, deb, rpm, apk, or helm",
+                                         "project target must be oci, deb, rpm, apk, helm, "
+                                         "homebrew, pkgbuild, appimage, flatpak, or snap",
                                          std::string{value}});
 }
 
@@ -102,7 +118,8 @@ auto service(std::string_view value) -> liquid::result<liquid::projection_servic
 
 auto project(int argc, char** argv) -> int {
     if (argc < 2) {
-        return usage("project <oci|deb|rpm|apk|helm> <result|install-tree> --name N --version V");
+        return usage("project <oci|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
+                     "<result|install-tree> --name N --version V");
     }
     auto selected = target(argv[0]);
     auto source_id = liquid::parse_digest(argv[1]);

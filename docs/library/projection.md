@@ -1,9 +1,10 @@
 # Package and image projection
 
-Issue #28 implements Tier A projection from a result's checked install tree, or from an explicit
-install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, and Helm charts. Projection
-does not convert one ecosystem package into another: every writer consumes the same canonical
-file tree and metadata request.
+Issues #28 and #77 implement projection from a result's checked install tree, or from an explicit
+install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, Helm charts, Homebrew bottles,
+Arch recipes, AppImages, Flatpak build directories, and Snaps. Projection does not convert one
+ecosystem package into another: every writer consumes the same canonical file tree and metadata
+request.
 
 ## Public contract
 
@@ -36,6 +37,95 @@ the built-in format registry:
   `datahash`, relationship fields, and `so:` dependencies.
 
 Maintainer scripts and file-conflict transactions remain issue #80.
+
+## Homebrew
+
+The Homebrew target writes a formula, a source tarball, and a bottle. The bottle is the canonical
+install tree below `<name>/<version>/`; both archives use the owned tar and deflate writers. The
+formula records the source URL and SHA-256, declares `cellar: :any_skip_relocation`, installs the
+staged tree into the keg, and tests that its first top-level `bin` program is executable. The
+formula leaves the bottle root at Homebrew's default so `HOMEBREW_BOTTLE_DOMAIN` can select a local
+or mirrored root without regenerating the formula.
+
+The shared relocation check runs before the formula or bottle is written. A build-root string,
+absolute runtime search path, absolute script interpreter, or other finding therefore refuses the
+projection instead of weakening `:any_skip_relocation`. Submitting formulae to Homebrew core is
+outside this operation.
+
+## Arch PKGBUILD
+
+The Arch target writes `PKGBUILD`, `.SRCINFO`, and a deterministic source tarball containing the
+install tree below `<pkgname>-<pkgver>/`. `package()` copies that tree below `$pkgdir/usr` without
+network access or a build phase. The recipe pins the archive SHA-256 and disables stripping so
+the projected bytes remain the checked bytes.
+
+ELF requirements use the same evidence as the native package writers. glibc names map to `glibc`,
+the C++ and GCC support libraries map to `gcc-libs`, and unknown SONAMEs remain explicit
+lower-case capabilities. Declared dependencies are additive and `.SRCINFO` repeats the complete
+list consumed by `makepkg`.
+
+## AppImage
+
+The AppImage target writes a type 2 executable: the architecture runtime followed directly by the
+owned SquashFS 4 image. The filesystem contains `AppRun`, the install tree below `usr/`, a desktop
+file, and `.DirIcon`. `AppRun` uses the runtime-provided `APPDIR` and executes the first top-level
+program in `bin`. x86-64 and AArch64 generation is available on Unix hosts; Windows returns an
+explicit unsupported result because its build does not embed ELF runtimes.
+
+The upstream [AppImage type 2 runtime](https://github.com/AppImage/type2-runtime) is a private
+build input pinned in `CMakeLists.txt`:
+
+| Architecture | URL | SHA-256 | Bytes |
+|---|---|---|---:|
+| x86-64 | `https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64` | `1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf` | 944632 |
+| AArch64 | `https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64` | `7d5d772b7c32f0c84caf0a452a3072a5709027d7eac5856feb89a7a7a8881372` | 936456 |
+
+The URL can advance, but a changed byte fails configuration until its provenance and hash are
+reviewed together. The runtimes are embedded as read-only data; projection itself does not fetch
+or invoke AppImage tooling.
+
+## Flatpak
+
+The Flatpak target writes `<name>-<version>.flatpak/manifest.json`, a `payload/` source directory,
+and an export-ready `files/` plus `metadata` build directory. The manifest pins
+`org.freedesktop.Platform` and `org.freedesktop.Sdk` to branch `24.08`, uses the simple buildsystem,
+and copies only the emitted payload into `/app`. A generated desktop entry and icon accompany the
+selected command.
+
+The manifest text is deterministic. A Flatpak repository commit is intentionally not produced by
+the library: `flatpak build-export` adds repository metadata through the installed Flatpak and
+OSTree implementation. The optional `realworld` peer runs both the ready directory through
+`flatpak build-export` and the manifest through `flatpak-builder --build-only` when the pinned
+runtime is installed.
+
+## Snap
+
+The Snap target writes `snapcraft.yaml`, a `payload/` tree, a `prime/` tree ready for `snap pack`,
+and an owned `.snap` SquashFS. `core24`, strict confinement, the target architecture, and the
+selected `usr/bin` command are explicit. `prime/meta/snap.yaml` is the metadata consumed by
+`snap pack`; the same `prime` content is passed to the deterministic SquashFS writer for the
+reported `.snap` digest.
+
+The peer runs `snap pack` and checks both images with `unsquashfs -l`. Installation is not claimed:
+containers do not run the `snapd` mount, namespace, AppArmor, and refresh services required for a
+real confined installation. Store assertions and submission to the Snap Store are outside scope.
+
+## Reproducibility and detached attestations
+
+| Output | Reproducible payload | Attachment |
+|---|---|---|
+| Homebrew bottle and source archive | yes | adjacent DSSE collection |
+| Homebrew formula | yes | adjacent DSSE collection |
+| `PKGBUILD`, `.SRCINFO`, and source archive | yes | adjacent DSSE collection |
+| AppImage | yes for a fixed runtime pin and zstd version | adjacent DSSE collection |
+| Flatpak manifest and build-tree files | yes | adjacent DSSE collection; exported OSTree commit is tool-owned |
+| Snap recipe, prime tree, and owned `.snap` | yes | adjacent DSSE collection; `snap pack` output is tool-owned |
+
+Each primary file has `<artifact>.attestations.json`. The collection names its SHA-256 subject and
+contains the signed `projection/1` statement plus verified source provenance and SBOM DSSE
+envelopes. TAAP signature timestamps mean detached collections produced at different signing
+instants need not have the same bytes; they do not change the primary artifact digest. OCI and
+Helm retain their subject-bound OCI 1.1 attachment mechanism.
 
 ## Derived dependencies and ABI refusal
 
@@ -105,6 +195,8 @@ run by both static and shared suites on macOS and by the Linux proof lane. Tests
 readers, format-registry recognition, deterministic gzip, repeated projection, OCI referrers,
 signed `projection/1`, digest-only Helm values, and native `helm lint` where Helm is installed.
 
-`tools/projection-peers/run-projection-interop.sh` is the distribution-tool proof for `dpkg`,
-`rpm`, `apk`, OCI import, and Helm/k0s. Its images are digest-pinned. The script exits with an
-explicit skip when the required container runner is absent.
+`tools/projection-peers/run-homebrew-interop.sh` creates a temporary tap, serves the bottle over
+HTTP through `HOMEBREW_BOTTLE_DOMAIN`, pours it, and runs `brew test`. The broader peer runner adds
+`makepkg` plus `pacman -U`, AppImage extraction on Ubuntu 24.04 and Fedora, Flatpak builder, and
+Snap structure checks to the existing `dpkg`, `rpm`, `apk`, OCI, and Helm checks. Peer images are
+digest-pinned and unavailable peers report an explicit skip.

@@ -227,7 +227,9 @@ composition. The Unix demo drives one Capy process across a signed tier-1 replac
 case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.
 `test_projection.cpp` imports the committed `fixtures/projection/root` install tree and covers
 package round trips, registry recognition, deterministic compression and output, OCI layers and
-attestation referrers, signed `projection/1`, digest-only Helm values, and native Helm lint when
-the tool is installed. The pinned target digests are the macOS/Linux byte-identity contract.
+attestation referrers, signed `projection/1`, digest-only Helm values, Homebrew bottles, Arch
+recipes, AppImage, Flatpak, Snap, adjacent DSSE collections, relocation refusal, and native Helm
+lint when the tool is installed. It round-trips the owned SquashFS through `unsquashfs` when that
+tool is installed. The pinned target digests are the macOS/Linux byte-identity contract.
 The format-registry inventory also pins the Debian, RPM, and Alpine codecs beside the five launch
 codecs.

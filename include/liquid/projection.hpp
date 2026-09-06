@@ -22,6 +22,11 @@ enum class projection_target : std::uint8_t {
     rpm,
     apk,
     helm_chart,
+    homebrew,
+    pkgbuild,
+    appimage,
+    flatpak,
+    snap,
 };
 
 struct LIQUID_EXPORT package_metadata {

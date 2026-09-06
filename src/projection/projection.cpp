@@ -397,6 +397,16 @@ std::string_view to_string(projection_target target) noexcept {
         return "apk";
     case projection_target::helm_chart:
         return "helm";
+    case projection_target::homebrew:
+        return "homebrew";
+    case projection_target::pkgbuild:
+        return "pkgbuild";
+    case projection_target::appimage:
+        return "appimage";
+    case projection_target::flatpak:
+        return "flatpak";
+    case projection_target::snap:
+        return "snap";
     }
     return "oci";
 }
@@ -417,6 +427,16 @@ runtime::task<projection_report> project(repository& source, projection_request 
     case projection_target::helm_chart:
         co_return co_await projection_detail::project_helm(
             source, std::move(*prepared), request.services);
+    case projection_target::homebrew:
+        co_return co_await projection_detail::project_homebrew(source, std::move(*prepared));
+    case projection_target::pkgbuild:
+        co_return co_await projection_detail::project_pkgbuild(source, std::move(*prepared));
+    case projection_target::appimage:
+        co_return co_await projection_detail::project_appimage(source, std::move(*prepared));
+    case projection_target::flatpak:
+        co_return co_await projection_detail::project_flatpak(source, std::move(*prepared));
+    case projection_target::snap:
+        co_return co_await projection_detail::project_snap(source, std::move(*prepared));
     }
     co_return std::unexpected(error{errc::unsupported, "unknown projection target", "project"});
 }

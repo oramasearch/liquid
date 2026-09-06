@@ -95,6 +95,9 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #77 adds deterministic Homebrew bottles and Arch recipes; pinned-runtime AppImages;
+Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and detached
+`projection/1`, provenance, and SBOM attestations.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.

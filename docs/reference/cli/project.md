@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
 
-Project a recorded build result or install tree into an OCI image, package, or Helm chart.
+Project a recorded build result or install tree into an ecosystem package or image.
 
 ## Options
 
