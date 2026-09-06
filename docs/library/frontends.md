@@ -12,7 +12,8 @@ syntax operation, and bundled Clang C++ module are implemented. The CMake fixtur
 configured Clang, changes one body, executes one new action, and assembles the translation unit
 again. Its header change executes both actions because both units read that header. Liquid #66 adds
 the `symbols` ABI operation and graph query; its record is documented in [`symbols.md`](symbols.md).
-Liquid #205 adds the optional `syntax` operation used by structural edits.
+Liquid #205 adds the optional `syntax` operation used by structural edits. Liquid #248 adds the
+optional versioned presence, lease, and attribution event table to the native plugin descriptor.
 The grammar distribution decision, complete inventory, and maintenance process are in
 [`grammars.md`](grammars.md).
 
@@ -44,6 +45,62 @@ three kinds, but every advertised row has a non-empty name and operation. The ho
 ABI version, required descriptor prefix, names, schemas, inputs, and results. Plugins return panel
 failures through the ordinary ABI error value; liquify renders that failure in the affected panel
 and continues updating the others. Plugins produce data and never receive an ImGui type or context.
+
+### Plugin event table
+
+A plugin subscribes to multiplayer updates by appending `events` to `liquify_plugin_v1` and
+pointing it at `liquify_plugin_event_callbacks_v1`. The callback table has its own
+`abi_version`, `struct_size`, and three independently optional function pointers:
+
+| Callback | Canonical-CBOR value |
+|---|---|
+| `presence` | One versioned presence update with actor, session, path, range, activity, and time. |
+| `lease` | One versioned lease update with holder, session, claim, authority, times, and active state. |
+| `attribution` | One versioned attribution result with path, requested change, and line records. |
+
+The version-1 maps are:
+
+```text
+presence: {
+  v: 1, actor: text, session: text, path: text,
+  range: null | source-range, activity: "editing" | "reading" | "idle", at: integer
+}
+lease: {
+  v: 1, actor: text, session: text,
+  claim: { path: text, kind: "file" | "symbol" | "range",
+           symbol: null | text, range: null | source-range },
+  authority: "advisory" | "lake", since: integer, expires: integer, active: bool
+}
+attribution: {
+  v: 1, path: text, change: text,
+  lines: [{ line: unsigned, text: text, actor: text, session: text,
+            change: text, agent: bool }]
+}
+source-range: {
+  start: { byte: unsigned, line: unsigned, column: unsigned },
+  end: { byte: unsigned, line: unsigned, column: unsigned }
+}
+```
+
+Times are Unix seconds, sessions are lowercase 32-digit hexadecimal strings, and changes are full
+algorithm-prefixed digest strings. Lines and columns are one-based; byte offsets are zero-based and
+half-open, matching `frontend_source_range`.
+
+A non-null callback is the subscription. Liquify invokes it with the descriptor's
+`plugin_context`; the input span is borrowed and remains valid only for the duration of the call.
+The plugin copies any bytes it needs after returning. Event callbacks do not return owned bytes or
+errors: rejection and retry belong to the repository or daemon operation that produced the event.
+Callbacks are serialized by the host's event dispatcher, so plugins do not create worker threads
+to receive them.
+
+Compatibility is checked at both levels. A host first validates the plugin descriptor's original
+v1 prefix. It reads `events` only when `liquify_plugin_v1.struct_size` covers that field; a shorter
+v1 descriptor is an older compatible plugin with no event subscriptions. For a present table, the
+host requires `LIQUIFY_PLUGIN_EVENTS_ABI_VERSION`, validates the callback table prefix covered by
+its `struct_size`, and reads each callback only when that field is covered. A null table or null
+callback means unsubscribed. Future tables append fields and increase `struct_size`; they do not
+reorder or reinterpret the v1 prefix. An incompatible table version disables the table without
+changing the compatibility of the plugin's queries, commands, or panels.
 
 | Operation | Input | Canonical-CBOR result |
 |---|---|---|

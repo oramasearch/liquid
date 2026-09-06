@@ -336,6 +336,13 @@ auto build_named(repository& source,
 } // namespace
 
 runtime::task<digest> repository::fetch_source(const source& value) {
+    auto existing = co_await repository_detail::build_access::get(*this, value.content);
+    if (existing) {
+        co_return value.content;
+    }
+    if (existing.error().code != errc::not_found) {
+        co_return std::unexpected(existing.error());
+    }
     auto parsed = net_detail::parse_url(value.url, "source URL");
     if (!parsed) {
         co_return std::unexpected(parsed.error());

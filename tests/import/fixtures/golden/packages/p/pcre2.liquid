@@ -1,0 +1,18 @@
+source pcre2-1.6.0 {
+    digest: sha256:cbec7301c0a906db7282052238404456adc217f6519fccc3d2a72a80d8927eec
+    kind: archive
+    url: "https://example.invalid/pcre2-1.6.0.tar.gz"
+}
+
+package pcre2 {
+    versions: [1.6.0]
+}
+
+build pcre2 {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/cbec7301c0a906db7282052238404456adc217f6519fccc3d2a72a80d8927eec -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["pcre2-1.6.0"]
+    install {
+        layout: prefix
+    }
+}

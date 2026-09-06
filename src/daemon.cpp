@@ -188,6 +188,52 @@ auto decode_presence_value(const cbor::value& source) -> result<liquid::presence
     return output;
 }
 
+auto attribution_value(std::span<const line_attribution> values) -> cbor::value {
+    auto lines = cbor::value::array{};
+    lines.reserve(values.size());
+    for (const auto& value : values) {
+        lines.push_back(map({{"line", value.line},
+                             {"text", value.text},
+                             {"actor", value.by.taap_id},
+                             {"session", to_string(value.session)},
+                             {"change", to_string(value.change.value)},
+                             {"agent", value.agent}}));
+    }
+    return cbor::value{std::move(lines)};
+}
+
+auto decode_attribution_value(const cbor::value& source) -> result<std::vector<line_attribution>> {
+    const auto* values = std::get_if<cbor::value::array>(&source.data);
+    if (!values) {
+        return std::unexpected(failure(errc::corrupt, "invalid daemon attribution response"));
+    }
+    auto output = std::vector<line_attribution>{};
+    output.reserve(values->size());
+    for (const auto& value : *values) {
+        const auto* line = unsigned_field(value, "line");
+        const auto* text = text_field(value, "text");
+        const auto* actor = text_field(value, "actor");
+        const auto* session_text = text_field(value, "session");
+        const auto* change_text = text_field(value, "change");
+        const auto* agent = bool_field(value, "agent");
+        if (!line || *line == 0 || !text || !actor || !session_text || !change_text || !agent) {
+            return std::unexpected(failure(errc::corrupt, "invalid daemon attribution line"));
+        }
+        auto session = parse_session_id(*session_text);
+        auto change = parse_digest(*change_text);
+        if (!session || !change) {
+            return std::unexpected(session ? change.error() : session.error());
+        }
+        output.push_back({.line = *line,
+                          .text = *text,
+                          .by = {.taap_id = *actor},
+                          .session = *session,
+                          .change = {*change},
+                          .agent = *agent});
+    }
+    return output;
+}
+
 auto strings_value(const std::vector<std::string>& values) -> cbor::value {
     auto output = cbor::value::array{};
     output.reserve(values.size());
@@ -1958,6 +2004,26 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                     response =
                         delivered ? encode_acknowledgement() : encode_error(delivered.error());
                 }
+            } else if (*operation == "attribution") {
+                const auto* path = text_field(*decoded, "path");
+                const auto* change_text = text_field(*decoded, "change");
+                auto change = change_text
+                                  ? parse_digest(*change_text)
+                                  : result<digest>{std::unexpected(failure(
+                                        errc::invalid_argument, "attribution change is missing"))};
+                if (!path || path->empty() || !change) {
+                    response = encode_error(
+                        change ? failure(errc::invalid_argument, "attribution path is missing")
+                               : change.error());
+                } else {
+                    auto source = co_await repository::open(state->checkout);
+                    auto lines = source ? co_await source->attribution(*path, change_id{*change})
+                                        : result<std::vector<line_attribution>>{
+                                              std::unexpected(source.error())};
+                    response = lines ? encode_success(map({{"v", std::uint64_t{1}},
+                                                           {"lines", attribution_value(*lines)}}))
+                                     : encode_error(lines.error());
+                }
             } else if (*operation == "build_start" || *operation == "build_next" ||
                        *operation == "build_plan" || *operation == "build_repository") {
                 response = co_await process_build_request(state, *decoded, *operation);
@@ -2373,6 +2439,39 @@ runtime::task<void> daemon::report_presence(liquid::presence value) {
         co_return std::unexpected(decoded.error());
     }
     co_return result<void>{};
+#endif
+}
+
+runtime::task<std::vector<line_attribution>> daemon::attribution(std::string path,
+                                                                 change_id change) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(path);
+    static_cast<void>(change);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map({{"v", std::uint64_t{1}},
+                                     {"op", "attribution"},
+                                     {"path", std::move(path)},
+                                     {"change", to_string(change.value)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    const auto* lines = field(*decoded, "lines");
+    if (!lines) {
+        co_return std::unexpected(failure(errc::corrupt, "missing daemon attribution response"));
+    }
+    co_return decode_attribution_value(*lines);
 #endif
 }
 

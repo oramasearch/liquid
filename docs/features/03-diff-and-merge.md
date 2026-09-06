@@ -87,12 +87,23 @@ tier and exact resource limits. Recognition may lower an individual input.
 |---|---:|---|---|
 | `apk` | 2 | `apk` | depth 1; 536870912 bytes; 1000000 entries |
 | `deb` | 2 | `deb` | depth 1; 536870912 bytes; 1000000 entries |
+| `elf` | 2 | `elf` | depth 1; 536870912 bytes; 100000 entries |
 | `hdf5` | 2 | `hdf5` | depth 8; 268435456 bytes; 100000 entries |
+| `jar` | 2 | `jar` | depth 8; 268435456 bytes; 100000 entries |
+| `jupyter` | 2 | `jupyter` | depth 8; 268435456 bytes; 100000 entries |
+| `macho` | 2 | `macho` | depth 1; 536870912 bytes; 100000 entries |
+| `odf` | 2 | `odf` | depth 8; 268435456 bytes; 100000 entries |
+| `ooxml` | 2 | `ooxml` | depth 8; 268435456 bytes; 100000 entries |
 | `parquet` | 2 | `parquet` | depth 8; 268435456 bytes; 100000 entries |
+| `pdf` | 2 | `pdf` | depth 1; 268435456 bytes; 100000 entries |
+| `pe` | 2 | `pe` | depth 1; 536870912 bytes; 100000 entries |
+| `pickle` | 2 | `pickle` | depth 8; 268435456 bytes; 100000 entries |
 | `rpm` | 2 | `rpm` | depth 1; 536870912 bytes; 1000000 entries |
+| `safetensors` | 2 | `safetensors` | depth 8; 268435456 bytes; 100000 entries |
 | `sqlite` | 2 | `sqlite` | depth 8; 268435456 bytes; 100000 entries |
 | `tar` | 1 | `tar` | depth 8; 268435456 bytes; 100000 entries |
 | `unknown` | 3 | `none` | depth 8; 268435456 bytes; 100000 entries |
+| `wheel` | 2 | `wheel` | depth 8; 268435456 bytes; 100000 entries |
 | `zip` | 1 | `zip` | depth 8; 268435456 bytes; 100000 entries |
 <!-- formats:end -->
 
@@ -100,15 +111,17 @@ tier and exact resource limits. Recognition may lower an individual input.
 
 | Format | Treatment |
 |---|---|
-| **zip / jar** | Implemented for STORED and DEFLATE members, including ZIP64 and data descriptors. XML-aware OOXML/ODF handling is later work. |
-| **tar** | Implemented for ustar, pax, GNU long names/links, gzip and zstd wrappers, plus deterministic uncompressed output. `ar` and cpio are later work. |
+| **zip / jar** | Implemented for STORED and DEFLATE members, including ZIP64 and data descriptors. JAR manifests remain members and signature files are reported. |
+| **tar** | Implemented for ustar, pax, GNU long names/links, gzip and zstd wrappers, plus deterministic uncompressed output. The bounded `ar` reader supports Debian package members. |
 | **HDF5 / NetCDF-4** | Logical object comparison in the manner of `h5diff` — groups, datasets, ranks, dimensions, dtypes, values, with tolerances. Not physical bytes: HDF5's layout is not part of its logical contract. |
 | **Parquet** | Implemented for row groups, column chunks, statistics, PLAIN/RLE/dictionary encoding, and uncompressed/gzip/zstd pages. Snappy is reported opaque. |
 | **SQLite** | Implemented for ordinary rowid table schemas and records; comparison ignores free lists and page placement. |
-| **ELF / Mach-O / PE** | Sections, symbols, relocations, disassembly — so an address shift is not a total rewrite ([15](15-consumer-sync-and-web.md) is unrelated; see research 15). |
-| **`.deb` / `.rpm` / `.apk` / wheels** | Decompose into files plus metadata. |
-| **PDF** | Extracted text, normalised object tree, metadata, rendered pages. |
+| **ELF / Mach-O / PE** | Sections, exported symbols, and imported libraries. Disassembly and decompilation are out of scope. |
+| **`.deb` / `.rpm` / `.apk` / wheels** | Decompose package metadata and payload files; wheels verify available `RECORD` hashes. |
+| **PDF** | Indirect objects, simple FlateDecode streams, literal text operators, and volatile metadata normalisation. Rendering is out of scope. |
 | **Jupyter** | JSON model, eliding outputs and normalising execution counts. |
+| **OOXML / ODF** | ZIP members with namespace-expanded XML names and sorted attributes; OOXML relationship identifiers are noise. |
+| **safetensors / pickle** | Tensor byte ranges with JSON dtype and shape; non-executing pickle opcode scan. |
 
 ### Compression locality
 
