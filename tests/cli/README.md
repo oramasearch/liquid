@@ -3,7 +3,8 @@
 `scenario.cmake` drives the built `liquid` executable through the Phase 1 command-line scenario
 without watcher capture: import files with `init`, inspect status, cut, move, nest a second
 repository, split a subtree, combine it, inspect JSON history, undo the move, reject a locked
-mutation, and dry-run collection. It reads signed drips through `log --ops --json`, recorded
+mutation from a second identity under the scenario's configured `nested` lock rule, and dry-run
+collection. It reads signed drips through `log --ops --json`, recorded
 operations through `ops --json`, and reverses a selected session path while checking the applied
 report. `help-docs.cmake` checks command and flag names in both directions against generated
 command help, and rejects an undeclared flag before any handler runs. `reference-docs.cmake`
