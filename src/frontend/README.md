@@ -7,6 +7,10 @@ values are documented in [`docs/library/frontends.md`](../../docs/library/fronte
 The loader also validates the optional ABI-v1 language metadata tail. The public registry projects
 language, extensions, frontend-or-grammar mechanism, and grammar-lock digest without changing the
 existing module language-name method.
+The process-global registry supplies those declarations to the support matrix. It accepts a
+grammar and compiler module for the same language, merges extensions, and selects the compiler
+module as the stronger Tier 3 implementation. Re-registering the same module name remains an
+error.
 
 `symbols.cpp` validates and encodes the frontend graph's `symbols` query value. Its public record
 contract is in [`docs/library/symbols.md`](../../docs/library/symbols.md).

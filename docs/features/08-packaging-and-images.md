@@ -7,7 +7,8 @@
 > #28, including derived dependencies, ABI refusal, deterministic compression, and attached
 > attestations. Issue #80 adds declarative install intent, generated maintainer scripts, file-owner
 > conflict detection, derived replacement relationships, and generation-based install/rollback.
-> Tier B remains #79.
+> Issue #78 adds deterministic `archive-z2` and `bare-user` OSTree commits plus bootc
+> OCI encapsulation from a digest-pinned base tree and overlays. Tier B remains #79.
 
 ## Projection, not translation
 
@@ -43,7 +44,7 @@ valuable, and a later goal.
 | **macOS** | `pkg` / `dmg`, with **codesigning and notarisation** — a hard gate, not polish. |
 | **Flatpak / Snap / AppImage** | Bundled runtimes. |
 | **OCI images** | See below. |
-| **ostree / bootc commits** | The image-based-OS target, and the closest fit to liquid's model. |
+| **ostree / bootc commits** | Implemented in #78: a supplied root tree plus path-mounted overlays becomes a reproducible OSTree commit and a component-layered bootc OCI layout. Booting it is Phase 7. |
 | **Helm charts** | The Kubernetes packaging standard — see below. |
 
 ## Helm charts

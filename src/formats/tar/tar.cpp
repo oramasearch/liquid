@@ -9,6 +9,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include <zlib.h>
@@ -391,6 +392,7 @@ auto append_member(std::vector<std::byte>& output,
                    std::string_view name,
                    char type,
                    std::span<const std::byte> contents,
+                   std::string_view link_path,
                    std::uint64_t mode,
                    std::uint64_t mtime) -> result<void> {
     auto header = std::array<std::byte, block_size>{};
@@ -406,6 +408,7 @@ auto append_member(std::vector<std::byte>& output,
     }
     std::ranges::fill(std::span{header}.subspan(148, 8), std::byte{' '});
     header[156] = std::byte{static_cast<unsigned char>(type)};
+    write_text(std::span{header}.subspan(157, 100), link_path);
     write_text(std::span{header}.subspan(257, 6), "ustar");
     write_text(std::span{header}.subspan(263, 2), "00");
     auto checksum = std::uint64_t{};
@@ -429,7 +432,9 @@ auto append_member(std::vector<std::byte>& output,
 
 auto deterministic_tar(std::vector<formats::tar::entry> entries, std::uint64_t mtime)
     -> result<std::vector<std::byte>> {
-    std::ranges::sort(entries, {}, &formats::tar::entry::path);
+    std::ranges::sort(entries, [](const auto& left, const auto& right) {
+        return std::tie(left.order, left.path) < std::tie(right.order, right.path);
+    });
     auto output = std::vector<std::byte>{};
     for (const auto& entry : entries) {
         auto name = entry.path;
@@ -437,22 +442,36 @@ auto deterministic_tar(std::vector<formats::tar::entry> entries, std::uint64_t m
         if (directory && !name.ends_with('/')) {
             name.push_back('/');
         }
+        auto pax_text = std::string{};
         if (name.size() > 100) {
-            const auto record = pax_record("path", name);
+            pax_text += pax_record("path", name);
+        }
+        if (entry.link_path.size() > 100) {
+            pax_text += pax_record("linkpath", entry.link_path);
+        }
+        if (!pax_text.empty()) {
             const auto record_bytes =
-                std::span{reinterpret_cast<const std::byte*>(record.data()), record.size()};
-            auto pax = append_member(output, "PaxHeaders/liquid", 'x', record_bytes, 0644, mtime);
+                std::span{reinterpret_cast<const std::byte*>(pax_text.data()), pax_text.size()};
+            auto pax =
+                append_member(output, "PaxHeaders/liquid", 'x', record_bytes, {}, 0644, mtime);
             if (!pax) {
                 return std::unexpected(pax.error());
             }
         }
         const auto header_name = name.size() <= 100 ? name : name.substr(0, 100);
-        const auto mode = directory ? 0755U : entry.mode;
+        const auto hardlink = !entry.link_path.empty();
+        const auto symbolic_link = entry.symbolic_link;
+        const auto mode = entry.mode;
         auto appended = append_member(output,
                                       header_name,
-                                      directory ? '5' : '0',
-                                      directory ? std::span<const std::byte>{}
-                                                : std::span<const std::byte>{entry.bytes},
+                                      directory       ? '5'
+                                      : symbolic_link ? '2'
+                                      : hardlink      ? '1'
+                                                      : '0',
+                                      directory || hardlink || symbolic_link
+                                          ? std::span<const std::byte>{}
+                                          : std::span<const std::byte>{entry.bytes},
+                                      entry.link_path,
                                       mode,
                                       mtime);
         if (!appended) {

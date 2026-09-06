@@ -136,6 +136,8 @@ auto removal_test(projection_target target) -> std::string {
     case projection_target::apk:
         return "true";
     case projection_target::oci_image:
+    case projection_target::ostree_commit:
+    case projection_target::bootc_image:
     case projection_target::helm_chart:
         return "false";
     }

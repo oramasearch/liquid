@@ -430,6 +430,7 @@ add_library(libliquid
   src/formats/binary/macho.cpp
   src/formats/binary/pe.cpp
   src/formats/json.cpp
+  src/formats/ostree/ostree.cpp
   src/formats/parquet/parquet.cpp
   src/formats/package/common.cpp
   src/formats/package/codecs.cpp
@@ -481,7 +482,9 @@ add_library(libliquid
   src/protobuf/wire.cpp
   src/projection/helm.cpp
   src/projection/conflicts.cpp
+  src/projection/bootc.cpp
   src/projection/oci.cpp
+  src/projection/ostree.cpp
   src/projection/package.cpp
   src/projection/projection.cpp
   src/projection/rules.cpp
@@ -529,6 +532,7 @@ add_library(libliquid
   src/sync/session.cpp
   src/lake_transparency.cpp
   src/transparency.cpp
+  src/tiers.cpp
   src/tuf.cpp
   src/version.cpp
   src/vfs.cpp
@@ -652,6 +656,8 @@ if(LIQUID_BUILD_CLI)
     src/cli/log.cpp
     src/cli/transparency.cpp
     src/cli/test.cpp
+    src/cli/tier.cpp
+    src/cli/tiers.cpp
     src/cli/repo.cpp
     src/cli/registry.cpp
     src/cli/review.cpp

@@ -232,5 +232,10 @@ script attestation and SBOM binding, batch and installed-inventory ownership con
 replacements. `test_install.cpp` covers intent application, generation listing and rollback, and a
 subprocess `SIGKILL` after every staged file and at the selection switch. The pinned target digests
 are the macOS/Linux byte-identity contract.
+the tool is installed. It also pins a GLib-derived OSTree commit checksum and bootc manifest digest,
+exercises base and overlay paths, writes `archive-z2` and `bare-user`, and checks symbolic-link
+objects. The pinned target digests are the macOS/Linux byte-identity contract.
 The format-registry inventory also pins the Debian, RPM, and Alpine codecs beside the five launch
 codecs.
+Support-matrix tests compare every live codec and locked grammar with `support_matrix()`, and pin
+the compiler frontend as the strongest C++ registration.

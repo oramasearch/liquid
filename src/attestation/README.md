@@ -16,5 +16,7 @@ and the patched or restart outcome.
 `image_provenance/1` validates a digest-pinned image reference, its `io.liquid.tree` digest, and an
 optional producing result. `image.cpp` mints that record with the device identity into a selected
 store.
+`projection/1` optionally binds OS projections to one base tree digest and an ordered list of
+overlay tree digests in addition to its target, source, normalisation, and tool fields.
 `delegation/1` validates attenuation-only scoped agent authority for session publication and lease
 claims.

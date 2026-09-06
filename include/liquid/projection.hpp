@@ -24,6 +24,13 @@ enum class projection_target : std::uint8_t {
     rpm,
     apk,
     helm_chart,
+    ostree_commit,
+    bootc_image,
+};
+
+enum class ostree_repository_mode : std::uint8_t {
+    archive_z2,
+    bare_user,
 };
 
 struct LIQUID_EXPORT package_metadata {
@@ -43,6 +50,7 @@ struct LIQUID_EXPORT package_metadata {
 
 struct LIQUID_EXPORT projection_source {
     std::variant<result_id, digest> value;
+    std::filesystem::path path;
 };
 
 struct LIQUID_EXPORT projection_service {
@@ -66,6 +74,8 @@ struct LIQUID_EXPORT projection_options {
     std::vector<std::string> conffiles;
     std::vector<std::string> oci_entrypoint;
     std::vector<std::string> oci_command;
+    std::string ostree_ref;
+    ostree_repository_mode ostree_mode{ostree_repository_mode::archive_z2};
 };
 
 struct LIQUID_EXPORT projection_request {
@@ -111,6 +121,7 @@ struct LIQUID_EXPORT projection_report {
     std::vector<pinned_artifact> pinned;
     std::vector<projection_dependency> dependencies;
     std::vector<projection_replacement> replacements;
+    std::optional<digest> ostree_commit;
     bool abi_break_allowed{};
 };
 
@@ -123,5 +134,6 @@ generate_maintainer_scripts(projection_target target, const install_intent& inte
 [[nodiscard]] LIQUID_EXPORT result<std::string>
 projection_report_json(const projection_report& report);
 [[nodiscard]] LIQUID_EXPORT std::string_view to_string(projection_target target) noexcept;
+[[nodiscard]] LIQUID_EXPORT std::string_view to_string(ostree_repository_mode mode) noexcept;
 
 } // namespace liquid

@@ -34,3 +34,8 @@ generation installation.
 deterministic RFC 1951 and gzip write path; zlib is used only for bounded read-side inflation.
 These package readers register as semantic-verbatim codecs. Their projection rules are documented
 in `docs/library/projection.md`.
+
+`ostree/` owns issue #78's dependency-free GVariant encoder and OSTree repository writer. It emits
+canonical file, dirtree, dirmeta, commit, and summary bytes, retains regular-file and symbolic-link
+metadata, and writes both `archive-z2` and `bare-user` object stores. `tar/` also writes deterministic
+hard-link and symbolic-link entries used by bootc's `bare-split-xattrs` encapsulation.

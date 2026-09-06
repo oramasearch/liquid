@@ -116,6 +116,21 @@ The honest version of the claim: **liquid does not make Metis true, it makes Met
 buildable at a customer** — because Metis's constraint is availability, and availability
 is manufactured by infrastructure, not by analysis.
 
+## Where this repository sits
+
+liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module of
+[**`oramasearch/liquid-bridge`**](https://github.com/oramasearch/liquid-bridge), which
+also holds [our k0s](https://github.com/oramasearch/k0s), the
+[lake binary](https://github.com/oramasearch/lake) and the
+[Orama operator](https://github.com/oramasearch/orama-operator), together with the
+**[action plan](https://github.com/oramasearch/liquid-bridge/blob/main/docs/action-plan.md)**.
+It is the intended go-to-market vehicle for Metis, the Enterprise Intelligence OS Orama is
+pivoting to build, whose central claim is that intelligence is bounded by *data
+availability*. liquid manufactures the two lower bands of that availability, Reach and
+Fidelity, as a side effect of being a tool teams adopt for other reasons, while Zetta
+turns available data into running instruments. The full repository table and the
+recorded Phase 0 decisions are in the root `CLAUDE.md`.
+
 ## Working conventions
 
 - **Confidentiality.** Metis blueprint (`docs/metis/`) and competitor material
