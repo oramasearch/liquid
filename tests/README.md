@@ -5,6 +5,18 @@ collection cases and its CLI flags live in `store/`; deterministic crash schedul
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
 
+Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
+identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
+`transparency/` records how the initial and renewed RFC 4998 fixtures were generated through lake's
+production timestamp service and contains the timestamp, trust, tampering, and renewal cases.
+OpenSSL generates ephemeral RSA and P-384 signatures only in the test process so the private
+verification engine is checked against an independent implementation for PKCS#1 v1.5, RSA-PSS,
+ECDSA, SHA-256, and SHA-384; no OpenSSL call enters the verification path.
+The main test binary compiles the private signature translation unit directly so this coverage also
+runs when libliquid's internal symbols are hidden by a shared build.
+The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
+URL or explicit TSA anchor file is absent.
+
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
 Linux, reports a clear error when the temporary root is not writable, and removes the directory at
@@ -89,7 +101,9 @@ repository's regular files. Daemon coverage injects a stale cached query and obs
 validation backlog and divergence status.
 Frontend tests load the Clang implementation as a separate shared object, register the same ABI
  statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
- to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
+ to discover C definitions. Grammar coverage recomputes every locked parser/scanner/query digest,
+parses one committed sample per configured language without error nodes, checks required tag-query
+unit discovery and ABI rejection, and exercises the public grammar metadata registry. The CMake frontend fixture compiles two C++ definition objects, proves a
  body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
  before assembly. The registered `frontend-one-function-measure` CTest performs the same
  one-definition edit against liquid's own tree with the configured compiler, asserts the action and
