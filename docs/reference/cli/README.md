@@ -49,6 +49,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`sbom`](sbom.md) | print a derived or explicitly inferred SBOM | available |
 | [`abi`](abi.md) | show or compare library ABIs | available |
 | [`symbols`](symbols.md) | show compiler or syntactic symbols for a source path | available |
+| [`secret`](secret.md) | fetch, seal, or unseal a Lake environment secret | available |
 | [`edit`](edit.md) | preview or apply a structural edit | available on macOS and Linux |
 | [`wrap`](wrap.md) | run an existing build as cached actions | available on Linux with FUSE and on macOS with macFUSE |
 | [`build`](build.md) | plan or start a configured repository build, profile a command, stream events, or export a trace | available on Linux with FUSE and on macOS with macFUSE |

@@ -231,6 +231,19 @@ constexpr auto flags_edit = std::to_array<flag>({
     {"--agent", "<name>", "Record the named agent as the edit author.", "none"},
     {"--at", "<line>", "Insert or move content at this one-based line.", "none"},
 });
+constexpr auto flags_secret = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--lake", "<url>", "Fetch a recipient public key from this Lake endpoint.", "none"},
+    {"--public-key", "<hex>", "Use this recipient public key.", "none"},
+    {"--kid", "<id>", "Use this recipient key identifier.", "none"},
+    {"--cluster", "<name>", "Bind the secret to this cluster.", "none"},
+    {"--namespace", "<name>", "Bind the secret to this namespace.", "default"},
+    {"--name", "<name>", "Bind the secret to this name.", "none"},
+    {"--value", "<text>", "Seal this text value.", "none"},
+    {"--value-file", "<path>", "Seal the contents of this file.", "none"},
+    {"--out", "<file>", "Write a sealed secret record to this file.", "standard output"},
+    {"--private-key-file", "<path>", "Read the unsealing private key from this file.", "none"},
+});
 constexpr auto flags_node_store = std::to_array<flag>({
     {"--root", "<path>", "Store node chunks below this directory.", "LIQUID_NODE_STORE_ROOT"},
     {"--listen", "<unix://path>", "Select the node-store service listener.", "none"},
@@ -733,6 +746,11 @@ constexpr auto commands = std::to_array<command>({
      "secret <public-key|seal|unseal> ...",
      "fetch, seal, or unseal a Lake environment secret",
      "available",
+     flags_secret,
+     "Fetch a recipient key, seal a scoped secret, or unseal a locally held secret record.",
+     "liquid secret public-key --lake https://lake.example.invalid --json",
+     normal_exit,
+     argument_policy::ordinary,
      liquid_cli::secret},
     {"edit",
      "edit <rename|extract|move|apply> ... [--json] [--apply] [--agent <name>]",
