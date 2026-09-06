@@ -141,7 +141,8 @@ The **repository document** (one per repository; directories are their own docum
       { "type": "refs", "name": text, "glob": glob, "forever": true } |
       { "type": "refs"|"results", "name": text, "duration_s": uint } |
       { "type": "size_cap", "name": text, "bytes": uint }
-    ] }
+    ] },
+    "agents": { "require_base": bool, "actors": [ taap_id ... ] }
   }                              # ordered path rules; first matching path/ref rule wins
   "ops":     list of op          # the operation log, liquid #41
 }
@@ -157,6 +158,25 @@ Every mutation of the document is a transaction, and every transaction is a **dr
 (features/22): the transaction's ops, the actor, the time and the signature form the drip
 record. The document's history *is* the drip stream. A liquid `change` is cut from it: a named,
 reviewable aggregation whose `root` is the tree snapshot written to the store at that moment.
+
+Repository write drips use signed body version 2. In addition to the liquid-selected `base`, the
+body may carry `reasoned_from = { change, cursor? }`, which is the state the caller read before it
+planned the write. It also carries every written path, and `revalidated = disjoint|forced` when a
+moved base was explicitly accepted. The decoder continues to accept version 1 bodies, including
+redaction records.
+
+`config.agents.require_base` applies only to the TAAP identifiers in `config.agents.actors` until
+delegation supplies classification. A listed writer without `write_options::base` receives
+`errc::invalid_argument` before content storage or a directory transaction begins. Unlisted
+writers retain the ordinary base-optional API.
+
+A write base has moved when the current head differs or the repository journal has advanced beyond
+the optional cursor. The material path set is the path being written plus `depends_on`, and path
+comparison includes ancestors and descendants. `refuse` rejects any moved base;
+`accept_if_disjoint` proceeds only when no later drip touched that set; `force` records that the
+caller re-planned. `explain_stale` returns the current head, later-drip count, changed paths, and
+the same UTF-8 line hunks as `diff(..., { .text = true })` without appending a drip or changing the
+working tree.
 
 Rules liquid's wrapper enforces on top of automerge-cpp:
 
@@ -183,8 +203,8 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 
 | Operation | What happens |
 |---|---|
-| `write(path, bytes)` | FastCDC logical chunks → `store.put` per chunk → blob digest; one transaction on the directory document: put or update the entry (minting `node_id` on create). That transaction is the drip. |
-| `move(from, to)` / `remove(path)` | explicit operations, the API's own methods: a move within a directory is one transaction; across directories two, carrying the same `node_id`; `remove` deletes the entry and records the operation. |
+| `write(path, bytes, options)` | Validate the caller-stated base and read set, then FastCDC logical chunks → `store.put` per chunk → blob digest; one transaction on the directory document: put or update the entry (minting `node_id` on create). That transaction is the drip. |
+| `move(from, to, options)` / `remove(path, options)` | Validate the same write options, then perform explicit operations: a move within a directory is one transaction; across directories two, carrying the same `node_id`; `remove` deletes the entry and records the operation. |
 | `cut(message)` | the explicit change cut: save touched directory documents, write the `tree` snapshot, build and sign the `change` record, update the ref, advance `head`; the working copy continues as a new change. |
 | move | one transaction: delete the old key, put the entry with the **same** `node_id` under the new key. Recorded, never inferred. |
 | cut a change | write the tree snapshot to the store (walk `tree`, emit `tree` records bottom-up), build the `change` record with `parents = heads of the ref`, `heads = document heads`, sign, `store.put`; set the ref. |

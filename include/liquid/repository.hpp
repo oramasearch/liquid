@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "liquid/abi.hpp"
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
@@ -66,6 +67,11 @@ struct LIQUID_EXPORT verify_config {
     std::uint32_t rate{20};
 };
 
+struct LIQUID_EXPORT agents_config {
+    bool require_base{};
+    std::vector<std::string> actors;
+};
+
 struct LIQUID_EXPORT ref_retention_rule {
     std::string name;
     std::string glob;
@@ -112,6 +118,7 @@ struct LIQUID_EXPORT repository_options {
     encryption_config encrypt{};
     cache_config cache{};
     verify_config verify{};
+    agents_config agents{};
     policy_config policy{};
     retention_config retention{};
     std::optional<remote_config> remote;
@@ -134,6 +141,25 @@ struct LIQUID_EXPORT change_input {
 
 struct LIQUID_EXPORT write_options {
     std::uint32_t mode{0100644};
+    std::optional<write_base> base;
+    std::vector<std::string> depends_on;
+    enum class stale_action : std::uint8_t {
+        refuse,
+        accept_if_disjoint,
+        force,
+    } on_stale{stale_action::refuse};
+};
+
+struct LIQUID_EXPORT stale_path_change {
+    std::string path;
+    std::vector<line_change> hunks;
+};
+
+struct LIQUID_EXPORT stale_base_report {
+    write_base base;
+    change_id head;
+    std::vector<stale_path_change> changed;
+    std::uint64_t since_drips{};
 };
 
 struct LIQUID_EXPORT ref {
@@ -148,6 +174,7 @@ struct LIQUID_EXPORT repository_status {
     std::vector<conflict> conflicts;
     std::vector<std::string> oversized_directories;
     std::optional<change_id> head;
+    agents_config agents;
 };
 
 struct LIQUID_EXPORT snapshot {
@@ -372,7 +399,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
     [[nodiscard]] runtime::task<std::vector<std::byte>> read_decrypted(std::string path);
     [[nodiscard]] runtime::task<void> write(std::string path, std::vector<std::byte> contents);
-    [[nodiscard]] runtime::task<void> write_file(std::string path, std::filesystem::path source);
+    [[nodiscard]] runtime::task<void>
+    write_file(std::string path, std::filesystem::path source, write_options options = {});
     [[nodiscard]] runtime::task<void>
     write_remote(std::string path, blob value, write_options options = {});
     [[nodiscard]] runtime::task<digest> store_remote_blob(blob value);
@@ -385,8 +413,9 @@ public:
                                              std::optional<change_id> change = std::nullopt);
     [[nodiscard]] runtime::task<std::vector<std::string>>
     diff_keys(std::string path, change_id change_a, change_id change_b);
-    [[nodiscard]] runtime::task<void> move(std::string from, std::string to);
-    [[nodiscard]] runtime::task<void> remove(std::string path);
+    [[nodiscard]] runtime::task<void>
+    move(std::string from, std::string to, write_options options = {});
+    [[nodiscard]] runtime::task<void> remove(std::string path, write_options options = {});
     [[nodiscard]] runtime::task<change_id> cut(std::string message);
     [[nodiscard]] runtime::task<change_id> record(change_input input);
     [[nodiscard]] runtime::task<change_id> record_from_tree(change_input input, digest root_tree);
@@ -397,6 +426,9 @@ public:
     [[nodiscard]] runtime::task<void> set_ref(std::string name, change_id id);
     [[nodiscard]] result<repository_status> status();
     [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
+    [[nodiscard]] runtime::task<std::vector<drip>> drips();
+    [[nodiscard]] runtime::task<stale_base_report> explain_stale(write_base base,
+                                                                 std::vector<std::string> paths);
     [[nodiscard]] runtime::task<snapshot> at(change_id id);
     [[nodiscard]] runtime::task<document_state> document_at(change_id id);
     [[nodiscard]] runtime::task<tree> tree(digest id);
@@ -425,6 +457,7 @@ public:
     [[nodiscard]] runtime::task<record_page<build_trace>> traces(record_page_options page = {});
     [[nodiscard]] runtime::task<record_page<sbom_report>> sboms(result_id result,
                                                                 record_page_options page = {});
+    [[nodiscard]] runtime::task<abi_descriptor> abi(digest library_blob);
     [[nodiscard]] runtime::task<readability_report>
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
@@ -459,6 +492,8 @@ public:
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
 
 private:
+    [[nodiscard]] runtime::task<std::optional<stale_revalidation>>
+    validate_write(write_options options, std::vector<std::string> paths);
     [[nodiscard]] runtime::task<std::vector<digest>> record_ids(std::string kind);
     [[nodiscard]] runtime::task<void>
     redact_impl(std::string path, std::vector<std::byte> replacement, digest target);

@@ -51,12 +51,17 @@ owning issue in `error::context`.
 | Header | Phase | Status | What it exposes |
 |---|---|---|---|
 | `liquid/liquid.hpp` | now | implemented | umbrella |
-| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
+| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()`, `grammar_digest()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97, #193 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `spawn_serial`, `offload`, `context` |
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
+| `liquid/abi.hpp` | #27 | implemented | synchronous ELF/Mach-O/PE ABI extraction, stable descriptors, compatibility verdicts and change reports, and JSON projection |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
+| `liquid/asn1.hpp` | #210 | implemented | strict DER element reader with exact encoded spans plus unsigned-integer and object-identifier decoding |
+| `liquid/x509.hpp` | #210 | implemented | certificate parsing, explicit TSA trust anchors, historical path validation, key usage, and critical timestamp-signing purpose |
+| `liquid/cms.hpp` | #210 | implemented | embedded CMS SignedData content, signed-attribute, signer, signature, and historical certificate-path verification |
+| `liquid/transparency.hpp` | #207, #210 | implemented (#210) | RFC 3161 timestamp-token and RFC 4998 evidence-chain verification over checkpoint signature values with explicit TSA trust anchors |
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
 | `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
@@ -64,17 +69,16 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #57, #60, #56, #58, #61, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, public plans, input policy, configure facts, retention, tests, and SBOMs | action execution and results, complete configured plan entries and stable JSON projection, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #27, #57, #60, #56, #58, #61, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, complete configured plan entries and stable JSON projection, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
 | `liquid/daemon.hpp` | #21, #23, #193, #195, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured drive sync, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
-| `liquid/drive.hpp` | #195 | implemented | three-tree folder synchronization, deterministic path outcomes, conflict values, resumable transfer, per-reference results, persisted status, and bounded full-walk options |
 
 ### `liquid/error.hpp`
 
@@ -105,6 +109,7 @@ template <class T> result<T> block_on(task<T>);                // run to complet
 void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared runtime context
 void spawn_serial(task<void>, std::function<void(result<void>)> on_done); // fire-and-forget on a single-runner I/O context
 template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking CPU work on the compute pool; resumes on the caller's executor
+detail::yield_awaiter yield() noexcept;                            // reschedule through the caller's executor; no timer, no stop callback
 }
 ```
 
@@ -120,6 +125,7 @@ capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard
 | `spawn` | long-lived I/O work | the process-wide shared runtime context |
 | `spawn_serial` | ordered long-lived I/O work | the process-wide single-runner event context |
 | `offload` | blocking CPU work | the compute pool; resumes on the caller executor |
+| `yield` | let other work run between steps of a long loop | posts the continuation to the caller executor |
 
 ### `liquid/hash.hpp`
 
@@ -303,6 +309,11 @@ struct frontend_callbacks {
   std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
   std::function<bool()> cancelled;
 };
+enum class frontend_tier_mechanism : std::uint8_t { frontend = 1, grammar = 2 };
+struct frontend_language {
+  std::string language; std::vector<std::string> extensions;
+  frontend_tier_mechanism tier_mechanism; std::string grammar_digest;
+};
 class frontend_module {
  public:
   frontend_module() noexcept; ~frontend_module();
@@ -311,6 +322,7 @@ class frontend_module {
   static result<frontend_module> load(std::filesystem::path shared_object);
   static result<frontend_module> linked(const liquid_frontend_module_v1* descriptor);
   std::string_view name() const; std::vector<std::string> languages() const;
+  std::vector<frontend_language> language_details() const;
   bool supports(std::string_view language) const;
   result<std::vector<frontend_unit>> units(std::string_view language,
       std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
@@ -333,6 +345,7 @@ class frontend_registry {
   frontend_registry& operator=(frontend_registry&&) noexcept;
   result<void> add(frontend_module); result<void> load(std::filesystem::path shared_object);
   result<const frontend_module*> find(std::string_view language) const;
+  std::vector<frontend_language> languages() const;
 };
 struct frontend_build_request {
   std::string language, source_path, compile_action; std::vector<std::byte> source, context_cbor;
@@ -360,13 +373,17 @@ class frontend_graph {
 ```
 
 `frontend_module` validates the descriptor, ownership contract, and canonical CBOR before values
-cross into C++. `frontend_registry` rejects duplicate language registrations. `frontend_graph`
+cross into C++. Optional ABI-v1 language metadata identifies compiler frontends and grammar-backed
+languages while preserving compatibility with the original descriptor size. `frontend_registry`
+rejects duplicate language registrations and projects names, extensions, mechanism, and grammar
+identity. `frontend_graph`
 registers the action and assembly query kinds, records action read paths through `query_context`,
 and runs the potentially blocking assembly operation through `runtime::offload`. The caller's
 `frontend_action_executor` owns compiler-action scheduling and returns object bytes. All three
 handles are move-only; their public copy operations are deleted.
 
-`symbol_record` is `{ subject, language, origin, occurrences }`; each occurrence carries its stable
+`symbol_record` is `{ subject, language, origin, grammar, occurrences }`; `grammar` is empty for
+compiler records and carries the canonical lock identity for syntactic records. Each occurrence carries its stable
 identifier, display name, kind, definition/reference role, source range, and optional container and
 documentation. `encode_symbols` and `decode_symbols` round-trip the canonical stored record.
 `decode_frontend_symbols(subject, bytes)` binds a frontend operation's per-unit output to its blob
@@ -545,47 +562,6 @@ upstream directory sync messages, refs, and referenced object roots. `import_dri
 and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
 in [sync.md](sync.md); pack frames remain private wire data.
 
-### `liquid/drive.hpp`
-
-```cpp
-enum class drive_reconciliation_kind : std::uint8_t {
-  local_only, remote_only, content_conflict, moved, delete_edit, interrupted_transfer
-};
-struct drive_reconciliation {
-  std::string path; std::optional<std::string> old_path;
-  drive_reconciliation_kind kind; std::vector<digest> values;
-};
-struct drive_tree_state {
-  std::optional<digest> remote, local, base; journal_cursor remote_cursor; bool interrupted;
-};
-struct drive_status {
-  std::filesystem::path folder; std::string remote; drive_tree_state trees;
-  std::uint64_t files, state_bytes, state_memory_ceiling, full_walks;
-  std::vector<conflict> conflicts; std::vector<sync_ref_outcome> references;
-};
-struct drive_sync_report {
-  drive_status status; std::vector<drive_reconciliation> paths;
-  sync_transfer_report sent, received;
-};
-struct drive_options {
-  std::string bearer_token; std::size_t batch_items;
-  std::uint64_t state_memory_ceiling; bool durable;
-};
-class drive_client {
- public:
-  static runtime::task<drive_client> open(std::filesystem::path, std::string, drive_options = {});
-  static runtime::task<drive_client> open(std::filesystem::path, drive_options = {});
-  runtime::task<drive_sync_report> sync();
-  runtime::task<drive_status> status();
-};
-```
-
-The overload with a remote configures a folder or verifies its existing configuration. The
-overload without one opens only a configured drive. State and the remote view live in the ordinary
-repository store; credentials remain in memory. `sync()` performs a bounded offloaded walk, pulls,
-reconciles, publishes, and pushes. It reports refusals instead of converting them to transport
-errors and advances the base only when every reference applies. See [drive.md](drive.md).
-
 ### `liquid/delta.hpp`
 
 ```cpp
@@ -618,6 +594,52 @@ records the measurement it must beat.
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 Lease destruction has no storage effect; expiry is the authority. Collection reports are plain
 values, and [gc.md](gc.md) defines their epoch and crash semantics.
+
+### `liquid/abi.hpp`
+
+```cpp
+enum class abi_binary_kind : std::uint8_t { elf, macho, pe };
+enum class abi_symbol_kind : std::uint8_t { function, object };
+struct abi_symbol {
+  std::string name;
+  std::optional<std::string> version;
+  abi_symbol_kind kind;
+  std::uint64_t size;
+  std::string binding;
+  std::string visibility;
+  std::optional<std::string> signature;
+};
+struct abi_descriptor {
+  digest subject;
+  abi_binary_kind binary;
+  std::string architecture;
+  std::optional<std::string> install_name;
+  std::vector<abi_symbol> exported_symbols;
+  std::vector<std::string> needed_libraries;
+};
+enum class abi_verdict : std::uint8_t { compatible, compatible_additions, incompatible };
+enum class abi_change_kind : std::uint8_t {
+  added, removed, type_changed, size_changed, version_changed
+};
+struct abi_change {
+  std::string symbol;
+  abi_change_kind kind;
+  std::string detail;
+};
+struct abi_report {
+  abi_verdict verdict;
+  std::vector<abi_change> changes;
+};
+result<abi_descriptor> extract_abi(std::span<const std::byte> binary);
+abi_report diff_abi(const abi_descriptor&, const abi_descriptor&);
+result<std::string> abi_json(const abi_descriptor&);
+result<std::string> abi_json(const abi_report&);
+```
+
+`repository::abi(digest library_blob)` asynchronously retrieves the stored descriptor for an
+output blob. Extraction and diffing remain synchronous so callers can place CPU work according to
+their runtime; result publication uses `runtime::offload`. The canonical record and verdict rules
+are in [abi.md](abi.md).
 
 ### `liquid/attestation.hpp`
 
@@ -717,10 +739,6 @@ struct search_plan { search_executor executor; search_query_kind query_kind;
                                    drips_since_index_update, scan_nanoseconds_per_blob,
                                    scan_parallelism;
                      double trigram_selectivity; std::vector<search_alternative> alternatives; };
-struct path_history_entry {
-  change_id change; std::string path; node_id node; std::optional<digest> value; std::uint32_t mode;
-  actor by; std::chrono::sys_seconds at; std::string message; bool deleted;
-};
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
@@ -738,11 +756,12 @@ class repository {
   runtime::task<void> redact(std::string path, std::vector<std::byte> replacement,
                              std::optional<change_id> = {});
   runtime::task<std::vector<std::string>> diff_keys(std::string path, change_id a, change_id b);
-  runtime::task<void> write_file(std::string path, std::filesystem::path source);   // streams a large file in; one drip
-  runtime::task<void> write_remote(std::string path, blob);
+  runtime::task<void> write_file(std::string path, std::filesystem::path source,
+                                 write_options = {});   // streams a large file in; one drip
+  runtime::task<void> write_remote(std::string path, blob, write_options = {});
   runtime::task<digest> store_remote_blob(blob);
-  runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
-  runtime::task<void> remove(std::string path);
+  runtime::task<void> move(std::string from, std::string to, write_options = {});
+  runtime::task<void> remove(std::string path, write_options = {});
   runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
   runtime::task<std::vector<ref>> refs();                 // name → change_id
   runtime::task<void> set_ref(std::string name, change_id);
@@ -750,6 +769,8 @@ class repository {
   runtime::task<std::vector<change>> log(log_options = {});
   runtime::task<snapshot> at(change_id);                  // historical tree
   runtime::task<document_state> document_at(change_id);   // historical refs, locks, and nesting
+  runtime::task<std::vector<drip>> drips();
+  runtime::task<stale_base_report> explain_stale(write_base, std::vector<std::string> paths);
   runtime::task<std::vector<tree_diff_entry>> diff(change_id old, change_id next,
                                                     tree_diff_options = {});
   runtime::task<std::vector<tree_diff_entry>> diff(digest old_tree, digest next_tree,
@@ -759,8 +780,6 @@ class repository {
   runtime::task<mapped_anchor> map_anchor(text_anchor, change_id target);
   runtime::task<std::vector<mapped_anchor>> map_anchors(std::span<const text_anchor>,
                                                         change_id target);
-  runtime::task<std::vector<path_history_entry>> history(std::string path);
-  runtime::task<void> restore(std::string path, change_id source);
   runtime::task<record_page<repository_result>> results(result_filter = {});
   runtime::task<action_input> action(digest); // action or result record
   runtime::task<record_page<repository_attestation>> attestations(attestation_filter = {});
@@ -768,6 +787,7 @@ class repository {
                                                                    record_page_options = {});
   runtime::task<record_page<build_trace>> traces(record_page_options = {});
   runtime::task<record_page<sbom_report>> sboms(result_id, record_page_options = {});
+  runtime::task<abi_descriptor> abi(digest library_blob);
   runtime::task<readability_report> readability(std::optional<change_id> = {});
   runtime::task<void> nest(repository source, std::string path);
   runtime::task<repository> split(std::string path, std::filesystem::path into);
@@ -801,12 +821,25 @@ class repository {
   runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);
   runtime::task<tree> tree(digest);                              // a tree record from the store (historical snapshots)
   runtime::task<std::vector<std::byte>> blob(digest);            // a blob's bytes by digest
-  runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);   // mode-aware
+  runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);
   runtime::task<void> nest_ref(std::string path, repo_ref);      // a nested-repository placeholder without the repository present
 };
 struct change_input { std::vector<change_ref> parents; actor author; std::chrono::sys_seconds at; std::string message;
                       std::map<std::string, std::string> metadata; std::optional<std::string> ref; };
-struct write_options { std::uint32_t mode{0100644}; };
+struct agents_config { bool require_base; std::vector<std::string> actors; };
+struct write_base { change_id change; std::optional<journal_cursor> cursor; };
+struct write_options {
+  enum class stale_action : std::uint8_t { refuse, accept_if_disjoint, force };
+  std::uint32_t mode{0100644};
+  std::optional<write_base> base;
+  std::vector<std::string> depends_on;
+  stale_action on_stale{stale_action::refuse};
+};
+struct stale_path_change { std::string path; std::vector<line_change> hunks; };
+struct stale_base_report {
+  write_base base; change_id head; std::vector<stale_path_change> changed;
+  std::uint64_t since_drips;
+};
 // log_options gains: std::optional<change_id> from; bool first_parent{false};  (full DAG, topological order, by default)
 ```
 
@@ -824,9 +857,11 @@ inputs, and alternatives that preserve or reject the requested result set. Publi
 and the private index format are documented in [search.md](search.md).
 
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
-`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
+`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`, and `agents`.
 `repository_options` is a plain record with `checkpoint_interval`, caller-owned `store`, local
-`storage`, `encrypt`, `cache`, `verify`, `policy`, and `retention`. `storage` selects the
+`storage`, `encrypt`, `cache`, `verify`, `agents`, `policy`, and `retention`. The persisted
+`agents` record has `require_base` and a list of TAAP actor identifiers; the base requirement
+applies only to listed actors. `storage` selects the
 object-store hash algorithm and key custody when `store` is null. When `store` points to an open
 caller-owned store, that store's configuration is authoritative and the caller keeps it alive for
 the repository's lifetime. Pass the same placement to `create` and `open` so later writes and reads
@@ -908,9 +943,8 @@ divergence, and verification fields from the action index when present. Attestat
 record id, subject, profile, and issuer. Trace and result-scoped SBOM pages return `build_trace` and
 verified `sbom_report` values from `build.hpp`. The CLI record views call these operations.
 
-The internal CRDT wrapper pins automerge-cpp at `06408d3`. Directory checkpoints prefer
-`save_compact()`, fall back to full history bytes when the compact form does not immediately
-round-trip, reopen sync-capable, and replay later journaled drips. Local
+The internal CRDT wrapper pins automerge-cpp at `06408d3`. Directory checkpoints call
+`save_compact()`, reopen through `load_shallow()`, and replay later journaled drips. Local
 automerge validation failures map to `errc::invalid_argument`; malformed checkpoint, merge, and
 sync data map to `errc::corrupt`. Apply, merge, and sync-receive expected values are checked before
 candidate state is installed, and remote observation uses the patch-returning entry points. The
@@ -1176,8 +1210,11 @@ probe.
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 
 ```cpp
+enum class stale_revalidation : std::uint8_t { disjoint, forced };
 struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
               std::vector<std::byte> signature; std::chrono::sys_seconds at;
+              std::optional<write_base> reasoned_from;
+              std::optional<stale_revalidation> revalidated;
               std::optional<digest> scan_attestation; std::optional<scan_block> block; bool redacted; };
 struct scan_allow_rule { std::string path; std::vector<std::string> detectors; };
 struct scan_configuration { std::vector<scan_allow_rule> allow;
@@ -1263,7 +1300,6 @@ struct daemon_options {
   std::uint32_t graph_validation_rate; std::chrono::milliseconds graph_validation_interval;
   query_registry graph_queries;
   capture_options capture; std::vector<std::shared_ptr<daemon_target>> targets;
-  std::string drive_bearer_token;
 };
 class daemon {
  public:
@@ -1295,8 +1331,6 @@ wire payload is canonical CBOR in the sync protocol's five-byte frame. Build ses
 every public event through that same frame.
 Windows entry points return
 `errc::unsupported` while Corosio lacks named-pipe transport.
-When a configured drive is a built-in target, `drive_bearer_token` is passed to its in-memory
-client and is not included in daemon state.
 
 `capture_status` makes overflow and recrawl visible because watcher events are hints, not a
 complete account of workspace state. The `drip_filter` insertion point between coalescing and
@@ -1336,7 +1370,7 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 
 `src/store/` (chunker, packs, liquid's fixed-width index, GC), `src/frontend/` (module-handle and
 frontend-query state), `src/crdt/` (checked automerge-cpp
-access, checked compact-or-full metadata checkpoints, upstream sync framing, and patch observation),
+access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
 `src/sync/` (canonical metadata and pack wire codecs plus the Corosio/Boost.HTTP client),
 `src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/search/`
 (manifest, segments, BM25F term records, and positional trigrams), `src/vfs/` (Cloud

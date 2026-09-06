@@ -1,0 +1,5 @@
+class Sample {
+    static int answer() {
+        return 42;
+    }
+}

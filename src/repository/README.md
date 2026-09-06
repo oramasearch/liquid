@@ -6,6 +6,13 @@ state directory; the handle borrows the store, and repository, directory, ref, a
 owners carry the repository identity. Redaction persists the caller's replacement and a signed marker before targeted store
 tombstoning, pack compaction, and the required `not_found` verification.
 
+Issue #86 validates caller-stated write bases before blob registration, content storage, or CRDT
+mutation. Persisted `config.agents` selects the TAAP actors that must supply a base. Version 2
+signed drip bodies carry the liquid-selected base, touched paths, optional `reasoned_from`, and an
+optional disjoint or forced result; the reader retains version 1 support. Stale explanation uses
+the shared text-hunk implementation against historical and current blob records and appends no
+drip.
+
 Public tree comparison flattens immutable tree records into repository-relative paths, matches
 entries by `node_id`, and reports moves independently from mode and content changes. Change-level
 comparison also attaches the conflict values stored on each change. Text hunk generation reads

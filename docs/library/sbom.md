@@ -107,16 +107,18 @@ component properties and the shared model retain their exact liquid meaning.
 ## Foreign-binary inference
 
 `build::infer_sbom` hashes the supplied file and performs local inspection without a
-package database or network call. It detects ELF, Mach-O, and PE headers; reads their section names;
-reads Mach-O and PE symbol tables and useful ELF symbol strings; extracts printable embedded
+package database or network call. The ELF, Mach-O, and PE parsing now comes from the private
+readers documented in [abi.md](abi.md), while the inference evidence remains unchanged. It reads
+section names, Mach-O and PE symbol tables, and useful ELF symbol strings; extracts printable embedded
 version strings; and checks a built-in signature table for OpenSSL, zlib, glibc, libstdc++, musl,
 and libc++.
 
 The target binary is always an inferred component. A recognized library adds another inferred
 component and a `contains` relationship. Section, symbol, and version-string observations are
 included as analysis evidence in an SPDX document comment or CycloneDX metadata properties.
-Absence of a recognized signature is not evidence that a library is absent. This path is a small
-composition analysis, not the Phase 5 binary-introspection codec work.
+Absence of a recognized signature is not evidence that a library is absent. This path remains a
+small composition analysis; it does not present the linked-binary ABI descriptor as dependency
+evidence.
 
 Foreign SBOMs use the local device identity and the same `sbom/1` profile, but set
 `derived=false` and `inferred=true`. The base document is hashed as a canonical `sbom` record in
