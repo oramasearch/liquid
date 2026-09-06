@@ -35,6 +35,7 @@ the public encoder.
 | `scan_result/1` | drip | fixed record fields `detectors:text_list`, `findings:unsigned_integer`, `allowances:text_list` | none | maximum attestation age: 24 hours |
 | `reproducibility/1` | artifact | `verified_by:text`, `sandbox:text`, `agreement:boolean` | `differing_outputs:text_list` | none |
 | `image_provenance/1` | artifact | `image:text`, `tree:text` | `result:text` | none |
+| `projection/1` | artifact | `target:text`, `source_result:text_list`, `normalisation:text`, `tool:text` | none | none |
 
 `*` marks a field that may be represented by a salted disclosure commitment rather than its
 plaintext value. A required field is satisfied by its committed value when the profile permits it.
@@ -84,6 +85,11 @@ record. Verification binds every attribute to the record before any object is lo
 `image_provenance/1` uses the OCI image's SHA-256 digest as its subject. `image` is the complete
 digest-pinned reference, `tree` is its `io.liquid.tree` digest, and optional `result` is the build
 result projected into the image. [`admission.md`](admission.md) defines its minting and policy use.
+`projection/1` uses the projected package, image manifest, or canonical chart digest as its
+subject. `source_result` preserves every result or install-tree identity in request order;
+`normalisation` records the fixed epoch, ownership, modes, and sorting rule; and `tool` binds the
+liquid version. OCI and Helm outputs carry the statement beside source provenance and SBOM
+statements through subject-bound OCI artifact manifests. See [projection.md](projection.md).
 
 For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's
