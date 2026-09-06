@@ -112,10 +112,14 @@ The privileged Linux wrapper fixture rebuilds a C library incompatibly and check
 event and `--fail-on-abi-break` status. CLI tests pin the JSON report shape, and the SBOM inference
 tests continue to exercise the same evidence model after reader extraction.
 
+The private ELF and Mach-O readers also expose file-offset path references for relocation
+publication. ELF includes `DT_NEEDED`, `DT_SONAME`, `DT_RPATH`, and `DT_RUNPATH`; Mach-O includes
+install names, needed libraries, and `LC_RPATH`. The public rules and findings belong to
+[relocation.md](relocation.md), not the ABI descriptor.
+
 ## Deferred
 
 - Full debug type graphs and libabigail-level classification are outside this record.
 - Package dependency projection and its compatibility gate belong to issue #28.
 - Hot-update classification belongs to issue #32.
 - Registry codec registration belongs to issue #70.
-- Relocation checks belong to issue #73.

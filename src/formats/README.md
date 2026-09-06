@@ -8,7 +8,8 @@ include these headers.
 sections, exported symbols, library identity, and needed libraries into the plain value types in
 `binary/elf.hpp`. The ELF reader also decodes GNU symbol-version tables and the documented DWARF
 signature subset. SBOM inference consumes the readers' compatibility evidence view, while ABI
-extraction consumes the structured linked-binary view.
+extraction consumes the structured linked-binary view. Relocation checking consumes file-offset
+ELF `DT_RPATH`/`DT_RUNPATH` and Mach-O `LC_RPATH` references from the same validated images.
 
 `json.cpp` and `dotenv.cpp` implement strict structured-text codecs used by repository features.
 

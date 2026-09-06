@@ -169,14 +169,26 @@ auto inspect_macho(std::span<const std::byte> bytes) -> result<image> {
             symbol_count = integer<std::uint32_t>(bytes, offset + 12, little).value_or(0);
             string_offset = integer<std::uint32_t>(bytes, offset + 16, little).value_or(0);
             string_size = integer<std::uint32_t>(bytes, offset + 20, little).value_or(0);
+        } else if (base_command == 0x1cU) {
+            const auto path_offset = integer<std::uint32_t>(bytes, offset + 8, little);
+            const auto path =
+                path_offset ? c_text(bytes, offset + *path_offset, offset + *size) : std::nullopt;
+            if (path) {
+                output.path_references.push_back(
+                    {path_kind::runtime_search_path, *path, offset + *path_offset});
+            }
         } else if (base_command == 0x0cU || base_command == 0x0dU || base_command == 0x18U ||
                    base_command == 0x1fU || base_command == 0x23U || base_command == 0x8000001fU) {
             const auto name_offset = integer<std::uint32_t>(bytes, offset + 8, little);
             const auto name =
                 name_offset ? c_text(bytes, offset + *name_offset, offset + *size) : std::nullopt;
             if (name && base_command == 0x0dU) {
+                output.path_references.push_back(
+                    {path_kind::install_name, *name, offset + *name_offset});
                 output.install_name = *name;
             } else if (name) {
+                output.path_references.push_back(
+                    {path_kind::needed_library, *name, offset + *name_offset});
                 output.needed_libraries.push_back(*name);
             }
         }
