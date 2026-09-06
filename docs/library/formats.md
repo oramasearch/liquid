@@ -1,9 +1,13 @@
 # Format registry and codecs
 
-**Status: implemented by liquid #29 and extended by #28.** libliquid owns a format registry used by
+**Status: implemented by liquid #29, extended by #28, and expanded by #70.** libliquid owns a format registry used by
 repository diff, search, storage, and package projection. The built-ins are ZIP, tar, HDF5,
 Parquet, SQLite, Debian, RPM, and Alpine packages. They are synchronous CPU codecs; coroutine
 callers invoke them through `runtime::offload`.
+
+Issue #70 also registers ELF, Mach-O, PE, PDF, Jupyter, OOXML, ODF, wheel, JAR, safetensors, and
+pickle readers. All are Tier 2: their original bytes remain authoritative while logical entries
+support search, retention, and container diff.
 
 ## Public API and module boundary
 
@@ -115,6 +119,38 @@ and version tags, decompresses the zstd payload, and walks cpio newc names. Alpi
 exactly the control and data gzip members, exposes `.PKGINFO`, and lists data paths. The original
 package bytes remain authoritative; complete read-side codecs remain issue #70. Writer and
 dependency rules are in [projection.md](projection.md).
+
+### Linked binaries
+
+ELF, Mach-O, and PE entries expose bounded section byte ranges, exported symbols, and imported
+libraries using the validated #27 readers. Load addresses are volatile. Disassembly and
+decompilation are explicitly out of scope.
+
+### PDF
+
+The PDF reader recognises indirect objects and simple stream objects, inflates `FlateDecode`,
+extracts literal text used with standard text-show operators, and exposes title, author, subject,
+and keyword metadata. `/ID`, `/CreationDate`, `/ModDate`, and `/Producer` are volatile. Rendering,
+encrypted files, JBIG2, JPX, JavaScript, malformed xref repair, and full font encoding support are
+outside the reader's subset.
+
+### Jupyter and model files
+
+Jupyter exposes one entry per cell source while `outputs` and `execution_count` are volatile.
+Safetensors exposes JSON-header tensor entries with dtype, shape, content bytes, and source ranges.
+Pickle never executes content: the scanner recognises text `GLOBAL` and `INST`, binary unicode and
+`STACK_GLOBAL`, and records `REDUCE`, `OBJ`, `NEWOBJ`, and `BUILD` as code-deserialisation-risk
+opcodes. It deliberately does not reconstruct objects or execute reducers.
+
+### OOXML, ODF, wheels, and JARs
+
+OOXML and ODF are ZIP views with namespace-expanded XML names and sorted attributes. OOXML `rId*`
+relationship attributes and ZIP member order are noise; media remains a separate digest-bearing
+entry. Debian and APK control members and payloads are represented below `control/` and `data/`;
+RPM payload files are represented below `data/` alongside decoded package name and version. Wheels
+retain `.dist-info/METADATA` and report available SHA-256 `RECORD` checks. JARs retain
+`META-INF/MANIFEST.MF` and note `.SF`, `.RSA`, and `.DSA` signature members. These views do not
+validate XML schemas, office rendering, wheel signatures, or JAR signatures.
 
 ## Limits and nesting
 

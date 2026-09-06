@@ -98,6 +98,9 @@ attestation artifacts; and the `liquid project` command.
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
+Liquid #70 adds Tier 2 registry views for linked binaries, PDF objects, Jupyter cells, OOXML and
+ODF XML parts, package payloads, wheels, JARs, safetensors tensors, and non-executing pickle
+opcodes.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
