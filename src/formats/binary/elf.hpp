@@ -13,6 +13,13 @@ namespace liquid::formats::binary {
 
 enum class image_kind : std::uint8_t { elf, macho, pe };
 enum class symbol_kind : std::uint8_t { function, object };
+enum class path_kind : std::uint8_t { install_name, needed_library, runtime_search_path };
+
+struct path_reference {
+    path_kind kind{path_kind::install_name};
+    std::string value;
+    std::uint64_t offset{};
+};
 
 struct section {
     std::string name;
@@ -42,6 +49,7 @@ struct image {
     std::vector<std::string> symbol_names;
     std::vector<symbol> exported_symbols;
     std::vector<std::string> needed_libraries;
+    std::vector<path_reference> path_references;
 };
 
 [[nodiscard]] auto inspect_elf(std::span<const std::byte> bytes) -> result<image>;
