@@ -295,6 +295,24 @@ set_target_properties(liquid-wrap-hook PROPERTIES
   C_VISIBILITY_PRESET hidden
   POSITION_INDEPENDENT_CODE ON)
 
+add_library(liquid-hot src/hot_update/runtime.c)
+add_library(liquid::hot ALIAS liquid-hot)
+target_include_directories(liquid-hot PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(liquid-hot PUBLIC c_std_11)
+target_compile_definitions(liquid-hot PRIVATE LIQUID_HOT_BUILDING)
+set_target_properties(liquid-hot PROPERTIES
+  OUTPUT_NAME liquid-hot
+  EXPORT_NAME hot
+  VERSION 1
+  SOVERSION 1
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+if(UNIX)
+  target_link_libraries(liquid-hot PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(liquid-read-guard src/sandbox/read_guard.c)
   target_link_options(liquid-read-guard PRIVATE -static)
@@ -414,6 +432,7 @@ add_library(libliquid
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
+  src/hot_update/hot_update.cpp
   src/http1/client.cpp
   src/http1/server.cpp
   src/http2/frame.cpp
@@ -555,6 +574,14 @@ if(NOT BUILD_SHARED_LIBS)
   target_compile_definitions(libliquid PUBLIC LIQUID_STATIC_DEFINE)
 endif()
 
+add_executable(liquid-hot-demo tools/hot-update-demo/main.cpp)
+target_link_libraries(liquid-hot-demo PRIVATE liquid::liquid liquid::hot)
+add_library(liquid-hot-demo-patch MODULE tools/hot-update-demo/patch.c)
+set_target_properties(liquid-hot-demo-patch PROPERTIES
+  PREFIX ""
+  OUTPUT_NAME "liquid-hot-demo-patch")
+add_executable(liquid-hot-demo-restart-hook tools/hot-update-demo/restart_hook.c)
+
 # -----------------------------------------------------------------------------
 # The CLI — a thin client of libliquid.
 # -----------------------------------------------------------------------------
@@ -576,6 +603,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/facts.cpp
     src/cli/git.cpp
     src/cli/history.cpp
+    src/cli/hot_update.cpp
     src/cli/identity.cpp
     src/cli/keys.cpp
     src/cli/locks.cpp
@@ -617,6 +645,10 @@ install(TARGETS libliquid EXPORT liquidTargets
 install(TARGETS liquid-wrap-hook
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid
   RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)
+install(TARGETS liquid-hot EXPORT liquidTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   install(TARGETS liquid-read-guard
     RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)

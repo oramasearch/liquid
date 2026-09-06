@@ -121,3 +121,7 @@ Wrap output includes its graph backlog and last divergence record.
 frontend when it supports that language, falls back to the locked tree-sitter grammar, and presents
 the public symbol record without inspecting private repository storage. `version --json` includes
 the canonical grammar-lock digest alongside the release version.
+
+`hot_update.cpp` classifies two recorded builds from public hot-update evidence and prints the
+tier, outcome, symbols, and evidence records. Its status view verifies every signed patch before
+showing the base artifact plus its patch composition.

@@ -78,6 +78,10 @@ The document also persists `config.data.databases` and private live branch state
 projects only branch IDs, sessions, declared names, branch URLs, mechanisms, and creation times;
 the configured base URL and branch-point fingerprint remain private. The data adapter checkpoints
 record addition or removal only after the corresponding PostgreSQL lifecycle step succeeds.
+The repository document also persists `config.hot_update`: the sandboxed restart-hook argument
+vector and the build-target/local-endpoint pairs consumed by the daemon. Creation and open reject
+empty hook arguments, duplicate target names, empty endpoints, or configured targets without a
+restart hook. The public accessor returns the effective stored configuration.
 
 The private search adapter exposes only the repository checkout's `.liquid/index/` path to the
 search implementation. Public queries remain on `repository::search`; no index representation or

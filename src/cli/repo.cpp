@@ -82,13 +82,14 @@ auto daemon_targets_json(const std::optional<liquid::daemon_status>& status) -> 
         for (std::size_t index = 0; index != status->targets.size(); ++index) {
             const auto& target = status->targets[index];
             output += std::format("{}{{\"name\":{},\"cursor\":{},\"behind\":{},\"deliveries\":{},"
-                                  "\"last_error\":{}}}",
+                                  "\"last_error\":{},\"detail\":{}}}",
                                   index == 0 ? "" : ",",
                                   json_string(target.name),
                                   json_string(target.cursor.token),
                                   target.behind,
                                   target.deliveries,
-                                  target.last_error ? json_string(*target.last_error) : "null");
+                                  target.last_error ? json_string(*target.last_error) : "null",
+                                  target.detail ? json_string(*target.detail) : "null");
         }
     }
     output += ']';
@@ -472,6 +473,9 @@ auto repo_status(int argc, char** argv) -> int {
                              target.cursor.token,
                              target.behind,
                              target.deliveries);
+                if (target.detail) {
+                    std::println("daemon_target_detail={} {}", target.name, *target.detail);
+                }
             }
         }
     }

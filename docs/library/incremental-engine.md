@@ -164,8 +164,9 @@ that persists the graph. The earlier `LIQUID_REPO/daemon/` design path cannot be
 `LIQUID_REPO` is the repository checkpoint file, not a directory. It owns the capture subscription
 ([`capture.md`](capture.md)): a drip arrives as a journal cursor advance; the daemon maps changed
 paths to inputs, marks the minimum stale, and fans out to pluggable targets in order: the build
-graph (demand what the last build demanded), the local search index (#22), collaborators, and the
-configured drive client from [`drive.md`](drive.md), each with its own cursor, at-least-once and idempotent, as
+graph (demand what the last build demanded), hot update (#32), the local search index (#22),
+collaborators, and the configured drive client from [`drive.md`](drive.md), each with its own
+cursor, at-least-once and idempotent, as
 `features/22` requires. `liquid status` shows what the last drip triggered and how far each target
 is behind.
 
@@ -183,14 +184,20 @@ named pipes. liquify links libliquid and hosts the graph in-process (liquify hos
 service when it is the first client, and the CLI attaches to it), which is the whole point of the
 architecture and is the only way to avoid a serialisation boundary.
 
-The built-in target order is build, search, collaborators, then drive when the checkout has drive
-metadata; an unconfigured checkout retains the lake acceptance hook. The build target marks only
-working-tree inputs named by the drip operations changed through #20's public graph. The search
-and drive targets publish their real updates; the collaborator hook remains pending its consumer.
+The built-in target order is build, configured hot-update, search, collaborators, then drive when
+the checkout has drive metadata; an unconfigured checkout retains the lake acceptance hook. The
+build target marks only working-tree inputs named by the drip operations changed through #20's
+public graph. The hot-update target is implemented by #32: it builds persisted
+`config.hot_update.targets`, classifies each prior/new evidence pair, applies a signed tier-1 or
+tier-2 patch, or invokes the sandboxed restart hook. Its status detail names the latest outcome,
+tier, and record. The search and drive targets publish their real updates; the collaborator hook
+remains pending its consumer. The complete safety and retry contract is in
+[hot-update.md](hot-update.md).
 Callers can instead pass ordered `daemon_target` implementations. Every target persists its own
 journal cursor only after successful delivery. Replayed or duplicate cursor values are ignored;
 a failed target keeps its old cursor and error, so restart retries it. `liquid status` reports the
-last drip, changed paths, delivery count, cursor, error, and undelivered drip count for each target.
+last drip, changed paths, delivery count, cursor, error, optional detail, cursor distance, and
+undelivered drip count for each target.
 
 ### Flow watermarks
 
