@@ -4,11 +4,14 @@
 blob. It is an ordinary content-addressed store object produced by a derived action.
 
 **Record.** The stored map is `{ v:1, kind:"symbols", subject:digest, language:text,
-origin:"compiler"|"syntactic", occurrences:[...] }`. Every occurrence has a stable language
+origin:"compiler"|"syntactic", grammar?:text, occurrences:[...] }`. Every occurrence has a stable language
 symbol identifier, display name, kind, `definition` or `reference` role, zero-based byte and
 one-based line/column half-open range, and optional container and documentation text. The source
 blob digest is the subject. The Clang module marks records `compiler`; tree-sitter marks fallback
 records `syntactic`, so consumers cannot treat syntax as semantic resolution.
+Syntactic records set `grammar` to the `sha256:` identity of the complete canonical grammar lock;
+compiler records omit it. Decoding remains compatible with records written before this optional
+field existed.
 
 `frontend_graph` registers the `symbols` query. Its canonical value is the record encoding; the
 caller publishes it with `repository::store_symbols`, which associates the source digest with the
@@ -47,14 +50,17 @@ has recorded the compile action, so extraction is not on an edit's compile or re
 
 `liquid symbols <path>` selects recorded C++ compile actions, requests their derived symbol
 actions, records the result, and prints its origin, record digest, and occurrences. When no
-compiler frontend is installed, it falls back to tree-sitter for the requested file. The first
-version accepts C++ paths.
+compiler frontend supports the detected language, it falls back to the registered tree-sitter
+grammar for the requested extension. This includes Python and every locked language whose upstream
+supplies a pinned `tags.scm`; grammars without one return an explicit unsupported result for symbol
+and unit discovery while retaining parse support.
 
 ## How to verify
 
 `Symbols.CompilerRecordResolvesAReferenceAcrossTranslationUnits` checks definitions, references,
 a cross-translation-unit identifier match, and repository round trip.
-`Symbols.TreeSitterFallbackLabelsSyntacticResults` checks the fallback label and definition.
+`Symbols.TreeSitterFallbackLabelsSyntacticResults` checks the fallback label, grammar identity, and
+definition. `symbols-cli-python` checks that a Python file reports `origin=syntactic`.
 
 ## Limits
 

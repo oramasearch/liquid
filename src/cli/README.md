@@ -87,5 +87,7 @@ also name the non-hermetic-read reason and its path for remote-eligibility diagn
 Status also projects daemon graph-validation backlog and the last divergence in text and JSON.
 Wrap output includes its graph backlog and last divergence record.
 
-`symbols.cpp` loads the compiler frontend when installed, falls back to tree-sitter, and presents
-the public symbol record without inspecting private repository storage.
+`symbols.cpp` detects the language from the public registry's extension table, uses the compiler
+frontend when it supports that language, falls back to the locked tree-sitter grammar, and presents
+the public symbol record without inspecting private repository storage. `version --json` includes
+the canonical grammar-lock digest alongside the release version.
