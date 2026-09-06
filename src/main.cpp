@@ -102,6 +102,7 @@ constexpr auto flags_search = std::to_array<flag>({
 constexpr auto flags_log = std::to_array<flag>({
     {"--ops", {}, "Show signed drips and operation metadata.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--timestamps", {}, "Verify timestamp evidence after the verify subcommand.", "false"},
 });
 constexpr auto flags_atomic = std::to_array<flag>({
     {"--atomic", {}, "Refuse every reference update when any update is refused.", "false"},

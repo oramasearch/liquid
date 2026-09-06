@@ -18,6 +18,7 @@ Show named changes or the signed drips and operation metadata that produced them
 |---|---|---|---|
 | `--ops` | — | Show signed drips and operation metadata. | false |
 | `--json` | — | Write stable JSON instead of text. | false |
+| `--timestamps` | — | Verify timestamp evidence after the verify subcommand. | false |
 
 ## Availability
 
