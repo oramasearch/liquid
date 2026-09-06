@@ -778,9 +778,10 @@ std::shared_ptr<const serve::route_table> service::unix_routes() {
     return routes;
 }
 
-std::shared_ptr<const serve::route_table> service::control_routes() {
-    const auto self = shared_from_this();
-    auto routes = std::make_shared<serve::route_table>();
+namespace {
+
+void add_liveness_routes(const std::shared_ptr<serve::route_table>& routes,
+                         const std::shared_ptr<service>& self) {
     routes->add(
         "GET", "/healthz", [](const serve::http_request&) -> runtime::task<serve::http_response> {
             co_return serve::make_response(200, "text/plain", "ok\n");
@@ -792,6 +793,10 @@ std::shared_ptr<const serve::route_table> service::control_routes() {
                                                    "text/plain",
                                                    self->ready() ? "ready\n" : "not ready\n");
                 });
+}
+
+void add_status_routes(const std::shared_ptr<serve::route_table>& routes,
+                       const std::shared_ptr<service>& self) {
     routes->add(
         "GET", "/v1", [self](const serve::http_request&) -> runtime::task<serve::http_response> {
             auto status = co_await self->status();
@@ -843,6 +848,10 @@ std::shared_ptr<const serve::route_table> service::control_routes() {
             output += std::format("liquid_node_store_evictions_total {}\n", status->evictions);
             co_return serve::make_response(200, "text/plain; version=0.0.4", std::move(output));
         });
+}
+
+void add_admin_routes(const std::shared_ptr<serve::route_table>& routes,
+                      const std::shared_ptr<service>& self) {
     routes->add("GET",
                 "/v1/attestations",
                 [self](const serve::http_request& request) -> runtime::task<serve::http_response> {
@@ -894,6 +903,9 @@ std::shared_ptr<const serve::route_table> service::control_routes() {
                     }
                     co_return serve::make_response(200, "application/json", "{}\n");
                 });
+}
+
+void add_openapi_route(const std::shared_ptr<serve::route_table>& routes) {
     routes->add(
         "GET",
         "/v1/openapi.json",
@@ -903,6 +915,10 @@ std::shared_ptr<const serve::route_table> service::control_routes() {
                 "application/json",
                 R"({"openapi":"3.1.0","info":{"title":"liquid node store","version":"v1"},"paths":{"/healthz":{"get":{}},"/readyz":{"get":{}},"/metrics":{"get":{}},"/v1":{"get":{}},"/v1/mounts":{"get":{}},"/v1/attestations":{"get":{}},"/v1/evict":{"post":{}},"/v1/budget":{"post":{}},"/v1/openapi.json":{"get":{}},"/mcp":{"post":{}}}})");
         });
+}
+
+void add_mcp_route(const std::shared_ptr<serve::route_table>& routes,
+                   const std::shared_ptr<service>& self) {
     routes->add(
         "POST",
         "/mcp",
@@ -966,6 +982,18 @@ std::shared_ptr<const serve::route_table> service::control_routes() {
                     id,
                     *encoded));
         });
+}
+
+} // namespace
+
+std::shared_ptr<const serve::route_table> service::control_routes() {
+    const auto self = shared_from_this();
+    auto routes = std::make_shared<serve::route_table>();
+    add_liveness_routes(routes, self);
+    add_status_routes(routes, self);
+    add_admin_routes(routes, self);
+    add_openapi_route(routes);
+    add_mcp_route(routes, self);
     return routes;
 }
 
