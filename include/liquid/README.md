@@ -7,6 +7,8 @@ inventory is maintained in `docs/library/api-map.md`.
 `frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
 descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
 errors, progress, and cancellation types while registering queries, commands, and panels.
+`tiers.hpp` defines the pure support matrix projected from the process-global frontend registry,
+the built-in format registry, and the declared platform backends.
 
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.
@@ -35,6 +37,9 @@ lookup remains asynchronous in `repository.hpp`, and wrapper compatibility event
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
 `build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
 install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
+`projection.hpp` exposes deterministic package, OCI, Helm, OSTree, and bootc targets. OSTree and
+bootc sources carry optional relative mount paths, options select the ref and repository mode, and
+the report returns the OSTree commit independently of an OCI image digest.
 
 `admission.hpp` defines the versioned image-admission policy and CBOR/JSON decision record,
 rule-attributed review results, injected attestation-source and transparency-log interfaces, the

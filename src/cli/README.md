@@ -49,6 +49,11 @@ repository storage or file contents.
 `diff.cpp` resolves each operand as a ref or change digest and calls public repository diff.
 `--text` opts into line hunks, `--formats` prints codec-tier container trees, an optional path
 filters the result, and `--json` emits the same nested values for tools.
+`tier.cpp` owns the shared `tier: <n> (<mechanism>)` text line and JSON object used by commands that
+degrade. `tiers.cpp` loads installed frontend modules, calls the pure public support-matrix API,
+filters language or format rows, and renders stable text, JSON, or the generated Markdown blocks.
+Diff, symbols, archive search, and wrap use the shared projection; #68, #69, and #70 must reuse it
+when their richer command paths land.
 
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
@@ -62,9 +67,10 @@ The same command group implements `replay`: it parses an action or result plus `
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
 `sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
 API, and uses the public foreign-binary path only when no producing result exists.
-`project.cpp` parses package, OCI, and Helm requests, distinguishes stored results from bare tree
-digests, calls the public projection task, and prints text or stable JSON reports. It does not read
-package writers or repository internals.
+`project.cpp` parses package, OCI, Helm, OSTree, and bootc requests, distinguishes stored results
+from bare tree digests, collects path-mounted overlay trees, reads `SOURCE_DATE_EPOCH`, and prints
+the commit checksum plus text or stable JSON reports. It does not read format writers or repository
+internals.
 `abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
 the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
 

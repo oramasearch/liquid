@@ -15,6 +15,9 @@ struct entry {
     std::vector<std::byte> bytes;
     std::uint32_t mode{0644};
     bool directory{};
+    std::string link_path;
+    bool symbolic_link{};
+    std::uint32_t order{};
 };
 
 [[nodiscard]] auto write(std::span<const entry> entries, std::uint64_t source_date_epoch)

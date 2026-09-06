@@ -11,6 +11,10 @@
 #include "liquid/runtime.hpp"
 
 namespace liquid_cli {
+
+auto print_tier(unsigned level, std::string_view mechanism) -> void;
+auto wrap_tier_mechanism() -> std::string_view;
+
 namespace {
 
 auto fail(const liquid::error& value) -> int {
@@ -308,6 +312,7 @@ auto wrap(int argc, char** argv) -> int {
     if (options.allow_embedded_prefix && !options.install_prefix) {
         return usage("wrap --allow-embedded-prefix requires --install-prefix");
     }
+    print_tier(1, wrap_tier_mechanism());
     auto result = liquid::runtime::block_on(
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));
     if (!result)
