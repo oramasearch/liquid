@@ -78,8 +78,8 @@ is wrong.
 | [04](04-build-engine.md) | Build engine | The incremental query graph, actions, early cutoff, compile-as-you-type, and local critical-path traces. |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
-| [07](07-dependency-resolution.md) | Dependency resolution | Spack-grade constraint solving over variants, compilers, targets and virtual providers. |
-| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more. |
+| [07](07-dependency-resolution.md) | Dependency resolution | Spack-grade constraint solving plus implemented linked-library ABI extraction and compatibility reports. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
 | [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |

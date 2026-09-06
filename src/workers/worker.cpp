@@ -285,6 +285,20 @@ upload_result(repository& source,
             co_return std::unexpected(uploaded.error());
         }
     }
+    for (const auto& id : value.abis) {
+        auto uploaded =
+            co_await upload_object(source, destination, instance, id, graph_kind::bytes, seen);
+        if (!uploaded) {
+            co_return std::unexpected(uploaded.error());
+        }
+    }
+    for (const auto& id : value.abi_compatibility) {
+        auto uploaded =
+            co_await upload_object(source, destination, instance, id, graph_kind::bytes, seen);
+        if (!uploaded) {
+            co_return std::unexpected(uploaded.error());
+        }
+    }
     co_return logical;
 }
 
@@ -408,7 +422,7 @@ runtime::task<void> execute_lease(repository& source,
     }
     value->worker = worker;
     value->schedule = lease.schedule;
-    value->record_version = 3;
+    value->record_version = 4;
     auto stored = co_await build_detail::store_result_with_provenance(source, *value);
     if (!stored) {
         co_return std::unexpected(stored.error());

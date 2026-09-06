@@ -5,6 +5,7 @@
 #include <format>
 #include <string_view>
 
+#include "build/abi.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/sbom.hpp"
@@ -226,6 +227,10 @@ runtime::task<result_id> store_result_with_provenance(repository& source, action
     auto sboms = co_await build_detail::store_derived_sboms(source, *action, value);
     if (!sboms) {
         co_return std::unexpected(sboms.error());
+    }
+    auto abis = co_await build_detail::store_abis(source, value);
+    if (!abis) {
+        co_return std::unexpected(abis.error());
     }
     auto subject = subject_digest(value);
     if (!subject) {

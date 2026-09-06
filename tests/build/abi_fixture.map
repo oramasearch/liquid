@@ -1,0 +1,6 @@
+LIQUID_ABI_1 {
+  global:
+    liquid_abi_*;
+  local:
+    *;
+};
