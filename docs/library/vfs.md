@@ -101,7 +101,7 @@ queue and runtime dispatch cost, not storage or kernel FUSE work.
 
 Create and write call `repository::write`, rename calls `repository::move`, and unlink or rmdir
 calls `repository::remove`. Directory creation uses the same repository document and journal
-path. Advisory-lock failures become `EACCES`. The repository journal records the operation's
+path. Exclusive-checkout failures become `EACCES`. The repository journal records the operation's
 stable `node_id`, so a VFS write is visible as a drip without an OS watcher; one rename request is
 one recorded move.
 

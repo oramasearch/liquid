@@ -30,5 +30,16 @@ subsets belong in `docs/library/formats.md` in the same change.
 `deb/`, `rpm/`, and `apk/` contain issue #28's Tier A writers and bounded round-trip readers.
 `package/` owns common hashes, deterministic zstd, tar, and cpio construction. `deflate/` owns the
 deterministic RFC 1951 and gzip write path; zlib is used only for bounded read-side inflation.
+`squashfs/` owns the deterministic SquashFS 4 writer shared by AppImage and Snap projection.
 These package readers register as semantic-verbatim codecs. Their projection rules are documented
 in `docs/library/projection.md`.
+
+`ostree/` owns issue #78's dependency-free GVariant encoder and OSTree repository writer. It emits
+canonical file, dirtree, dirmeta, commit, and summary bytes, retains regular-file and symbolic-link
+metadata, and writes both `archive-z2` and `bare-user` object stores. `tar/` also writes deterministic
+hard-link and symbolic-link entries used by bootc's `bare-split-xattrs` encapsulation.
+Issue #70 adds `ar/` for the bounded System V and BSD archive-member reader used by Debian
+decoding; `binary/codec.cpp` adapts the validated ELF, Mach-O, and PE readers to registry trees;
+`pdf/` owns the PDF object reader; `xml/` owns namespace-aware XML canonicalisation; `document/`
+owns OOXML, ODF, wheel, and JAR ZIP views; and `model/` owns Jupyter, safetensors, and pickle
+readers. None executes payloads, renders documents, disassembles code, or writes these formats.

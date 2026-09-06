@@ -10,10 +10,17 @@ absent. Local clones should use
 then builds without a dependency cache, runs CTest with failure output, and runs `liquid version`
 on each desktop platform.
 
+The separate `Documentation site` job installs the pinned `mkdocs==1.6.1`, runs the same internal
+link checker registered as `docs-links`, renders all of `docs/`, and uploads
+`liquid-documentation-site` as a workflow artifact. The artifact is the published deliverable;
+hosting is intentionally not selected here. CLI reference freshness remains a CTest responsibility,
+so each binary build regenerates Markdown and stable JSON from its own typed command table before
+the site job packages the committed tree.
+
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
-| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, PostgreSQL server/client, Autoconf, Automake, GNU `time`, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount and PostgreSQL data-branch scenarios, `liquid version` |
-| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario, `liquid version` |
+| Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, SquashFS tools, PostgreSQL server/client, Autoconf, Automake, GNU `time`, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount, SquashFS round trip, and PostgreSQL data-branch scenarios; run the AppImage extraction peer; `liquid version` |
+| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario; pour and test a projected bottle from a temporary tap; `liquid version` |
 | Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 | Linux self-host | `ubuntu-24.04` | Clang 19, CMake, Ninja, libfuse3 | CMake bootstrap, two `liquid wrap` builds, 100% second-run disk hits, byte-identical static library and CLI, shared libliquid build |
@@ -131,6 +138,10 @@ memory-limit failure.
 
 `BuildWrap.*` runs the CMake, recursive Make, compilation-database, and Autotools fixture coverage.
 The local image includes Autoconf and Automake so every Linux fixture executes rather than skipping.
+`guides-run` executes the marked shell blocks in `docs/guides/` against the same CMake and Autotools
+fixtures, including second-run cache hits, miss explanation, a local sync peer, and the current
+identity commands. It returns CTest's skip code only when `/dev/fuse` is unavailable; the privileged
+container proof must execute it.
 
 Test processes create a random fixture directory beneath the platform temporary root through
 `tests/temporary_directory.hpp`. On Linux this honours `TMPDIR`, which allows container runs to

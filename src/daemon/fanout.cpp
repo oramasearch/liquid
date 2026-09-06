@@ -302,6 +302,16 @@ runtime::task<void> fanout::deliver_presence(liquid::presence value) {
     co_return result<void>{};
 }
 
+runtime::task<void> fanout::deliver_locks(std::vector<exclusive_lock> values) {
+    for (const auto& target : targets_) {
+        auto delivered = co_await target->deliver_locks(values);
+        if (!delivered) {
+            co_return std::unexpected(delivered.error());
+        }
+    }
+    co_return result<void>{};
+}
+
 auto fanout::target_status() const -> std::vector<daemon_target_status> {
     std::lock_guard lock(mutex_);
     auto output = std::vector<daemon_target_status>{};

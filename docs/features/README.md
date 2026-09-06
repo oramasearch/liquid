@@ -18,11 +18,14 @@ moves a project along that chain in either direction, computing only the minimum
 delta at each step, distributing the work across many machines, with a
 cryptographic chain of custody throughout.
 
-It replaces, or subsumes the role of: git, GitHub, Spack, Nix, `docker build`,
-CMake, Autotools, ccache/sccache, Bazel's remote execution, an artifact registry,
-a code search engine, a PaaS, Dropbox, Clerk and Vault.
+It replaces, or subsumes the role of: git, GitHub, Hugging Face, Spack, Nix,
+`docker build`, CMake, Autotools, ccache/sccache, remote build execution (Bazel's
+and REAPI's), an artifact registry, a code search engine, a PaaS, Dropbox, Clerk
+and Vault.
 
-**[lake.live](18-lake-service.md)** is the hosted expression of all of it.
+**[lake.live](18-lake-service.md)** is the hosted expression of all of it: liquid is
+the tool, lake is where it collects. A mix of **GitHub, Google Drive and Railway**
+over one content-addressed store, with identity, secrets and PKI.
 
 ## Names and units
 
@@ -31,7 +34,7 @@ a code search engine, a PaaS, Dropbox, Clerk and Vault.
 | **liquid** | The tool. The CLI and the daemon. |
 | **lake** | Where liquid collects — the hosted service at `lake.live`. |
 | **liquify** | The IDE. |
-| **drip** | One captured write to disk. The atom of history — automatic, continuous, never explicit, and signed by the party that made it. |
+| **drip** | One captured write to disk. The atom of history — automatic, continuous, never explicit, and signed by the party that made it, human or agent. |
 | **change** | A named, reviewable aggregation of drips. What another system would call a commit or a pull request. |
 
 Drips are the record; changes are the narrative. Nothing else versions at this
@@ -67,6 +70,55 @@ is wrong.
 10. **Every change is attributable.** Every drip carries a TAAP/1 signature from an
     identified party — human or agent — and the chain is append-only and tamper-evident
     ([25](25-identity-attestation-and-transparency.md)).
+    [TAAP/1](../standards/taap-1-spec-draft.md) is the security model: every claim
+    liquid makes about a user, an agent, a document, a build or an artifact is a signed
+    attestation, and history is an append-only, tamper-evident log with a witness
+    quorum, optionally anchored to a public chain. On by default.
+
+## What it must do
+
+The commitments the feature areas below exist to meet. Each links the area that
+specifies it.
+
+- Version anything, including multi-terabyte binary assets, from day one
+  ([01](01-object-model-and-storage.md)).
+- **Compose repositories**: nest, split, and merge two unrelated codebases with
+  history intact. Git cannot do this; it is liquid's headline feature
+  ([02](02-version-control.md)).
+- Diff *inside* zip, HDF5, Parquet, SQLite and OOXML, not just their bytes
+  ([03](03-diff-and-merge.md)).
+- Build incrementally as you type, with a build cache and compiler cache built in
+  ([04](04-build-engine.md), [05](05-caching.md)).
+- Resolve dependencies at Spack's level of expressiveness
+  ([07](07-dependency-resolution.md)).
+- Produce `.deb`, `.rpm`, `.apk`, OCI images and Helm charts from one build
+  ([08](08-packaging-and-images.md)).
+- Serve builds, with a transparency log and signed provenance
+  ([09](09-artifact-service.md), [10](10-supply-chain.md)).
+- Store encrypted secrets without destroying deduplication
+  ([11](11-secrets-and-encryption.md)).
+- Search full text and code, including inside published artifacts ([12](12-search.md)).
+- Deploy to a minimal Kubernetes distribution, a private, upstream-synced copy of
+  [k0s](https://github.com/oramasearch/k0s) modified for drips, with a Railway-style
+  experience ([13](13-deployment-runtime.md)).
+- Present a Dropbox/Drive-style interface for non-developers, local and web
+  ([15](15-consumer-sync-and-web.md)).
+- Review changes, not branches, so review survives a rebase and stacking is native
+  ([02](02-version-control.md), [18](18-lake-service.md)).
+- Host models and datasets with training provenance: the chunk store Hugging Face
+  already migrated to, plus the attestation chain a model hub cannot offer
+  ([09](09-artifact-service.md)).
+- Give you an editor with no language server, because the editor and the build are
+  the same incremental graph ([21](21-liquify-ide.md)).
+- Attribute everything, users, agents, documents, builds and artifacts, with signed
+  [TAAP/1](../standards/taap-1-spec-draft.md) attestations, in an append-only log with
+  independent witnesses, optionally anchored to a public chain for timestamping that
+  does not require trusting us ([25](25-identity-attestation-and-transparency.md)).
+- Provide identity, a runtime secrets service, and PKI: one CA serving signing, mTLS,
+  TLS and SSH, because keyless signing already *is* certificate issuance
+  ([19](19-identity.md), [20](20-secrets-service-and-pki.md)).
+- Support every language, platform and operating system, with the tier of support
+  stated honestly rather than implied ([16](16-universality.md)).
 
 ## Feature areas
 
@@ -74,11 +126,13 @@ is wrong.
 |---|---|---|
 | [01](01-object-model-and-storage.md) | Object model and storage | The chunk store, Merkle DAG, large-file support, and how everything else sits on it. |
 | [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, splitting and merging unrelated codebases. |
-| [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML. |
+| [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML, with a generated codec-tier table. |
 | [04](04-build-engine.md) | Build engine | The incremental query graph, actions, typed `.liquid` targets, early cutoff, compile-as-you-type, and local critical-path traces. |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage, Flatpak, and Snap, with ABI and relocation gates. |
+| [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented; a pinned Spack export seeds the package universe with explicit losses. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
@@ -86,8 +140,8 @@ is wrong.
 | [12](12-search.md) | Search | Local BM25F and positional-trigram search over the working tree and named refs is implemented; published-artifact search follows the format registry. |
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
 | [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |
-| [15](15-consumer-sync-and-web.md) | Consumer sync and web | The drive client and Linux desktop state, hydration, offline, and badge integration are implemented; native Windows/macOS and web surfaces follow. |
-| [16](16-universality.md) | Universality | Every language, platform and operating system — what that commitment actually requires. |
+| [15](15-consumer-sync-and-web.md) | Consumer sync and web | The drive client, concurrent offline history, and Linux desktop state, hydration, offline, and badge integration are implemented; native Windows/macOS and web surfaces follow. |
+| [16](16-universality.md) | Universality | Every language, platform and operating system, declared through the generated support matrix. |
 | [17](17-implementation.md) | Implementation | C++26, the component inventory, and the build order. |
 | [18](18-lake-service.md) | **lake.live** | The hosted service: GitHub + Google Drive + Railway over one store. |
 | [19](19-identity.md) | Identity and auth | Clerk-quality auth, and why identity is the trust root for the whole chain of custody. |
@@ -95,10 +149,12 @@ is wrong.
 | [21](21-liquify-ide.md) | **liquify** | The IDE. No language server, because the editor and the build are one graph. |
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 | [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
-| [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Agent/document/repository write buckets and daemon flow watermarks are implemented; private replicas, presence, and semantic conflict work remain. |
+| [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Write flow control, private replicas, presence, leases, epochs, and per-line attribution are implemented; suspicious-region detection remains. |
 | [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, and the append-only log with optional public anchoring. |
 
 ## Status
 
 This tree is the specification. Each document states implementation status where code has landed;
 unimplemented behavior remains explicit, and open decisions stay in each document's final section.
+The consolidated record of what is implemented, by phase, is
+[`../library/status.md`](../library/status.md).

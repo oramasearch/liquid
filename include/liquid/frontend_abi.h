@@ -173,6 +173,18 @@ typedef struct liquify_plugin_panel_v1 {
     liquify_plugin_operation_v1 view_model;
 } liquify_plugin_panel_v1;
 
+#define LIQUIFY_PLUGIN_EVENTS_ABI_VERSION 1u
+
+typedef void (*liquify_plugin_event_v1)(void* plugin_context, liquid_frontend_bytes_v1 event_cbor);
+
+typedef struct liquify_plugin_event_callbacks_v1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    liquify_plugin_event_v1 presence;
+    liquify_plugin_event_v1 lease;
+    liquify_plugin_event_v1 attribution;
+} liquify_plugin_event_callbacks_v1;
+
 typedef struct liquify_plugin_v1 {
     uint32_t abi_version;
     size_t struct_size;
@@ -185,6 +197,7 @@ typedef struct liquify_plugin_v1 {
     size_t panel_count;
     void* plugin_context;
     liquid_frontend_destroy_v1 destroy;
+    const liquify_plugin_event_callbacks_v1* events;
 } liquify_plugin_v1;
 
 typedef const liquify_plugin_v1* (*liquify_plugin_entrypoint_v1)(void);

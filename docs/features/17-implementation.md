@@ -9,11 +9,13 @@ Windows, and BSD where the dependencies allow.
 
 Two components are decided and are not open questions.
 
-### Datastore — [`homer6/automerge-cpp`](https://github.com/homer6/automerge-cpp)
+### Datastore — [`oramasearch/automerge-cpp`](https://github.com/oramasearch/automerge-cpp)
 
 A from-scratch C++23 implementation of **Automerge**, a CRDT library — not a wrapper
 around the Rust original. CI covers Linux, macOS, Windows and FreeBSD, which matches
-liquid's portability commitment.
+liquid's portability commitment. Its canonical repository is `oramasearch/automerge-cpp`
+(it began as `homer6/automerge-cpp`); liquid consumes it as a pinned submodule for the
+metadata and namespace layer.
 
 What it provides that liquid needs directly:
 

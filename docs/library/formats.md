@@ -1,9 +1,13 @@
 # Format registry and codecs
 
-**Status: implemented by liquid #29 and extended by #28.** libliquid owns a format registry used by
+**Status: implemented by liquid #29, extended by #28, and expanded by #70.** libliquid owns a format registry used by
 repository diff, search, storage, and package projection. The built-ins are ZIP, tar, HDF5,
 Parquet, SQLite, Debian, RPM, and Alpine packages. They are synchronous CPU codecs; coroutine
 callers invoke them through `runtime::offload`.
+
+Issue #70 also registers ELF, Mach-O, PE, PDF, Jupyter, OOXML, ODF, wheel, JAR, safetensors, and
+pickle readers. All are Tier 2: their original bytes remain authoritative while logical entries
+support search, retention, and container diff.
 
 ## Public API and module boundary
 
@@ -16,6 +20,8 @@ range of the original, an optional nested tree, and an explanation when an objec
 `format_registry::global()` contains the built-ins. `find_by_magic`, `find_by_extension`, and
 `recognise` identify candidates; `unpack` recursively expands recognised members. Codecs implement
 recognition, unpacking, canonicalisation, and logical diff. Merge and repack are optional.
+`support_matrix()` projects every live descriptor into `liquid tiers`; new codecs automatically
+appear in its JSON and generated format table.
 
 [`format_abi.h`](../../include/liquid/format_abi.h) is the versioned C11 module boundary. A module
 exports only `liquid_format_get_module_v1`, returning a `liquid_format_module_v1` descriptor. All
@@ -114,6 +120,38 @@ exactly the control and data gzip members, exposes `.PKGINFO`, and lists data pa
 package bytes remain authoritative; complete read-side codecs remain issue #70. Writer and
 dependency rules are in [projection.md](projection.md).
 
+### Linked binaries
+
+ELF, Mach-O, and PE entries expose bounded section byte ranges, exported symbols, and imported
+libraries using the validated #27 readers. Load addresses are volatile. Disassembly and
+decompilation are explicitly out of scope.
+
+### PDF
+
+The PDF reader recognises indirect objects and simple stream objects, inflates `FlateDecode`,
+extracts literal text used with standard text-show operators, and exposes title, author, subject,
+and keyword metadata. `/ID`, `/CreationDate`, `/ModDate`, and `/Producer` are volatile. Rendering,
+encrypted files, JBIG2, JPX, JavaScript, malformed xref repair, and full font encoding support are
+outside the reader's subset.
+
+### Jupyter and model files
+
+Jupyter exposes one entry per cell source while `outputs` and `execution_count` are volatile.
+Safetensors exposes JSON-header tensor entries with dtype, shape, content bytes, and source ranges.
+Pickle never executes content: the scanner recognises text `GLOBAL` and `INST`, binary unicode and
+`STACK_GLOBAL`, and records `REDUCE`, `OBJ`, `NEWOBJ`, and `BUILD` as code-deserialisation-risk
+opcodes. It deliberately does not reconstruct objects or execute reducers.
+
+### OOXML, ODF, wheels, and JARs
+
+OOXML and ODF are ZIP views with namespace-expanded XML names and sorted attributes. OOXML `rId*`
+relationship attributes and ZIP member order are noise; media remains a separate digest-bearing
+entry. Debian and APK control members and payloads are represented below `control/` and `data/`;
+RPM payload files are represented below `data/` alongside decoded package name and version. Wheels
+retain `.dist-info/METADATA` and report available SHA-256 `RECORD` checks. JARs retain
+`META-INF/MANIFEST.MF` and note `.SF`, `.RSA`, and `.DSA` signature members. These views do not
+validate XML schemas, office rendering, wheel signatures, or JAR signatures.
+
 ## Limits and nesting
 
 The default descriptor limit is depth 8, 256 MiB of decoded bytes, and 100,000 entries. Callers may
@@ -143,6 +181,15 @@ bytes together. Their six logical members total 169 bytes without derived-entry 
 content-addressed store retains four unique payloads totalling 107 logical bytes: the repeated
 24-byte `stored.txt` and 38-byte `zip64.txt` bodies are each stored once, saving 62 logical bytes.
 The repository test also counts one physical store frame for each repeated entry digest.
+
+## SquashFS writer
+
+Issue #77 adds a private SquashFS 4 writer for AppImage and Snap projection. It writes sorted
+inodes and directories, zero IDs, fixed timestamps and normalised modes. File data uses 128 KiB
+blocks and the pinned zstd compressor when compressed bytes are smaller; fragments, xattrs,
+duplicate aliases and export tables are omitted. Metadata blocks are stored uncompressed, making
+every inode and directory reference independent of compressor-version output. The writer is not a
+format-registry reader: `unsquashfs` provides the external round-trip check.
 
 ## Verification contract
 

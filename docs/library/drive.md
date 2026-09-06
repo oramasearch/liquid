@@ -1,13 +1,18 @@
 # Drive synchronization
 
-**What.** Issues #195 and #235's folder synchronization client: persisted three-tree
+**What.** Issues #195, #235, and #258's folder synchronization client: persisted three-tree
+**What.** Issues #195, #235, and #247's folder synchronization client and clone entry point:
+persisted three-tree
 reconciliation, per-path device state, lazy and pinned hydration, offline write queues, content
 conflicts that retain both values, resumable transfer, path history and restore, daemon-hosted
 watching, and Linux file-manager badges.
 
-**Status: implemented by liquid #195 and #235.** `liquid::drive_client` provides one-shot
+**Status: implemented by liquid #195, #235, and #258.** `liquid::drive_client` provides one-shot
+**Status: implemented by liquid #195, #235, and #247.** `liquid::drive_client` provides one-shot
 synchronization, path state, policy configuration, pinning, and status. `liquid drive sync`
 exposes synchronization directly; `pin`, `unpin`, and `status` use the same repository settings.
+`liquid clone` selects a remote directly or through a configured drive folder and creates a fully
+materialized plain checkout through the same client.
 `--watch` attaches to the checkout daemon, whose drive target runs the same client after captured
 filesystem drips. Lake's web drive is separate consumer work.
 
@@ -85,6 +90,11 @@ change names both local and remote heads when they differ. The client then recon
 files with the pulled tree. This also handles an empty remote, which adopts the local identity on
 the subsequent push.
 
+Every imported directory document that can become active is bound to the destination repository's
+path-derived actor. The transport receiver identity is never retained for later local writes. Two
+fresh clients can therefore edit the same imported directory offline without reusing one actor's
+sequence numbers; their later sync retains both named values and records both paths in history.
+
 ## Reconciliation table
 
 `B`, `L`, and `R` mean the base, local, and remote value for one stable node. Changed includes
@@ -155,6 +165,25 @@ pending for a later retry. The CLI prints every outcome and exits with status 1 
 refused. In watch mode, the drive target records the refused reference and reason as its daemon
 target error and leaves its delivery cursor pending for retry.
 
+## Clone entry point
+
+`liquid clone <url|drive-folder> [<dir>] [--json]` is the plain-checkout entry point. A URL becomes
+the client's persisted remote; a drive-folder operand reuses that repository's configured remote.
+An omitted destination uses the last URL path component or `repository` when the endpoint has no
+path component. The command refuses an existing non-empty target before opening the endpoint.
+
+Clone opens the target with the remote-selecting `drive_client::open` overload, pins the empty root,
+and runs one synchronization. First-sync identity adoption brings in the remote history. The root
+pin makes every pulled descendant available offline, including files above the ordinary hydration
+threshold, so the result is a complete working tree rather than a lazy drive view. The stored
+remote supports later `drive status` and synchronization. `LIQUID_TOKEN` is supplied only through
+the in-memory drive options and is never persisted.
+
+Text output reports the remote and absolute target. JSON reports the path, remote, received object
+count, and received byte count. Transport errors retain their public `errc` names; Lake
+authentication is `unauthorized`, an absent repository is `not_found`, and a non-empty target is
+`already_exists`. A failed clone removes state it created and restores an existing empty target.
+
 ## History and restore
 
 `repository::history(path)` walks changes newest first. It finds the path's `node_id` at the first
@@ -191,8 +220,15 @@ move, delete-versus-edit, interrupted chunk download and resume, and event-loss 
 full walk. It pushes a folder and pulls the result with an ordinary `sync_endpoint`, verifies
 conflicts after checkpoint reload, joins a pre-existing non-empty remote, preserves an
 authorization refusal reason with an unadvanced base, and rejects the bounded synthetic folder
-described above. Repository and CLI tests prove
+described above. A separate two-client regression syncs a common file, edits it differently while
+both clients are offline, and verifies both names, conflict references, and path histories after
+the clients reconnect in sequence. Repository and CLI tests prove
 history follows a move and restore appends a drip without changing the old log.
+described above. Repository and CLI tests prove
+history follows a move and restore appends a drip without changing the old log. The clone scenario
+pulls from an HTTP endpoint, fully hydrates a file above the default threshold, checks persisted
+remote and JSON output, and builds a small CMake project inside the checkout. Refusal cases pin the
+authentication, unknown-repository, and non-empty-target error names.
 
 Portable VFS tests cover the three-state resolver, recursive folder pins, explicit child
 overrides, xattr names and values, and invalid pin values. Drive tests persist settings, retain a
