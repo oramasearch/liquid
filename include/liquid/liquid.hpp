@@ -11,6 +11,7 @@
 #include "liquid/error.hpp"
 #include "liquid/format.hpp"
 #include "liquid/format_abi.h"
+#include "liquid/flow.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/frontend_abi.h"
 #include "liquid/git.hpp"

@@ -394,9 +394,10 @@ TEST(SearchIndex, duplicate_cursor_advances_search_target_once) {
         .value = {.id = {fingerprint("duplicate")}, .ops = {{"source.txt"}}}, .cursor = {"42:0"}};
     EXPECT_TRUE(liquid::runtime::block_on(fanout.deliver(delivery)));
     EXPECT_TRUE(liquid::runtime::block_on(fanout.deliver(delivery)));
-    const auto status = fanout.target_status({"42:0"});
+    const auto status = fanout.target_status();
     ASSERT_EQ(status.size(), 1);
     EXPECT_EQ(status.front().cursor.token, "42:0");
+    EXPECT_EQ(status.front().behind, 0);
     EXPECT_EQ(status.front().deliveries, 1);
 
     auto hits = liquid::search_detail::query(

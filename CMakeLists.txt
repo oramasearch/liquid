@@ -393,6 +393,7 @@ add_library(libliquid
   src/frontend/graph.cpp
   src/frontend/module.cpp
   src/frontend/symbols.cpp
+  src/flow_control.cpp
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c

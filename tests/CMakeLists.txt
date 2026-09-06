@@ -413,6 +413,7 @@ add_executable(liquid-header-tests
   headers/error.cpp
   headers/export.cpp
   headers/format.cpp
+  headers/flow.cpp
   headers/frontend.cpp
   headers/git.cpp
   headers/graph.cpp
