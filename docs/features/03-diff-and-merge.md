@@ -17,6 +17,12 @@ function is a move, not a delete plus an add.
 The same parse serves incremental compilation ([04](04-build-engine.md)) and symbol
 search ([12](12-search.md)). One parse, three consumers.
 
+**Status.** Liquid #72 implements the digest-pinned 49-language grammar registry and syntactic
+symbol/unit parsing that structural diff will consume. Structural tree comparison and merge remain
+liquid #68 work; this page still describes that target behavior rather than a completed command.
+The grammar identity is available for future structural records so two derived values cannot hide
+different parser inputs.
+
 Text diff remains the fallback for languages without a grammar, and the fallback is
 always available.
 

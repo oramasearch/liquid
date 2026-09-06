@@ -5,6 +5,18 @@ collection cases and its CLI flags live in `store/`; deterministic crash schedul
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
 
+Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
+identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
+`transparency/` records how the initial and renewed RFC 4998 fixtures were generated through lake's
+production timestamp service and contains the timestamp, trust, tampering, and renewal cases.
+OpenSSL generates ephemeral RSA and P-384 signatures only in the test process so the private
+verification engine is checked against an independent implementation for PKCS#1 v1.5, RSA-PSS,
+ECDSA, SHA-256, and SHA-384; no OpenSSL call enters the verification path.
+The main test binary compiles the private signature translation unit directly so this coverage also
+runs when libliquid's internal symbols are hidden by a shared build.
+The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
+URL or explicit TSA anchor file is absent.
+
 Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
 Linux, reports a clear error when the temporary root is not writable, and removes the directory at
@@ -51,6 +63,10 @@ deleted regions and files, and a renamed node in one unsorted batch. CLI scenari
 command-documentation tests live in `cli/`. `test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
+`test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
+drip bodies, same-path line-hunk reports, declared read dependencies, disjoint and forced records,
+and a synchronized replica whose signed write arrives before refusal. The CLI scenario
+also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
 exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI
@@ -72,7 +88,8 @@ process, checks ordinary and atomic per-ref output, and invokes the real push an
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
 
-Build tests cover the disk action index's reopen and rebuild paths on every platform. In the
+Build tests cover the disk action index's reopen and rebuild paths, public configured-plan schema,
+named configuration errors, and current root digests on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.
@@ -84,7 +101,9 @@ repository's regular files. Daemon coverage injects a stale cached query and obs
 validation backlog and divergence status.
 Frontend tests load the Clang implementation as a separate shared object, register the same ABI
  statically, verify its sole exported entry point on macOS and Linux, and use the tree-sitter fallback
- to discover C definitions. The CMake frontend fixture compiles two C++ definition objects, proves a
+ to discover C definitions. Grammar coverage recomputes every locked parser/scanner/query digest,
+parses one committed sample per configured language without error nodes, checks required tag-query
+unit discovery and ABI rejection, and exercises the public grammar metadata registry. The CMake frontend fixture compiles two C++ definition objects, proves a
  body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
  before assembly. The registered `frontend-one-function-measure` CTest performs the same
  one-definition edit against liquid's own tree with the configured compiler, asserts the action and
@@ -95,6 +114,10 @@ rejection, and the DSSE/in-toto projection's canonical attestation digest round-
 cache-hit case also proves that the existing provenance attestation is reused without re-signing.
 Portable SBOM cases prove the SPDX/CycloneDX required structure, exact input and toolchain digests,
 nested-repository pins, signatures, and universal inference markers; CLI cases invoke both formats.
+Portable ABI cases decode digest-pinned ELF, Mach-O, and PE fixtures, while native shared-library
+fixtures exercise exported functions and objects, additions, removals, GNU symbol versions, debug
+signatures, canonical records, signed compatibility attestations, and stable CLI JSON. The
+privileged wrapper case checks the incompatible build event and opt-in failing exit status.
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
 `compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,
@@ -120,11 +143,12 @@ The privileged Linux build suite also proves eligible actions reject and name a 
 unknown-field retention, hash selection, and liquid record conversion. The codec stays private to
 libliquid, so this target compiles its private sources directly for static and shared builds.
 
-`consumer/` is an independent CMake project that adds the pinned Capy and Corosio checkouts plus
-nlohmann/json before liquid, then builds and runs an executable linked to `liquid::liquid`.
-`consumer-project-build` configures and builds it as one CTest step with the parent build's compiler
-and static/shared setting. `cli-identity-codec` creates and rotates an identity through the CLI,
-then decodes, re-encodes, and verifies the stored canonical-CBOR files through public libliquid API.
+`consumer/` is an independent CMake project that finds the installed liquid package, then builds
+and runs an executable linked to `liquid::liquid`. `consumer-project-build` installs the already-
+built parent artifacts into a test-local prefix, configures the consumer with the parent generator
+and C++ compiler, and compiles only the consumer source. `cli-identity-codec` creates and rotates an
+identity through the CLI, then decodes, re-encodes, and verifies the stored canonical-CBOR files
+through public libliquid API.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.

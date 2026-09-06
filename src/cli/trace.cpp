@@ -5,10 +5,15 @@
 #include <vector>
 
 #include "liquid/build.hpp"
+#include "liquid/daemon.hpp"
 #include "liquid/error.hpp"
+#include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid_cli {
+
+[[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
+
 namespace {
 
 auto fail(const liquid::error& value) -> int {
@@ -144,6 +149,25 @@ auto print_build_events(liquid::build_handle handle) -> liquid::runtime::task<in
     co_return exit;
 }
 
+auto print_build_plan(liquid::build_target target) -> liquid::runtime::task<int> {
+    auto repository = co_await liquid::repository::open_build(std::filesystem::current_path());
+    if (!repository) {
+        co_return std::unexpected(repository.error());
+    }
+    auto plan = co_await repository->build_plan(std::move(target));
+    if (!plan) {
+        co_return std::unexpected(plan.error());
+    }
+    for (const auto& action : *plan) {
+        auto json = liquid::plan_json(action);
+        if (!json) {
+            co_return std::unexpected(json.error());
+        }
+        std::println("{}", *json);
+    }
+    co_return 0;
+}
+
 } // namespace
 
 auto wrap(int argc, char** argv) -> int;
@@ -169,9 +193,36 @@ auto build(int argc, char** argv) -> int {
     if (argc >= 1 && std::string_view{argv[0]} == "--profile") {
         return wrap(argc - 1, argv + 1);
     }
+    if (argc >= 1 && std::string_view{argv[0]} == "--plan") {
+        if (argc > 2) {
+            return usage("build --plan [target]");
+        }
+        auto result = liquid::runtime::block_on(
+            print_build_plan({argc == 2 ? std::string{argv[1]} : std::string{}}));
+        return result ? *result : fail(result.error());
+    }
+    if (argc <= 1 && (argc == 0 || std::string_view{argv[0]} != "trace")) {
+        const auto checkout = std::filesystem::current_path();
+        auto ready = ensure_daemon(checkout);
+        if (!ready) {
+            return fail(ready.error());
+        }
+        auto daemon = liquid::runtime::block_on(liquid::daemon::attach(checkout));
+        if (!daemon) {
+            return fail(daemon.error());
+        }
+        auto handle = liquid::runtime::block_on(
+            daemon->build(liquid::build_target{argc == 1 ? std::string{argv[0]} : std::string{}}));
+        if (!handle) {
+            return fail(handle.error());
+        }
+        auto result = liquid::runtime::block_on(print_build_events(std::move(*handle)));
+        return result ? *result : fail(result.error());
+    }
     if (argc < 1 || std::string_view{argv[0]} != "trace") {
-        return usage("build --events <command> [args...] | build --profile <command> [args...] | "
-                     "build trace [--chrome]");
+        return usage(
+            "build [target] | build --plan [target] | build --events <command> [args...] | "
+            "build --profile <command> [args...] | build trace [--chrome]");
     }
     const auto chrome = argc == 2 && std::string_view{argv[1]} == "--chrome";
     if (argc > 2 || (argc == 2 && !chrome)) {

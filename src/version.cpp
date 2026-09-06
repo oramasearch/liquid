@@ -2,6 +2,12 @@
 
 namespace liquid {
 
-std::string_view version_string() noexcept { return "0.0.1"; }
+std::string_view version_string() noexcept {
+    return "0.0.1";
+}
 
-}  // namespace liquid
+std::string_view grammar_digest() noexcept {
+    return LIQUID_GRAMMAR_LOCK_DIGEST;
+}
+
+} // namespace liquid

@@ -187,7 +187,7 @@ TEST(ReapiConversion, results_fill_standard_fields_and_preserve_the_native_recor
         .started_at = std::chrono::sys_seconds{1700000000s},
         .finished_at = std::chrono::sys_seconds{1700000002s},
         .provenance = digest("provenance"),
-        .record_version = 3,
+        .record_version = 4,
         .sboms = {digest("sbom")},
     };
     const auto content = std::map<std::string, std::vector<std::byte>>{

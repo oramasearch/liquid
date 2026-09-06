@@ -60,6 +60,11 @@ string(REGEX MATCH "\"remote_bytes\":0" no_remote_bytes "${status_output}")
 if(NOT no_remote_bytes)
   message(FATAL_ERROR "status did not report remote bytes: ${status_output}")
 endif()
+string(REGEX MATCH "\"agents\":\\{\"require_base\":false,\"actors\":\\[\\]\\}"
+  default_agent_policy "${status_output}")
+if(NOT default_agent_policy)
+  message(FATAL_ERROR "status did not report agent policy: ${status_output}")
+endif()
 
 run_liquid(cut_output cut_error cut_result "${workspace}" cut imported)
 require_success(cut_result cut_output cut_error)
@@ -78,6 +83,47 @@ string(REGEX MATCH "^moved.txt:1:1@[^ ]+ moved=true approximate=false deleted=fa
   moved_anchor "${anchor_output}")
 if(NOT moved_anchor)
   message(FATAL_ERROR "anchor did not follow the moved node: ${anchor_output}")
+endif()
+
+file(WRITE "${LIQUID_CLI_ROOT}/agent-source.txt" "agent one\n")
+run_liquid(base_log_output base_log_error base_log_result "${workspace}" log --ops --json)
+require_success(base_log_result base_log_output base_log_error)
+string(JSON base_cursor LENGTH "${base_log_output}")
+run_liquid(write_output write_error write_result "${workspace}"
+  write agent-one.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt"
+  --base "${moved_change}@${base_cursor}")
+require_success(write_result write_output write_error)
+file(WRITE "${LIQUID_CLI_ROOT}/agent-source.txt" "agent two\n")
+run_liquid(stale_output stale_error stale_result "${workspace}"
+  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${moved_change}")
+if(stale_result EQUAL 0)
+  message(FATAL_ERROR "stale write unexpectedly succeeded")
+endif()
+string(REGEX MATCH "error: conflict: write base has moved" stale_conflict "${stale_error}")
+if(NOT stale_conflict)
+  message(FATAL_ERROR "stale write omitted the conflict: ${stale_error}")
+endif()
+run_liquid(disjoint_output disjoint_error disjoint_result "${workspace}"
+  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${moved_change}"
+  --on-stale disjoint)
+require_success(disjoint_result disjoint_output disjoint_error)
+file(WRITE "${LIQUID_CLI_ROOT}/agent-source.txt" "agent forced\n")
+run_liquid(force_output force_error force_result "${workspace}"
+  write agent-two.txt --from "${LIQUID_CLI_ROOT}/agent-source.txt" --base "${moved_change}"
+  --depends-on agent-one.txt --on-stale force)
+require_success(force_result force_output force_error)
+run_liquid(drip_log_output drip_log_error drip_log_result "${workspace}" log --ops --json)
+require_success(drip_log_result drip_log_output drip_log_error)
+string(JSON drip_count LENGTH "${drip_log_output}")
+math(EXPR disjoint_index "${drip_count} - 2")
+math(EXPR forced_index "${drip_count} - 1")
+string(JSON disjoint_flag GET "${drip_log_output}" ${disjoint_index} revalidated)
+string(JSON forced_flag GET "${drip_log_output}" ${forced_index} revalidated)
+string(JSON forced_base GET "${drip_log_output}" ${forced_index} reasoned_from)
+string(JSON initial_cursor GET "${drip_log_output}" ${base_cursor} cursor)
+if(NOT disjoint_flag STREQUAL "disjoint" OR NOT forced_flag STREQUAL "forced" OR
+   NOT forced_base STREQUAL moved_change OR NOT initial_cursor STREQUAL base_cursor)
+  message(FATAL_ERROR "drip log omitted stale-write metadata: ${drip_log_output}")
 endif()
 
 run_liquid(other_init_output other_init_error other_init_result "${other}" init .)
@@ -103,11 +149,11 @@ if(NOT combined_log)
   message(FATAL_ERROR "log JSON omitted the combined change: ${log_output}")
 endif()
 
-run_liquid(log_ops_output log_ops_error log_ops_result "${workspace}" log --ops --json)
+run_liquid(log_ops_output log_ops_error log_ops_result "${workspace}" ops --json)
 require_success(log_ops_result log_ops_output log_ops_error)
 string(REGEX MATCH "\"kind\":\"move\"" moved_operation "${log_ops_output}")
 if(NOT moved_operation)
-  message(FATAL_ERROR "log --ops JSON omitted the move: ${log_ops_output}")
+  message(FATAL_ERROR "ops JSON omitted the move: ${log_ops_output}")
 endif()
 string(JSON move_session GET "${log_ops_output}" 0 session)
 run_liquid(ops_output ops_error ops_result "${workspace}" ops --json)

@@ -32,6 +32,8 @@ std::string_view to_string(errc code) noexcept {
         return "internal";
     case errc::not_remote:
         return "not_remote";
+    case errc::not_configured:
+        return "not_configured";
     }
     return "unknown";
 }
