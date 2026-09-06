@@ -87,12 +87,23 @@ tier and exact resource limits. Recognition may lower an individual input.
 |---|---:|---|---|
 | `apk` | 2 | `apk` | depth 1; 536870912 bytes; 1000000 entries |
 | `deb` | 2 | `deb` | depth 1; 536870912 bytes; 1000000 entries |
+| `elf` | 2 | `elf` | depth 1; 536870912 bytes; 100000 entries |
 | `hdf5` | 2 | `hdf5` | depth 8; 268435456 bytes; 100000 entries |
+| `jar` | 2 | `jar` | depth 8; 268435456 bytes; 100000 entries |
+| `jupyter` | 2 | `jupyter` | depth 8; 268435456 bytes; 100000 entries |
+| `macho` | 2 | `macho` | depth 1; 536870912 bytes; 100000 entries |
+| `odf` | 2 | `odf` | depth 8; 268435456 bytes; 100000 entries |
+| `ooxml` | 2 | `ooxml` | depth 8; 268435456 bytes; 100000 entries |
 | `parquet` | 2 | `parquet` | depth 8; 268435456 bytes; 100000 entries |
+| `pdf` | 2 | `pdf` | depth 1; 268435456 bytes; 100000 entries |
+| `pe` | 2 | `pe` | depth 1; 536870912 bytes; 100000 entries |
+| `pickle` | 2 | `pickle` | depth 8; 268435456 bytes; 100000 entries |
 | `rpm` | 2 | `rpm` | depth 1; 536870912 bytes; 1000000 entries |
+| `safetensors` | 2 | `safetensors` | depth 8; 268435456 bytes; 100000 entries |
 | `sqlite` | 2 | `sqlite` | depth 8; 268435456 bytes; 100000 entries |
 | `tar` | 1 | `tar` | depth 8; 268435456 bytes; 100000 entries |
 | `unknown` | 3 | `none` | depth 8; 268435456 bytes; 100000 entries |
+| `wheel` | 2 | `wheel` | depth 8; 268435456 bytes; 100000 entries |
 | `zip` | 1 | `zip` | depth 8; 268435456 bytes; 100000 entries |
 <!-- formats:end -->
 
