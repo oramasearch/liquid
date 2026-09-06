@@ -98,13 +98,17 @@ auto available(std::string_view command) -> bool {
     return false;
 }
 
+auto clang_command() -> std::string {
+    return std::system("command -v clang >/dev/null 2>&1") == 0 ? "clang" : "clang-19";
+}
+
 auto run_wrap(const std::filesystem::path& project,
               const std::filesystem::path& cache,
               std::vector<std::string> command,
               bool explain = false,
               std::uint32_t jobs = 0,
-              std::optional<liquid::remote_config> remote = {})
-    -> liquid::result<liquid::wrap_report> {
+              std::optional<liquid::remote_config> remote = {},
+              std::vector<liquid::named_input> inputs = {}) -> liquid::result<liquid::wrap_report> {
     return liquid::runtime::block_on(
         liquid::build::wrap(project,
                             std::move(command),
@@ -114,7 +118,8 @@ auto run_wrap(const std::filesystem::path& project,
                                                  .verify = false,
                                                  .cache_directory = cache,
                                                  .fact_directory = cache.parent_path() / "facts",
-                                                 .remote = std::move(remote)}));
+                                                 .remote = std::move(remote),
+                                                 .inputs = std::move(inputs)}));
 }
 
 auto shell_quote(std::string_view value) -> std::string {
@@ -509,6 +514,99 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(other_built->outer, liquid::cache_status::hit);
     EXPECT_EQ(std::getenv("LD_PRELOAD"), nullptr);
     EXPECT_EQ(std::getenv("DYLD_INSERT_LIBRARIES"), nullptr);
+}
+
+TEST(BuildWrap, unchanged_upstream_output_terminates_a_cross_project_cascade) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("clang")) {
+        GTEST_SKIP() << "clang is absent";
+    }
+    wrap_directory fixture{"cmake"};
+    auto code = std::error_code{};
+    std::filesystem::remove_all(fixture.project(), code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::create_directories(fixture.project(), code);
+    ASSERT_FALSE(code) << code.message();
+    {
+        auto source = std::ofstream{fixture.project() / "value.c"};
+        source << "int dependency_value(void) { return 7; }\n";
+    }
+    const auto compiler = clang_command();
+    const auto compile = compiler + " -c value.c -o value.o";
+    auto first = run_wrap(fixture.project(), fixture.cache(), {"/bin/sh", "-c", compile});
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    ASSERT_EQ(first->processes_started, 1U);
+    ASSERT_TRUE(first->output_tree);
+    auto upstream_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(upstream_repository) << upstream_repository.error().message;
+    auto upstream_cache = liquid::build_detail::disk_cache{*upstream_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(upstream_cache.open()));
+    auto first_result = liquid::runtime::block_on(upstream_cache.find_output("value.o"));
+    ASSERT_TRUE(first_result) << first_result.error().message;
+    ASSERT_TRUE(*first_result);
+
+    const auto downstream = fixture.second_checkout();
+    std::filesystem::remove_all(downstream, code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::create_directories(downstream, code);
+    ASSERT_FALSE(code) << code.message();
+    auto consumed = run_wrap(downstream,
+                             fixture.second_cache(),
+                             {"/bin/sh", "-c", "cp deps/upstream/value.o copied.o"},
+                             false,
+                             0,
+                             {},
+                             {{"upstream", (**first_result).value}});
+    ASSERT_TRUE(consumed) << consumed.error().message << ": " << consumed.error().context;
+    ASSERT_GT(consumed->processes_started, 0U);
+
+    {
+        auto source = std::ofstream{fixture.project() / "value.c", std::ios::app};
+        source << "// output-preserving source change\n";
+    }
+    auto rebuilt = run_wrap(fixture.project(), fixture.cache(), {"/bin/sh", "-c", compile});
+    ASSERT_TRUE(rebuilt) << rebuilt.error().message << ": " << rebuilt.error().context;
+    ASSERT_EQ(rebuilt->processes_started, 1U);
+    ASSERT_TRUE(rebuilt->output_tree);
+    EXPECT_EQ(liquid::to_string(*rebuilt->output_tree), liquid::to_string(*first->output_tree));
+    auto rebuilt_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(rebuilt_repository) << rebuilt_repository.error().message;
+    auto rebuilt_cache = liquid::build_detail::disk_cache{*rebuilt_repository};
+    ASSERT_TRUE(liquid::runtime::block_on(rebuilt_cache.open()));
+    auto second_result = liquid::runtime::block_on(rebuilt_cache.find_output("value.o"));
+    ASSERT_TRUE(second_result) << second_result.error().message;
+    ASSERT_TRUE(*second_result);
+    EXPECT_NE(liquid::to_string((**second_result).value),
+              liquid::to_string((**first_result).value));
+
+    auto terminated = run_wrap(downstream,
+                               fixture.second_cache(),
+                               {"/bin/sh", "-c", "cp deps/upstream/value.o copied.o"},
+                               false,
+                               0,
+                               {},
+                               {{"upstream", (**second_result).value}});
+    ASSERT_TRUE(terminated) << terminated.error().message << ": " << terminated.error().context;
+    EXPECT_EQ(terminated->processes_started, 0U);
+    EXPECT_EQ(terminated->outer, liquid::cache_status::hit);
+    auto explanation = liquid::runtime::block_on(
+        liquid::build::why(downstream, "copied.o", fixture.second_cache()));
+    ASSERT_TRUE(explanation) << explanation.error().message;
+    EXPECT_EQ(explanation->cause.detail,
+              "input deps/upstream unchanged: same normalised tree after upstream rebuild");
+    auto downstream_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.second_cache() / "repository"));
+    ASSERT_TRUE(downstream_repository) << downstream_repository.error().message;
+    auto claims = liquid::runtime::block_on(liquid::build::known_outputs(*downstream_repository));
+    ASSERT_TRUE(claims) << claims.error().message;
+    const auto upstream_claims = std::ranges::count_if(*claims, [&](const auto& claim) {
+        return liquid::to_string(claim.output_tree) == liquid::to_string(*first->output_tree);
+    });
+    EXPECT_GE(upstream_claims, 2);
 }
 
 TEST(BuildWrap, incompatible_shared_library_is_reported_and_can_fail_the_cli) {

@@ -246,7 +246,8 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::symbols},
     {"wrap",
-     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
+     "wrap [--jobs <count>] [--target <triple>] [--input <name>=<result|tree>] "
+     "[--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "
      "[--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> "
      "[args...]",

@@ -194,6 +194,18 @@ TEST(BuildProvenance, stores_and_verifies_the_slsa_mapping) {
     EXPECT_EQ(predicate.run_details.metadata.finished_on, "1970-01-01T00:01:42Z");
 }
 
+TEST(BuildProvenance, signed_results_enumerate_content_addressed_output_claims) {
+    stored_provenance fixture;
+    auto outputs = liquid::runtime::block_on(liquid::build::known_outputs(fixture.repository));
+    ASSERT_TRUE(outputs) << outputs.error().message;
+    ASSERT_EQ(outputs->size(), 1U);
+    ASSERT_TRUE(fixture.value.output_tree);
+    EXPECT_EQ(liquid::to_string(outputs->front().input_tree),
+              liquid::to_string(fixture.input_tree));
+    EXPECT_EQ(liquid::to_string(outputs->front().output_tree),
+              liquid::to_string(*fixture.value.output_tree));
+}
+
 TEST(BuildProvenance, tampered_predicate_fails_signature_verification) {
     stored_provenance fixture;
     auto report = liquid::runtime::block_on(
