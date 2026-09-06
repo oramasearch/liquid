@@ -27,6 +27,7 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `log` | `log [--ops] [--json]` | Show change or signed drip history. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
@@ -123,6 +124,16 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
+Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
+is itself the package directory. Specs containing spaces must be passed as one quoted argument.
+Text output prints each selected spec and digest, with dependencies indented beneath their root.
+`--json` prints the stable graph, including selection reasons, or conflict object. An unsatisfiable request prints its minimal
+attributed core and exits 1. `--explain` appends the reason list for every selected package;
+`--why <package>` prints only that package's explanation. With `--reuse`, `<path>/reuse.txt` must
+contain one already built concretised-spec digest per line; blank lines and lines beginning with
+`#` are ignored.
 
 `write` is the scripted-agent file path. `--base` names the change the caller read and may append
 the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read

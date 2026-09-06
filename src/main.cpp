@@ -62,6 +62,7 @@ auto worker(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto resolve(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -101,6 +102,12 @@ constexpr auto commands = std::to_array<command>({
      "search paths and contents",
      "available",
      liquid_cli::search},
+    {"resolve",
+     "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
+     "<package> <spec>... [--universe <path>] [--reuse] [--json]",
+     "concretise package specifications",
+     "available",
+     liquid_cli::resolve},
     {"log",
      "log [--ops] [--json]",
      "show change or signed drip history",

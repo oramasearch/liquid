@@ -174,12 +174,14 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > atomic manifest replacement makes the whole change visible at once. Identical blobs are indexed
 > once even when several paths refer to them. Named refs use snapshot-specific index slots.
 
-> **Phase 5 dependency-resolution records and spec parsing are implemented.** Canonical
+> **Phase 5 dependency resolution is implemented.** Canonical
 > `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
 > concrete dependencies, compiler and target constraints, conflicts, and patches. The public
 > Spack-style parser reports exact error columns, while directory and repository universes use the
-> documented `packages/` tree. The solver engine is liquid's own CDCL implementation behind a
-> private concretizer interface.
+> documented `packages/` tree. Liquid's own CDCL engine chooses virtual providers, binds compilers
+> as dependencies, applies target-family fallback, optimises reuse before freshness and defaults,
+> and returns minimal attributed conflict cores. `liquid resolve` prints the graph, stable JSON, or
+> package-selection explanations.
 
 ## Where this sits
 

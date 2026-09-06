@@ -14,8 +14,8 @@ stability, unique child creation, cleanup, and the failure diagnostic.
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
-Spec parsing, canonical package records, solver dimensions, explanations, optimisation, and the
-generated scale workload live in `resolve/`.
+Spec parsing, canonical package records, universe loading, solver dimensions, cancellation,
+explanations, optimisation, CLI output, and the generated scale workload live in `resolve/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered

@@ -608,8 +608,7 @@ result<std::vector<std::byte>> encode_concretised_spec(const concretised_spec& v
                                    {"variants", encode_text_map(value.variants)},
                                    {"target", value.target},
                                    {"dependencies", cbor::value{std::move(dependencies)}},
-                                   {"patches", cbor::value{std::move(patches)}},
-                                   {"reasons", encode_text_array(value.reasons)}};
+                                   {"patches", cbor::value{std::move(patches)}}};
     if (value.compiler) {
         fields.emplace_back("compiler", encode_digest(*value.compiler));
     }
@@ -627,8 +626,7 @@ result<concretised_spec> decode_concretised_spec(std::span<const std::byte> byte
     auto target = text(find(*decoded, "target"), "concretised target");
     auto dependencies = array(find(*decoded, "dependencies"), "concretised dependencies");
     auto patches = array(find(*decoded, "patches"), "concretised patches");
-    auto reasons = decode_text_array(find(*decoded, "reasons"), "concretised reasons");
-    if (!name || !version || !variants || !target || !dependencies || !patches || !reasons) {
+    if (!name || !version || !variants || !target || !dependencies || !patches) {
         if (!name) {
             return std::unexpected(name.error());
         }
@@ -644,16 +642,12 @@ result<concretised_spec> decode_concretised_spec(std::span<const std::byte> byte
         if (!dependencies) {
             return std::unexpected(dependencies.error());
         }
-        if (!patches) {
-            return std::unexpected(patches.error());
-        }
-        return std::unexpected(reasons.error());
+        return std::unexpected(patches.error());
     }
     auto output = concretised_spec{.name = std::move(*name),
                                    .version = std::move(*version),
                                    .variants = std::move(*variants),
-                                   .target = std::move(*target),
-                                   .reasons = std::move(*reasons)};
+                                   .target = std::move(*target)};
     if (const auto* compiler_value = find(*decoded, "compiler")) {
         auto compiler = decode_digest(compiler_value, "concretised compiler");
         if (!compiler) {
