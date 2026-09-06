@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid import git <path>
+liquid import <path> | import git <path>
 ```
 
 ## Description

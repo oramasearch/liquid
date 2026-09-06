@@ -288,7 +288,7 @@ if(LIQUID_BUILD_CLI)
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_REFERENCE_SOURCE=${PROJECT_SOURCE_DIR}/docs/reference/cli
-      -DLIQUID_REFERENCE_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/cli-reference
+      -DLIQUID_REFERENCE_OUTPUT=${PROJECT_BINARY_DIR}/reference/cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/reference-docs.cmake)
   add_test(NAME cli-docs-json
     COMMAND $<TARGET_FILE:liquid-cli> docs --format json)

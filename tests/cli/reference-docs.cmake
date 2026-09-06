@@ -8,19 +8,6 @@ if(NOT DEFINED LIQUID_REFERENCE_OUTPUT)
   message(FATAL_ERROR "LIQUID_REFERENCE_OUTPUT is required")
 endif()
 
-file(REMOVE_RECURSE "${LIQUID_REFERENCE_OUTPUT}")
-file(MAKE_DIRECTORY "${LIQUID_REFERENCE_OUTPUT}")
-foreach(format IN ITEMS markdown json)
-  execute_process(
-    COMMAND "${LIQUID_CLI}" docs --format "${format}" --out "${LIQUID_REFERENCE_OUTPUT}"
-    RESULT_VARIABLE result
-    OUTPUT_VARIABLE output
-    ERROR_VARIABLE error)
-  if(NOT result EQUAL 0)
-    message(FATAL_ERROR "liquid docs --format ${format} failed: ${output}${error}")
-  endif()
-endforeach()
-
 file(GLOB_RECURSE expected_files
   RELATIVE "${LIQUID_REFERENCE_SOURCE}"
   "${LIQUID_REFERENCE_SOURCE}/*")
@@ -31,7 +18,7 @@ list(SORT expected_files)
 list(SORT actual_files)
 if(NOT expected_files STREQUAL actual_files)
   message(FATAL_ERROR
-    "generated CLI reference file list is stale\nexpected: ${expected_files}\nactual: ${actual_files}")
+    "generated CLI reference file list is stale\nRefresh with: ${LIQUID_CLI} docs --format markdown --out ${LIQUID_REFERENCE_SOURCE} && ${LIQUID_CLI} docs --format json --out ${LIQUID_REFERENCE_SOURCE}\nexpected: ${expected_files}\nactual: ${actual_files}")
 endif()
 
 foreach(path IN LISTS expected_files)
@@ -41,6 +28,7 @@ foreach(path IN LISTS expected_files)
       "${LIQUID_REFERENCE_OUTPUT}/${path}"
     RESULT_VARIABLE comparison)
   if(NOT comparison EQUAL 0)
-    message(FATAL_ERROR "generated CLI reference is stale: ${path}")
+    message(FATAL_ERROR
+      "generated CLI reference is stale: ${path}\nRefresh with: ${LIQUID_CLI} docs --format markdown --out ${LIQUID_REFERENCE_SOURCE} && ${LIQUID_CLI} docs --format json --out ${LIQUID_REFERENCE_SOURCE}")
   endif()
 endforeach()

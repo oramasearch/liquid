@@ -24,7 +24,9 @@ description, and default. The same records validate command-line flags and rende
 
 `cli-help-docs` compares commands and flags in both directions, rejects an undeclared option for
 every command, and checks the committed reference. `cli-reference-docs` regenerates Markdown and
-stable JSON and fails when any generated file differs.
+stable JSON during the build and fails when the generated copy differs from the committed tree.
+Regular builds also run the `liquid-reference-docs` target, which writes a fresh reference from the
+built binary under the build directory before CTest compares it with the committed copy.
 | Command | Usage | Description | Availability |
 |---|---|---|---|
 | `version` | `version [--json]` | Print the library version. | available |

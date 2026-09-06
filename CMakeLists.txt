@@ -604,6 +604,23 @@ if(LIQUID_BUILD_CLI)
   target_link_libraries(liquid-cli PRIVATE
     liquid::liquid Boost::corosio Boost::corosio_openssl Boost::http Boost::json)
   target_include_directories(liquid-cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+  # Keep a build-tree reference beside the binary.  The CTest below compares this
+  # binary-produced tree with the committed documentation.
+  set(LIQUID_REFERENCE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/reference/cli)
+  set(LIQUID_REFERENCE_STAMP ${CMAKE_CURRENT_BINARY_DIR}/reference/generated.stamp)
+  add_custom_command(
+    OUTPUT ${LIQUID_REFERENCE_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format markdown --out ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND $<TARGET_FILE:liquid-cli> docs --format json --out ${LIQUID_REFERENCE_DIRECTORY}
+    COMMAND ${CMAKE_COMMAND} -E touch ${LIQUID_REFERENCE_STAMP}
+    DEPENDS liquid-cli
+    VERBATIM)
+  add_custom_target(liquid-reference-docs ALL
+    DEPENDS ${LIQUID_REFERENCE_STAMP})
+
   set(LIQUID_MAN_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/man)
   add_custom_command(
     OUTPUT ${LIQUID_MAN_DIRECTORY}/generated.stamp
