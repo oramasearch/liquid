@@ -44,6 +44,7 @@
 #include "build/verify.hpp"
 #include "build/why.hpp"
 #include "build/wrap.hpp"
+#include "data/environment.hpp"
 #include "formats/json.hpp"
 #include "liquid/graph.hpp"
 #include "objects/records.hpp"
@@ -1248,6 +1249,12 @@ auto fixed_environment(const wrap_options& options) -> std::map<std::string, std
     return environment;
 }
 
+auto has_data_url(const std::map<std::string, std::string>& environment) -> bool {
+    return std::ranges::any_of(environment, [](const auto& item) {
+        return item.second.starts_with("postgresql://") || item.second.starts_with("postgres://");
+    });
+}
+
 auto contains_argument(const std::vector<std::string>& command, std::string_view prefix) -> bool {
     return std::ranges::any_of(command, [&](const auto& argument) {
         return std::string_view{argument}.starts_with(prefix);
@@ -1722,8 +1729,8 @@ auto write_toolchain(const std::filesystem::path& path, digest value) -> liquid:
     return {};
 }
 
-runtime::task<digest> store_sandbox(repository& source) {
-    auto encoded = objects::encode(wrap_sandbox_definition());
+runtime::task<digest> store_sandbox(repository& source, bool network) {
+    auto encoded = objects::encode(wrap_sandbox_definition(network));
     if (!encoded)
         co_return std::unexpected(encoded.error());
     co_return co_await repository_detail::build_access::put_record(source, std::move(*encoded));
@@ -2420,7 +2427,8 @@ execute_observed_run(repository& source,
                                                        .trace = trace,
                                                        .plan = plan_path,
                                                        .command = {},
-                                                       .environment = environment};
+                                                       .environment = environment,
+                                                       .network = has_data_url(environment)};
     const auto started_at =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     auto seeded = co_await launch_seed_processes(request, commands->seeds, options.jobs);
@@ -2786,7 +2794,7 @@ runtime::task<void> publish_observed_run(repository& source,
 
 } // namespace
 
-objects::sandbox_record wrap_sandbox_definition() {
+objects::sandbox_record wrap_sandbox_definition(bool network) {
     return {.mechanism = "wrap user+mount+net namespaces with exec-time hook v1",
             .work_root = "/liquid/work/",
             .toolchain_root = "/usr/",
@@ -2794,7 +2802,7 @@ objects::sandbox_record wrap_sandbox_definition() {
             .temporary_root = "/tmp/",
             .fixed_environment =
                 {"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH", "ZERO_AR_DATE"},
-            .network = false,
+            .network = network,
             .output_normalisers = build_detail::output_normaliser_rules()};
 }
 
@@ -2809,6 +2817,10 @@ runtime::task<std::pair<digest, std::string>> phase2_toolchain(repository& sourc
                                                                std::string_view cwd,
                                                                std::string_view command) {
     co_return co_await phase2_toolchain_impl(source, recorded, inputs, cwd, command);
+}
+
+runtime::task<digest> capture_toolchain(repository& source, std::set<std::string> executables) {
+    co_return co_await store_toolchain(source, executables);
 }
 
 runtime::task<action_result> run_wrapped_action(repository& source,
@@ -2882,7 +2894,8 @@ runtime::task<action_result> run_wrapped_action(repository& source,
                                                        .stderr_path = stderr_path,
                                                        .cwd = cwd,
                                                        .command = action.input.command,
-                                                       .environment = std::move(environment)};
+                                                       .environment = std::move(environment),
+                                                       .network = has_data_url(action.input.env)};
     build_detail::testing::record_sandbox_spawn();
     auto launched = co_await runtime::offload(
         [request = std::move(request)] { return sandbox_detail::launch_wrap(request); });
@@ -3001,6 +3014,21 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!facts_key)
         co_return std::unexpected(facts_key.error());
     auto action_environment = fixed_environment(options);
+    if (options.session) {
+        auto data_repository =
+            co_await repository::open(working_tree, repository_options{.session = options.session});
+        if (!data_repository) {
+            co_return std::unexpected(data_repository.error());
+        }
+        auto data_environment =
+            data_detail::session_environment(*data_repository, *options.session);
+        if (!data_environment) {
+            co_return std::unexpected(data_environment.error());
+        }
+        for (auto& [name, value] : *data_environment) {
+            action_environment.insert_or_assign(std::move(name), std::move(value));
+        }
+    }
     apply_install_conventions(command, options);
     const auto fact_variables = build_detail::cached_variables(facts, *facts_key);
     apply_cached_variables(command, action_environment, fact_variables);
@@ -3093,7 +3121,7 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
                 co_return std::unexpected(pinned.error());
         }
     }
-    auto sandbox = co_await store_sandbox(*source);
+    auto sandbox = co_await store_sandbox(*source, has_data_url(action_environment));
     if (!sandbox)
         co_return std::unexpected(sandbox.error());
     auto report = wrap_report{};

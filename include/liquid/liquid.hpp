@@ -7,6 +7,7 @@
 #include "liquid/build.hpp"
 #include "liquid/cms.hpp"
 #include "liquid/daemon.hpp"
+#include "liquid/data.hpp"
 #include "liquid/delta.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/edit.hpp"

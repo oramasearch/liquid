@@ -221,6 +221,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > atomic manifest replacement makes the whole change visible at once. Identical blobs are indexed
 > once even when several paths refer to them. Named refs use snapshot-specific index slots.
 
+> **Agent application-data branching is implemented for PostgreSQL template copies.** Persisted
+> declarations create one isolated branch per session, guarded promotion refuses a changed base,
+> discard removes disposable data, and status plus `liquid data` expose the live lifecycle. A
+> session-scoped `wrap` receives branch URLs in a network-enabled sandbox. The reflink capability
+> selector is implemented; local cluster control metadata remains required for that lifecycle fast
+> path.
 > **Phase 5 now includes the format registry and its first five codecs.** ZIP, tar, HDF5, Parquet,
 > and SQLite are decoded without format-vendor libraries through a versioned C module ABI. Format
 > trees drive opt-in repository and CLI container diffs, archive entries use `!/` paths in search,
@@ -284,6 +290,7 @@ and Zetta's.
 - [`docs/library/admission.md`](docs/library/admission.md) — image provenance, admission policy, evidence and log verification, TLS, decisions, and deployment boundaries.
 - [`docs/api/admission.md`](docs/api/admission.md) — webhook, control, metrics, REST, OpenAPI, and MCP routes.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, public build streams and ordering, JSON projection, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
+- [`docs/library/data-branching.md`](docs/library/data-branching.md) — the decided per-session PostgreSQL data-branch lifecycle, guarded promotion, template-copy baseline, and local reflink fast path.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
