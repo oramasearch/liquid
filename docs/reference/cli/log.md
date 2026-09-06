@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps
+liquid log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify <log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> <identity>
 ```
 
 ## Description
 
-Show named changes or the signed drips and operation metadata that produced them.
+Show repository history, verify timestamp or transparency-log evidence, and scan log identities.
 
 ## Options
 
@@ -27,7 +27,7 @@ available
 ## Examples
 
 ```sh
-liquid log --ops --json
+liquid log verify https://log.example.invalid <attestation-base64url>
 ```
 
 ## Exit status

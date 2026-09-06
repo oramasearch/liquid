@@ -19,6 +19,7 @@ auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
 auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
+auto transparency_log(int argc, char** argv) -> int;
 auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
 auto diff(int argc, char** argv) -> int;
@@ -485,15 +486,18 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::project},
     {"log",
-     "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps",
-     "show or verify change, signed drip, or timestamp history",
+     "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
+     "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "
+     "<identity>",
+     "show or verify change, signed drip, timestamp, or transparency-log history",
      "available",
      flags_log,
-     "Show named changes or the signed drips and operation metadata that produced them.",
-     "liquid log --ops --json",
+     "Show repository history, verify timestamp or transparency-log evidence, and scan log "
+     "identities.",
+     "liquid log verify https://log.example.invalid <attestation-base64url>",
      normal_exit,
      argument_policy::ordinary,
-     liquid_cli::repo_log},
+     liquid_cli::transparency_log},
     {"cut",
      "cut <message>",
      "cut the working change",
