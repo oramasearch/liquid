@@ -1,6 +1,8 @@
-# Private HTTP client
+# Private network request layer
 
-`http_client.*` owns liquid's reusable HTTP/1.1 client transport: URL parsing, request framing,
-Corosio connection and TLS setup, response framing, and chunked transfer decoding. Protocol clients
-remain responsible for their media types and response envelopes. Public APIs expose Capy tasks and
-standard liquid values; Boost.HTTP and Corosio stay behind this private boundary.
+`http_client.*` provides URL decomposition and protocol-neutral request and response values for
+private clients. Its only transport is `src/http1/client.cpp`, which owns Corosio connection, TLS
+peer verification, HTTP/1.1 framing, and chunked transfer decoding. Forge builds its JSON and Lake
+envelope mapping over these request values; sealed secrets use them for their public-key lookup.
+
+Public headers expose only Capy tasks and liquid values. Boost.HTTP and Corosio remain private.

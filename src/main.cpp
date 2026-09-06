@@ -72,6 +72,7 @@ auto abi(int argc, char** argv) -> int;
 auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
+auto review(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -154,6 +155,11 @@ constexpr auto commands = std::to_array<command>({
      "pull repository changes and objects",
      "available",
      liquid_cli::sync_pull},
+    {"review",
+     "review <list|show|open|comment|approve|close|protections|watch> --lake <url> [--json] ...",
+     "review a lake change in place",
+     "available",
+     liquid_cli::review},
     {"serve",
      "serve sync <path> [...] | serve admission --policy <file> [...]",
      "serve repository sync or image admission",

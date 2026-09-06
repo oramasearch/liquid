@@ -79,6 +79,9 @@ by dependency; conflict and package-choice explanations use the stable library f
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`review.cpp` implements lake review listing, display, creation, anchored comments, state updates,
+branch protections, and the polling watch entirely through `forge_client`. It reads `LIQUID_TOKEN`
+for the bearer and pins both line-oriented text and JSON output without exposing the token.
 `secret.cpp` fetches Lake sealing keys, seals stdin or file values, emits canonical CBOR or base64,
 and performs local break-glass unsealing through the public secret API. Private-key files must be
 32 raw bytes with mode `0600` on POSIX systems; key and value bytes are never written to errors.
