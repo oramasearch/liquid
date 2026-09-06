@@ -1309,8 +1309,10 @@ TEST(RepositoryLocks, concurrent_offline_locks_reconcile_as_a_conflict_value) {
     auto conflicts = liquid::runtime::block_on(peer->conflicts());
     ASSERT_TRUE(conflicts) << conflicts.error().message;
     ASSERT_EQ(conflicts->size(), 1U);
-    EXPECT_EQ(conflicts->front().path, "models/catalog.bin");
-    EXPECT_EQ(conflicts->front().refs.size(), 2U);
+    EXPECT_EQ(conflicts->front().region.path, "models/catalog.bin");
+    EXPECT_EQ(conflicts->front().kind, liquid::conflict_kind::crdt_suspicious);
+    EXPECT_NE(liquid::to_string(conflicts->front().left), liquid::to_string(liquid::digest{}));
+    EXPECT_NE(liquid::to_string(conflicts->front().right), liquid::to_string(liquid::digest{}));
     auto peer_locks = liquid::runtime::block_on(peer->locks());
     ASSERT_TRUE(peer_locks) << peer_locks.error().message;
     ASSERT_EQ(peer_locks->size(), 1U);

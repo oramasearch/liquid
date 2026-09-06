@@ -79,6 +79,10 @@ All producers construct `liquid::conflict` and pass it to `repository::record_co
 - a CRDT integration that detects a suspicious converged result records `crdt-suspicious`. The
   CLI fixture is the current test double for that producer.
 
+Concurrent lock reconciliation emits `crdt-suspicious` with the competing lock records as its
+three values. A lock-only path has no tree entry, so the value remains visible in status and sync
+without blocking an unrelated build.
+
 Drive reconciliation also stores its content and delete/edit collisions through this record type.
 It may continue showing a deterministic alternate filename for the competing value, but status and
 retention use the conflict object rather than a drive-only representation.

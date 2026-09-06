@@ -3269,15 +3269,6 @@ runtime::task<void> reconcile_lock_drips(repository_document& candidate,
                 return value.path == decoded->lock->path;
             });
         if (!duplicate) {
-            auto parts = split_path(decoded->lock->path);
-            if (!parts) {
-                co_return std::unexpected(parts.error());
-            }
-            const auto* selected = lookup(candidate.root, *parts);
-            if (!selected) {
-                co_return std::unexpected(
-                    failure(errc::corrupt, "lock conflict path is absent", decoded->lock->path));
-            }
             auto value =
                 conflict{.base = *local_id,
                          .left = *local_id,
@@ -3294,16 +3285,10 @@ runtime::task<void> reconcile_lock_drips(repository_document& candidate,
             if (!id) {
                 co_return std::unexpected(id.error());
             }
-            auto selected_kind = node_kind::blob;
-            if (selected->kind == entry_kind::directory) {
-                selected_kind = node_kind::tree;
-            } else if (selected->kind == entry_kind::nested_repository) {
-                selected_kind = node_kind::repo;
-            }
             candidate.conflict_values.push_back({.path = decoded->lock->path,
                                                  .id = *id,
-                                                 .selected = selected->object,
-                                                 .selected_kind = selected_kind});
+                                                 .selected = *local_id,
+                                                 .selected_kind = node_kind::blob});
         }
     }
     co_return result<void>{};
