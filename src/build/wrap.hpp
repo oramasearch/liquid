@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -17,7 +18,7 @@ struct sandbox_record;
 
 namespace liquid::build {
 
-[[nodiscard]] objects::sandbox_record wrap_sandbox_definition();
+[[nodiscard]] objects::sandbox_record wrap_sandbox_definition(bool network = false);
 [[nodiscard]] liquid::result<std::filesystem::path>
 wrap_cache_directory(const std::filesystem::path& working_tree);
 [[nodiscard]] runtime::task<std::pair<digest, std::string>>
@@ -26,6 +27,8 @@ phase2_toolchain(repository& source,
                  digest inputs,
                  std::string_view cwd,
                  std::string_view command);
+[[nodiscard]] runtime::task<digest> capture_toolchain(repository& source,
+                                                      std::set<std::string> executables);
 [[nodiscard]] runtime::task<action_result> run_wrapped_action(repository& source,
                                                               const objects::action_record& action,
                                                               const action_result& expected,

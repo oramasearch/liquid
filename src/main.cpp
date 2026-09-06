@@ -62,6 +62,7 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto data(int argc, char** argv) -> int;
 auto drive(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
@@ -134,6 +135,13 @@ constexpr auto flags_history = std::to_array<flag>({
 });
 constexpr auto flags_drive = std::to_array<flag>({
     {"--watch", {}, "Continue synchronizing after the first successful transfer.", "false"},
+});
+constexpr auto flags_data = std::to_array<flag>({
+    {"--session",
+     "<id>",
+     "Select the session to branch for an application database.",
+     "new session"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
 constexpr auto flags_serve = std::to_array<flag>({
     {"--listen", "<address>", "Select the listener address.", "127.0.0.1"},
@@ -356,6 +364,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_status},
+    {"data",
+     "data branch <database> [--session <id>] | data list [--json] | data <discard|promote> <id>",
+     "manage session database branches",
+     "available with PostgreSQL client tools",
+     flags_data,
+     "Create, list, discard, or promote PostgreSQL branches bound to repository sessions.",
+     "liquid data branch application --session 0123456789abcdef0123456789abcdef",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::data},
     {"write",
      "write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... "
      "[--on-stale refuse|disjoint|force]",

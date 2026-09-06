@@ -32,6 +32,7 @@ built binary under the build directory before CTest compares it with the committ
 | `version` | `version [--json]` | Print the library version. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `status` | `status [--json]` | Show repository status. | available |
+| `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
@@ -71,6 +72,8 @@ built binary under the build directory before CTest compares it with the committ
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--session <id>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--install-prefix <path>] [--allow-embedded-prefix] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions or publish a checked install tree. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
@@ -96,6 +99,8 @@ built binary under the build directory before CTest compares it with the committ
 
 ## Output and errors
 
+`status`, `data list`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`,
+and `cache stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
 `wrap --install-prefix /opt/example` stages install output beneath the fixed sandbox output root,
 passes the logical prefix to CMake or a direct Autotools configure command, and publishes an
 unrooted install tree. An embedded sandbox prefix, declared prefix, absolute binary lookup path, or
@@ -113,7 +118,8 @@ may be narrowed by repeating `--path` or `--drip`; those selectors require `--se
 be combined with a positional operation ID.
 
 `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
-but not present in the local store, plus `agents.require_base` and the configured actor list.
+but not present in the local store, plus `agents.require_base`, the configured actor list, and one
+row per live application-data branch. JSON status returns those records in `data_branches`.
 Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
@@ -338,6 +344,15 @@ to the platform cache directory and can be relocated with `LIQUID_WRAP_CACHE`. O
 `wrap` reports graph validation backlog and the last divergence, then schedules the configured
 graph and action verification samples on the shared runtime; `--no-verify` skips that background
 work.
+
+`data branch <database> [--session <id>]` creates one branch from the persisted declaration. An
+omitted session gets a new random ID; pass that printed ID to `wrap --session <id>`. `data list`
+prints live records in creation order, and `--json` produces an array. `data discard <id>` removes
+the disposable database. `data promote <id>` replaces the base only when it has not changed since
+the branch point and otherwise exits with a conflict reason. Branch and list output include the
+branch URL needed by a session but never print the configured base URL. A session wrap refuses to
+start unless every declared database has a live branch and adds each branch URL to the fixed action
+environment before action identity is computed.
 
 `--target <triple>` selects configure facts for that target. A foreign target is lookup-only: if
 an Autotools `conftest` or CMake `try_compile` is not answered by matching facts, `wrap` reports an

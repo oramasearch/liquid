@@ -78,6 +78,10 @@ publication, per-drip search fan-out target, public working/ref query API, and `
 Liquid #67 adds measured selection among BM25F, verified trigrams, and parallel mapped scans,
 cursor-based stale-index exclusion, common located hit records, the public executed-plan API, and
 `liquid search --explain`.
+Liquid #87 adds persisted PostgreSQL application-database declarations, isolated template-copy
+branches per session, guarded promote/discard, live-branch status and CLI commands, and
+session-scoped branch URLs in network-enabled wrapper sandboxes. The reflink capability selector
+is implemented; local cluster control metadata remains required for that lifecycle fast path.
 Liquid #29 adds the versioned format-codec C ABI and registry; dependency-free ZIP, tar, HDF5,
 Parquet, and SQLite readers; deterministic tar output; opt-in container diff; archive search; and
 content-addressed retention of decoded Tier 1 and Tier 2 entries.
@@ -417,12 +421,19 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
    same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
    `docs/library/distribution.md`.
-10. **TSA signature verification is liquid's own, verification only** (Steve, 2026-09-05;
+10. **Agent application-data isolation uses template copies with a reflink fast path** (Steve,
+   2026-09-05; liquid-bridge decision 26). Each session owns one branch per declared PostgreSQL
+   database, and its sandbox receives the branch URL rather than the base. Promotion replaces the
+   base only when a logical fingerprint proves it has not changed since branching; liquid does not
+   attempt a data merge. `CREATE DATABASE ... TEMPLATE ...` is the portable baseline. A local,
+   quiescent cluster may use APFS `clonefile` or Linux `FICLONE` plus a second server. Details:
+   `docs/library/data-branching.md`.
+11. **TSA signature verification is liquid's own, verification only** (Steve, 2026-09-05;
     bridge decision 32). RFC 3161 and RFC 4998 verification uses liquid's strict DER, CMS, X.509,
     RSA, and NIST-curve ECDSA readers and verifiers. It does not generate keys or signatures and
     does not link a general-purpose cryptography library for these operations. Design:
     `docs/library/transparency.md`.
-10. **Tier 2 tree-sitter grammars are fetched at configure time and pinned by digest** (liquid #72,
+12. **Tier 2 tree-sitter grammars are fetched at configure time and pinned by digest** (liquid #72,
     2026-09-05). One canonical lock names an exact public-upstream commit, archive SHA-256,
     generated parser SHA-256, every hand-written scanner SHA-256, tag-query SHA-256, language ABI,
     licence, and extensions. Generated parsers do not live in-tree: the digest-checked bytes have

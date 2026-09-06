@@ -9,6 +9,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`version`](version.md) | print the version | available |
 | [`init`](init.md) | create a repository and import its regular files | available |
 | [`status`](status.md) | show repository status | available |
+| [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |
 | [`write`](write.md) | write a file from a stated base | available |
 | [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
 | [`search`](search.md) | search paths and contents | available |
