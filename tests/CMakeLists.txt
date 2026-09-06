@@ -404,16 +404,25 @@ target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_ma
 gtest_discover_tests(liquid-format-tests)
 
 add_executable(liquid-encryption-tests
+  encryption/test_custody.cpp
   encryption/test_leaf.cpp
   encryption/test_repository_leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp
   ${PROJECT_SOURCE_DIR}/src/encryption/leaf.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
-  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp
+  ${PROJECT_SOURCE_DIR}/src/hash/sha256.c
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/age.cpp
+  ${PROJECT_SOURCE_DIR}/src/identity/custody/common.cpp)
+if(UNIX)
+  target_sources(liquid-encryption-tests PRIVATE encryption/test_remote_custody.cpp)
+endif()
 target_include_directories(liquid-encryption-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
+target_compile_definitions(liquid-encryption-tests PRIVATE
+  LIQUID_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(liquid-encryption-tests PRIVATE
   liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main)
 gtest_discover_tests(liquid-encryption-tests)

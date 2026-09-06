@@ -40,6 +40,7 @@ struct LIQUID_EXPORT store_options {
     algorithm hash_algorithm{algorithm::blake3};
     std::uint64_t pack_size{};
     std::shared_ptr<keyring> keys;
+    std::map<std::string, std::string> custody;
     std::string write_key;
     bool durable{};
     std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
