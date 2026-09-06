@@ -128,7 +128,7 @@ specifies it.
 |---|---|---|
 | [01](01-object-model-and-storage.md) | Object model and storage | The chunk store, Merkle DAG, large-file support, and how everything else sits on it. |
 | [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, splitting and merging unrelated codebases. |
-| [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML. |
+| [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML, with a generated codec-tier table. |
 | [04](04-build-engine.md) | Build engine | The incremental query graph, actions, typed `.liquid` targets, early cutoff, compile-as-you-type, and local critical-path traces. |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
@@ -141,7 +141,7 @@ specifies it.
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
 | [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |
 | [15](15-consumer-sync-and-web.md) | Consumer sync and web | The drive client and Linux desktop state, hydration, offline, and badge integration are implemented; native Windows/macOS and web surfaces follow. |
-| [16](16-universality.md) | Universality | Every language, platform and operating system — what that commitment actually requires. |
+| [16](16-universality.md) | Universality | Every language, platform and operating system, declared through the generated support matrix. |
 | [17](17-implementation.md) | Implementation | C++26, the component inventory, and the build order. |
 | [18](18-lake-service.md) | **lake.live** | The hosted service: GitHub + Google Drive + Railway over one store. |
 | [19](19-identity.md) | Identity and auth | Clerk-quality auth, and why identity is the trust root for the whole chain of custody. |

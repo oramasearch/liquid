@@ -46,6 +46,12 @@ configured declaratively. A node runs a signed image identified by hash — whic
 exactly liquid's worldview, and liquid produces and signs that image itself
 ([08](08-packaging-and-images.md), [10](10-supply-chain.md)).
 
+**Implemented for liquid #78:** a digest-pinned base OS tree and declared overlays project to an
+OSTree commit and a bootc OCI image whose manifest digest is the node image identity. The image
+contains the commit, ostree-ext labels, component layers, and subject-bound attestations. Producing
+kernel or bootloader bytes and booting that image on the k0s immutable node remain Phase 7; release
+signing and transparency are tracked by the release-approval work.
+
 **But keep a real break-glass path.** Losing shell access is Talos users' loudest
 complaint, and "the API is unreachable" needs an answer better than IPMI.
 

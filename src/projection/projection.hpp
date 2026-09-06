@@ -19,6 +19,10 @@ struct prepared_projection {
     std::vector<std::string> needed;
     std::vector<std::string> sonames;
     std::map<std::string, std::uint8_t> stability_layers;
+    std::map<std::string, std::uint32_t> directory_modes;
+    std::map<std::string, std::string> components;
+    std::string base_source;
+    std::vector<std::string> overlay_sources;
     bool abi_break_allowed{};
 };
 
@@ -40,6 +44,10 @@ struct prepared_projection {
 project_package(repository& source, projection_target target, prepared_projection prepared)
     -> runtime::task<projection_report>;
 [[nodiscard]] auto project_oci(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_ostree(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_bootc(repository& source, prepared_projection prepared)
     -> runtime::task<projection_report>;
 [[nodiscard]] auto project_helm(repository& source,
                                 prepared_projection prepared,
