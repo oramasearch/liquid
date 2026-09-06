@@ -27,6 +27,9 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, timestamp, or recorded operation history and verify timestamp evidence. | available |
+| `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
+| `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]>` | Synchronize or inspect a configured drive folder. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
@@ -129,6 +132,14 @@ Lake checkpoint, tile, and proof authentication remains the separate `#207` veri
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
 sets `approximate`; and a removed line or file sets `deleted`.
+`history` follows the same stable node through moves. `--restore` appends an ordinary working-tree
+drip from the selected change and leaves prior changes and refs untouched. See
+[`history.md`](history.md).
+`drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
+counts, conflicts, per-path outcomes, and per-reference outcomes. Refusal reasons are verbatim and
+make the command exit with status 1 without advancing the base. `drive status` reads the persisted
+state without contacting the server. `--watch` performs one sync and then attaches to the checkout
+daemon. See [`drive.md`](drive.md).
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
@@ -423,6 +434,10 @@ liquid facts list
 liquid facts show blake3:<fact-digest>
 liquid facts export
 liquid serve reapi --listen 127.0.0.1:8980
+liquid history src/main.cpp
+liquid history src/main.cpp --restore blake3:<change-digest>
+liquid drive sync ~/Documents https://lake.live/api/repositories/example
+liquid drive status ~/Documents
 liquid pause
 liquid resume
 liquid watch
@@ -431,9 +446,10 @@ liquid watch
 ## How to verify
 
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
-two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
-combines it, reads JSON history and signed drips through `log --ops`, reads recorded operations
-through `ops`, undoes a selected session path, verifies a locked mutation is
+two repositories, imports files, cuts changes, moves a path, lists and restores its stable-node
+history, nests a repository, splits a subtree, combines it, reads JSON history and signed drips
+through `log --ops`, checks writer-base validation from the restored change, reads recorded
+operations through `ops`, undoes a selected session path, and verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.

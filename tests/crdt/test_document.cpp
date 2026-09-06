@@ -7,6 +7,7 @@
 
 namespace {
 
+using liquid::crdt::directory_document;
 using liquid::crdt::document;
 using liquid::crdt::operation;
 using liquid::crdt::operation_kind;
@@ -59,6 +60,31 @@ void sync(document& left, document& right) {
     FAIL() << "sync did not quiesce";
 }
 
+void sync(directory_document& left, directory_document& right) {
+    auto left_state = liquid::crdt::sync_state{};
+    auto right_state = liquid::crdt::sync_state{};
+    for (int round = 0; round < 20; ++round) {
+        auto progress = false;
+        auto from_left = left.generate_sync_message(left_state);
+        ASSERT_TRUE(from_left.has_value()) << from_left.error().message;
+        if (*from_left) {
+            auto received = right.receive_sync_message(right_state, **from_left);
+            ASSERT_TRUE(received.has_value()) << received.error().message;
+            progress = true;
+        }
+        auto from_right = right.generate_sync_message(right_state);
+        ASSERT_TRUE(from_right.has_value()) << from_right.error().message;
+        if (*from_right) {
+            auto received = left.receive_sync_message(left_state, **from_right);
+            ASSERT_TRUE(received.has_value()) << received.error().message;
+            progress = true;
+        }
+        if (!progress)
+            return;
+    }
+    FAIL() << "directory sync did not quiesce";
+}
+
 TEST(CrdtDocument, actor_is_distinct_and_deterministic_per_device) {
     auto first = create("laptop");
     auto same = create("laptop");
@@ -67,6 +93,55 @@ TEST(CrdtDocument, actor_is_distinct_and_deterministic_per_device) {
     EXPECT_NE(first.actor(), second.actor());
     EXPECT_FALSE(
         std::ranges::all_of(first.actor(), [](auto byte) { return byte == std::byte{0}; }));
+}
+
+TEST(CrdtDirectoryDocument, preserves_the_entry_kind) {
+    auto value = directory_document::create(repository_id(), "taap:user:steve", "laptop");
+    ASSERT_TRUE(value.has_value()) << value.error().message;
+    auto id = liquid::crdt::node_id{};
+    id[0] = std::byte{0x24};
+
+    auto inserted = value->put_entry("nested", {"tree", id, 0040755, "blake3:nested"});
+    ASSERT_TRUE(inserted.has_value()) << inserted.error().message;
+    auto found = value->entry_at("nested");
+    ASSERT_TRUE(found.has_value()) << found.error().message;
+    ASSERT_TRUE(*found);
+    EXPECT_EQ((*found)->kind, "tree");
+    EXPECT_EQ((*found)->id, id);
+
+    auto saved = value->save();
+    ASSERT_TRUE(saved.has_value()) << saved.error().message;
+    auto reopened = directory_document::load(*saved, "taap:user:steve", "reopened");
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().message;
+    auto entries = reopened->entries();
+    ASSERT_TRUE(entries.has_value()) << entries.error().message;
+    ASSERT_EQ(entries->size(), 1U);
+    EXPECT_EQ(entries->front().name, "nested");
+    EXPECT_EQ(entries->front().value.kind, "tree");
+    EXPECT_EQ(entries->front().value.id, id);
+
+    auto second_id = liquid::crdt::node_id{};
+    second_id[0] = std::byte{0x25};
+    auto second = reopened->put_entry("second", {"tree", second_id, 0040755, "blake3:second"});
+    ASSERT_TRUE(second.has_value()) << second.error().message;
+    auto sync_bytes = reopened->save_sync();
+    ASSERT_TRUE(sync_bytes.has_value()) << sync_bytes.error().message;
+    auto sync_copy = directory_document::load_sync(*sync_bytes, "taap:user:steve", "sync-copy");
+    ASSERT_TRUE(sync_copy.has_value()) << sync_copy.error().message;
+    auto copied = sync_copy->entry_at("second");
+    ASSERT_TRUE(copied.has_value()) << copied.error().message;
+    ASSERT_TRUE(*copied);
+    EXPECT_EQ((*copied)->kind, "tree");
+    EXPECT_EQ((*copied)->id, second_id);
+
+    auto peer = directory_document::create_sync_receiver("taap:peer", "peer");
+    ASSERT_TRUE(peer.has_value()) << peer.error().message;
+    sync(*peer, *sync_copy);
+    auto peer_entry = peer->entry_at("second");
+    ASSERT_TRUE(peer_entry.has_value()) << peer_entry.error().message;
+    ASSERT_TRUE(*peer_entry);
+    EXPECT_EQ((*peer_entry)->kind, "tree");
+    EXPECT_EQ((*peer_entry)->id, second_id);
 }
 
 TEST(CrdtDocument, save_and_load_round_trip) {

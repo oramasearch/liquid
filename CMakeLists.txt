@@ -378,6 +378,7 @@ add_library(libliquid
   src/daemon.cpp
   src/daemon/fanout.cpp
   src/drip.cpp
+  src/drive/client.cpp
   src/delta.cpp
   src/edit.cpp
   src/edit_codec.cpp
@@ -539,6 +540,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/compose.cpp
     src/cli/delta.cpp
     src/cli/edit.cpp
+    src/cli/drive.cpp
     src/cli/gc.cpp
     src/cli/facts.cpp
     src/cli/git.cpp

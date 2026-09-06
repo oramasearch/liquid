@@ -35,7 +35,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
-> HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
+> HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
+> three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
+> per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the
+> daemon drive target. VFS full materialisation works on every platform;
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, historical document state, composition,
@@ -44,8 +47,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > one-drip streaming file writes, and caller-stated write bases with stale-reasoning refusal,
 > disjoint re-validation, and forced re-planning records are implemented. TAAP/1 identities with rotation and signed drips and changes, the internal
 > CRDT metadata document, canonical CBOR codec, and drip journal are implemented behind libliquid.
-> Directory CRDT checkpoints are compact and shallow-loaded, remote changes are observed through
-> patches, and every automerge apply, merge, and sync-receive failure is checked.
+> Directory CRDT checkpoints prefer compact bytes with checked full-history fallback and reopen as
+> sync-capable documents; remote changes are observed through patches, and every automerge apply,
+> merge, and sync-receive failure is checked.
 > The `liquid` binary is the documented thin client of the Phase 1 repository, capture, VFS, store,
 > and identity APIs plus the Phase 2 build wrapper. `liquid gc --explain` reports why retained chunks are live. Repository path
 > rules encrypt selected JSON and `.env` leaf values while leaving their structure visible, with
@@ -229,6 +233,8 @@ and Zetta's.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
+- [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, conflicts, transfer resume, path history, and daemon watching.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.
 - [`docs/library/gc.md`](docs/library/gc.md) — leased roots, retention rules, cost-aware result eviction, epoch marking, reference extraction, and crash-safe sweep ordering.
