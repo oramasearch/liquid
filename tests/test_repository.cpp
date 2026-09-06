@@ -136,6 +136,12 @@ auto encrypted_options(const std::shared_ptr<liquid::keyring>& keys) -> liquid::
     return options;
 }
 
+auto exclusive_checkout_options(std::string pattern = "**") -> liquid::repository_options {
+    auto options = liquid::repository_options{};
+    options.locks.rules.push_back({"exclusive-checkout", {std::move(pattern)}});
+    return options;
+}
+
 auto peak_rss_bytes() -> std::uint64_t {
 #if defined(_WIN32)
     return 0;
@@ -1176,7 +1182,8 @@ TEST(Repository, write_modes_and_nested_references_are_preserved) {
 
 TEST(Repository, write_undo_and_locks_are_recorded) {
     temporary_repository location;
-    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create(location.path(), exclusive_checkout_options()));
     ASSERT_TRUE(created);
     auto repository = std::move(*created);
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("value"))));
@@ -1186,11 +1193,127 @@ TEST(Repository, write_undo_and_locks_are_recorded) {
     EXPECT_FALSE(missing);
     ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("value"))));
     ASSERT_TRUE(liquid::runtime::block_on(repository.lock("file")));
-    auto refused = liquid::runtime::block_on(repository.write("file", content("replacement")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("replacement"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.unlock("file")));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("after unlock"))));
+}
+
+TEST(RepositoryLocks, another_identity_is_refused_with_holder_time_and_reason) {
+    temporary_repository location;
+    const auto first_home = location.path().parent_path() / "lock-identity-first";
+    const auto second_home = location.path().parent_path() / "lock-identity-second";
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
+    auto identity_home = scoped_liquid_home{first_home};
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create(location.path(), exclusive_checkout_options("assets/**")));
+    ASSERT_TRUE(created) << created.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(created->write("assets/model.bin", content("original"))));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(created->lock("assets/model.bin", "large binary update")));
+    auto locks = liquid::runtime::block_on(created->locks());
+    ASSERT_TRUE(locks) << locks.error().message;
+    ASSERT_EQ(locks->size(), 1U);
+    const auto holder = locks->front().holder.taap_id;
+    const auto since = std::to_string(locks->front().since.time_since_epoch().count());
+    EXPECT_EQ(locks->front().reason, "large binary update");
+    EXPECT_EQ(locks->front().authority, liquid::lock_authority::advisory);
+    EXPECT_TRUE(
+        liquid::runtime::block_on(created->write("assets/model.bin", content("holder update"))));
+
+    identity_home.set(second_home);
+    auto other = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(other) << other.error().message;
+    auto refused =
+        liquid::runtime::block_on(other->write("assets/model.bin", content("other update")));
     ASSERT_FALSE(refused);
     EXPECT_EQ(refused.error().code, liquid::errc::locked);
-    ASSERT_TRUE(liquid::runtime::block_on(repository.unlock("file")));
-    ASSERT_TRUE(liquid::runtime::block_on(repository.write("file", content("replacement"))));
+    EXPECT_NE(refused.error().message.find(holder), std::string::npos);
+    EXPECT_NE(refused.error().message.find(since), std::string::npos);
+    EXPECT_NE(refused.error().message.find("large binary update"), std::string::npos);
+    auto nested_lock =
+        liquid::runtime::block_on(other->lock("assets/model.bin/part", "nested claim"));
+    ASSERT_FALSE(nested_lock);
+    EXPECT_EQ(nested_lock.error().code, liquid::errc::locked);
+    auto wrong_release = liquid::runtime::block_on(other->unlock("assets/model.bin"));
+    ASSERT_FALSE(wrong_release);
+    EXPECT_EQ(wrong_release.error().code, liquid::errc::unauthorized);
+
+    ASSERT_TRUE(liquid::runtime::block_on(created->unlock("assets/model.bin")));
+    other = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(other) << other.error().message;
+    EXPECT_TRUE(
+        liquid::runtime::block_on(other->write("assets/model.bin", content("after release"))));
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
+}
+
+TEST(RepositoryLocks, connected_authority_approves_acquire_and_release) {
+    temporary_repository location;
+    auto requests = std::vector<liquid::lock_authorization_request>{};
+    auto options = exclusive_checkout_options("generated/**");
+    options.authorize_lock =
+        [&requests](liquid::lock_authorization_request request) -> liquid::runtime::task<void> {
+        requests.push_back(std::move(request));
+        co_return liquid::result<void>{};
+    };
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created) << created.error().message;
+    ASSERT_TRUE(
+        liquid::runtime::block_on(created->lock("generated/archive.zip", "regenerate archive")));
+    auto locks = liquid::runtime::block_on(created->locks());
+    ASSERT_TRUE(locks) << locks.error().message;
+    ASSERT_EQ(locks->size(), 1U);
+    EXPECT_EQ(locks->front().authority, liquid::lock_authority::lake);
+    auto offline = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(offline) << offline.error().message;
+    auto offline_release = liquid::runtime::block_on(offline->unlock("generated/archive.zip"));
+    ASSERT_FALSE(offline_release);
+    EXPECT_EQ(offline_release.error().code, liquid::errc::unavailable);
+    ASSERT_TRUE(liquid::runtime::block_on(created->unlock("generated/archive.zip")));
+    ASSERT_EQ(requests.size(), 2U);
+    EXPECT_EQ(requests.front().operation, liquid::lock_operation::acquire);
+    EXPECT_EQ(requests.back().operation, liquid::lock_operation::release);
+    EXPECT_EQ(requests.front().value.path, "generated/archive.zip");
+}
+
+TEST(RepositoryLocks, concurrent_offline_locks_reconcile_as_a_conflict_value) {
+    temporary_repository source_path;
+    temporary_repository peer_path;
+    const auto first_home = source_path.path().parent_path() / "sync-lock-identity-first";
+    const auto second_home = source_path.path().parent_path() / "sync-lock-identity-second";
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
+    auto identity_home = scoped_liquid_home{first_home};
+    auto source = liquid::runtime::block_on(
+        liquid::repository::create(source_path.path(), exclusive_checkout_options("models/**")));
+    ASSERT_TRUE(source) << source.error().message;
+    auto cloned = liquid::runtime::block_on(
+        liquid::repository_detail::testing::clone(*source, peer_path.path()));
+    ASSERT_TRUE(cloned) << cloned.error().message;
+    cloned = liquid::repository{};
+
+    identity_home.set(second_home);
+    auto peer = liquid::runtime::block_on(liquid::repository::open(peer_path.path()));
+    ASSERT_TRUE(peer) << peer.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(peer->lock("models/catalog.bin", "peer rebuild")));
+    ASSERT_TRUE(liquid::runtime::block_on(source->lock("models/catalog.bin", "source rebuild")));
+    const auto items = exported_items(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    auto imported = liquid::runtime::block_on(peer->import_drips(*items));
+    ASSERT_TRUE(imported) << imported.error().message;
+
+    auto conflicts = liquid::runtime::block_on(peer->conflicts());
+    ASSERT_TRUE(conflicts) << conflicts.error().message;
+    ASSERT_EQ(conflicts->size(), 1U);
+    EXPECT_EQ(conflicts->front().path, "models/catalog.bin");
+    EXPECT_EQ(conflicts->front().refs.size(), 2U);
+    auto peer_locks = liquid::runtime::block_on(peer->locks());
+    ASSERT_TRUE(peer_locks) << peer_locks.error().message;
+    ASSERT_EQ(peer_locks->size(), 1U);
+    EXPECT_EQ(peer_locks->front().reason, "peer rebuild");
+    std::filesystem::remove_all(first_home);
+    std::filesystem::remove_all(second_home);
 }
 
 TEST(Repository, journal_replays_a_write_before_the_next_checkpoint) {
@@ -1567,7 +1690,8 @@ TEST(Repository, operations_are_newest_first_with_their_metadata) {
 
 TEST(Repository, undo_by_operation_id_reverses_write_record_and_lock) {
     temporary_repository location;
-    auto created = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create(location.path(), exclusive_checkout_options()));
     ASSERT_TRUE(created) << created.error().message;
     auto repository = std::move(*created);
 

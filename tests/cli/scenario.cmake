@@ -17,6 +17,18 @@ function(run_liquid output error result directory)
   set("${result}" "${command_result}" PARENT_SCOPE)
 endfunction()
 
+function(run_liquid_as output error result directory identity)
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "LIQUID_HOME=${identity}" "${LIQUID_CLI}" ${ARGN}
+    WORKING_DIRECTORY "${directory}"
+    RESULT_VARIABLE command_result
+    OUTPUT_VARIABLE command_output
+    ERROR_VARIABLE command_error)
+  set("${output}" "${command_output}" PARENT_SCOPE)
+  set("${error}" "${command_error}" PARENT_SCOPE)
+  set("${result}" "${command_result}" PARENT_SCOPE)
+endfunction()
+
 function(require_success result output error)
   if(NOT ${result} EQUAL 0)
     message(FATAL_ERROR "liquid failed with ${${result}}:\n${${output}}${${error}}")
@@ -29,6 +41,8 @@ file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/workspace/notes")
 file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/other")
 file(WRITE "${LIQUID_CLI_ROOT}/workspace/first.txt" "first\n")
 file(WRITE "${LIQUID_CLI_ROOT}/workspace/notes/second.txt" "second\n")
+file(WRITE "${LIQUID_CLI_ROOT}/workspace/liquid.liquid"
+  "lock nested { paths: [path \"nested\"] }\n")
 file(WRITE "${LIQUID_CLI_ROOT}/other/child.txt" "child\n")
 
 set(workspace "${LIQUID_CLI_ROOT}/workspace")
@@ -189,7 +203,8 @@ if(NOT session_applied)
 endif()
 run_liquid(lock_output lock_error lock_result "${workspace}" lock nested)
 require_success(lock_result lock_output lock_error)
-run_liquid(locked_output locked_error locked_result "${workspace}" rm nested)
+run_liquid_as(locked_output locked_error locked_result "${workspace}"
+  "${LIQUID_CLI_ROOT}/writer-identity" rm nested)
 if(locked_result EQUAL 0)
   message(FATAL_ERROR "locked mutation unexpectedly succeeded")
 endif()

@@ -26,6 +26,11 @@ and live local-byte accounting for long-running node stores.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
+claims, exclusive checkout rules and records, transient presence, and epoch compaction reports.
+`repository.hpp` exposes lock acquisition, holder-only release, configuration, enumeration, and
+the optional connected authorization callback. `daemon.hpp` exposes lock requests and complete
+lock-set delivery to local targets.
+claims, transient presence, and epoch compaction reports.
 claims, transient presence, epoch compaction reports, and per-line actor/session/change
 attribution records used by the repository and daemon APIs.
 `tuf.hpp` defines the repository-backed trusted-root bootstrap, ordered metadata update verifier,

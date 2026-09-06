@@ -182,6 +182,15 @@ content-addressed store retains four unique payloads totalling 107 logical bytes
 24-byte `stored.txt` and 38-byte `zip64.txt` bodies are each stored once, saving 62 logical bytes.
 The repository test also counts one physical store frame for each repeated entry digest.
 
+## SquashFS writer
+
+Issue #77 adds a private SquashFS 4 writer for AppImage and Snap projection. It writes sorted
+inodes and directories, zero IDs, fixed timestamps and normalised modes. File data uses 128 KiB
+blocks and the pinned zstd compressor when compressed bytes are smaller; fragments, xattrs,
+duplicate aliases and export tables are omitted. Metadata blocks are stored uncompressed, making
+every inode and directory reference independent of compressor-version output. The writer is not a
+format-registry reader: `unsquashfs` provides the external round-trip check.
+
 ## Verification contract
 
 `tests/formats/test_registry.cpp` is the registry conformance suite. It covers dynamic C module

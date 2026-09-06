@@ -233,6 +233,9 @@ constexpr auto flags_undo = std::to_array<flag>({
     {"--path", "<path>", "Limit a session undo to a path; repeatable.", "all session paths"},
     {"--drip", "<id>", "Limit a session undo to a drip; repeatable.", "all session drips"},
 });
+constexpr auto flags_lock = std::to_array<flag>({
+    {"--reason", "<text>", "Record why this exclusive checkout is needed.", "exclusive checkout"},
+});
 constexpr auto flags_mount = std::to_array<flag>({
     {"--read-only", {}, "Deny writes through the mounted working tree.", "false"},
 });
@@ -521,15 +524,16 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::config},
     {"project",
-     "project <oci|ostree|bootc|deb|rpm|apk|helm> <result|tree> [--overlay [path=]<tree>] "
+     "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
+     "<result|tree> [--overlay [path=]<tree>] "
      "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
      "project a build into an installable package, commit, image, or chart",
      "available",
      flags_project,
-     "Project a recorded result or tree into a package, OCI or bootc image, Helm chart, or OSTree "
-     "commit.",
+     "Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or "
+     "bundled-runtime artifact.",
      "liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json",
      normal_exit,
      argument_policy::ordinary,
@@ -752,22 +756,22 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::history_undo},
     {"lock",
-     "lock <path>",
-     "advisory-lock a path",
+     "lock <path> [--reason <text>]",
+     "exclusively lock a configured path",
      "available",
-     {},
-     "Record an advisory lock for a repository path.",
-     "liquid lock src/main.cpp",
+     flags_lock,
+     "Acquire an exclusive checkout for a path allowed by repository configuration.",
+     "liquid lock assets/archive.zip --reason \"regenerate archive\"",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::locks_lock},
     {"unlock",
      "unlock <path>",
-     "remove an advisory lock",
+     "release an exclusive lock",
      "available",
      {},
-     "Remove the caller's advisory lock from a repository path.",
-     "liquid unlock src/main.cpp",
+     "Release the caller's exclusive checkout for a repository path.",
+     "liquid unlock assets/archive.zip",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::locks_unlock},

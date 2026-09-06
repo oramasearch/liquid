@@ -1,0 +1,55 @@
+#if defined(__APPLE__)
+.section __TEXT,__const
+.private_extern _liquid_appimage_runtime_x86_64_start
+.private_extern _liquid_appimage_runtime_x86_64_end
+.private_extern _liquid_appimage_runtime_aarch64_start
+.private_extern _liquid_appimage_runtime_aarch64_end
+#elif defined(_WIN32)
+.section .rdata,"dr"
+.global liquid_appimage_runtime_x86_64_start
+.global liquid_appimage_runtime_x86_64_end
+.global liquid_appimage_runtime_aarch64_start
+.global liquid_appimage_runtime_aarch64_end
+#else
+.section .rodata
+.global liquid_appimage_runtime_x86_64_start
+.hidden liquid_appimage_runtime_x86_64_start
+.global liquid_appimage_runtime_x86_64_end
+.hidden liquid_appimage_runtime_x86_64_end
+.global liquid_appimage_runtime_aarch64_start
+.hidden liquid_appimage_runtime_aarch64_start
+.global liquid_appimage_runtime_aarch64_end
+.hidden liquid_appimage_runtime_aarch64_end
+#endif
+
+.balign 16
+#if defined(__APPLE__)
+_liquid_appimage_runtime_x86_64_start:
+#else
+liquid_appimage_runtime_x86_64_start:
+#endif
+.incbin "@LIQUID_APPIMAGE_RUNTIME_X86_64_ASM@"
+#if defined(__APPLE__)
+_liquid_appimage_runtime_x86_64_end:
+#else
+liquid_appimage_runtime_x86_64_end:
+#endif
+
+.balign 16
+#if defined(__APPLE__)
+_liquid_appimage_runtime_aarch64_start:
+#else
+liquid_appimage_runtime_aarch64_start:
+#endif
+.incbin "@LIQUID_APPIMAGE_RUNTIME_AARCH64_ASM@"
+#if defined(__APPLE__)
+_liquid_appimage_runtime_aarch64_end:
+#else
+liquid_appimage_runtime_aarch64_end:
+#endif
+
+#if !defined(__APPLE__) && !defined(_WIN32)
+.size liquid_appimage_runtime_x86_64_start, liquid_appimage_runtime_x86_64_end - liquid_appimage_runtime_x86_64_start
+.size liquid_appimage_runtime_aarch64_start, liquid_appimage_runtime_aarch64_end - liquid_appimage_runtime_aarch64_start
+.section .note.GNU-stack,"",@progbits
+#endif

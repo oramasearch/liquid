@@ -5,8 +5,9 @@ directory unless a command names another repository; `wrap` instead snapshots th
 tree into its project cache. One-shot commands run library operations through `runtime::block_on`;
 `serve sync` awaits them on its listener executor. The CLI does not read repository storage directly.
 
-`init` imports regular files already present in its target directory through
-`repository::import_tree`; the local-tree form of `import` uses the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
+`init` lowers lock rules from `liquid.liquid`, or the first sorted top-level `.liquid` file, before
+it imports regular files through `repository::import_tree`; the local-tree form of `import` uses
+the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
 it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
 its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
 available, but daemon attachment returns the documented unsupported result because the current
@@ -80,8 +81,8 @@ built binary under the build directory before CTest compares it with the committ
 | `diff` | `diff <a> <b> [path] [--text] [--formats] [--json]` | Compare refs or change digests, optionally decoding changed containers. | available |
 | `ops` | `ops [--json]` | Alias for `log --ops`. | available |
 | `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
-| `lock` | `lock <path>` | Advisory-lock a path. | available |
-| `unlock` | `unlock <path>` | Remove an advisory lock. | available |
+| `lock` | `lock <path> [--reason <text>]` | Acquire configured exclusive checkout for a path. | available |
+| `unlock` | `unlock <path>` | Release exclusive checkout held by the current identity. | available |
 | `session` | `session start <delegation>`, `session write <id> <path> --from <file>`, `session publish <id> [--message <text>]`, or `session discard <id>` | Manage a persisted private speculative replica. | available |
 | `compact` | `compact --epoch [--min-ack-peers <count>]` | Write and record a compact repository epoch. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
@@ -107,6 +108,7 @@ built binary under the build directory before CTest compares it with the committ
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into a native package, image, ecosystem recipe, or bundled-runtime format. | available |
 | `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm> <result\|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2\|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked tree into packages, OCI or bootc images, an OSTree commit, or a Helm chart. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
@@ -128,6 +130,9 @@ built binary under the build directory before CTest compares it with the committ
 
 ## Output and errors
 
+`lock` prints the acquired path and `unlock` prints the released path. Acquisition requires a
+matching `.liquid` lock rule. A conflicting write reports the holder identity, acquisition time,
+and reason; [exclusive checkout locks](../library/locks.md) defines offline and connected authority.
 Commands that use a lower support level print one shared line before the affected result:
 
 ```text
@@ -492,7 +497,10 @@ Repeatable `--depends` values are additive to reader-derived dependencies. Helm 
 `name=repository@sha256:digest[,port=N][,env=K=V][,volume=P]`. `--compat-gzip` selects liquid's
 deterministic gzip encoder for Debian and OCI; `--allow-abi-break` records an explicit override.
 Text output lists artifact and attestation digests, while `--json` adds pinned image references,
-dependency labels, and the ABI override bit. See [projection.md](../library/projection.md).
+dependency labels, and the ABI override bit. Homebrew and PKGBUILD emit ecosystem recipes beside
+their payload archives; AppImage, Flatpak, and Snap emit bundled-runtime layouts. Formats without
+an attachment mechanism place DSSE evidence in `<artifact>.attestations.json`. See
+[projection.md](../library/projection.md).
 
 The OS forms use the first digest as the base root and accept repeatable overlays. A bare overlay
 replaces matching paths at the root; `--overlay <path>=<tree-digest>` mounts it below a declared

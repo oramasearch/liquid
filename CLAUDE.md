@@ -95,6 +95,9 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #77 adds deterministic Homebrew bottles and Arch recipes; pinned-runtime AppImages;
+Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and detached
+`projection/1`, provenance, and SBOM attestations.
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
@@ -125,6 +128,14 @@ Liquid #74 adds the typed declarative `.liquid` configuration language, exact so
 diagnostics, canonical formatting and package/target/source lowering, repository-local includes,
 digest-verified source fetch, action-backed generators with provenance, and configured target CLI.
 Configured target results must pass the relocation publication check before they are returned.
+Liquid #42 adds configured exclusive checkout path patterns, holder/time/reason lock records,
+holder-aware write refusal and release, signed offline reconciliation through conflict values,
+connected lake authorization callbacks, daemon lock snapshots, and `liquid lock`/`unlock`.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+local-intent operation and session undo reports, operation-log CLI output, and historical refs,
+exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
+transient presence, compaction epochs, and delegation-attributed publication. Directory
 Liquid #75 adds the provenance-linked Spack exporter, public `import_spack` task, formatter-backed
 package documents and canonical universe records, digest pinning for patches, explicit loss reports,
 the 500-package resolution fixture, and the opt-in Linux build subset. Spack is the first importer;
