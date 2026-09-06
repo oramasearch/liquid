@@ -38,6 +38,8 @@ branches. It also proves an ordinary sandbox cannot execute an arbitrary externa
 data client allowance. It skips with the missing prerequisite when neither mode is available. The
 portable selector case probes APFS/Linux copy-on-write support and proves an ineligible local
 cluster falls back to template copying.
+The shared-library macOS test target compiles the private platform launcher that its denial case
+exercises, so hidden library visibility does not omit that profile coverage.
 Spec parsing, canonical package records, universe loading, solver dimensions, cancellation,
 explanations, optimisation, CLI output, and the generated scale workload live in `resolve/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held

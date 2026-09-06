@@ -78,6 +78,9 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp)
+  if(APPLE)
+    target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
+  endif()
 endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
