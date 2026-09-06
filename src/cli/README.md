@@ -55,6 +55,10 @@ fetch can hydrate a patch or target registered with the store's configured remot
 optional score and located path coordinates. Explain mode prints stable JSON with chosen and
 alternative costs plus every planner input. It does not read the index files directly.
 
+`resolve.cpp` parses root specs and universe, reuse, explanation, and JSON selectors. It calls only
+the public package-universe loader, resolver, and explanation projections. Text graphs are indented
+by dependency; conflict and package-choice explanations use the stable library formats.
+
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
@@ -77,12 +81,15 @@ repeatable path and drip filters, and renders every applied or skipped report en
 `workers.cpp` implements the scheduler and worker daemons with flag-over-environment
 configuration. Long-running entry points run on the guarded process-wide runtime while the command
 thread waits for completion, keeping accept and polling loops live between I/O callbacks.
+`node_store.cpp` implements `node-store serve` plus the status, mount, unmount, and prefetch thin
+HTTP clients. Flags override the documented node-store environment variables.
 `wrap.cpp` selects the scheduler backend with `--scheduler` while `--remote` keeps the stock REAPI
 path.
 
 Repository status includes bytes still remote in both text and JSON. Build explanation renderers
 also name the non-hermetic-read reason and its path for remote-eligibility diagnostics.
-Status also projects daemon graph-validation backlog and the last divergence in text and JSON.
+Status also projects daemon graph-validation backlog, flow watermarks and buckets, and the last
+divergence in text and JSON. Push prints the peer's exhausted scope and retry delay on HTTP 429.
 Wrap output includes its graph backlog and last divergence record.
 
 `symbols.cpp` detects the language from the public registry's extension table, uses the compiler

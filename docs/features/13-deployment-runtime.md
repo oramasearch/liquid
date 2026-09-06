@@ -98,6 +98,11 @@ that an operator can inspect and override with `kubectl`.
 
 ## Chunk-aware distribution to nodes
 
+**Implemented for liquid #202:** `liquid node-store serve` receives image tree metadata without
+content chunks, exposes the tree through a reference-counted read-only VFS mount, reuses shared
+chunks across images, and enforces a node-local logical byte budget. The k0s proxy snapshotter is
+tracked separately in k0s #14; OCI projection remains liquid #28.
+
 Because liquid's store is content-defined chunks and liquid may control the
 snapshotter, nodes fetch only chunks they lack — **across images, not just within
 one** (the Nydus/RAFS model, [08](08-packaging-and-images.md)).
