@@ -62,6 +62,43 @@ auto encode_response(const http_response& value) -> std::string {
                        value.body);
 }
 
+auto json_escape(std::string_view input) -> std::string {
+    auto output = std::string{};
+    for (const auto character : input) {
+        switch (character) {
+        case '"':
+            output += "\\\"";
+            break;
+        case '\\':
+            output += "\\\\";
+            break;
+        case '\b':
+            output += "\\b";
+            break;
+        case '\f':
+            output += "\\f";
+            break;
+        case '\n':
+            output += "\\n";
+            break;
+        case '\r':
+            output += "\\r";
+            break;
+        case '\t':
+            output += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(character) < 0x20U) {
+                output += std::format("\\u{:04x}", static_cast<unsigned char>(character));
+            } else {
+                output.push_back(character);
+            }
+            break;
+        }
+    }
+    return output;
+}
+
 auto parse_request(std::string value) -> result<http_request> {
     const auto header_end = value.find("\r\n\r\n");
     const auto first_space = value.find(' ');
@@ -197,8 +234,8 @@ http_response error_response(const error& value) {
                          "application/json",
                          std::format(R"({{"error":{{"code":{},"message":"{}","context":"{}"}}}})",
                                      static_cast<unsigned>(value.code),
-                                     value.message,
-                                     value.context));
+                                     json_escape(value.message),
+                                     json_escape(value.context)));
 }
 
 std::string_view json_rpc_id(std::string_view body) {

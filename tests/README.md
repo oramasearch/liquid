@@ -18,9 +18,13 @@ Scheduler protocol, duplicate-join, size-class placement, and one-requeue covera
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
 eviction, live-byte accounting, runtime source registration, hydration observation, collector
-reclamation, and range/full rehydration. `test_repository.cpp` pins the
-exact readability report for revisions written before and after rotation and its three disclosure
-statements.
+reclamation, and range/full rehydration. `test_repository.cpp` pins the exact readability report
+for revisions written before and after rotation and its three disclosure statements.
+`test_node_store.cpp` checks local and operator status, readiness, metrics, attestation bytes,
+OpenAPI isolation, and the three MCP tool declarations. Its Linux FUSE case mounts two 64 MiB
+images that differ by one 4 MiB file, reads both, checks shared-chunk avoidance, prefetch,
+reference counts, budget eviction, and non-remote protection; macOS records the documented skip
+when macFUSE is absent.
 
 Retention coverage spans `store/`, `build/`, and `cli/`: persisted forever-ref reachability,
 mixed-cost size-cap eviction, rule counts, and rule/lease/expiry explanations all run in the default

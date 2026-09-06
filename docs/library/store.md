@@ -118,8 +118,11 @@ therefore enter packs through the same verified, deduplicated path as local writ
 metadata file is atomically replaced and survives reopen; it carries locations, not content.
 `store_options::on_hydration` observes each newly fetched chunk after it has entered the verified
 store path; the completion flag identifies the last chunk in the blob's ordered table. Node-store
-uses the coroutine callback for per-image counters and budget checks. `store::local_bytes` reports
-the deduplicated raw size of live indexed chunks, excluding obsolete and evicted pack entries.
+uses the coroutine callback for per-image counters and budget checks.
+`store_options::on_remote_access` observes successful reads of remote-registered content, including
+reads served entirely from local chunks; node-store uses it for least-recently-read ordering.
+`store::local_bytes` reports the deduplicated raw size of live indexed chunks, excluding obsolete
+and evicted pack entries.
 
 ## Write-through ordering
 

@@ -14,7 +14,7 @@ notes so that each claim has a clear role.
 | [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, #18 scheduling, #16 REAPI interoperability, and #63's scheduler and workers. |
 | [`library/workers.md`](library/workers.md) | Scheduler and worker protocol, bounded requeue, TAAP result identity, configuration, control endpoints, and deployment shape. |
 | [`library/node-store.md`](library/node-store.md) | Per-node shared chunk storage, metadata-only image mounts, listener boundaries, accounting, budgets, and eviction. |
-| [`api/README.md`](api/README.md) | Scheduler and worker network capability maps. |
+| [`api/README.md`](api/README.md) | Scheduler, worker, and node-store network capability maps. |
 | [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, build-stream forwarding, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
 | [`library/frontends.md`](library/frontends.md) | The versioned frontend C ABI, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
 | [`library/search.md`](library/search.md) | Issues #22 and #67's BM25F, positional-trigram, and mapped-scan executors; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |

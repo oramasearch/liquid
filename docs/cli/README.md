@@ -72,6 +72,7 @@ that the table and `liquid --help` name the same commands.
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
 | `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
 | `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
+| `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 
 ## Output and errors
 
@@ -121,6 +122,20 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+## Node store commands
+
+`liquid node-store serve --root <path>` runs both node-store listeners. Optional flags are
+`--listen <unix://path>`, `--control-listen <address>`, and `--budget-bytes <count>`. Their
+environment defaults are `LIQUID_NODE_STORE_ROOT`, `LIQUID_NODE_STORE_LISTEN`,
+`LIQUID_CONTROL_LISTEN`, and `LIQUID_NODE_STORE_BUDGET_BYTES`; flags win. The issue #202 spelling
+includes the `serve` subcommand. The k0s #14 integration must use this spelling.
+
+`liquid node-store status [--control <address>] [--json]` reads the TCP `/v1` status.
+`liquid node-store mount <tree> --store <url> [--socket <path>]`, `unmount <tree>`, and
+`prefetch <tree>` are thin clients of the local Unix listener. The mount command reads an optional
+bearer from `LIQUID_TOKEN` and never prints it. The socket defaults to
+`/run/liquid/node-store.sock`, or to `LIQUID_NODE_STORE_LISTEN` with its `unix://` prefix removed.
 
 `write` is the scripted-agent file path. `--base` names the change the caller read and may append
 the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read

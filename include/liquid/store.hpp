@@ -39,6 +39,7 @@ public:
 
 using hydration_observer = std::function<runtime::task<void>(
     digest content, digest chunk, std::uint64_t bytes, bool content_complete)>;
+using remote_access_observer = std::function<void(digest content)>;
 
 struct LIQUID_EXPORT store_options {
     algorithm hash_algorithm{algorithm::blake3};
@@ -49,6 +50,7 @@ struct LIQUID_EXPORT store_options {
     std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
     std::shared_ptr<blob_write_through> write_through;
     hydration_observer on_hydration;
+    remote_access_observer on_remote_access;
 };
 
 enum class blob_availability : std::uint8_t { absent, remote, local };

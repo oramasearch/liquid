@@ -1,7 +1,6 @@
 # Node store
 
-**Status: designed for liquid #202; implementation and measured results are recorded below as
-they land.**
+**Status: implemented for liquid #202.**
 
 The node store is one long-running liquid component on every runtime node. It owns one shared
 chunk store under `--root`, exposes read-only image roots to the local container runtime, and
@@ -60,20 +59,22 @@ The node store reports one entry per mounted tree:
 - `references` is the number of successful mounts not yet released.
 
 Shared chunks count as avoided for each image that can reuse them, but occupy bytes once in the
-node store. `store_bytes` is the current physical store footprint. The component also reports the
+node store. `store_bytes` is the deduplicated logical size of live indexed chunks; obsolete pack
+frames do not keep a budget above its target while compaction is pending. The component reports the
 configured budget, successful evictions, and the most recent operational error.
 
 ## Budget and eviction
 
 `budget_bytes == 0` disables automatic budget enforcement. For a positive budget, the node store
-checks the physical store size after every hydration and prefetch. While the store remains over
+checks the logical live size after every hydration and prefetch. While the store remains over
 budget, it selects the least-recently-read eligible blob content and calls `store::evict`.
 
 Eligibility is deliberately narrow: the digest must be registered remote and currently local.
 Tree and blob records reachable from a mounted image are pinned, and a digest without a remote
 registration is never selected. Mounted image content may be evicted because its registration
-makes later verified hydration possible; mounted metadata may not. Reads and prefetch update the
-same recency table. Explicit `POST /v1/evict` applies the identical eligibility checks.
+makes later verified hydration possible; mounted metadata may not. Content remains an eviction
+candidate after its last mount is released. Reads and prefetch update the same recency table.
+Explicit `POST /v1/evict` applies the identical eligibility checks.
 
 Eviction retains the remote registration, so a later read hydrates the content again. Failure to
 meet a budget because no eligible candidate remains is reported as an error and leaves all
@@ -123,7 +124,7 @@ and FUSE callbacks continue through the VFS request queue.
 - If any required tree or blob record is absent and the store URL is unreachable, mount fails with
   `errc::unavailable`; the error context names that URL. No partial mount or reference is exposed.
 - A corrupt remote record or chunk fails digest verification and is never published as local.
-- An unknown tree, mount, prefetch target, or attestation subject returns `errc::not_found`.
+- An unknown tree, mount, or prefetch target returns `errc::not_found`.
 - An invalid digest, malformed JSON, conflicting unmount selectors, or unusable listen address
   returns `errc::invalid_argument`.
 - Failure to mount through FUSE reports the platform error. macOS without macFUSE reports the
@@ -166,4 +167,3 @@ Linux runs the FUSE path in the privileged container proof. macOS records the ex
 skip when macFUSE is unavailable.
 
 Measured pull counts and the host load average are added here by the completed proof.
-

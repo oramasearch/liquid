@@ -6,8 +6,10 @@ inventory is maintained in `docs/library/api-map.md`.
 
 `sync.hpp` includes metadata-only tree receipt for node-store and other lazy-hydration clients.
 It records remote blob locations without fetching content chunks.
-`store.hpp` exposes runtime remote-source registration, hydration observation, and live local-byte
-accounting for long-running node stores.
+`store.hpp` exposes runtime remote-source registration, hydration and remote-access observation,
+and live local-byte accounting for long-running node stores.
+`node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
+values.
 
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of

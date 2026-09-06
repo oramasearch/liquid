@@ -13,6 +13,7 @@ add_executable(liquid-tests
   test_hash.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_node_store.cpp
   test_object.cpp
   test_remote.cpp
   reapi/test_wire.cpp
@@ -368,6 +369,7 @@ add_executable(liquid-header-tests
   headers/hash.cpp
   headers/identity.cpp
   headers/liquid.cpp
+  headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp
   headers/remote.cpp

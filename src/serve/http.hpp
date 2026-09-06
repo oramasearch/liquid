@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "liquid/export.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid::serve {
@@ -27,7 +28,7 @@ struct http_response {
 
 using route_handler = std::function<runtime::task<http_response>(const http_request&)>;
 
-class route_table {
+class LIQUID_EXPORT route_table {
 public:
     void add(std::string method, std::string path, route_handler handler);
     [[nodiscard]] runtime::task<http_response> dispatch(const http_request& request) const;
@@ -41,16 +42,18 @@ private:
     std::vector<route> routes_;
 };
 
-[[nodiscard]] http_response
-make_response(unsigned status, std::string content_type, std::string body);
-[[nodiscard]] http_response error_response(const error& value);
-[[nodiscard]] std::string_view json_rpc_id(std::string_view body);
+[[nodiscard]] LIQUID_EXPORT http_response make_response(unsigned status,
+                                                        std::string content_type,
+                                                        std::string body);
+[[nodiscard]] LIQUID_EXPORT http_response error_response(const error& value);
+[[nodiscard]] LIQUID_EXPORT std::string_view json_rpc_id(std::string_view body);
 
-[[nodiscard]] runtime::task<void> serve_tcp(std::string listen,
-                                            std::shared_ptr<const route_table> routes,
-                                            std::function<void()> on_bound = {});
-[[nodiscard]] runtime::task<void> serve_unix(std::filesystem::path path,
-                                             std::shared_ptr<const route_table> routes,
-                                             std::function<void()> on_bound = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<void> serve_tcp(std::string listen,
+                                                          std::shared_ptr<const route_table> routes,
+                                                          std::function<void()> on_bound = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<void>
+serve_unix(std::filesystem::path path,
+           std::shared_ptr<const route_table> routes,
+           std::function<void()> on_bound = {});
 
 } // namespace liquid::serve

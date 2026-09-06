@@ -1461,6 +1461,9 @@ runtime::task<std::vector<std::byte>> store_backend::get_remote(const blob& valu
         co_return std::unexpected(store_error(
             errc::corrupt, "remote object failed digest verification", to_string(value.content)));
     }
+    if (options_.on_remote_access) {
+        options_.on_remote_access(value.content);
+    }
     co_return output;
 }
 
@@ -1493,6 +1496,9 @@ store_backend::read_remote(const blob& value, std::uint64_t offset, std::span<st
     if (copied != wanted) {
         co_return std::unexpected(store_error(
             errc::corrupt, "remote chunk list does not cover range", to_string(value.content)));
+    }
+    if (options_.on_remote_access) {
+        options_.on_remote_access(value.content);
     }
     co_return copied;
 }

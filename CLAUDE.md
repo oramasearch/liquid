@@ -364,6 +364,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
    same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
    `docs/library/distribution.md`.
+10. **The runtime node store is embedded liquid, not a containerd snapshotter** (liquid #202;
+    bridge decision 23). An image root is a tree digest plus its sync URL. `liquid node-store
+    serve` receives only tree and blob records, exposes a reference-counted read-only VFS mount,
+    and owns the shared node chunk budget. The k0s #14 Go proxy snapshotter bind-mounts that path
+    and owns writable layers; liquid ships neither the proxy nor layers.
 
 **Still open:**
 
