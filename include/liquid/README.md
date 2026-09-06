@@ -28,8 +28,10 @@ lookup remains asynchronous in `repository.hpp`, and wrapper compatibility event
 `build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
 install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
 
-`admission.hpp` defines the versioned image-admission policy, injected attestation-source and
-transparency-log interfaces, the one-image review operation, and the long-running admission server.
+`admission.hpp` defines the versioned image-admission policy and CBOR/JSON decision record,
+rule-attributed review results, injected attestation-source and transparency-log interfaces, the
+one-image review operation, named policy-directory options, bounded replay, and the long-running
+admission server.
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
 engine and its clause encoding stay private.

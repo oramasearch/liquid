@@ -169,7 +169,7 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::deploy},
     {"serve",
-     "serve sync <path> [...] | serve admission --policy <file> [...]",
+     "serve sync <path> [...] | serve admission <--policy <file>|--policies <dir>> [...]",
      "serve repository sync or image admission",
      "available",
      liquid_cli::serve},
