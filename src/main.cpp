@@ -60,6 +60,7 @@ auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
+auto node_store(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
@@ -298,6 +299,11 @@ constexpr auto commands = std::to_array<command>({
      "run a remote-execution worker",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::worker},
+    {"node-store",
+     "node-store <serve|status|mount|unmount|prefetch> [options]",
+     "run or control the runtime node chunk store",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::node_store},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},

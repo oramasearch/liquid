@@ -29,9 +29,14 @@ Scheduler protocol, duplicate-join, size-class placement, and one-requeue covera
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
-eviction, collector reclamation, and range/full rehydration. `test_repository.cpp` pins the
-exact readability report for revisions written before and after rotation and its three disclosure
-statements.
+eviction, live-byte accounting, runtime source registration, hydration observation, collector
+reclamation, and range/full rehydration. `test_repository.cpp` pins the exact readability report
+for revisions written before and after rotation and its three disclosure statements.
+`test_node_store.cpp` checks local and operator status, readiness, metrics, attestation bytes,
+OpenAPI isolation, and the three MCP tool declarations. Its Linux FUSE case mounts two 64 MiB
+images that differ by one 4 MiB file, reads both, checks shared-chunk avoidance, prefetch,
+reference counts, budget eviction, and non-remote protection; macOS records the documented skip
+when macFUSE is absent.
 
 Retention coverage spans `store/`, `build/`, and `cli/`: persisted forever-ref reachability,
 mixed-cost size-cap eviction, rule counts, and rule/lease/expiry explanations all run in the default
@@ -61,7 +66,10 @@ one repository without losing the other, and reopens by identifier. Tree-diff ca
 additions, removals, content and mode changes, `node_id` moves, opt-in text hunks, and stored
 conflict values. Text-anchor cases map unchanged and shifted lines, approximate replacements,
 deleted regions and files, and a renamed node in one unsorted batch. CLI scenario and
-command-documentation tests live in `cli/`. `test_runtime.cpp`
+command-documentation tests live in `cli/`. Flow-control cases pin the eleventh-write refusal and
+operation count, update-size rejection, cross-actor directory isolation, persisted configuration,
+daemon pause/resume and bucket status, peer HTTP 429 retry projection, and the status JSON fixture.
+`test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
@@ -83,7 +91,10 @@ bytes across repeated pushes, pulls into an empty repository, and rejects a corr
 signature without changing state. It checks change-to-ref context, derives false fast-forward
 state for divergent history, applies mixed per-ref outcomes, preserves exact reasons, keeps
 all-refused and atomic pushes unchanged, retains uploaded objects, converts callback exceptions to
-refusals, and reads a legacy reply. Its CLI case starts the real `serve sync --allow-ref main`
+refusals, and reads a legacy reply. Metadata-only receipt verifies tree and blob records while
+leaving every payload chunk remote. Its CLI case starts the real `serve sync --allow-ref main`
+refusals, reads a legacy reply, and proves a flow-refused push leaves repository metadata
+unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
