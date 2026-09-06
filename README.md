@@ -85,6 +85,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > that definition's new action; recorded header reads invalidate the definitions that use them.
 > Liquid #66 adds content-addressed per-translation-unit symbol records from a query over recorded
 > compile actions, a labelled tree-sitter fallback, graph retrieval, repository access, and
+> `liquid symbols <path>`.
+> Liquid #32 adds evidence-based hot-update classification for tiers 0–4, signed patch and restart
+> records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and Linux x86_64,
+> sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven daemon target.
+> Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise returns the
+> tier-3 restart outcome.
 > `liquid symbols <path>`; syntactic records and `liquid version --json` carry the grammar-lock
 > digest. The distribution decision and inventory are in
 > [`docs/library/grammars.md`](docs/library/grammars.md).

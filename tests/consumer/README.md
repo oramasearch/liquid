@@ -1,8 +1,8 @@
 # Installed CMake consumer
 
 This is a separate CMake project that consumes the installed liquid package. Its executable finds
-the package with `find_package(liquid CONFIG REQUIRED)`, links `liquid::liquid`, and calls the
-public identity decoder.
+the package with `find_package(liquid CONFIG REQUIRED)`, links `liquid::liquid` and `liquid::hot`,
+and calls the public identity decoder plus the separately versioned hot-update ABI.
 
 The parent suite registers `consumer-project-build`. That CTest step installs the already-built
 parent artifacts into a test-local prefix, creates a clean consumer build with the parent's

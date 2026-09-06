@@ -1,0 +1,11 @@
+# Hot-update tests
+
+`test_demo.cpp` drives the installed runtime shape end to end on macOS and Linux: an `input.txt`
+drip makes the daemon rebuild the configured target, classify its prepared frontend evidence,
+create and deliver a signed tier-1 patch to a Capy demo process, and report the outcome. The same
+process prints the replacement leaf-function value after its next quiescence point.
+A tier-2 check loads an additive object without requiring an existing entry slot. The tier-3 case
+runs the restart hook through the configured sandbox backend and verifies the outcome arguments.
+It skips explicitly when macOS has no macFUSE; Linux CI executes it with libfuse3.
+
+The portable classification and unsigned-patch refusal cases remain in `tests/test_hot_update.cpp`.

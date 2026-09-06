@@ -180,3 +180,7 @@ through public libliquid API.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.
+Hot-update tests classify fixture pairs across all tiers, prove that comment-only output equality is
+tier 0, require ABI evidence for tier 2, reject unsigned patches, and reconstruct a two-patch
+composition. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
+case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.
