@@ -7,8 +7,9 @@ liquid's protobuf wire layer.
 
 `DirectoryCache` retains converted subtrees by native digest, REAPI algorithm, and mode. Action
 conversion uses standard fields plus platform properties for native input, toolchain, and sandbox
-digests. Result conversion fills standard output and execution fields and carries the canonical
-native record in typed auxiliary metadata so Liquid peers retain fields REAPI does not model.
+digests. Result conversion fills standard output and execution fields, creates version-4 native
+results, and carries the canonical native record in typed auxiliary metadata so Liquid peers retain
+ABI references and other fields REAPI does not model.
 Scheduler mode enables Execution and Operations on the same server, dispatches the private worker
 protocol, and writes an ActionCache entry only after a signed completion is accepted.
 The scheduler client uploads its prepared native graph directly instead of issuing one large

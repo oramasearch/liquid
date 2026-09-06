@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "liquid/abi.hpp"
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
@@ -441,6 +442,7 @@ public:
     [[nodiscard]] runtime::task<record_page<build_trace>> traces(record_page_options page = {});
     [[nodiscard]] runtime::task<record_page<sbom_report>> sboms(result_id result,
                                                                 record_page_options page = {});
+    [[nodiscard]] runtime::task<abi_descriptor> abi(digest library_blob);
     [[nodiscard]] runtime::task<readability_report>
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);

@@ -63,12 +63,16 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Direct build execution
 > and every wrapped tool action are `action_result` graph nodes. A versioned C frontend ABI loads
 > replaceable shared or static language modules outside libliquid. The bundled tree-sitter fallback
-> discovers C and C++ units, while the Clang C++ module emits definition actions and assembles their
+> fetches 49 exact-commit grammars under archive and per-file SHA-256 checks, registers their
+> extensions, and discovers units from pinned tag queries where upstream supplies them. The Clang
+> C++ module emits definition actions and assembles their
 > outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 > that definition's new action; recorded header reads invalidate the definitions that use them.
 > Liquid #66 adds content-addressed per-translation-unit symbol records from a query over recorded
 > compile actions, a labelled tree-sitter fallback, graph retrieval, repository access, and
-> `liquid symbols <path>`.
+> `liquid symbols <path>`; syntactic records and `liquid version --json` carry the grammar-lock
+> digest. The distribution decision and inventory are in
+> [`docs/library/grammars.md`](docs/library/grammars.md).
 > Public build handles now stream queued, started, hit, done, failed, critical-path, and finished
 > events through the library and daemon. CMake test registrations become discoverable cached
 > actions, with `liquid build --events` providing JSON Lines and `liquid test` reporting results.
@@ -80,7 +84,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
 > dependency-aware build observability, build-input policy, a cross-project configure fact base,
-> cost-aware retention, and graph-derived SPDX and CycloneDX SBOMs for every output.**
+> cost-aware retention, graph-derived SPDX and CycloneDX SBOMs for every output, and stored ABI
+> descriptors plus signed compatibility comparisons for every built shared library.**
 > `liquid::build` stores action and
 > result records, materialises a toolchain, observes reads through the VFS mount, and executes the
 > action in Linux namespaces or a macOS sandbox with a fixed environment. `liquid wrap` runs an
@@ -221,6 +226,7 @@ and Zetta's.
 - [`docs/cli/build-events.md`](docs/cli/build-events.md) — the stable build-event JSON-lines schema and ordering.
 - [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
+- [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
 
 | | |
 |---|---|

@@ -26,6 +26,13 @@ universality tractable rather than aspirational.
 Tier 3 is where the marketing pressure will be, and it is where liquid must not
 overpromise.
 
+Tier 2 has a concrete distribution answer: the runtime and 49-grammar set are fetched from exact
+public-upstream commits at configure time and pinned by archive and executable-file SHA-256 values
+in one canonical lock. The lock digest identifies the complete set in derived records. Generated
+parsers stay out of the source tree, and an optional URL-root override serves byte-identical
+archives from an organisation or air-gapped mirror. The trust model and inventory are documented in
+[`../library/grammars.md`](../library/grammars.md).
+
 The implemented Tier 1 entry point is `liquid wrap`: local observed execution and caching work on
 Linux with FUSE and on macOS when macFUSE is installed. Remote execution, artifact provenance,
 packaging, Windows, and BSD are still future work, so the complete Tier 1 row remains a product
@@ -84,6 +91,4 @@ Stating these prevents the promise from becoming a lie:
 
 - **Which languages get Tier 3 first**, and on what evidence — C and C++ are the
   hardest and the most valuable.
-- **Whether Tier 2 grammars ship in-tree or are fetched**, which is a supply-chain
-  question as much as a distribution one.
 - **How to test universality** without an unbounded matrix.

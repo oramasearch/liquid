@@ -511,6 +511,49 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(std::getenv("DYLD_INSERT_LIBRARIES"), nullptr);
 }
 
+TEST(BuildWrap, incompatible_shared_library_is_reported_and_can_fail_the_cli) {
+    if (::access("/dev/fuse", R_OK | W_OK) != 0) {
+        GTEST_SKIP() << "FUSE is unavailable";
+    }
+    if (!available("cmake") || !available("ninja") || !available("clang")) {
+        GTEST_SKIP() << "cmake, ninja, or clang is absent";
+    }
+    wrap_directory fixture{"abi"};
+    auto cache_environment = scoped_environment{"LIQUID_WRAP_CACHE", fixture.cache().string()};
+    ASSERT_TRUE(cache_environment.valid());
+    auto configured = liquid::runtime::block_on(
+        liquid::build::wrap(fixture.project(),
+                            {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"},
+                            {.cache = true, .verify = false}));
+    ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
+    ASSERT_EQ(configured->exit, 0);
+    auto first = liquid::runtime::block_on(liquid::build::wrap(
+        fixture.project(), {"cmake", "--build", "build"}, {.cache = true, .verify = false}));
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    ASSERT_EQ(first->exit, 0);
+    EXPECT_TRUE(first->abi_breaks.empty());
+
+    auto source = std::ofstream{fixture.project() / "abi.c", std::ios::trunc};
+    source << "int abi_retained(double value) { return (int)value + 1; }\n";
+    source.close();
+#if defined(LIQUID_CLI)
+    const auto output = fixture.project().parent_path() / "abi-break-output";
+    const auto command = "cd " + shell_quote(fixture.project().string()) + " && " +
+                         shell_quote(LIQUID_CLI) +
+                         " wrap --fail-on-abi-break cmake --build build --clean-first >" +
+                         shell_quote(output.string()) + " 2>&1";
+    const auto status = std::system(command.c_str());
+    auto input = std::ifstream{output};
+    const auto text =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    ASSERT_TRUE(WIFEXITED(status)) << text;
+    EXPECT_EQ(WEXITSTATUS(status), 1) << text;
+    EXPECT_NE(text.find("abi-break:"), std::string::npos) << text;
+    EXPECT_NE(text.find("abi_removed removed"), std::string::npos) << text;
+    EXPECT_NE(text.find("abi_retained type_changed"), std::string::npos) << text;
+#endif
+}
+
 TEST(BuildWrap, recursive_make_is_split_into_actions) {
     if (::access("/dev/fuse", R_OK | W_OK) != 0)
         GTEST_SKIP() << "FUSE is unavailable";
