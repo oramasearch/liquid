@@ -333,8 +333,9 @@ and target constraints, conflicts, and patches. The public Spack-style parser re
 columns, while directory and repository universes use the documented `packages/` tree. Liquid's
 own CDCL engine chooses virtual providers, binds compilers as dependencies, applies target-family
 fallback, optimises reuse before freshness and defaults, and returns minimal attributed conflict
-cores. `liquid resolve` prints the graph, stable JSON, or package-selection explanations
-([`resolution.md`](resolution.md)).
+cores. Selected graphs are constructed iteratively, so dependency-chain length never consumes
+worker-thread stack. `liquid resolve` prints the graph, stable JSON, or package-selection
+explanations ([`resolution.md`](resolution.md)).
 
 **Configuration.** `.liquid` is a typed declarative language for package, source, and target
 records with repository-local includes, exact source-located diagnostics, canonical formatting and
