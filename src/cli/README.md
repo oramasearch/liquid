@@ -32,6 +32,10 @@ storage directly.
 and prints the target coordinate plus moved, approximate, and deleted state. It does not inspect
 repository storage or file contents.
 
+`diff.cpp` resolves each operand as a ref or change digest and calls public repository diff.
+`--text` opts into line hunks, `--formats` prints codec-tier container trees, an optional path
+filters the result, and `--json` emits the same nested values for tools.
+
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
 `verify.cpp` parses action, all, changed, and graph selectors, calls the public verification APIs,

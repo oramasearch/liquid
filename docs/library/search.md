@@ -1,6 +1,6 @@
 # Local search index
 
-**Status: implemented by liquid #22 and #67.** Each repository has a content-addressed BM25F and
+**Status: implemented by liquid #22, #67, and #29.** Each repository has a content-addressed BM25F and
 positional-trigram index, updated by the daemon after each drip. A measured cost planner selects
 BM25F, verified trigrams, or a current working-set scan. The public repository API and
 `liquid search` expose both results and the executed plan.
@@ -20,6 +20,12 @@ complete previous generation or the complete next generation.
 The manifest has a `working` slot and separate `ref:<name>` slots. Reference indexes are populated
 on first query from the immutable snapshot. Working-tree search is populated on first query when a
 daemon index is not present.
+
+Recognised Tier 1 and Tier 2 containers add one document per decoded entry. Its path is
+`container!/entry`, using exactly one `!/` separator at each nesting level, and its blob identity is
+the entry content digest. Identical entries in different containers therefore share blob, term, and
+trigram files. Expansion uses the registry's depth, byte, and entry limits; a limit report stops
+deeper indexing without discarding already decoded entries.
 
 ## Content-addressed files
 
@@ -187,9 +193,4 @@ isolated 15-microsecond inversion. Regex scan is cheaper through 250 files and t
 cheaper from 500 onward. The planner tests use 10 and 4,000 blobs to stay well outside those
 transition bands and assert both executor choices.
 
-## Deferred
-
-Searching inside packaged archives remains with the Phase 5 format registry. Issue #22 cannot
-identify decomposable artifact bodies until that registry defines the supported formats and their
-canonical extraction behavior. Symbol-record lookup is documented separately in
-[`symbols.md`](symbols.md).
+Symbol-record lookup is documented separately in [`symbols.md`](symbols.md).

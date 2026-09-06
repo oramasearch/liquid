@@ -1,0 +1,144 @@
+# Format registry and codecs
+
+**Status: implemented by liquid #29.** libliquid owns a format registry used by repository diff,
+search, and storage. The launch codecs are ZIP, tar, HDF5, Parquet, and SQLite. They are synchronous
+CPU codecs; coroutine callers invoke them through `runtime::offload`.
+
+## Public API and module boundary
+
+[`format.hpp`](../../include/liquid/format.hpp) exposes `format_descriptor`, `format_entry`,
+`format_tree`, `format_diff`, `format_codec`, and `format_registry`. A descriptor supplies a stable
+name, fidelity tier, extensions, magic prefixes, volatile fields, and resource limits. A tree entry
+has a path, kind, logical size and digest, canonical-CBOR attributes, materialised bytes or a byte
+range of the original, an optional nested tree, and an explanation when an object is opaque.
+
+`format_registry::global()` contains the built-ins. `find_by_magic`, `find_by_extension`, and
+`recognise` identify candidates; `unpack` recursively expands recognised members. Codecs implement
+recognition, unpacking, canonicalisation, and logical diff. Merge and repack are optional.
+
+[`format_abi.h`](../../include/liquid/format_abi.h) is the versioned C11 module boundary. A module
+exports only `liquid_format_get_module_v1`, returning a `liquid_format_module_v1` descriptor. All
+operation inputs and outputs are canonical CBOR. Output bytes carry a release callback owned by the
+module, and progress and cancellation callbacks cross the boundary without C++ or third-party
+types. Built-in C++ codecs use the same descriptor through `format_codec::linked`; external modules
+load through `format_registry::load`.
+
+The v1 operation values are:
+
+| Operation | Input map | Output |
+|---|---|---|
+| `recognise` | `{blob: bytes, path: text}` | `{recognised: bool, tier: uint, reason: text}` |
+| `unpack` | `{blob: bytes, limits: {maximum_depth, byte_budget, maximum_entries}}` | format-tree map |
+| `canonicalise` | `{tree: format-tree}` | format-tree map |
+| `diff` | `{old: format-tree, new: format-tree, absolute_tolerance: text, relative_tolerance: text}` | format-diff map |
+| `merge` | `{base: format-tree, left: format-tree, right: format-tree}` | format-tree map |
+| `repack` | `{tree: format-tree}` | `{bytes: bytes}` |
+
+A format-tree map contains `codec`, `tier`, `entries`, `original`, `truncated`, and `limits`. Each
+entry contains `path`, numeric `kind`, `size`, `content`, `attributes`, `bytes`, optional
+`source_range`, optional `nested`, and `opaque_reason`. A format-diff map contains `codec`, `tier`,
+`entries`, and `truncated`; each entry has `path`, numeric `kind`, optional old/new digests, and an
+optional nested diff. Absent optionals are CBOR null. The C++ wrapper rejects non-canonical or
+malformed results before exposing them.
+
+## Fidelity tiers
+
+| Tier | Registry guarantee |
+|---|---|
+| 1, `canonical_round_trip` | Repack is available and a codec test proves byte-identical recovery for the recognised input. |
+| 2, `semantic_verbatim` | The original remains authoritative; unpacked logical entries support diff, search, and deduplication, but repack is unavailable. |
+| 3, `chunk_only` | The registry does not decode the object. Ordinary content-defined storage still applies. |
+
+Recognition may lower one instance below the codec's advertised best tier. ZIP is Tier 1 only for
+STORED members; other supported ZIP inputs report Tier 2 because their compressed stream cannot be
+re-emitted byte for byte. Uncompressed tar is Tier 1. gzip- and zstd-wrapped tar report Tier 2
+because compressor settings cannot be recovered. HDF5, Parquet, and SQLite are Tier 2.
+
+Canonicalisation removes only fields declared by the codec and sorts entries by path. ZIP removes
+member modification times, external attributes, and timestamp extra fields. tar removes mtime,
+uid, and gid. HDF5 ignores physical object placement, Parquet ignores writer metadata, and SQLite
+ignores the freelist and physical page placement.
+
+## Supported subsets
+
+### ZIP
+
+The decoder reads local headers, the central directory, ZIP64 sizes and offsets, and archives whose
+members use data descriptors. STORED and raw-DEFLATE members are decoded with CRC and size checks.
+Multi-disk and encrypted archives and compression methods other than STORED or DEFLATE return an
+explicit unsupported result.
+
+### tar
+
+The decoder reads ustar headers, pax extended headers, and GNU long-name and long-link records. It
+recognises uncompressed, gzip, and zstd wrappers. The deterministic writer sorts entries, reads
+`SOURCE_DATE_EPOCH`, writes uid/gid zero, clears names and extended attributes, and normalises file
+and directory modes. It writes uncompressed tar for package and image consumers.
+
+### HDF5
+
+The dependency-free Tier 2 reader supports superblocks v0 through v3, object headers v1 and v2,
+old symbol-table B-trees, link messages, groups, and compact, contiguous, and version-1 chunked
+datasets. Fixed-point, floating-point, and fixed/variable string datatypes are described. Shuffle
+and deflate filters are decoded. Dataset attributes record rank, dimensions, datatype, element
+size, and layout; comparisons use the logical decoded value bytes rather than file offsets. The
+`format_diff_options` absolute and relative tolerances apply element-by-element to 32-bit and
+64-bit floating-point datasets; the default zero values preserve exact comparison. An
+unknown datatype, link, layout, chunk index, or filter leaves an entry with `opaque_reason` instead
+of inventing a value.
+
+### Parquet
+
+The Tier 2 reader implements the Thrift compact protocol for the footer and page headers. It emits
+one entry per row-group column chunk with schema, statistics, and decoded values. Data page v1,
+PLAIN, RLE/bit-packed levels, and dictionary indices are supported with uncompressed, gzip, and
+zstd pages. Snappy and unknown physical types, encodings, page types, or compressors are preserved
+as opaque column entries with the reason recorded.
+
+### SQLite
+
+The Tier 2 reader validates the database header, walks table b-tree interior and leaf pages, decodes
+the record serial types, reads `sqlite_schema`, and emits schema plus rowid-keyed row entries for
+ordinary tables, including overflow payload chains. The freelist is ignored. UTF-16 databases,
+index b-trees, and `WITHOUT ROWID` tables are outside this initial subset and return a specific
+unsupported result.
+
+## Limits and nesting
+
+The default descriptor limit is depth 8, 256 MiB of decoded bytes, and 100,000 entries. Callers may
+lower each value. Every decoder bounds offsets, lengths, allocations, and counts before use. When a
+nested member reaches the depth or byte budget, unpack succeeds with `format_tree::truncated` set
+and a human-readable item in `format_tree::limits`; it never silently continues. This protects
+diff, search, and capture from hostile recursive archives.
+
+Nested paths use exactly one `!/` separator: `archive.zip!/inner/file.txt`. Further containers
+append another component, for example `outer.tar!/inner.zip!/file.txt`. Search hits use the same
+notation. The hit's blob digest is the logical entry digest, so identical contents share index
+files even when their container paths differ.
+
+## Repository integration and measurement
+
+`tree_diff_options::formats` opts into container decoding. A `tree_diff_entry` then carries a
+`container_diff` with codec, observed tier, added/removed/modified entry paths, nested diffs, and a
+truncation flag. `liquid diff <a> <b> [path] --formats` renders those entries; `--json` preserves the
+same shape.
+
+When `repository::write` or capture stores a recognised Tier 1 or Tier 2 container, it also stores
+each logical entry as an ordinary blob and records those digests on the parent blob record. Garbage
+collection follows those references. The verbatim container remains stored and readable.
+
+The committed `archive-a.zip` and `archive-b.zip` fixtures are 419 and 418 bytes, or 837 verbatim
+bytes together. Their six logical members total 169 bytes without derived-entry deduplication. The
+content-addressed store retains four unique payloads totalling 107 logical bytes: the repeated
+24-byte `stored.txt` and 38-byte `zip64.txt` bodies are each stored once, saving 62 logical bytes.
+The repository test also counts one physical store frame for each repeated entry digest.
+
+## Verification contract
+
+`tests/formats/test_registry.cpp` is the registry conformance suite. It covers dynamic C module
+loading, recognition and unpack for every launch codec, volatile-field canonicalisation, logical
+diff, Tier 1 byte-identical ZIP and tar repack, deterministic tar output, every byte truncation
+boundary, and reported recursion limits. Real fixtures and their producing commands live in
+[`tests/fixtures/formats/README.md`](../../tests/fixtures/formats/README.md). Repository, search,
+and CLI tests prove nested diffs, derived-entry retention, archive search paths, and ZIP/HDF5
+rendering.

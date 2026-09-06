@@ -704,6 +704,10 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
     auto chunk_sizes = cbor::value::array{};
     for (const auto size : sizes)
         chunk_sizes.push_back(cbor::value{size});
+    auto format_entries = cbor::value::array{};
+    for (const auto& entry : value.format_entries) {
+        format_entries.push_back(encode_digest(entry));
+    }
     const auto has_content = value.content.alg == algorithm::blake3 ||
                              value.content.alg == algorithm::sha256 ||
                              value.content.alg == algorithm::blake3_keyed;
@@ -712,11 +716,15 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
             error{errc::invalid_argument, "remote blob requires a digest and source", "blob"});
     }
     if (!has_content && !value.remote) {
-        return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
-                                 {"kind", "blob"},
-                                 {"size", cbor::value{value.size}},
-                                 {"chunks", std::move(chunks)},
-                                 {"chunk_sizes", std::move(chunk_sizes)}}));
+        auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{1}}},
+                                       {"kind", "blob"},
+                                       {"size", cbor::value{value.size}},
+                                       {"chunks", std::move(chunks)},
+                                       {"chunk_sizes", std::move(chunk_sizes)}};
+        if (!format_entries.empty()) {
+            fields.emplace_back("format_entries", std::move(format_entries));
+        }
+        return cbor::encode(cbor::value{std::move(fields)});
     }
     auto fields = cbor::value::map{{"v", cbor::value{std::uint64_t{2}}},
                                    {"kind", "blob"},
@@ -724,6 +732,9 @@ auto encode(const blob& value) -> result<std::vector<std::byte>> {
                                    {"size", cbor::value{value.size}},
                                    {"chunks", std::move(chunks)},
                                    {"chunk_sizes", std::move(chunk_sizes)}};
+    if (!format_entries.empty()) {
+        fields.emplace_back("format_entries", std::move(format_entries));
+    }
     if (value.remote) {
         fields.emplace_back("remote",
                             map({{"source", cbor::value{value.remote->source}},
@@ -1158,6 +1169,7 @@ auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
     const auto* size = find(*source, "size");
     const auto* chunks = find(*source, "chunks");
     const auto* chunk_sizes = find(*source, "chunk_sizes");
+    const auto* format_entries = find(*source, "format_entries");
     const auto* n = size ? std::get_if<std::uint64_t>(&size->data) : nullptr;
     const auto* values = chunks ? std::get_if<cbor::value::array>(&chunks->data) : nullptr;
     if (!n || !values)
@@ -1197,6 +1209,19 @@ auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
             return std::unexpected(corrupt("invalid blob content digest"));
         }
         output.content = *content;
+    }
+    if (format_entries) {
+        const auto* entries = std::get_if<cbor::value::array>(&format_entries->data);
+        if (!entries) {
+            return std::unexpected(corrupt("invalid blob format entries"));
+        }
+        for (const auto& entry : *entries) {
+            auto decoded = decode_digest(entry);
+            if (!decoded) {
+                return std::unexpected(corrupt("invalid blob format entry"));
+            }
+            output.format_entries.push_back(*decoded);
+        }
     }
     if (remote_value) {
         const auto* source_value = find(*remote_value, "source");
