@@ -111,12 +111,15 @@ metadata is part of the interface.
 
 ## Sandboxed client actions
 
-libliquid links no `libpq`. It finds `psql`, `createdb`, `dropdb`, and `pg_dump`, captures each
-executable and its dynamic-library closure into a content-addressed toolchain tree, materialises
-that tree for the action, and invokes its client executable through the existing sandbox launcher.
-The data-action sandbox retains the fixed environment and
-filesystem restrictions while explicitly enabling network access for the configured PostgreSQL
-endpoint. Ordinary build actions remain network-denied.
+libliquid links no `libpq`. Once per branch, discard, promotion, or test operation it resolves
+`psql`, `createdb`, `dropdb`, and `pg_dump` from `pg_config --bindir`, falling back to `PATH` when
+`pg_config` is unavailable. The data-action record stores the canonical absolute executable path;
+the sandbox permits that installed path and invokes it directly. It does not copy a client binary
+into the repository's temporary action directory, which preserves the host's code-signing and
+execution policy. The action still creates its toolchain directory for generated scripts. The
+data-action sandbox retains the fixed environment and filesystem restrictions while explicitly
+enabling network access for the configured PostgreSQL endpoint. Ordinary build actions remain
+network-denied.
 
 Every implemented potentially waiting step is coroutine-native. Client processes, filesystem
 capability probes, and process waits run through `runtime::offload` or the sandbox executor. No
