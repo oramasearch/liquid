@@ -7,6 +7,7 @@ Each command page is generated from the same metadata used to validate flags and
 | Command | Summary | Availability |
 |---|---|---|
 | [`version`](version.md) | print the version | available |
+| [`tiers`](tiers.md) | print declared language, format, and platform support | available |
 | [`init`](init.md) | create a repository and import its regular files | available |
 | [`status`](status.md) | show repository status | available |
 | [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |
