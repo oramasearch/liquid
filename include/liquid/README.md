@@ -4,6 +4,10 @@ Installed C++ headers in this directory define libliquid's supported API. `liqui
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.
 
+`frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
+descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
+errors, progress, and cancellation types while registering queries, commands, and panels.
+
 `sync.hpp` includes metadata-only tree receipt for node-store and other lazy-hydration clients.
 It records remote blob locations without fetching content chunks.
 `store.hpp` exposes runtime remote-source registration, hydration and remote-access observation,
