@@ -243,6 +243,73 @@ TEST(ConfigurationLanguage, package_target_source_and_when_lower_to_typed_record
     EXPECT_EQ(lowered->targets.front().install_layout, "prefix");
 }
 
+TEST(ConfigurationLanguage, install_block_lowers_to_a_validated_intent) {
+    const auto text =
+        "build app {\n"
+        "  command: [\"true\"]\n"
+        "  install {\n"
+        "    service { name: liquid_agent exec: path \"/usr/bin/liquid-agent\" "
+        "user: liquid_agent after: [network_online] restart: always }\n"
+        "    user { name: liquid_agent system: true home: path \"/var/lib/liquid-agent\" }\n"
+        "    group { name: liquid_agent system: true }\n"
+        "    directory { path: path \"/var/lib/liquid-agent\" mode: 750 owner: liquid_agent }\n"
+        "    symlink { path: path \"/usr/bin/liquid-current\" "
+        "target: path \"/usr/bin/liquid-agent\" }\n"
+        "    cache systemd-daemon-reload {}\n"
+        "    alternatives { name: liquid-tool path: path \"/usr/bin/liquid-agent\" priority: 40 }\n"
+        "  }\n"
+        "}\n";
+    auto parsed = liquid::parse_configuration(text, "install.liquid");
+    ASSERT_TRUE(parsed) << parsed.error().message;
+    const auto checked = liquid::check(*parsed);
+    ASSERT_TRUE(checked.empty()) << liquid::to_string(checked.front());
+    auto lowered = liquid::lower(*parsed);
+    ASSERT_TRUE(lowered) << lowered.error().message;
+    ASSERT_EQ(lowered->targets.size(), 1U);
+    ASSERT_TRUE(lowered->targets.front().install);
+    const auto& intent = *lowered->targets.front().install;
+    ASSERT_EQ(intent.services.size(), 1U);
+    EXPECT_EQ(intent.services.front().name, "liquid_agent");
+    EXPECT_EQ(intent.services.front().restart, liquid::service_restart::always);
+    ASSERT_EQ(intent.directories.size(), 1U);
+    EXPECT_EQ(intent.directories.front().mode, 0750U);
+    ASSERT_EQ(intent.caches.size(), 1U);
+    EXPECT_EQ(intent.caches.front(), liquid::install_cache::systemd_daemon_reload);
+    EXPECT_TRUE(liquid::validate_install_intent(intent));
+
+    auto encoded = liquid::encode_target(lowered->targets.front());
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::decode_target(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    ASSERT_TRUE(decoded->install);
+    EXPECT_EQ(*decoded->install, intent);
+}
+
+TEST(ConfigurationLanguage, install_names_and_paths_report_strict_type_diagnostics) {
+    const auto text =
+        "build app { command: [\"true\"] install {\n"
+        "  user { name: Bad system: true home: path \"/var/lib/good\" }\n"
+        "  symlink { path: path \"/usr/bin/tool;rm\" target: path \"/usr/bin/tool\" }\n"
+        "} }\n";
+    const auto actual = diagnostics(text);
+    ASSERT_EQ(actual.size(), 2U);
+    EXPECT_NE(actual[0].find("expected name matching [a-z_][a-z0-9_-]*"), std::string::npos);
+    EXPECT_NE(actual[0].find("cannot contain metacharacters"), std::string::npos);
+    EXPECT_NE(actual[1].find("expected canonical absolute path"), std::string::npos);
+    EXPECT_NE(actual[1].find("has no metacharacters"), std::string::npos);
+}
+
+TEST(ConfigurationLanguage, install_alternative_priority_requires_an_int32) {
+    const auto text = "build app { command: [\"true\"] install {\n"
+                      "  alternatives { name: liquid_tool path: path \"/usr/bin/liquid-tool\" "
+                      "priority: 2147483648 }\n"
+                      "} }\n";
+    const auto actual = diagnostics(text);
+    ASSERT_EQ(actual.size(), 1U);
+    EXPECT_NE(actual.front().find("expected 32-bit signed integer"), std::string::npos);
+    EXPECT_NE(actual.front().find("must fit the package formats"), std::string::npos);
+}
+
 TEST(ConfigurationLanguage, lock_path_patterns_lower_to_repository_rules) {
     const auto text = std::string{"lock generated-assets {\n"
                                   "  paths: [path \"assets/**\", path \"models/*.bin\"]\n"

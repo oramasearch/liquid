@@ -21,6 +21,8 @@ remote cache; any unclassified network use then fails inside the sandbox. The ou
 the `liquid-offline` label for local and hosted selection.
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
+`install.cmake` installs two trees into isolated generations, lists them, rolls back, and verifies
+that `current` exposes the first tree again.
 `configuration.cmake` checks a directory, lowers source origins in text and JSON, and formats the
 same document twice to pin idempotence.
 `locks.cmake` lowers a repository lock rule during initialization, then acquires with an explicit

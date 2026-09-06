@@ -8,8 +8,9 @@
 > attestations. Issue #77 adds Homebrew bottles, Arch binary-package recipes, AppImage, Flatpak, and
 > Snap, including the owned SquashFS writer and detached attestations. Issue #78 adds deterministic
 > `archive-z2` and `bare-user` OSTree commits plus bootc OCI encapsulation from a digest-pinned base
-> tree and overlays. Maintainer scripts and conflict
-> transactions remain issue #80; Tier B remains #79.
+> tree and overlays. Issue #80 adds declarative install intent, generated maintainer scripts,
+> file-owner conflict detection, derived replacement relationships, and generation-based
+> install/rollback. Tier B remains #79.
 
 ## Projection, not translation
 
@@ -88,6 +89,11 @@ Where liquid emits them, it **generates them from declarative intent** — regis
 service, update a cache, create a user — rather than passing through arbitrary user
 shell.
 
+The implemented `install_intent/1` vocabulary is closed: service, user, group, directory, symlink,
+cache update, and alternatives registration. Strict name and canonical-path grammars run before
+lowering. Debian, RPM, and Alpine lifecycle scripts come from the same intent and fixed POSIX
+templates; their digests are bound into both the projection attestation and package SBOM.
+
 ## OCI images
 
 liquid emits OCI images; it does not adopt tar layers internally
@@ -133,8 +139,10 @@ Archive formats are the easy part. These are not:
   see [relocation.md](../library/relocation.md).
 - **glibc version floors** and musl/glibc differences — expressed as constraints in
   the solver rather than discovered at runtime.
-- **File conflicts** between packages claiming a path.
-- **Transactional upgrade** with rollback.
+- **File conflicts** between packages claiming a path — implemented for request batches and
+  package, dpkg, or RPM inventories, with explicit replacement derivation.
+- **Transactional upgrade** with rollback — implemented with staged generations and one atomic
+  `current` selection.
 - **Cross-compilation and sysroots** — first-class, because the toolchain is an input.
 
 ## Open questions

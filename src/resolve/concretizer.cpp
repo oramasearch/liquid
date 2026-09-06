@@ -702,10 +702,24 @@ private:
         return std::nullopt;
     }
 
-    auto build_package(std::size_t package_index) -> result<digest> {
-        if (const auto found = nodes_.find(package_index); found != nodes_.end()) {
-            return found->second.id;
-        }
+    struct planned_edge {
+        std::string name;
+        dependency_type type{dependency_type::link};
+        bool virtual_dependency{};
+        bool compiler{};
+        std::size_t package{};
+    };
+
+    struct build_frame {
+        std::size_t package{};
+        std::vector<planned_edge> edges;
+        std::size_t next_edge{};
+    };
+
+    // Opens the frame of one selected package: marks it in progress and plans its dependency and
+    // compiler edges without touching any dependency node. A package already in progress is a
+    // cycle.
+    auto open_frame(std::size_t package_index) -> result<build_frame> {
         if (!visiting_.insert(package_index).second) {
             return std::unexpected(fail(errc::conflict,
                                         "cyclic package dependency cannot be content-addressed",
@@ -717,10 +731,7 @@ private:
         }
         const auto& choice = source_.candidates[selected->second];
         const auto& package = source_.universe.packages[package_index];
-        auto node = concretised_spec{.name = package.name,
-                                     .version = choice.version,
-                                     .variants = choice.variants,
-                                     .target = choice.target};
+        auto frame = build_frame{.package = package_index};
         for (const auto& dependency : package.dependencies) {
             if (!matches_when(choice, dependency.when)) {
                 continue;
@@ -729,24 +740,43 @@ private:
             if (!target) {
                 continue;
             }
-            auto built = build_package(source_.candidates[*target].package);
-            if (!built) {
-                return std::unexpected(built.error());
-            }
-            node.dependencies.push_back(
-                {dependency.name, dependency.type, *built, dependency.virtual_dependency});
+            frame.edges.push_back({dependency.name,
+                                   dependency.type,
+                                   dependency.virtual_dependency,
+                                   false,
+                                   source_.candidates[*target].package});
         }
         if (const auto compiler = selected_compiler(package_index, choice)) {
-            auto built = build_package(source_.candidates[*compiler].package);
-            if (!built) {
-                return std::unexpected(built.error());
+            const auto compiler_package = source_.candidates[*compiler].package;
+            frame.edges.push_back({source_.universe.packages[compiler_package].name,
+                                   dependency_type::build,
+                                   false,
+                                   true,
+                                   compiler_package});
+        }
+        return frame;
+    }
+
+    // Closes a frame whose every edge target already has a node: binds the edge digests, hashes
+    // the canonical record, and publishes the node.
+    auto close_frame(const build_frame& frame) -> result<void> {
+        const auto& choice = source_.candidates[selected_by_package_.at(frame.package)];
+        const auto& package = source_.universe.packages[frame.package];
+        auto node = concretised_spec{.name = package.name,
+                                     .version = choice.version,
+                                     .variants = choice.variants,
+                                     .target = choice.target};
+        for (const auto& edge : frame.edges) {
+            const auto built = nodes_.find(edge.package);
+            if (built == nodes_.end()) {
+                return std::unexpected(
+                    fail(errc::internal, "dependency node was not built before its parent"));
             }
-            node.compiler = *built;
+            if (edge.compiler) {
+                node.compiler = built->second.id;
+            }
             node.dependencies.push_back(
-                {source_.universe.packages[source_.candidates[*compiler].package].name,
-                 dependency_type::build,
-                 *built,
-                 false});
+                {edge.name, edge.type, built->second.id, edge.virtual_dependency});
         }
         for (const auto& patch : package.patches) {
             if (matches_when(choice, patch.when)) {
@@ -780,9 +810,46 @@ private:
             return std::unexpected(identity.error());
         }
         node.id = *identity;
-        visiting_.erase(package_index);
-        nodes_.emplace(package_index, std::move(node));
-        return *identity;
+        visiting_.erase(frame.package);
+        nodes_.emplace(frame.package, std::move(node));
+        return {};
+    }
+
+    // Builds the node of one package and, in postorder, every node it reaches. The traversal
+    // keeps its frames in a heap vector instead of recursing: at most one frame is open per
+    // selected package, so a dependency chain as long as the universe costs no native stack.
+    // The solver runs on a runtime pool thread, whose stack on macOS is 512 KiB.
+    auto build_package(std::size_t package_index) -> result<digest> {
+        if (const auto found = nodes_.find(package_index); found != nodes_.end()) {
+            return found->second.id;
+        }
+        auto first = open_frame(package_index);
+        if (!first) {
+            return std::unexpected(first.error());
+        }
+        auto frames = std::vector<build_frame>{};
+        frames.push_back(std::move(*first));
+        while (!frames.empty()) {
+            auto& frame = frames.back();
+            if (frame.next_edge != frame.edges.size()) {
+                const auto child = frame.edges[frame.next_edge++].package;
+                if (nodes_.contains(child)) {
+                    continue;
+                }
+                auto next = open_frame(child);
+                if (!next) {
+                    return std::unexpected(next.error());
+                }
+                frames.push_back(std::move(*next));
+                continue;
+            }
+            auto closed = close_frame(frame);
+            if (!closed) {
+                return std::unexpected(closed.error());
+            }
+            frames.pop_back();
+        }
+        return nodes_.at(package_index).id;
     }
 
     const problem& source_;

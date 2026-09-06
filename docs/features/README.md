@@ -133,6 +133,7 @@ specifies it.
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and Helm, with generated install scripts, ownership conflict checks, atomic generations, and ABI gates. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage, Flatpak, and Snap, with ABI and relocation gates. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented; a pinned Spack export seeds the package universe with explicit losses. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |

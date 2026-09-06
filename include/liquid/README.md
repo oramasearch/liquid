@@ -60,6 +60,10 @@ codecs, coroutine-native universe loading and solving, and stable explanation va
 engine and its clause encoding stay private.
 `configuration.hpp` defines the `.liquid` AST, exact diagnostics, synchronous check/lower/format
 operations, canonical target/source codecs, asynchronous source fetch, action-backed generators,
+configured target execution, and lowered install intents. `install.hpp` defines the closed
+`install_intent/1` values and codecs plus atomic generation install, list, and rollback tasks.
+`projection.hpp` accepts those intents, exposes fixed lifecycle-script generation, checks package
+ownership in batches or against installed inventories, and reports derived replacements.
 and configured target execution.
 `import.hpp` defines Spack import reports and loss categories, stable text and JSON report codecs,
 offline patch-byte injection, optional target toolchain binding, and the coroutine import task.

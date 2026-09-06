@@ -653,6 +653,11 @@ GitHub Actions builds and tests clean checkouts on Linux, macOS, and Windows; se
 > to deterministic `.deb`, `.rpm`, `.apk`, OCI image layouts, and digest-pinned Helm charts.
 > Binary readers derive package relationships, incompatible ABI verdicts refuse by default, and
 > signed `projection/1`, source provenance, and SBOM statements accompany OCI artifacts.
+> **Phase 5 install-time semantics are implemented.** Closed `install_intent/1` records generate
+> Debian, RPM, and Alpine lifecycle scripts with no caller shell; script digests enter both
+> `projection/1` and SPDX. Batch and installed-inventory ownership checks refuse conflicting paths
+> unless an explicit replacement derives the package relationship. `liquid install`, `--list`, and
+> `rollback` select complete staged generations atomically, including interruption recovery.
 > **Phase 5 now includes the image-based OS projection.** A digest-pinned base tree and declared
 > overlays produce reproducible `archive-z2` or `bare-user` OSTree commits and component-layered
 > bootc OCI layouts. The commit checksum and image digest are distinct identities, and signed
@@ -735,6 +740,7 @@ and Zetta's.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
+- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, install intents, ownership conflicts, atomic generations, derived dependencies, byte identity, and attached attestations.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, OSTree commits, bootc images, byte identity, and attached attestations.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, derived dependencies, byte identity, and attached attestations.
 - [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
@@ -752,6 +758,7 @@ and Zetta's.
 - [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
 - [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
+- [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, install-intent lowering, source verification, generators, and trace origins.
 - [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, lowering, source verification, generators, and trace origins.
 - [`docs/library/import-spack.md`](docs/library/import-spack.md) — pinned Spack export, field mapping, explicit translation losses, the imported universe, and build subset.
 
