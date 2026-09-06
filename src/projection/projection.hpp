@@ -70,9 +70,10 @@ project_package(repository& source, projection_target target, prepared_projectio
     -> runtime::task<projection_report>;
 [[nodiscard]] auto project_winget(repository& source, const projection_request& request)
     -> runtime::task<projection_report>;
-[[nodiscard]] auto appx_manifest(const package_metadata& metadata) -> result<std::string>;
-[[nodiscard]] auto winget_manifests(const package_metadata& metadata,
-                                    std::string_view installer_url,
-                                    digest installer) -> result<std::map<std::string, std::string>>;
+[[nodiscard]] LIQUID_EXPORT auto appx_manifest(const package_metadata& metadata)
+    -> result<std::string>;
+[[nodiscard]] LIQUID_EXPORT auto
+winget_manifests(const package_metadata& metadata, std::string_view installer_url, digest installer)
+    -> result<std::map<std::string, std::string>>;
 
 } // namespace liquid::projection_detail

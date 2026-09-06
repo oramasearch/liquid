@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap|macos-pkg|macos-dmg|msix|winget> <result|tree|installer> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree|installer> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description

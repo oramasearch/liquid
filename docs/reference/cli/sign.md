@@ -10,8 +10,7 @@ liquid sign <drip|change|artifact> <digest> | sign <macos|windows> <artifact> --
 
 ## Description
 
-Sign canonical digests with the current software, FIDO2, or PIV identity key, or sign an installer
-outside the projection sandbox and write a platform_signature/1 attestation.
+Sign a canonical digest with the identity key, or sign and verify a platform installer outside the projection sandbox with a platform_signature/1 sidecar.
 
 ## Options
 
@@ -24,7 +23,7 @@ outside the projection sandbox and write a platform_signature/1 attestation.
 
 ## Availability
 
-macOS signing on macOS; Windows signing on Windows
+available
 
 ## Examples
 

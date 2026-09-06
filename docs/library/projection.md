@@ -332,8 +332,8 @@ them.
 
 The committed install-tree fixture pins each target's digest in `tests/test_projection.cpp` and is
 run by both static and shared suites on macOS and by the Linux proof lane. The shared suite links
-the private package, tar-writer, and SquashFS-writer translation units directly, preserving their
-internal ABI while exercising the same deterministic bytes. Tests cover the package
+the private package, platform, tar-writer, and SquashFS-writer translation units directly,
+preserving their internal ABI while exercising the same deterministic bytes. Tests cover the package
 readers, format-registry recognition, deterministic gzip, repeated projection, OCI referrers,
 signed `projection/1`, both OSTree repository modes, symbolic links, overlay paths, the independent
 GVariant checksum, the bootc image digest, `platform_signature/1` schema, pinned Appx and winget

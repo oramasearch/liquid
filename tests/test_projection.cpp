@@ -89,7 +89,10 @@ public:
 
     auto project(liquid::projection_request request) -> liquid::projection_report {
         auto report = liquid::runtime::block_on(liquid::project(repository_, std::move(request)));
-        EXPECT_TRUE(report) << report.error().message << ": " << report.error().context;
+        if (!report) {
+            ADD_FAILURE() << report.error().message << ": " << report.error().context;
+            return {};
+        }
         return std::move(*report);
     }
 
