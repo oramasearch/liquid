@@ -18,6 +18,10 @@ paths below. Requests and responses use `Content-Type: application/vnd.liquid.sy
 either `Content-Length` or HTTP/1.1 chunked transfer coding. Frame boundaries are independent of
 HTTP read boundaries.
 
+The sync adapter uses liquid's shared private Corosio HTTP/1.1 client for URL parsing, request and
+response framing, chunked decoding, bearer authentication, and TLS. Protocol paths, media types,
+and CBOR envelopes remain owned by the sync layer.
+
 | Method and path | Request body | Successful response |
 |---|---|---|
 | `POST <repository>/sync/push` | client metadata stream | acknowledgement header, optionally followed by server metadata the client must import |
