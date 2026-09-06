@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "encoding/cbor.hpp"
+#include "flow_control.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
@@ -25,6 +26,17 @@ auto server_error(errc code, std::string message, std::string context = {}) -> e
 
 auto same_digest(const digest& left, const digest& right) -> bool {
     return left.alg == right.alg && left.bytes == right.bytes;
+}
+
+auto context_value(std::string_view context, std::string_view name) -> std::string {
+    const auto prefix = std::string{name} + "=";
+    const auto start = context.find(prefix);
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    const auto value_start = start + prefix.size();
+    const auto end = context.find(' ', value_start);
+    return std::string{context.substr(value_start, end - value_start)};
 }
 
 class change_graph {
@@ -317,6 +329,7 @@ struct sync_server::impl {
     store* objects{};
     sync_server_options options;
     bool matching_store{};
+    std::unique_ptr<flow_detail::controller> flow_limits;
 };
 
 sync_server::sync_server(repository& subject, sync_server_options options)
@@ -327,7 +340,8 @@ sync_server::sync_server(repository& subject, store& objects, sync_server_option
           impl{&subject,
                &objects,
                std::move(options),
-               &repository_detail::sync_access::objects(subject) == &objects})) {}
+               &repository_detail::sync_access::objects(subject) == &objects,
+               std::make_unique<flow_detail::controller>(subject.flow_configuration())})) {}
 
 sync_server::~sync_server() = default;
 sync_server::sync_server(sync_server&&) noexcept = default;
@@ -345,6 +359,20 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
     if (!incoming->outcomes.empty()) {
         co_return std::unexpected(
             server_error(errc::invalid_argument, "push request contains reference outcomes"));
+    }
+    for (const auto& item : incoming->items) {
+        if (item.author.taap_id.empty()) {
+            continue;
+        }
+        auto document = item.directory;
+        if (std::ranges::all_of(document, [](std::byte value) { return value == std::byte{}; })) {
+            document = item.repository;
+        }
+        auto admitted = impl_->flow_limits->admit(
+            item.author.taap_id, flow_detail::node_key(document), item.body.size());
+        if (!admitted) {
+            co_return std::unexpected(admitted.error());
+        }
     }
     auto outcomes = default_outcomes(incoming->items);
     if (!outcomes) {
@@ -494,6 +522,18 @@ result<std::vector<std::byte>> sync_server::encode_error(const error& value) {
     };
     if (item) {
         fields.emplace_back("item", *item);
+    }
+    const auto retry_text = context_value(value.context, "retry_after_ms");
+    auto retry_after_ms = std::uint64_t{};
+    const auto parsed_retry =
+        std::from_chars(retry_text.data(), retry_text.data() + retry_text.size(), retry_after_ms);
+    if (!retry_text.empty() && parsed_retry.ec == std::errc{} &&
+        parsed_retry.ptr == retry_text.data() + retry_text.size()) {
+        fields.emplace_back("retry_after_ms", retry_after_ms);
+    }
+    const auto scope = context_value(value.context, "scope");
+    if (!scope.empty()) {
+        fields.emplace_back("scope", scope);
     }
     return encoding::cbor::encode(encoding::cbor::value{std::move(fields)});
 }

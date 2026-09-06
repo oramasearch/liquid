@@ -17,6 +17,7 @@
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/flow.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
@@ -120,6 +121,7 @@ struct LIQUID_EXPORT repository_options {
     agents_config agents{};
     policy_config policy{};
     retention_config retention{};
+    flow_config flow{};
     std::optional<remote_config> remote;
     std::optional<session_id> session;
 };
@@ -475,6 +477,8 @@ public:
                                                           std::span<sync_item> output);
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
+    [[nodiscard]] flow_config flow_configuration() const;
+    [[nodiscard]] std::vector<flow_bucket_status> flow_buckets() const;
 
 private:
     [[nodiscard]] runtime::task<std::optional<stale_revalidation>>

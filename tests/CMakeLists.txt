@@ -14,11 +14,13 @@ add_executable(liquid-tests
   test_hash.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_node_store.cpp
   test_object.cpp
   test_remote.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  resolve/test_resolution.cpp
   workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
@@ -410,16 +412,19 @@ add_executable(liquid-header-tests
   headers/delta.cpp
   headers/error.cpp
   headers/export.cpp
+  headers/flow.cpp
   headers/frontend.cpp
   headers/git.cpp
   headers/graph.cpp
   headers/hash.cpp
   headers/identity.cpp
   headers/liquid.cpp
+  headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp
   headers/remote.cpp
   headers/repository.cpp
+  headers/resolve.cpp
   headers/runtime.cpp
   headers/store.cpp
   headers/sync.cpp

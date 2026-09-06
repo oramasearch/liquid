@@ -6,9 +6,7 @@
 #include <string_view>
 #include <utility>
 
-#include <boost/http.hpp>
-
-#include "http1/server.hpp"
+#include "serve/http.hpp"
 
 namespace liquid::workers {
 namespace {
@@ -19,27 +17,8 @@ auto openapi(std::string_view component) -> std::string {
         component);
 }
 
-auto json_id(std::string_view body) -> std::string_view {
-    const auto field = body.find("\"id\"");
-    const auto colon = field == std::string_view::npos ? field : body.find(':', field + 4);
-    if (colon == std::string_view::npos) {
-        return "null";
-    }
-    const auto begin = body.find_first_not_of(" \t\r\n", colon + 1);
-    if (begin == std::string_view::npos) {
-        return "null";
-    }
-    if (body[begin] == '"') {
-        const auto end = body.find('"', begin + 1);
-        return end == std::string_view::npos ? std::string_view{"null"}
-                                             : body.substr(begin, end - begin + 1);
-    }
-    const auto end = body.find_first_of(",}\r\n \t", begin);
-    return body.substr(begin, end == std::string_view::npos ? body.size() - begin : end - begin);
-}
-
 auto mcp_response(std::string_view body, std::string_view component) -> std::string {
-    const auto id = json_id(body);
+    const auto id = serve::json_rpc_id(body);
     if (body.find("\"method\":\"initialize\"") != std::string_view::npos) {
         return std::format(
             R"({{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"2025-06-18","capabilities":{{}},"serverInfo":{{"name":"liquid-{}","version":"v1"}}}}}})",
@@ -54,72 +33,54 @@ auto mcp_response(std::string_view body, std::string_view component) -> std::str
         id);
 }
 
-auto make_router(std::shared_ptr<const control_status> status) -> http1::router {
-    auto routes = http1::router{};
-    routes.add(boost::http::method::get,
-               "/healthz",
-               [](boost::http::route_params& params) -> boost::http::route_task {
-                   co_return co_await http1::send(
-                       params, boost::http::status::ok, "text/plain", "ok\n");
-               });
-    routes.add(boost::http::method::get,
-               "/readyz",
-               [status](boost::http::route_params& params) -> boost::http::route_task {
-                   const auto ready = status->ready();
-                   co_return co_await http1::send(params,
-                                                  ready ? boost::http::status::ok
-                                                        : boost::http::status::service_unavailable,
-                                                  "text/plain",
-                                                  ready ? "ready\n" : "not ready\n");
-               });
-    routes.add(boost::http::method::get,
-               "/metrics",
-               [status](boost::http::route_params& params) -> boost::http::route_task {
-                   co_return co_await http1::send(params,
-                                                  boost::http::status::ok,
-                                                  "text/plain; version=0.0.4",
-                                                  status->metrics());
-               });
-    routes.add(boost::http::method::get,
-               "/v1",
-               [status](boost::http::route_params& params) -> boost::http::route_task {
-                   co_return co_await http1::send(
-                       params,
-                       boost::http::status::ok,
-                       "application/json",
-                       std::format(R"({{"component":"{}","version":"v1"}})", status->component));
-               });
-    routes.add(boost::http::method::get,
-               "/v1/openapi.json",
-               [status](boost::http::route_params& params) -> boost::http::route_task {
-                   co_return co_await http1::send(params,
-                                                  boost::http::status::ok,
-                                                  "application/json",
-                                                  openapi(status->component));
-               });
-    routes.add(boost::http::method::post,
-               "/mcp",
-               [status](boost::http::route_params& params) -> boost::http::route_task {
-                   auto body = co_await http1::read_body(params);
-                   if (!body) {
-                       co_return boost::http::route_error(body.error());
-                   }
-                   const auto text =
-                       std::string{reinterpret_cast<const char*>(body->data()), body->size()};
-                   co_return co_await http1::send(params,
-                                                  boost::http::status::ok,
-                                                  "application/json",
-                                                  mcp_response(text, status->component));
-               });
+auto make_routes(std::shared_ptr<const control_status> status)
+    -> std::shared_ptr<const serve::route_table> {
+    auto routes = std::make_shared<serve::route_table>();
+    routes->add(
+        "GET", "/healthz", [](const serve::http_request&) -> runtime::task<serve::http_response> {
+            co_return serve::make_response(200, "text/plain", "ok\n");
+        });
+    routes->add("GET",
+                "/readyz",
+                [status](const serve::http_request&) -> runtime::task<serve::http_response> {
+                    const auto ready = status->ready();
+                    co_return serve::make_response(
+                        ready ? 200U : 503U, "text/plain", ready ? "ready\n" : "not ready\n");
+                });
+    routes->add("GET",
+                "/metrics",
+                [status](const serve::http_request&) -> runtime::task<serve::http_response> {
+                    co_return serve::make_response(
+                        200, "text/plain; version=0.0.4", status->metrics());
+                });
+    routes->add(
+        "GET", "/v1", [status](const serve::http_request&) -> runtime::task<serve::http_response> {
+            co_return serve::make_response(
+                200,
+                "application/json",
+                std::format(R"({{"component":"{}","version":"v1"}})", status->component));
+        });
+    routes->add("GET",
+                "/v1/openapi.json",
+                [status](const serve::http_request&) -> runtime::task<serve::http_response> {
+                    co_return serve::make_response(
+                        200, "application/json", openapi(status->component));
+                });
+    routes->add(
+        "POST",
+        "/mcp",
+        [status](const serve::http_request& request) -> runtime::task<serve::http_response> {
+            co_return serve::make_response(
+                200, "application/json", mcp_response(request.body, status->component));
+        });
     return routes;
 }
 
 } // namespace
 
-runtime::task<void> serve_control(std::string listen, control_status status) {
+auto serve_control(std::string listen, control_status status) -> runtime::task<void> {
     auto shared_status = std::make_shared<const control_status>(std::move(status));
-    co_return co_await http1::serve(http1::server_options{.listen = std::move(listen)},
-                                    make_router(std::move(shared_status)));
+    co_return co_await serve::serve_tcp(std::move(listen), make_routes(std::move(shared_status)));
 }
 
 } // namespace liquid::workers

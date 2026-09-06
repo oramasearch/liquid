@@ -9,3 +9,4 @@ worker RPCs are documented as an internal protocol.
 | Image admission | [`admission.md`](admission.md) |
 | Scheduler | [`scheduler.md`](scheduler.md) |
 | Worker control listener | [`worker.md`](worker.md) |
+| Node store | [`node-store.md`](node-store.md) |

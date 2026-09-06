@@ -113,6 +113,18 @@ Non-success responses use `Content-Type: application/vnd.liquid.error-v1` and a 
 | 503 | `unavailable` |
 | 500 | `io`, `internal` |
 
+Before metadata import, `sync_server` applies the repository's actor, directory-document, and
+repository buckets to each authored `sync_item`. A refusal returns the existing HTTP 429 mapping;
+the canonical error body also carries `retry_after_ms` and `scope`. The complete metadata batch is
+left unapplied, so a rejected peer operation cannot enter causal history. `max_update_bytes`
+applies to each item's body.
+
+`sync_endpoint::push` projects a flow rejection into `sync_report::retry_after_ms` and
+`exhausted_scope` rather than hiding the peer's retry signal in transport text. `liquid push`
+prints `flow_rejected scope=<scope> retry_after_ms=<value>` and exits unsuccessfully. Object
+uploads may already exist in the content-addressed store, but the repository document, directory
+documents, drips, changes, and refs remain unchanged.
+
 An interrupted request has no success response and is retried from the last acknowledged cursor.
 Servers do not advance that cursor until metadata import and required chunk publication both
 succeed. A successful reply acknowledges the batch even when it reports refusals; refs are exported
@@ -185,6 +197,15 @@ push/pull requests over the vendored `oramasearch/http` module. A caller may put
 cursor and the push's `atomic` choice in `sync_endpoint_options`; `sync_report::references` exposes
 the applied or refused result and reason for each ref, and the returned report supplies the next
 cursor to retain. All waiting operations are Capy tasks.
+
+`sync_session::receive_metadata(roots)` is the image-root variant. Each root is a tree record. It
+range-reads and digest-verifies absent tree and blob records, stores those records locally, and
+stops at each decoded blob instead of reading its chunks. The session registers the blob's
+whole-content digest, ordered chunks, and sizes with `{source, instance}` from its constructor.
+`sync_metadata_report::trees` and `blobs` count records fetched from the peer; local records are
+walked but not counted again. `bytes_remote` sums the registered chunk sizes not already local.
+Consequently `store::has(blob.content)` reports `remote` for a wholly absent payload immediately
+after receipt, and a later store or VFS read hydrates through the registered source.
 
 ## Local server command
 

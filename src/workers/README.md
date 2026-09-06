@@ -10,6 +10,9 @@ provenance, SBOMs, ABI descriptors, and ABI compatibility attestations. `control
 isolated fixed route registry for health, readiness, Prometheus metrics, REST discovery, OpenAPI,
 and MCP discovery. It runs through the shared private HTTP/1.1 server adapter used by other liquid
 control surfaces.
+provenance, SBOMs, ABI descriptors, and ABI compatibility attestations. `control.cpp` registers
+health, readiness, Prometheus metrics, REST discovery, OpenAPI, and MCP discovery handlers in the
+shared asynchronous route table under `src/serve/`.
 
 The worker detects an existing repository through its `LIQUID_REPO` marker. Reusing a worker root
 therefore reopens the co-located CAS and preserves the TAAP identity used to sign results.
