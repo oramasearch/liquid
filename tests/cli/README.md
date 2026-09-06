@@ -29,3 +29,7 @@ applied, and fetched file digests.
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
 identity encode, decode, and verification APIs.
+
+The admission process test invokes `attest image` and verifies its printed digest through
+`attest verify`, then starts the built `serve admission` command over TLS and explicit insecure
+HTTP and posts committed Kubernetes fixtures.

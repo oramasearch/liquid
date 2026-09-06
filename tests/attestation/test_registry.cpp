@@ -77,6 +77,10 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.attributes = {{"verified_by", "taap:1:ed25519:verifier"},
                             {"sandbox", "blake3:sandbox"},
                             {"agreement", true}};
+    } else if (profile == "image_provenance/1") {
+        value.attributes = {{"image", "registry.example/liquid@sha256:image"},
+                            {"tree", "blake3:tree"},
+                            {"result", "blake3:result"}};
     }
     return value;
 }
@@ -111,7 +115,7 @@ auto sign_unknown_profile(liquid::attestation value) -> liquid::attestation {
 
 TEST(AttestationRegistry, all_profiles_accept_examples_and_reject_missing_required_fields) {
     const auto& registry = liquid::attestation_profile_registry::global();
-    ASSERT_EQ(registry.profiles().size(), 11U);
+    ASSERT_EQ(registry.profiles().size(), 12U);
     for (const auto& profile : registry.profiles()) {
         auto accepted = registry.validate(example(profile.name));
         ASSERT_TRUE(accepted) << profile.name << ": " << accepted.error().message;
