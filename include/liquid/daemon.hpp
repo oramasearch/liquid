@@ -31,6 +31,9 @@ public:
 
     [[nodiscard]] virtual auto name() const -> std::string = 0;
     [[nodiscard]] virtual runtime::task<void> deliver(daemon_delivery delivery) = 0;
+    [[nodiscard]] virtual auto detail() const -> std::optional<std::string> {
+        return std::nullopt;
+    }
 };
 
 struct LIQUID_EXPORT daemon_target_status {
@@ -39,6 +42,7 @@ struct LIQUID_EXPORT daemon_target_status {
     std::uint64_t behind{};
     std::uint64_t deliveries{};
     std::optional<std::string> last_error;
+    std::optional<std::string> detail;
 };
 
 struct LIQUID_EXPORT daemon_status {

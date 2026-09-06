@@ -71,8 +71,10 @@ auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto secret(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
+auto review(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -460,6 +462,11 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::sync_pull},
+    {"review",
+     "review <list|show|open|comment|approve|close|protections|watch> --lake <url> [--json] ...",
+     "review a lake change in place",
+     "available",
+     liquid_cli::review},
     {"serve",
      "serve sync <path> [sync options] | serve reapi --listen <address> [--instance <name>] | "
      "serve admission --policy <file> [admission options]",
@@ -742,6 +749,11 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::symbols},
+    {"hot-update",
+     "hot-update <classify|apply|status> ...",
+     "classify, apply, or inspect runtime updates",
+     "available on macOS arm64 and Linux x86_64",
+     liquid_cli::hot_update},
     {"secret",
      "secret <public-key|seal|unseal> ...",
      "fetch, seal, or unseal a Lake environment secret",

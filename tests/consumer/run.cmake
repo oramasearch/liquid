@@ -51,7 +51,8 @@ if(NOT configure_result EQUAL 0)
 endif()
 
 execute_process(
-  COMMAND "${CMAKE_COMMAND}" --build "${LIQUID_CONSUMER_BINARY_DIR}" --target liquid-consumer
+  COMMAND "${CMAKE_COMMAND}" --build "${LIQUID_CONSUMER_BINARY_DIR}"
+    --target liquid-consumer liquid-forge-double-consumer
   RESULT_VARIABLE build_result
   OUTPUT_VARIABLE build_output
   ERROR_VARIABLE build_error)
@@ -64,4 +65,11 @@ execute_process(
   RESULT_VARIABLE run_result)
 if(NOT run_result EQUAL 0)
   message(FATAL_ERROR "consumer executable failed")
+endif()
+
+execute_process(
+  COMMAND "${LIQUID_CONSUMER_BINARY_DIR}/liquid-forge-double-consumer"
+  RESULT_VARIABLE forge_run_result)
+if(NOT forge_run_result EQUAL 0)
+  message(FATAL_ERROR "forge double consumer executable failed")
 endif()

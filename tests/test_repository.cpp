@@ -1909,4 +1909,18 @@ TEST(Repository, RemoteConfigurationPersistsAcrossOpen) {
     EXPECT_EQ(*reopened->remote_configuration(), *options.remote);
 }
 
+TEST(Repository, HotUpdateConfigurationPersistsAcrossOpen) {
+    temporary_repository location;
+    auto options = liquid::repository_options{};
+    options.hot_update.restart_hook = {"/usr/bin/env", "restart-demo"};
+    options.hot_update.targets = {{"demo", location.path() / "demo.sock"}};
+    auto created = liquid::runtime::block_on(liquid::repository::create(location.path(), options));
+    ASSERT_TRUE(created) << created.error().message;
+    EXPECT_EQ(created->hot_update_configuration(), options.hot_update);
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    EXPECT_EQ(reopened->hot_update_configuration(), options.hot_update);
+}
+
 } // namespace

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string_view>
 #include <utility>
@@ -289,7 +290,11 @@ runtime::task<response> request(request_options options) {
             co_return std::unexpected(client_error(errc::io, code.message(), url->host));
         }
         if (options.verify_peer) {
-            if (const auto code = context.set_default_verify_paths()) {
+            const auto* certificate_file = std::getenv("SSL_CERT_FILE");
+            const auto code = certificate_file != nullptr && certificate_file[0] != '\0'
+                                  ? context.load_verify_file(certificate_file)
+                                  : context.set_default_verify_paths();
+            if (code) {
                 co_return std::unexpected(client_error(errc::io, code.message(), url->host));
             }
         }

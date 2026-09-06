@@ -37,6 +37,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
+> shared HTTP/1.1 client, `serve sync` adapter, and lake forge review client with its polling event
+> stream and installable double are implemented. VFS full materialisation works on every platform;
 > HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
 > policy reload, local or node-store evidence lookup, metrics, REST, OpenAPI, and MCP. Complete
@@ -87,6 +89,12 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > that definition's new action; recorded header reads invalidate the definitions that use them.
 > Liquid #66 adds content-addressed per-translation-unit symbol records from a query over recorded
 > compile actions, a labelled tree-sitter fallback, graph retrieval, repository access, and
+> `liquid symbols <path>`.
+> Liquid #32 adds evidence-based hot-update classification for tiers 0–4, signed patch and restart
+> records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and Linux x86_64,
+> sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven daemon target.
+> Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise returns the
+> tier-3 restart outcome.
 > `liquid symbols <path>`; syntactic records and `liquid version --json` carry the grammar-lock
 > digest. The distribution decision and inventory are in
 > [`docs/library/grammars.md`](docs/library/grammars.md).
@@ -256,6 +264,7 @@ and Zetta's.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
 - [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.
 - [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, conflicts, transfer resume, path history, and daemon watching.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
@@ -379,6 +388,7 @@ library, never the other way round).
 |---|---|
 | `liquid::liquid` (`libliquid`) | the library: `libliquid.a`, or `libliquid.so`/`.dylib` with `-DBUILD_SHARED_LIBS=ON`; symbols hidden by default, `LIQUID_EXPORT` marks the API |
 | `liquid-cli` → `liquid` | the command-line binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
+| `liquid_forge_double`, `liquid-forge-double` | installable in-memory lake forge target and standalone integration-test server |
 | `liquid-tests` | GoogleTest; on by default only when liquid is the top-level project |
 
 ### Build

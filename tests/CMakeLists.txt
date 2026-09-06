@@ -17,7 +17,9 @@ add_executable(liquid-tests
   test_delta.cpp
   test_daemon.cpp
   test_error.cpp
+  test_forge.cpp
   test_hash.cpp
+  test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
   test_node_store.cpp
@@ -89,6 +91,7 @@ if(UNIX)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   liquid::liquid
+  liquid_forge_double
   liquid_monocypher
   orama::oramacore-cpp
   GTest::gtest_main
@@ -165,6 +168,8 @@ if(UNIX)
     LIQUID_ADMISSION_TLS_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem")
 endif()
 target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TLS_CERTIFICATE="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
+  LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
   LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
@@ -209,8 +214,31 @@ if(UNIX)
     LIQUID_WRAP_SLEEP_TOOL="$<TARGET_FILE:liquid-wrap-sleep-tool>")
 endif()
 
+if(UNIX)
+  add_executable(liquid-hot-demo-tests
+    hot_update/test_demo.cpp
+    ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+    ${PROJECT_SOURCE_DIR}/src/objects/records.cpp)
+  target_include_directories(liquid-hot-demo-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(liquid-hot-demo-tests PRIVATE
+    liquid::liquid
+    liquid::hot
+    GTest::gtest_main)
+  target_compile_definitions(liquid-hot-demo-tests PRIVATE
+    LIQUID_HOT_DEMO="$<TARGET_FILE:liquid-hot-demo>"
+    LIQUID_HOT_DEMO_PATCH="$<TARGET_FILE:liquid-hot-demo-patch>"
+    LIQUID_HOT_DEMO_RESTART_HOOK="$<TARGET_FILE:liquid-hot-demo-restart-hook>"
+    LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
+  add_dependencies(liquid-hot-demo-tests
+    liquid-hot-demo
+    liquid-hot-demo-patch
+    liquid-hot-demo-restart-hook)
+  gtest_discover_tests(liquid-hot-demo-tests)
+endif()
+
 if(LIQUID_BUILD_CLI)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_CLI="$<TARGET_FILE:liquid-cli>")
+  add_dependencies(liquid-tests liquid-cli)
   if(NOT APPLE)
   set(LIQUID_SYMBOLS_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/symbols-cli-repository)
   add_test(NAME symbols-cli-clean
@@ -503,6 +531,7 @@ add_executable(liquid-header-tests
   headers/git.cpp
   headers/graph.cpp
   headers/hash.cpp
+  headers/hot_update.cpp
   headers/identity.cpp
   headers/liquid.cpp
   headers/node_store.cpp
@@ -524,6 +553,9 @@ add_executable(liquid-frontend-c-header headers/frontend_abi.c)
 target_include_directories(liquid-frontend-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME public-frontend-c-header COMMAND liquid-frontend-c-header)
 
+add_executable(liquid-hot-c-header headers/hot_abi.c)
+target_include_directories(liquid-hot-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-hot-c-header COMMAND liquid-hot-c-header)
 add_executable(liquid-format-c-header headers/format_abi.c)
 target_include_directories(liquid-format-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME public-format-c-header COMMAND liquid-format-c-header)

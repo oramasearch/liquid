@@ -44,6 +44,7 @@ built binary under the build directory before CTest compares it with the committ
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
+| `review` | `review <list\|show\|open\|comment\|approve\|close\|protections\|watch> --lake <url> [--json] ...` | Review a lake change in place. | available |
 | `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
@@ -82,6 +83,7 @@ built binary under the build directory before CTest compares it with the committ
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
 | `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
+| `hot-update` | `hot-update <classify\|apply\|status> ...` | Classify, apply, or inspect runtime updates. | available on macOS arm64 and Linux x86_64 |
 | `edit` | `edit <rename\|extract\|move\|apply> ... [--json] [--apply] [--agent <name>]` | Preview or apply a structural edit through the daemon. | available on macOS and Linux |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
 | `serve` | `serve admission --policy <file> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>]` | Serve image admission and its control API. | available |
@@ -108,6 +110,10 @@ Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
 adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
+successful delivery count.
+The `hot-update` target also emits `daemon_target_detail=<name> <detail>` after a successful
+delivery. Its detail names the configured build target, `patched` or `restart` outcome, tier, and
+content-addressed record.
 successful delivery count. The top-level JSON `flow` object pins paused state, reason, persistence
 lag, consumer lag, and bucket rows. Text output presents the same high-level values on one `flow`
 line; each bucket row in JSON includes scope, key, current tokens, rate, burst, and rejected count.
@@ -123,6 +129,28 @@ Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refu
 completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
 use `LIQUID_TOKEN` as an optional bearer credential and never print it. A URL must use HTTP or HTTPS
 and identify one lake repository.
+`review` uses the same bearer rule. Its verbs are:
+
+```sh
+liquid review list --lake https://lake.example/v1/repositories/example [--state open]
+liquid review show --lake https://lake.example/v1/repositories/example review-1
+liquid review open --lake https://lake.example/v1/repositories/example <change>
+liquid review comment --lake https://lake.example/v1/repositories/example \
+  review-1 'src/file.cpp:14:3@<change>' 'Please keep this check.'
+liquid review approve --lake https://lake.example/v1/repositories/example review-1
+liquid review close --lake https://lake.example/v1/repositories/example review-1
+liquid review protections --lake https://lake.example/v1/repositories/example
+liquid review watch --lake https://lake.example/v1/repositories/example review-1
+```
+
+`list --state` accepts `open`, `approved`, or `closed`. A requested-changes action is a comment plus
+the `open` state because lake has no requested-changes state. Text is one stable line per record or
+event. `--json` writes one object for single-record verbs, an array for lists, and one object per
+watch event. The built-binary test pins an opened review as:
+
+```json
+{"id":"review-1","change":"blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262","state":"open","reviewers":[],"created":1788537601,"updated":1788537601}
+```
 An HTTP 429 flow refusal prints
 `flow_rejected scope=<actor|document|repository> retry_after_ms=<count>` and exits with status 1;
 the cursor does not advance.
@@ -423,6 +451,12 @@ current project's wrap repository.
 `retain explain` applies persisted `config.retention` rules, evaluates reachability without
 deleting data, and prints the matching rule, lease ID, and expiry for a retained digest. A digest
 outside every live root is reported as due for eviction by the next collection.
+`hot-update classify <old> <new> [--json]` prints the tier, first-class outcome, changed symbols,
+evidence records, and reason. Missing frontend evidence is tier 4 rather than a command error.
+`hot-update apply <patch> --endpoint <path>` verifies the `hot_update/1` signature before sending
+the object to the program's local endpoint. `hot-update status <result> [--json]` walks the signed
+chain and lists the original artifact followed by each patch in application order. Configuration
+and safety rules are in [`../library/hot-update.md`](../library/hot-update.md).
 `sbom` accepts a produced path and exactly one output-format flag. In a liquid repository or
 wrapped project it verifies and prints the result-bound `sbom/1` attestation and its graph-derived
 SPDX 2.3 or CycloneDX 1.5 document. A regular file with no producing result uses local ELF,
@@ -494,6 +528,9 @@ liquid sbom build/output.o --spdx
 liquid sbom /usr/bin/tool --cyclonedx
 liquid abi show build/libexample.so --json
 liquid abi diff blake3:<old-result>:build/libexample.so blake3:<new-result>:build/libexample.so --json
+liquid hot-update classify blake3:<old-result> blake3:<new-result> --json
+liquid hot-update apply blake3:<patch-record> --endpoint .liquid/demo.sock
+liquid hot-update status blake3:<new-result> --json
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --input zlib=blake3:<result-or-tree-digest> cmake --build build
 liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080

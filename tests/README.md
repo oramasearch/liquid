@@ -4,6 +4,10 @@ The default suite covers the public library surface and the local store. Focused
 collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
+`test_forge.cpp` covers lake review, comment, state, and branch-protection round trips; every
+documented envelope error; bearer isolation; HTTPS with the committed certificate; rebase anchor
+mapping; polling review events; and the built CLI's pinned JSON. `support/forge_double` provides the
+installable in-memory server used by those cases and downstream liquify tests.
 
 Strict DER coverage rejects BER indefinite lengths, non-minimal tags, lengths, integers, and object
 identifiers while preserving each element's exact encoded span for timestamp-renewal hashing.
@@ -178,3 +182,7 @@ through public libliquid API.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.
+Hot-update tests classify fixture pairs across all tiers, prove that comment-only output equality is
+tier 0, require ABI evidence for tier 2, reject unsigned patches, and reconstruct a two-patch
+composition. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
+case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.

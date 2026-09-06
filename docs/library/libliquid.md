@@ -9,6 +9,7 @@ command-line binary, liquify and lake are clients of it. Decided 2026-09-02 (`CL
 | Target | What |
 |---|---|
 | `liquid::liquid` (`libliquid`) | `libliquid.a` by default; `libliquid.so` / `.dylib` (`SOVERSION 0`) with `-DBUILD_SHARED_LIBS=ON`. Symbols hidden by default; `LIQUID_EXPORT` (from the generated `liquid/export.hpp`) marks the API |
+| `liquid::hot` (`liquid-hot`) | separately versioned C runtime (`LIQUID_HOT_ABI_VERSION` and `SOVERSION 1`) for cooperative entry registration and quiescent replacement |
 | `liquid-cli` → `liquid` | the binary; `-DLIQUID_BUILD_CLI=OFF` for library-only consumers |
 | `liquid-frontend-tree-sitter`, `liquid-frontend-clang` | replaceable C/C++ language modules, built by default outside libliquid and disabled with `-DLIQUID_BUILD_FRONTENDS=OFF` |
 | `liquid-tests` | GoogleTest; `LIQUID_BUILD_TESTS` defaults to ON only when liquid is the top-level project |
@@ -39,6 +40,9 @@ set(LIQUID_BUILD_CLI OFF CACHE BOOL "" FORCE)
 add_subdirectory(modules/liquid EXCLUDE_FROM_ALL)
 target_link_libraries(app PRIVATE liquid::liquid)
 
+# add this for a participating hot-update process
+target_link_libraries(app PRIVATE liquid::hot)
+
 # from an install
 find_package(liquid CONFIG REQUIRED)
 target_link_libraries(app PRIVATE liquid::liquid)
@@ -63,7 +67,7 @@ compiler. The consumer source is the only project source compiled by this test.
 
 `cmake --install build --prefix <p>` lays out `bin/liquid`, `lib/libliquid.a`, `include/liquid/`,
 `lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, and
-`liquidTargets.cmake`), the wrap hook and Linux remote-action read guard under `libexec/liquid/`,
+`liquidTargets.cmake`), `lib/libliquid-hot`, the wrap hook and Linux remote-action read guard under `libexec/liquid/`,
 the bundled dynamic frontend modules under `libexec/liquid/frontends/`, plus Capy's public headers
 under `include/boost/`. The liquid export owns
 Capy's `liquid::capy` library target and recreates its `Boost::capy` alias. It carries its

@@ -104,6 +104,7 @@ struct repository_document {
     bool cache_publish{};
     std::uint32_t verification_rate{20};
     agents_config agents;
+    hot_update_config hot_update;
     policy_config policy;
     retention_config retention{};
     flow_config flow{};
@@ -521,6 +522,15 @@ auto encode_repository_document(const repository_document& value)
                       {"batch_blob_limit", cbor::value{value.remote->batch_blob_limit}},
                       {"publish", cbor::value{value.remote->publish}}});
     }
+    auto restart_hook = cbor::value::array{};
+    for (const auto& argument : value.hot_update.restart_hook) {
+        restart_hook.push_back(cbor::value{argument});
+    }
+    auto hot_update_targets = cbor::value::array{};
+    for (const auto& target : value.hot_update.targets) {
+        hot_update_targets.push_back(map({{"name", cbor::value{target.name}},
+                                          {"endpoint", cbor::value{target.endpoint.string()}}}));
+    }
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
@@ -538,6 +548,9 @@ auto encode_repository_document(const repository_document& value)
               map({{"approved_builders", cbor::value{std::move(approved_builders)}},
                    {"rules", cbor::value{std::move(policy_rules)}}})},
              {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})},
+             {"hot_update",
+              map({{"restart_hook", cbor::value{std::move(restart_hook)}},
+                   {"targets", cbor::value{std::move(hot_update_targets)}}})},
              {"flow", std::move(flow)},
              {"remote", std::move(remote)}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
@@ -982,6 +995,40 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                         failure(errc::corrupt, "invalid agent actor", "repository document"));
                 }
                 output.agents.actors.push_back(*actor);
+            }
+        }
+        if (const auto* hot_update = find(*config, "hot_update")) {
+            const auto* restart_hook_value = find(*hot_update, "restart_hook");
+            const auto* targets_value = find(*hot_update, "targets");
+            const auto* restart_hook =
+                restart_hook_value ? std::get_if<cbor::value::array>(&restart_hook_value->data)
+                                   : nullptr;
+            const auto* targets =
+                targets_value ? std::get_if<cbor::value::array>(&targets_value->data) : nullptr;
+            if (!restart_hook || !targets) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid hot-update config", "repository document"));
+            }
+            for (const auto& argument_value : *restart_hook) {
+                const auto* argument = std::get_if<std::string>(&argument_value.data);
+                if (!argument || argument->empty()) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid hot-update restart hook", "repository document"));
+                }
+                output.hot_update.restart_hook.push_back(*argument);
+            }
+            for (const auto& target_value : *targets) {
+                const auto* name_value = find(target_value, "name");
+                const auto* endpoint_value = find(target_value, "endpoint");
+                const auto* name =
+                    name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+                const auto* endpoint =
+                    endpoint_value ? std::get_if<std::string>(&endpoint_value->data) : nullptr;
+                if (!name || name->empty() || !endpoint || endpoint->empty()) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid hot-update target", "repository document"));
+                }
+                output.hot_update.targets.push_back({*name, *endpoint});
             }
         }
         if (const auto* flow = find(*config, "flow")) {
@@ -2495,6 +2542,27 @@ auto validate_agents_config(const agents_config& config) -> result<void> {
             return std::unexpected(
                 failure(errc::invalid_argument, "invalid or duplicate agent actor", actor));
         }
+    }
+    return {};
+}
+
+auto validate_hot_update_config(const hot_update_config& config) -> result<void> {
+    if (std::ranges::any_of(config.restart_hook, &std::string::empty)) {
+        return std::unexpected(failure(errc::invalid_argument,
+                                       "hot-update restart hook has an empty argument",
+                                       "config.hot_update.restart_hook"));
+    }
+    auto names = std::set<std::string>{};
+    for (const auto& target : config.targets) {
+        if (target.name.empty() || target.endpoint.empty() || !names.insert(target.name).second) {
+            return std::unexpected(failure(
+                errc::invalid_argument, "invalid or duplicate hot-update target", target.name));
+        }
+    }
+    if (!config.targets.empty() && config.restart_hook.empty()) {
+        return std::unexpected(failure(errc::invalid_argument,
+                                       "configured hot-update targets require a restart hook",
+                                       "config.hot_update.restart_hook"));
     }
     return {};
 }
@@ -4040,6 +4108,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_agents) {
         co_return std::unexpected(valid_agents.error());
     }
+    auto valid_hot_update = validate_hot_update_config(options.hot_update);
+    if (!valid_hot_update) {
+        co_return std::unexpected(valid_hot_update.error());
+    }
     auto valid_flow = flow_detail::validate(options.flow);
     if (!valid_flow) {
         co_return std::unexpected(valid_flow.error());
@@ -4065,6 +4137,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.cache_publish = options.cache.publish;
     document.verification_rate = options.verify.rate;
     document.agents = std::move(options.agents);
+    document.hot_update = std::move(options.hot_update);
     document.policy = std::move(options.policy);
     document.retention = std::move(options.retention);
     document.flow = std::move(options.flow);
@@ -4150,6 +4223,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!valid_agents) {
         co_return std::unexpected(valid_agents.error());
     }
+    auto valid_hot_update = validate_hot_update_config(document->hot_update);
+    if (!valid_hot_update) {
+        co_return std::unexpected(valid_hot_update.error());
+    }
     auto valid_flow = flow_detail::validate(document->flow);
     if (!valid_flow) {
         co_return std::unexpected(valid_flow.error());
@@ -4183,6 +4260,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
 std::optional<remote_config> repository::remote_configuration() const {
     return impl_ ? impl_->current.remote : std::nullopt;
 }
+hot_update_config repository::hot_update_configuration() const {
+    return impl_ ? impl_->current.hot_update : hot_update_config{};
+}
+
 flow_config repository::flow_configuration() const {
     return impl_ ? impl_->current.flow : flow_config{};
 }

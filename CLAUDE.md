@@ -91,6 +91,9 @@ Liquid #72 replaces tag-selected tree-sitter inputs with one canonical lock for 
 public grammars. Configure-time archives and every compiled parser/scanner and tag query are pinned
 by SHA-256; the generated registry, public language metadata, syntax fallback, and grammar-set
 provenance all derive from that lock.
+Liquid #201 adds the public lake forge review client, edit-surviving comment advancement, polling
+review events, the `liquid review` command group, and an installable in-memory forge double over
+the shared private HTTP/1.1 client.
 Liquid #25 defines canonical package and fully bound concretised-spec records, the public
 Spack-style parser, filesystem and repository universe loading, and a private CDCL concretizer.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
@@ -129,6 +132,11 @@ enumeration used by CLI record views.
 Liquid #66 adds content-addressed compiler and syntactic-fallback symbol records derived from
 recorded compile actions, graph retrieval,
 repository access, and the `liquid symbols` command.
+Liquid #32 adds deterministic hot-update classification for tiers 0–4, signed patch and restart
+records, a separately versioned cooperative C runtime on macOS arm64 and Linux x86_64, sandboxed
+restart hooks, reconstructible process composition, and a drip-driven daemon target. Tier 2 remains
+conditional on a compatible #27 ABI descriptor referenced by the signed build result; absent that
+proof, an additive interface is tier 3.
 Liquid #205 adds optional concrete syntax to frontend ABI v1 and implemented C/C++ structural
 rename, extract, move, and tree-edit previews and applies through libliquid, the local daemon, and
 `liquid edit`, with attributed grouped undo.

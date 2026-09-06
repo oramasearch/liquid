@@ -29,6 +29,7 @@ the public encoder.
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
 | `sbom/1` | artifact | `format:text`, `document:text`, `derived:boolean`, `inferred:boolean`, `components:text_list*` | `supplier:text*` | none |
 | `delta/1` | artifact | `source:text`, `target:text`, `algorithm:text`, `delta:text` | none | none |
+| `hot_update/1` | artifact | `supersedes:text`, `target:text`, `tier:text`, `symbols:text_list`, `object:text`, `patch:text`, `outcome:text` | none | none |
 | `model_provenance/1` | model | `training_dataset:text*`, `training_code:text*` | `base_model:text*` | none |
 | `abi_compatibility/1` | library | `compatible_with:text`, `compatibility:text` | `notes:text` | none |
 | `scan_result/1` | drip | fixed record fields `detectors:text_list`, `findings:unsigned_integer`, `allowances:text_list` | none | maximum attestation age: 24 hours |
@@ -61,6 +62,11 @@ library has an earlier descriptor for the same output path. The current library 
 `compatible_with` names the earlier blob, `compatibility` records the deterministic verdict, and
 `notes` records the change count. The repository device identity signs it through the same issuer
 path as provenance and SBOM claims. [abi.md](abi.md) defines extraction and verdict rules.
+`hot_update/1` uses the new result digest as its artifact subject. For tier-1 or tier-2 `patched`,
+`object` names the relocatable definition object and `patch` names its canonical patch record. For
+tier 0 or `restart`, `object` names the target result and `patch` names the canonical outcome
+record. Verification binds every attribute to the record before any object is loaded;
+[hot-update.md](hot-update.md) defines the tier rules, runtime delivery, and composition chain.
 `image_provenance/1` uses the OCI image's SHA-256 digest as its subject. `image` is the complete
 digest-pinned reference, `tree` is its `io.liquid.tree` digest, and optional `result` is the build
 result projected into the image. [`admission.md`](admission.md) defines its minting and policy use.

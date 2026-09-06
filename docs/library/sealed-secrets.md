@@ -122,8 +122,9 @@ public API.
 
 ## Lake capability
 
-`fetch_sealing_public_key` reads `GET <lake>/v1/sealing_public_key` through liquid's private HTTP
-client and optionally sends a bearer token. The successful Lake envelope is:
+`fetch_sealing_public_key` reads `GET <lake>/v1/sealing_public_key` through the private HTTP
+transport shared with sync and forge, and optionally sends a bearer token. The successful Lake
+envelope is:
 
 ```json
 {
