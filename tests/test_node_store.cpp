@@ -340,12 +340,13 @@ TEST(NodeStore, ReusesChunksAcrossTwoImagePullsAndPrefetchesEvictedContent) {
     }
     ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
     for (auto index = std::uint64_t{}; index < expected.size(); ++index) {
-        EXPECT_EQ(
-            read_file(first->path / std::format("file-{:02}.bin", index), expected[index].size()),
-            expected[index]);
+        const auto path = first->path / std::format("file-{:02}.bin", index);
+        EXPECT_EQ(read_error(path), 0) << path;
+        EXPECT_EQ(read_file(path, expected[index].size()), expected[index]);
     }
     auto after_a = liquid::runtime::block_on(service->status());
     ASSERT_TRUE(after_a) << after_a.error().message;
+    ASSERT_FALSE(after_a->last_error) << *after_a->last_error;
     ASSERT_EQ(after_a->mounts.size(), 1U);
     EXPECT_GE(after_a->mounts.front().bytes_fetched, 64U * 1024U * 1024U);
 

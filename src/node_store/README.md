@@ -6,5 +6,12 @@ local snapshotter and TCP operator route tables on the shared HTTP listener impl
 `src/serve/`. Control route registration is grouped by liveness, status, administration, OpenAPI,
 and MCP surfaces so each group remains independently reviewable.
 
+Each image path is created before its caller-owned-store repository. The path is the persistent
+marker used to reopen that repository after its mount reference count reaches zero or the service
+restarts.
+
+The repository is moved into its final mount-table owner before FUSE starts. The backend's borrowed
+repository reference therefore remains stable for the full mount lifetime.
+
 The public value contract remains in `include/liquid/node_store.hpp`; CLI transport code remains
 under `src/cli/`.

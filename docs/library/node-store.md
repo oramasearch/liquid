@@ -166,4 +166,6 @@ both unreachable-store cases, every control route and metric, attestation lookup
 Linux runs the FUSE path in the privileged container proof. macOS records the existing explicit
 skip when macFUSE is unavailable.
 
-Measured pull counts and the host load average are added here by the completed proof.
+The Linux FUSE proof measured A at 1,539 chunks and 67,108,864 fetched bytes. B fetched 90 chunks
+and 4,194,304 bytes while avoiding 62,914,560 bytes. At that run, the macOS host load averages were
+44.21, 38.52, and 63.36; the Linux container reported 143.44, 176.63, and 86.27.

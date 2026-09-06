@@ -494,6 +494,23 @@ runtime::task<mount_result> service::mount_image(mount_request request) {
     if (!exists) {
         co_return std::unexpected(exists.error());
     }
+    if (!*exists) {
+        auto created = co_await runtime::offload([image_path] {
+            auto code = std::error_code{};
+            std::filesystem::create_directories(image_path, code);
+            if (code) {
+                return result<void>{
+                    std::unexpected(failure(errc::io, code.message(), image_path.string()))};
+            }
+            return result<void>{};
+        });
+        if (!created) {
+            co_return std::unexpected(created.error());
+        }
+        if (!*created) {
+            co_return std::unexpected(created->error());
+        }
+    }
     auto repository_options = liquid::repository_options{.store = &impl_->storage};
     auto image = *exists ? co_await repository::open(image_path, repository_options)
                          : co_await repository::create(image_path, repository_options);
@@ -510,14 +527,14 @@ runtime::task<mount_result> service::mount_image(mount_request request) {
         co_return std::unexpected(recorded.error());
     }
     const auto mount_path = impl_->options.root / "mounts" / tree_key;
-    auto backend =
-        co_await vfs_detail::start_observed_fuse(*image, request.tree, mount_path, {}, {}, true);
+    auto value = std::make_unique<mounted_image>();
+    value->image = std::move(*image);
+    auto backend = co_await vfs_detail::start_observed_fuse(
+        value->image, request.tree, mount_path, {}, {}, true);
     if (!backend) {
         note_error(backend.error());
         co_return std::unexpected(backend.error());
     }
-    auto value = std::make_unique<mounted_image>();
-    value->image = std::move(*image);
     value->mounted = vfs_detail::mount_factory::make(std::move(*backend));
     value->status = node_store_mount{request.tree, mount_path, 1, 0, 0, avoided, 0};
     value->blobs = std::move(*blobs);
