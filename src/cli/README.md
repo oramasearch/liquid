@@ -78,12 +78,15 @@ repeatable path and drip filters, and renders every applied or skipped report en
 `workers.cpp` implements the scheduler and worker daemons with flag-over-environment
 configuration. Long-running entry points run on the guarded process-wide runtime while the command
 thread waits for completion, keeping accept and polling loops live between I/O callbacks.
+`node_store.cpp` implements `node-store serve` plus the status, mount, unmount, and prefetch thin
+HTTP clients. Flags override the documented node-store environment variables.
 `wrap.cpp` selects the scheduler backend with `--scheduler` while `--remote` keeps the stock REAPI
 path.
 
 Repository status includes bytes still remote in both text and JSON. Build explanation renderers
 also name the non-hermetic-read reason and its path for remote-eligibility diagnostics.
-Status also projects daemon graph-validation backlog and the last divergence in text and JSON.
+Status also projects daemon graph-validation backlog, flow watermarks and buckets, and the last
+divergence in text and JSON. Push prints the peer's exhausted scope and retry delay on HTTP 429.
 Wrap output includes its graph backlog and last divergence record.
 
 `symbols.cpp` detects the language from the public registry's extension table, uses the compiler

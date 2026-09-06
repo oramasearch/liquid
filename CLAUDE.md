@@ -24,6 +24,8 @@ deterministic crash simulator, liquid #116's bounded-memory file and repository 
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
 verified redaction, liquid #52's JSON/`.env` leaf encryption with structural key diff, and liquid
 #43's local Git import/export with identity mapping are implemented;
+liquid #85 adds persisted actor, directory-document, and repository write buckets, explicit
+pre-transaction rejection, peer 429 retry signals, daemon watermarks, and consumer-lag status;
 liquid #10 provides local sandboxed action execution through `liquid::build` on Linux. Liquid #11
 provides its signed, manifest-validated persistent disk cache with read-only publication by default.
 Liquid #12 provides `liquid wrap` for configuration-free CMake, Autotools, Make, and
@@ -389,6 +391,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    decision 20). Do not vendor Clingo. Package rules compile to clauses behind the private
    `src/resolve/concretizer.hpp` interface, while `include/liquid/resolve.hpp` exposes only plain
    records, tasks, results, digests, and stable explanations. Design: `docs/library/resolution.md`.
+11. **The runtime node store is embedded liquid, not a containerd snapshotter** (liquid #202;
+    bridge decision 23). An image root is a tree digest plus its sync URL. `liquid node-store
+    serve` receives only tree and blob records, exposes a reference-counted read-only VFS mount,
+    and owns the shared node chunk budget. The k0s #14 Go proxy snapshotter bind-mounts that path
+    and owns writable layers; liquid ships neither the proxy nor layers.
 
 **Still open:**
 
