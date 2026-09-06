@@ -73,6 +73,8 @@ it.
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, historical document state, composition,
+> conflict values, operation- and session-scoped local-intent undo, advisory
+> locks, private speculative agent sessions, semantic file/symbol/range leases, transient presence,
 > conflict values, operation- and session-scoped local-intent undo, configured exclusive checkout
 > locks with signed offline reconciliation and connected authority, private speculative agent
 > sessions, semantic file/symbol/range leases, transient presence,
@@ -98,6 +100,9 @@ it.
 > stable JSON, and installed man-page reference from that table. Executable guides cover an
 > existing wrapped build, a first repository and sync peer, and the current keys-and-encryption
 > boundary. CI renders the complete documentation tree as a downloadable static-site artifact.
+> The `liquid-offline` suite reruns every CLI test in liquid's macOS or Linux sandbox with
+> networking denied and verifies the explicit push, pull, remote-execution, and remote-cache
+> refusals before their handlers start.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,

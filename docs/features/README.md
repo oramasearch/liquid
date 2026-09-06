@@ -64,7 +64,9 @@ is wrong.
 7. **Provenance is a byproduct.** Every action already records everything an
    attestation needs. Signing is automatic.
 8. **Everything works offline, degraded but correct.** Remote cache, remote
-   execution and the artifact service are accelerators, never requirements.
+   execution and the artifact service are accelerators, never requirements. The
+   `liquid-offline` CTest suite runs every `liquid-cli` case in liquid's platform
+   sandbox with networking denied and pins every intentional network refusal.
 9. **Every write to disk is a versioned change.** Capture is automatic and
    continuous. There is no step at which history begins.
 10. **Every change is attributable.** Every drip carries a TAAP/1 signature from an

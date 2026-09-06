@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <print>
 #include <string>
 #include <string_view>
@@ -401,6 +403,9 @@ constexpr auto flags_compact = std::to_array<flag>({
 
 constexpr auto normal_exit = "0 on success, 1 on an operation failure, and 2 for invalid usage.";
 constexpr auto information_exit = "0 when the information was written and 2 for invalid usage.";
+constexpr auto network_exit =
+    "0 on success, 1 on an operation failure, 2 for invalid usage, and 69 when offline mode "
+    "refuses a required network operation.";
 
 constexpr auto commands = std::to_array<command>({
     {"version",
@@ -623,8 +628,8 @@ constexpr auto commands = std::to_array<command>({
      flags_atomic,
      "Send signed metadata, requested references, and missing objects to a sync endpoint.",
      "liquid push http://127.0.0.1:8080",
-     "0 when every reference applied, 1 when transport fails or a reference is refused, and 2 for "
-     "invalid usage.",
+     "0 when every reference applied, 1 when transport fails or a reference is refused, 2 for "
+     "invalid usage, and 69 when offline mode refuses the push.",
      argument_policy::ordinary,
      liquid_cli::sync_push},
     {"pull",
@@ -634,7 +639,7 @@ constexpr auto commands = std::to_array<command>({
      {},
      "Receive signed metadata and missing objects from a sync endpoint.",
      "liquid pull http://127.0.0.1:8080",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::sync_pull},
     {"review",
@@ -667,7 +672,7 @@ constexpr auto commands = std::to_array<command>({
      flags_serve,
      "Serve repository synchronization, the repository CAS and ActionCache, or image admission.",
      "liquid serve sync . --listen 127.0.0.1 --port 8080",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::serve},
     {"move",
@@ -1015,7 +1020,7 @@ constexpr auto commands = std::to_array<command>({
      flags_wrap,
      "Run an unchanged build in the observed mount and reuse valid tool actions before they start.",
      "liquid wrap --jobs 8 --explain cmake --build build",
-     normal_exit,
+     network_exit,
      argument_policy::child_command,
      liquid_cli::wrap},
     {"build",
@@ -1028,7 +1033,7 @@ constexpr auto commands = std::to_array<command>({
      flags_build,
      "Plan or execute a configured graph, wrap a child command, stream events, or export a trace.",
      "liquid build --plan",
-     normal_exit,
+     network_exit,
      argument_policy::build_command,
      liquid_cli::build},
     {"test",
@@ -1089,7 +1094,7 @@ constexpr auto commands = std::to_array<command>({
      flags_scheduler,
      "Serve CAS, ActionCache, Execution, and the liquid worker lease queue.",
      "liquid scheduler --listen 0.0.0.0:50051",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::scheduler},
     {"worker",
@@ -1100,7 +1105,7 @@ constexpr auto commands = std::to_array<command>({
      flags_worker,
      "Poll a liquid scheduler and execute leased build actions in the Phase 2 sandbox.",
      "liquid worker --scheduler 127.0.0.1:50051",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::worker},
     {"pause",
@@ -1175,6 +1180,47 @@ auto usage_error(std::string_view message) -> int {
     return 2;
 }
 
+auto has_argument(int argc, char** argv, std::string_view expected) -> bool {
+    for (auto index = 0; index < argc; ++index) {
+        if (std::string_view{argv[index]} == expected) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto offline_reason(std::string_view command_name, int argc, char** argv)
+    -> std::optional<std::string_view> {
+    const auto* configured = std::getenv("LIQUID_OFFLINE");
+    if (configured == nullptr || std::string_view{configured}.empty() ||
+        std::string_view{configured} == "0") {
+        return std::nullopt;
+    }
+    if (command_name == "push" && argc >= 1) {
+        return "push";
+    }
+    if (command_name == "pull" && argc == 1) {
+        return "pull";
+    }
+    if ((command_name == "scheduler" && has_argument(argc, argv, "--listen")) ||
+        (command_name == "worker" && has_argument(argc, argv, "--scheduler"))) {
+        return "remote execution";
+    }
+    if (command_name == "serve" && argc >= 1 && std::string_view{argv[0]} == "reapi") {
+        return "the remote cache";
+    }
+    if (command_name != "wrap" && command_name != "build") {
+        return std::nullopt;
+    }
+    if (has_argument(argc, argv, "--remote-publish")) {
+        return "the remote cache";
+    }
+    if (has_argument(argc, argv, "--remote") || has_argument(argc, argv, "--scheduler")) {
+        return "remote execution";
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 namespace liquid_cli {
@@ -1247,6 +1293,10 @@ int main(int argc, char** argv) {
     const auto flag_error = liquid_cli::validate_flags(*found, argc - 2, argv + 2);
     if (!flag_error.empty()) {
         return usage_error(flag_error);
+    }
+    if (const auto reason = offline_reason(command_name, argc - 2, argv + 2)) {
+        std::println(stderr, "liquid {}: needs the network for {}", command_name, *reason);
+        return 69;
     }
     if (command_name == "version") {
         if (argc != 2 && !(argc == 3 && std::string_view{argv[2]} == "--json")) {

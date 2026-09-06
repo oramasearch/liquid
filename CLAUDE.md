@@ -207,6 +207,9 @@ line-hunk stale reports, and signed disjoint or forced re-validation records.
 Liquid #82 adds the typed CLI command and flag table, generated Markdown, stable JSON and man-page
 reference, executable user guides, and the documentation-site CI artifact. `liquid diff` exposes
 the existing public change-diff API for the first-repository guide.
+Liquid #54 adds the `liquid-offline` CTest suite, which reruns every CLI test in the macOS or Linux
+sandbox with networking denied and verifies the only intentional network requirements before a
+handler starts.
 Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
 3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
 anchors and historical certificate validation.
