@@ -155,6 +155,18 @@ attestation_profile_registry::attestation_profile_registry()
                          field("comment", attestation_field_type::text, false, true)},
                         {attestation_subject_kind::change},
                         attestation_status_kind::none),
+                profile("release_policy/1",
+                        {field("role", attestation_field_type::text, true),
+                         field("threshold", attestation_field_type::unsigned_integer, true),
+                         field("signers", attestation_field_type::text_list, true),
+                         field("not_after", attestation_field_type::text, true)},
+                        {attestation_subject_kind::repository},
+                        attestation_status_kind::none),
+                profile("release_approval/1",
+                        {field("policy", attestation_field_type::text, true),
+                         field("release", attestation_field_type::text, true)},
+                        {attestation_subject_kind::artifact},
+                        attestation_status_kind::none),
                 profile("slsa_provenance/1",
                         {},
                         {attestation_subject_kind::artifact},
@@ -319,6 +331,8 @@ std::string_view to_string(attestation_subject_kind value) noexcept {
         return "model";
     case attestation_subject_kind::library:
         return "library";
+    case attestation_subject_kind::repository:
+        return "repository";
     }
     return "unknown";
 }

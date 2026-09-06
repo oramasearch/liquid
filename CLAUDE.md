@@ -17,7 +17,8 @@ same library as a pinned submodule, lake will. The mapped public headers compile
 error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
 store, liquid #199's pre-pack write-through callback and remote-registered local eviction,
 liquid #4's TAAP/1 actor identities,
-liquid #111's identity-key rotation and chain verification, and signed drips and changes, liquid #7's
+liquid #111's identity-key rotation and chain verification, liquid #81's software, FIDO2, and PIV
+identity backends, TPM-sealed KEK custody, and threshold release approval, signed drips and changes, liquid #7's
 trust-domain encrypted objects, liquid #51's pluggable local, recipient, cloud KMS, lake transit,
 and threshold-share KEK custody, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
@@ -99,6 +100,9 @@ Liquid #80 adds canonical declarative install intents, fixed Debian/RPM/Alpine l
 generation, script SBOM and projection binding, batch and installed-inventory file conflict
 detection, derived replacement relationships, and atomic projected-tree generations with install,
 list, rollback, and interruption recovery.
+Liquid #77 adds deterministic Homebrew bottles and Arch recipes; pinned-runtime AppImages;
+Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and detached
+`projection/1`, provenance, and SBOM attestations.
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
@@ -130,6 +134,14 @@ diagnostics, canonical formatting and package/target/source lowering, repository
 digest-verified source fetch, action-backed generators with provenance, and configured target CLI.
 Its `install` block lowers the strict issue #80 intent vocabulary into canonical `install_intent/1`.
 Configured target results must pass the relocation publication check before they are returned.
+Liquid #42 adds configured exclusive checkout path patterns, holder/time/reason lock records,
+holder-aware write refusal and release, signed offline reconciliation through conflict values,
+connected lake authorization callbacks, daemon lock snapshots, and `liquid lock`/`unlock`.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+local-intent operation and session undo reports, operation-log CLI output, and historical refs,
+exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
+transient presence, compaction epochs, and delegation-attributed publication. Directory
 Liquid #75 adds the provenance-linked Spack exporter, public `import_spack` task, formatter-backed
 package documents and canonical universe records, digest pinning for patches, explicit loss reports,
 the 500-package resolution fixture, and the opt-in Linux build subset. Spack is the first importer;
@@ -155,7 +167,9 @@ repository sync server and the `serve sync` HTTP adapter; liquid #177 adds per-c
 change-graph-derived reference authorization; liquid #189 adds per-reference accepted/refused
 outcomes and opt-in atomic pushes. Liquid #195 adds persisted three-tree folder reconciliation,
 named conflict values, resumed transfer, reference refusal reporting, path history and restore,
-`liquid drive`, and the daemon drive target. Liquid #235 adds persisted per-path device state,
+`liquid drive`, and the daemon drive target. Liquid #258 binds imported active directory documents
+to each destination repository's actor so concurrent offline clients keep both named histories.
+Liquid #235 adds persisted per-path device state,
 pinning, policy-driven hydration, offline read and write status, FUSE xattrs, and Linux desktop
 badges. Liquid #247 adds `liquid clone` through the drive client, with persisted remote
 configuration and a fully materialised plain checkout. Full materialisation works on
@@ -199,6 +213,9 @@ line-hunk stale reports, and signed disjoint or forced re-validation records.
 Liquid #82 adds the typed CLI command and flag table, generated Markdown, stable JSON and man-page
 reference, executable user guides, and the documentation-site CI artifact. `liquid diff` exposes
 the existing public change-diff API for the first-repository guide.
+Liquid #54 adds the `liquid-offline` CTest suite, which reruns every CLI test in the macOS or Linux
+sandbox with networking denied and verifies the only intentional network requirements before a
+handler starts.
 Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
 3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
 anchors and historical certificate validation.
@@ -510,6 +527,13 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
     binary lookup paths, and absolute package metadata. Liquid never rewrites existing binaries
     and does not require a fixed content-addressed install path. See
     [`docs/library/relocation.md`](docs/library/relocation.md).
+13. **Hardware command layers are owned by liquid over operating-system transports** (Steve,
+    2026-09-05; liquid-bridge decision 21). CTAP2 uses liquid's canonical CBOR over USB HID, PIV
+    sends APDUs through PC/SC, and the TPM 2.0 sealing subset uses `/dev/tpmrm0` or Windows TBS.
+    Tests inject protocol-level software doubles through those transport interfaces. Do not add
+    libfido2, OpenSC, or tpm2-tss. Design: [`docs/library/identity.md`](docs/library/identity.md),
+    [`docs/library/encryption.md`](docs/library/encryption.md), and
+    [`docs/library/release-approval.md`](docs/library/release-approval.md).
 
 **Still open:**
 

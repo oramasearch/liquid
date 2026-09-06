@@ -21,9 +21,11 @@
 #endif
 
 #include "crypto/crypto.hpp"
+#include "crypto/signature.hpp"
 #include "identity/custody/common.hpp"
 #include "identity/custody/providers.hpp"
 #include "identity/key_version.hpp"
+#include "identity/keys/backend.hpp"
 #include "identity/taap.hpp"
 #include "monocypher-ed25519.h"
 #include "monocypher.h"
@@ -386,7 +388,7 @@ auto write_private(const std::filesystem::path& path, std::span<const std::byte>
 auto signing_key_identifier(const actor& value) -> std::string {
     const auto& fingerprint =
         value.key_fingerprint.empty() ? value.fingerprint : value.key_fingerprint;
-    return "taap:1:ed25519:" + fingerprint;
+    return "taap:1:" + value.algorithm + ":" + fingerprint;
 }
 
 auto valid_fingerprint(std::string_view value) -> bool {
@@ -526,10 +528,7 @@ auto identity_wrapping_key(const std::filesystem::path& directory)
 struct signer::impl {
     actor identity;
     std::string label;
-    std::array<std::byte, 64> secret{};
-    ~impl() {
-        crypto_wipe(secret.data(), secret.size());
-    }
+    std::unique_ptr<identity_detail::key_backend> backend;
 };
 
 auto actor::identifier() const noexcept -> std::string_view {
@@ -559,18 +558,18 @@ runtime::task<signature> signer::sign(std::string artifact_type,
         co_return std::unexpected(identity_error(errc::invalid_argument, "signer has no identity"));
     }
     auto input = identity_detail::signing_input(artifact_type, canonical_body);
-    auto bytes = std::vector<std::byte>(64);
-    crypto_ed25519_sign(reinterpret_cast<std::uint8_t*>(bytes.data()),
-                        reinterpret_cast<const std::uint8_t*>(impl_->secret.data()),
-                        reinterpret_cast<const std::uint8_t*>(input.data()),
-                        input.size());
-    crypto_wipe(input.data(), input.size());
-    co_return signature{"ed25519",
+    auto signed_bytes = co_await impl_->backend->sign(std::move(input));
+    if (!signed_bytes) {
+        co_return std::unexpected(signed_bytes.error());
+    }
+    co_return signature{std::move(signed_bytes->algorithm),
                         signing_key_identifier(impl_->identity),
                         impl_->label,
                         std::move(artifact_type),
                         identity_detail::now(),
-                        std::move(bytes)};
+                        std::move(signed_bytes->bytes),
+                        std::move(signed_bytes->authenticator_data),
+                        std::move(signed_bytes->client_data_hash)};
 }
 
 auto signer::identity() const -> actor {
@@ -596,6 +595,11 @@ auto valid_compromise_declaration(const compromise_declaration& declaration) -> 
 } // namespace
 
 runtime::task<identity_document> signer::rotate(std::optional<compromise_declaration> compromise) {
+    co_return co_await rotate_to("software", std::move(compromise));
+}
+
+runtime::task<identity_document>
+signer::rotate_to(std::string custody, std::optional<compromise_declaration> compromise) {
     if (!impl_) {
         co_return std::unexpected(identity_error(errc::invalid_argument, "signer has no identity"));
     }
@@ -632,20 +636,24 @@ runtime::task<identity_document> signer::rotate(std::optional<compromise_declara
         co_return std::unexpected(updated_at.error());
     }
     const auto label = impl_->label + "-rotated-" + std::to_string(stored->size());
-    auto seed = std::array<std::byte, 32>{};
-    auto random = crypto_detail::random_bytes(seed);
-    if (!random) {
-        co_return std::unexpected(random.error());
+    auto new_backend = result<std::unique_ptr<identity_detail::key_backend>>{std::unexpected(
+        identity_error(errc::invalid_argument, "unsupported identity key custody", custody))};
+    if (custody == "software") {
+        new_backend = identity_detail::make_software_backend();
+    } else if (custody == "fido2") {
+        new_backend = co_await identity_detail::make_fido2_backend();
+    } else if (custody == "piv:9c") {
+        new_backend = co_await identity_detail::make_piv_backend("9c");
     }
-    auto new_secret = std::array<std::byte, 64>{};
-    auto public_key = std::array<std::byte, 32>{};
-    crypto_ed25519_key_pair(reinterpret_cast<std::uint8_t*>(new_secret.data()),
-                            reinterpret_cast<std::uint8_t*>(public_key.data()),
-                            reinterpret_cast<std::uint8_t*>(seed.data()));
-    crypto_wipe(seed.data(), seed.size());
-    auto new_identity = identity_detail::identifier(public_key, *updated_at, label);
+    if (!new_backend) {
+        co_return std::unexpected(new_backend.error());
+    }
+    auto new_identity = identity_detail::identifier((*new_backend)->public_key(),
+                                                    *updated_at,
+                                                    label,
+                                                    (*new_backend)->algorithm(),
+                                                    (*new_backend)->custody());
     if (!new_identity) {
-        crypto_wipe(new_secret.data(), new_secret.size());
         co_return std::unexpected(new_identity.error());
     }
     new_identity->taap_id = current.subject.taap_id;
@@ -664,47 +672,46 @@ runtime::task<identity_document> signer::rotate(std::optional<compromise_declara
     }
     auto body = identity_detail::canonical_document(successor, false);
     if (!body) {
-        crypto_wipe(new_secret.data(), new_secret.size());
         co_return std::unexpected(body.error());
     }
     auto directory = liquid_home() / "identity";
     std::error_code code;
     std::filesystem::create_directories(document_directory(current.subject), code);
     if (code) {
-        crypto_wipe(new_secret.data(), new_secret.size());
         co_return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
     }
     for (std::size_t index = 0; index < stored->size(); ++index) {
         const auto path = document_path(document_directory(current.subject), index);
         if (std::filesystem::exists(path, code)) {
             if (code) {
-                crypto_wipe(new_secret.data(), new_secret.size());
                 co_return std::unexpected(identity_error(errc::io, code.message(), path.string()));
             }
             continue;
         }
         auto copied = write_private(path, (*stored)[index].bytes);
         if (!copied) {
-            crypto_wipe(new_secret.data(), new_secret.size());
             co_return std::unexpected(copied.error());
         }
     }
-    auto wrapping_key = identity_wrapping_key(directory);
-    if (!wrapping_key) {
-        crypto_wipe(new_secret.data(), new_secret.size());
-        co_return std::unexpected(wrapping_key.error());
-    }
-    auto sealed = crypto_detail::seal(*wrapping_key, {}, new_secret);
-    crypto_wipe(wrapping_key->data(), wrapping_key->size());
-    if (!sealed) {
-        crypto_wipe(new_secret.data(), new_secret.size());
-        co_return std::unexpected(sealed.error());
+    auto persisted = (*new_backend)->descriptor();
+    if ((*new_backend)->custody() == "software") {
+        auto wrapping_key = identity_wrapping_key(directory);
+        if (!wrapping_key) {
+            crypto_wipe(persisted.data(), persisted.size());
+            co_return std::unexpected(wrapping_key.error());
+        }
+        auto sealed = crypto_detail::seal(*wrapping_key, {}, persisted);
+        crypto_wipe(wrapping_key->data(), wrapping_key->size());
+        crypto_wipe(persisted.data(), persisted.size());
+        if (!sealed) {
+            co_return std::unexpected(sealed.error());
+        }
+        persisted = std::move(*sealed);
     }
     if (successor.compromised_keys.empty()) {
         auto old_signature = co_await sign("identity_document", *body);
         if (!old_signature) {
-            crypto_wipe(new_secret.data(), new_secret.size());
-            crypto_wipe(sealed->data(), sealed->size());
+            crypto_wipe(persisted.data(), persisted.size());
             co_return std::unexpected(old_signature.error());
         }
         successor.signatures.push_back(std::move(*old_signature));
@@ -713,48 +720,40 @@ runtime::task<identity_document> signer::rotate(std::optional<compromise_declara
     next.impl_ = std::make_unique<signer::impl>();
     next.impl_->identity = successor.subject;
     next.impl_->label = successor.key_label;
-    next.impl_->secret = new_secret;
+    next.impl_->backend = std::move(*new_backend);
     auto new_signature = co_await next.sign("identity_document", *body);
     if (!new_signature) {
-        crypto_wipe(new_secret.data(), new_secret.size());
-        crypto_wipe(sealed->data(), sealed->size());
+        crypto_wipe(persisted.data(), persisted.size());
         co_return std::unexpected(new_signature.error());
     }
     successor.signatures.push_back(std::move(*new_signature));
     auto encoded = identity_detail::canonical_document(successor, true);
     if (!encoded) {
-        crypto_wipe(new_secret.data(), new_secret.size());
-        crypto_wipe(sealed->data(), sealed->size());
+        crypto_wipe(persisted.data(), persisted.size());
         co_return std::unexpected(encoded.error());
     }
-    crypto_wipe(impl_->secret.data(), impl_->secret.size());
-    auto written = write_private(directory / (current.subject.fingerprint + ".key"), *sealed);
-    crypto_wipe(sealed->data(), sealed->size());
+    auto written = write_private(directory / (current.subject.fingerprint + ".key"), persisted);
+    crypto_wipe(persisted.data(), persisted.size());
     if (!written) {
-        crypto_wipe(new_secret.data(), new_secret.size());
         co_return std::unexpected(written.error());
     }
     written = write_private(directory / (current.subject.fingerprint + ".pub"),
                             successor.subject.public_key);
     if (!written) {
-        crypto_wipe(new_secret.data(), new_secret.size());
         co_return std::unexpected(written.error());
     }
     written =
         write_private(document_path(document_directory(current.subject), stored->size()), *encoded);
     if (!written) {
-        crypto_wipe(new_secret.data(), new_secret.size());
         co_return std::unexpected(written.error());
     }
     written = write_private(directory / (current.subject.fingerprint + ".identity.cbor"), *encoded);
     if (!written) {
-        crypto_wipe(new_secret.data(), new_secret.size());
         co_return std::unexpected(written.error());
     }
     impl_->identity = successor.subject;
     impl_->label = successor.key_label;
-    impl_->secret = new_secret;
-    crypto_wipe(new_secret.data(), new_secret.size());
+    impl_->backend = std::move(next.impl_->backend);
     co_return successor;
 }
 
@@ -767,21 +766,93 @@ auto verify_with_key(const actor& by,
     if (signed_value.bytes.empty()) {
         return false;
     }
-    if (by.algorithm != "ed25519" || by.public_key.size() != 32 || artifact_type.empty() ||
-        signed_value.algorithm != "ed25519" || signed_value.bytes.size() != 64 ||
+    if (artifact_type.empty() || signed_value.algorithm != by.algorithm ||
         signed_value.signing_key_identifier != signing_key_identifier(by) ||
         signed_value.signature_purpose != artifact_type) {
         return std::unexpected(
             identity_error(errc::unauthorized, "invalid TAAP signature metadata"));
     }
     auto input = identity_detail::signing_input(artifact_type, canonical_body);
-    const auto valid =
-        crypto_ed25519_check(reinterpret_cast<const std::uint8_t*>(signed_value.bytes.data()),
-                             reinterpret_cast<const std::uint8_t*>(by.public_key.data()),
-                             reinterpret_cast<const std::uint8_t*>(input.data()),
-                             input.size()) == 0;
+    auto verified = result<void>{};
+    if ((by.algorithm == "ed25519" || by.algorithm == "fido2-eddsa") &&
+        by.public_key.size() == 32 && signed_value.bytes.size() == 64) {
+        auto message = std::span<const std::byte>{input};
+        auto assertion = std::vector<std::byte>{};
+        if (by.algorithm == "fido2-eddsa") {
+            auto client_data = crypto::digest(crypto::digest_kind::sha256, input);
+            if (!client_data || signed_value.client_data_hash != *client_data ||
+                signed_value.authenticator_data.empty()) {
+                crypto_wipe(input.data(), input.size());
+                return std::unexpected(
+                    identity_error(errc::unauthorized, "invalid FIDO2 signature metadata"));
+            }
+            auto client_hash =
+                crypto::digest(crypto::digest_kind::sha256, signed_value.client_data_hash);
+            if (!client_hash) {
+                crypto_wipe(input.data(), input.size());
+                return std::unexpected(client_hash.error());
+            }
+            assertion = signed_value.authenticator_data;
+            assertion.insert(assertion.end(), client_hash->begin(), client_hash->end());
+            message = assertion;
+        } else if (!signed_value.authenticator_data.empty() ||
+                   !signed_value.client_data_hash.empty()) {
+            crypto_wipe(input.data(), input.size());
+            return std::unexpected(
+                identity_error(errc::unauthorized, "invalid TAAP signature metadata"));
+        }
+        if (crypto_ed25519_check(reinterpret_cast<const std::uint8_t*>(signed_value.bytes.data()),
+                                 reinterpret_cast<const std::uint8_t*>(by.public_key.data()),
+                                 reinterpret_cast<const std::uint8_t*>(message.data()),
+                                 message.size()) != 0) {
+            verified = std::unexpected(
+                identity_error(errc::unauthorized, "TAAP signature verification failed"));
+        }
+        crypto_wipe(assertion.data(), assertion.size());
+    } else if ((by.algorithm == "ecdsa-p256" || by.algorithm == "fido2-es256") &&
+               by.public_key.size() == 64) {
+        auto message = std::span<const std::byte>{input};
+        auto assertion = std::vector<std::byte>{};
+        if (by.algorithm == "fido2-es256") {
+            auto client_data = crypto::digest(crypto::digest_kind::sha256, input);
+            if (!client_data || signed_value.client_data_hash != *client_data ||
+                signed_value.authenticator_data.empty()) {
+                crypto_wipe(input.data(), input.size());
+                return std::unexpected(
+                    identity_error(errc::unauthorized, "invalid FIDO2 signature metadata"));
+            }
+            auto client_hash =
+                crypto::digest(crypto::digest_kind::sha256, signed_value.client_data_hash);
+            if (!client_hash) {
+                crypto_wipe(input.data(), input.size());
+                return std::unexpected(client_hash.error());
+            }
+            assertion = signed_value.authenticator_data;
+            assertion.insert(assertion.end(), client_hash->begin(), client_hash->end());
+            message = assertion;
+        } else if (!signed_value.authenticator_data.empty() ||
+                   !signed_value.client_data_hash.empty()) {
+            crypto_wipe(input.data(), input.size());
+            return std::unexpected(
+                identity_error(errc::unauthorized, "invalid TAAP signature metadata"));
+        }
+        auto key = crypto::public_key{.kind = crypto::signature_kind::ecdsa,
+                                      .curve = crypto::curve_kind::p256,
+                                      .first = {by.public_key.begin(), by.public_key.begin() + 32},
+                                      .second = {by.public_key.begin() + 32, by.public_key.end()}};
+        verified = crypto::verify_signature(
+            key,
+            {.kind = crypto::signature_kind::ecdsa, .digest = crypto::digest_kind::sha256},
+            message,
+            signed_value.bytes);
+        crypto_wipe(assertion.data(), assertion.size());
+    } else {
+        crypto_wipe(input.data(), input.size());
+        return std::unexpected(
+            identity_error(errc::unauthorized, "invalid TAAP signature metadata"));
+    }
     crypto_wipe(input.data(), input.size());
-    if (!valid) {
+    if (!verified) {
         return std::unexpected(
             identity_error(errc::unauthorized, "TAAP signature verification failed"));
     }
@@ -798,14 +869,27 @@ auto valid_compromise_declaration(const compromise_declaration& declaration) -> 
 }
 
 auto valid_subject(const identity_document& document) -> bool {
-    if (document.subject.algorithm != "ed25519" || document.subject.public_key.size() != 32 ||
-        !valid_fingerprint(document.subject.fingerprint) ||
+    const auto algorithm = document.subject.algorithm;
+    const auto valid_key = ((algorithm == "ed25519" || algorithm == "fido2-eddsa") &&
+                            document.subject.public_key.size() == 32) ||
+                           ((algorithm == "ecdsa-p256" || algorithm == "fido2-es256") &&
+                            document.subject.public_key.size() == 64);
+    const auto valid_custody =
+        (algorithm == "ed25519" &&
+         (document.subject.custody.empty() || document.subject.custody == "software")) ||
+        ((algorithm == "fido2-eddsa" || algorithm == "fido2-es256") &&
+         document.subject.custody == "fido2") ||
+        (algorithm == "ecdsa-p256" && document.subject.custody == "piv:9c");
+    if (!valid_key || !valid_custody || !valid_fingerprint(document.subject.fingerprint) ||
         !valid_fingerprint(document.subject.key_fingerprint) ||
-        document.subject.taap_id != "taap:1:ed25519:" + document.subject.fingerprint) {
+        !document.subject.taap_id.ends_with(document.subject.fingerprint)) {
         return false;
     }
-    auto expected = identity_detail::key_fingerprint(
-        document.subject.public_key, document.created_at, document.key_label);
+    auto expected = identity_detail::key_fingerprint(document.subject.public_key,
+                                                     document.created_at,
+                                                     document.key_label,
+                                                     document.subject.algorithm,
+                                                     document.subject.custody);
     return expected && *expected == document.subject.key_fingerprint;
 }
 
@@ -865,8 +949,7 @@ result<bool> verify(const actor& by,
 }
 
 result<bool> verify_document(const identity_document& document) {
-    if (document.subject.algorithm != "ed25519" || document.subject.public_key.size() != 32 ||
-        document.signatures.empty()) {
+    if (!valid_subject(document) || document.signatures.empty()) {
         return std::unexpected(identity_error(errc::unauthorized, "invalid identity document"));
     }
     auto body = identity_detail::canonical_document(document, false);
@@ -996,11 +1079,11 @@ runtime::task<signer> identity_detail::local_signer() {
     }
     auto label = std::string{"liquid-device"};
     auto created_at = identity_detail::now();
-    auto secret = std::array<std::byte, 64>{};
     actor identity;
-    if (public_key.size() == 32 && !fingerprint.empty()) {
+    auto backend = std::unique_ptr<identity_detail::key_backend>{};
+    if (!public_key.empty() && !fingerprint.empty()) {
         auto provisional =
-            actor{"taap:1:ed25519:" + fingerprint, "ed25519", fingerprint, public_key, {}};
+            actor{"taap:1:ed25519:" + fingerprint, "ed25519", fingerprint, public_key, {}, {}};
         auto stored = load_stored_documents(provisional);
         if (!stored) {
             co_return std::unexpected(stored.error());
@@ -1022,101 +1105,103 @@ runtime::task<signer> identity_detail::local_signer() {
                                "current identity document does not match public key",
                                identity.taap_id));
         }
-        auto wrapping_key = identity_wrapping_key(directory);
-        if (!wrapping_key) {
-            co_return std::unexpected(wrapping_key.error());
+        auto saved = read_bytes(directory / (fingerprint + ".key"));
+        if (!saved) {
+            co_return std::unexpected(saved.error());
         }
-        auto sealed = read_bytes(directory / (fingerprint + ".key"));
-        if (!sealed) {
+        if (identity.custody.empty() || identity.custody == "software") {
+            auto wrapping_key = identity_wrapping_key(directory);
+            if (!wrapping_key) {
+                crypto_wipe(saved->data(), saved->size());
+                co_return std::unexpected(wrapping_key.error());
+            }
+            auto opened = crypto_detail::open(*wrapping_key, {}, *saved);
             crypto_wipe(wrapping_key->data(), wrapping_key->size());
-            co_return std::unexpected(sealed.error());
+            crypto_wipe(saved->data(), saved->size());
+            if (!opened) {
+                co_return std::unexpected(
+                    identity_error(errc::unauthorized, "cannot unwrap local identity"));
+            }
+            auto made = identity_detail::make_software_backend(*opened);
+            crypto_wipe(opened->data(), opened->size());
+            if (!made) {
+                co_return std::unexpected(made.error());
+            }
+            backend = std::move(*made);
+        } else {
+            auto made = identity_detail::open_hardware_backend(identity.custody, *saved);
+            crypto_wipe(saved->data(), saved->size());
+            if (!made) {
+                co_return std::unexpected(made.error());
+            }
+            backend = std::move(*made);
         }
-        auto opened = crypto_detail::open(*wrapping_key, {}, *sealed);
-        crypto_wipe(wrapping_key->data(), wrapping_key->size());
-        crypto_wipe(sealed->data(), sealed->size());
-        if (!opened || opened->size() != secret.size()) {
-            co_return std::unexpected(
-                identity_error(errc::unauthorized, "cannot unwrap local identity"));
-        }
-        std::ranges::copy(*opened, secret.begin());
-        crypto_wipe(opened->data(), opened->size());
     } else {
-        auto seed = std::array<std::byte, 32>{};
-        auto random = crypto_detail::random_bytes(seed);
-        if (!random) {
-            co_return std::unexpected(random.error());
+        auto made = identity_detail::make_software_backend();
+        if (!made) {
+            co_return std::unexpected(made.error());
         }
-        auto generated_public = std::array<std::byte, 32>{};
-        crypto_ed25519_key_pair(reinterpret_cast<std::uint8_t*>(secret.data()),
-                                reinterpret_cast<std::uint8_t*>(generated_public.data()),
-                                reinterpret_cast<std::uint8_t*>(seed.data()));
-        crypto_wipe(seed.data(), seed.size());
-        auto derived = identity_detail::identifier(generated_public, created_at, label);
+        backend = std::move(*made);
+        auto derived = identity_detail::identifier(
+            backend->public_key(), created_at, label, backend->algorithm(), backend->custody());
         if (!derived) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(derived.error());
         }
         identity = std::move(*derived);
+        auto private_material = backend->descriptor();
         auto wrapping_key = identity_wrapping_key(directory);
         if (!wrapping_key) {
-            crypto_wipe(secret.data(), secret.size());
+            crypto_wipe(private_material.data(), private_material.size());
             co_return std::unexpected(wrapping_key.error());
         }
-        auto sealed = crypto_detail::seal(*wrapping_key, {}, secret);
+        auto sealed = crypto_detail::seal(*wrapping_key, {}, private_material);
         crypto_wipe(wrapping_key->data(), wrapping_key->size());
+        crypto_wipe(private_material.data(), private_material.size());
         if (!sealed) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(sealed.error());
         }
         auto written = write_private(directory / (identity.fingerprint + ".key"), *sealed);
         crypto_wipe(sealed->data(), sealed->size());
         if (!written) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(written.error());
         }
         written = write_private(directory / (identity.fingerprint + ".pub"), identity.public_key);
         if (!written) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(written.error());
         }
         identity_document document{identity, label, created_at, created_at, std::nullopt, {}, {}};
         auto body = identity_detail::canonical_document(document, false);
         if (!body) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(body.error());
         }
-        auto input = identity_detail::signing_input("identity_document", *body);
-        auto signed_bytes = std::vector<std::byte>(64);
-        crypto_ed25519_sign(reinterpret_cast<std::uint8_t*>(signed_bytes.data()),
-                            reinterpret_cast<const std::uint8_t*>(secret.data()),
-                            reinterpret_cast<const std::uint8_t*>(input.data()),
-                            input.size());
-        crypto_wipe(input.data(), input.size());
-        document.signatures.push_back({"ed25519",
+        auto signed_bytes =
+            co_await backend->sign(identity_detail::signing_input("identity_document", *body));
+        if (!signed_bytes) {
+            co_return std::unexpected(signed_bytes.error());
+        }
+        document.signatures.push_back({std::move(signed_bytes->algorithm),
                                        signing_key_identifier(identity),
                                        label,
                                        "identity_document",
                                        identity_detail::now(),
-                                       std::move(signed_bytes)});
+                                       std::move(signed_bytes->bytes),
+                                       std::move(signed_bytes->authenticator_data),
+                                       std::move(signed_bytes->client_data_hash)});
         auto full_document = identity_detail::canonical_document(document, true);
         if (!full_document) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(full_document.error());
         }
         std::filesystem::create_directories(document_directory(identity), code);
         if (code) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
         }
         written = write_private(document_path(document_directory(identity), 0), *full_document);
         if (!written) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(written.error());
         }
         written =
             write_private(directory / (identity.fingerprint + ".identity.cbor"), *full_document);
         if (!written) {
-            crypto_wipe(secret.data(), secret.size());
             co_return std::unexpected(written.error());
         }
     }
@@ -1124,8 +1209,7 @@ runtime::task<signer> identity_detail::local_signer() {
     output.impl_ = std::make_unique<signer::impl>();
     output.impl_->identity = std::move(identity);
     output.impl_->label = std::move(label);
-    output.impl_->secret = secret;
-    crypto_wipe(secret.data(), secret.size());
+    output.impl_->backend = std::move(backend);
     co_return output;
 }
 
@@ -1830,6 +1914,8 @@ runtime::task<std::shared_ptr<key_provider>> key_provider_from_uri(std::string c
         provider = custody_detail::make_lake_provider(std::move(parameters));
     else if (kind == "shamir")
         provider = custody_detail::make_shamir_provider(std::move(parameters));
+    else if (kind == "tpm")
+        provider = custody_detail::make_tpm_provider(std::move(parameters));
     if (!provider)
         co_return std::unexpected(provider.error());
     co_return *provider;

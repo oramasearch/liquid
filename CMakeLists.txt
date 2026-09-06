@@ -155,6 +155,48 @@ FetchContent_Declare(monocypher_source
   URL_HASH SHA256=8cc9bc341a66249016db9bd70e9142d8d0aef9945973744b1ac05dbc55d8ee66)
 FetchContent_MakeAvailable(monocypher_source)
 
+# AppImage type 2 runtimes are private, byte-pinned projection inputs. Keep both
+# supported architectures available so cross-projection does not consult the network.
+set(LIQUID_APPIMAGE_RUNTIME_SOURCE "")
+if(NOT WIN32)
+  enable_language(ASM)
+  set(LIQUID_APPIMAGE_RUNTIME_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/appimage-runtimes")
+  file(MAKE_DIRECTORY "${LIQUID_APPIMAGE_RUNTIME_DIRECTORY}")
+  set(LIQUID_APPIMAGE_RUNTIME_X86_64
+    "${LIQUID_APPIMAGE_RUNTIME_DIRECTORY}/runtime-x86_64")
+  set(LIQUID_APPIMAGE_RUNTIME_AARCH64
+    "${LIQUID_APPIMAGE_RUNTIME_DIRECTORY}/runtime-aarch64")
+  file(DOWNLOAD
+    https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+    "${LIQUID_APPIMAGE_RUNTIME_X86_64}"
+    EXPECTED_HASH SHA256=1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf
+    TLS_VERIFY ON
+    STATUS LIQUID_APPIMAGE_RUNTIME_X86_64_STATUS)
+  list(GET LIQUID_APPIMAGE_RUNTIME_X86_64_STATUS 0 LIQUID_APPIMAGE_RUNTIME_X86_64_CODE)
+  if(NOT LIQUID_APPIMAGE_RUNTIME_X86_64_CODE EQUAL 0)
+    list(GET LIQUID_APPIMAGE_RUNTIME_X86_64_STATUS 1 LIQUID_APPIMAGE_RUNTIME_X86_64_MESSAGE)
+    message(FATAL_ERROR "Cannot fetch the pinned x86-64 AppImage runtime: ${LIQUID_APPIMAGE_RUNTIME_X86_64_MESSAGE}")
+  endif()
+  file(DOWNLOAD
+    https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64
+    "${LIQUID_APPIMAGE_RUNTIME_AARCH64}"
+    EXPECTED_HASH SHA256=7d5d772b7c32f0c84caf0a452a3072a5709027d7eac5856feb89a7a7a8881372
+    TLS_VERIFY ON
+    STATUS LIQUID_APPIMAGE_RUNTIME_AARCH64_STATUS)
+  list(GET LIQUID_APPIMAGE_RUNTIME_AARCH64_STATUS 0 LIQUID_APPIMAGE_RUNTIME_AARCH64_CODE)
+  if(NOT LIQUID_APPIMAGE_RUNTIME_AARCH64_CODE EQUAL 0)
+    list(GET LIQUID_APPIMAGE_RUNTIME_AARCH64_STATUS 1 LIQUID_APPIMAGE_RUNTIME_AARCH64_MESSAGE)
+    message(FATAL_ERROR "Cannot fetch the pinned AArch64 AppImage runtime: ${LIQUID_APPIMAGE_RUNTIME_AARCH64_MESSAGE}")
+  endif()
+  file(TO_CMAKE_PATH "${LIQUID_APPIMAGE_RUNTIME_X86_64}" LIQUID_APPIMAGE_RUNTIME_X86_64_ASM)
+  file(TO_CMAKE_PATH "${LIQUID_APPIMAGE_RUNTIME_AARCH64}" LIQUID_APPIMAGE_RUNTIME_AARCH64_ASM)
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  configure_file(cmake/appimage_runtimes.S.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/appimage_runtimes.S" @ONLY)
+  set(LIQUID_APPIMAGE_RUNTIME_SOURCE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/appimage_runtimes.S")
+endif()
+
 # Compression is a private codec dependency of the pack format.  Do not expose
 # its headers or targets through libliquid's public interface.
 set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
@@ -442,8 +484,10 @@ add_library(libliquid
   src/formats/package/codecs.cpp
   src/formats/registry.cpp
   src/formats/rpm/rpm.cpp
+  src/formats/squashfs/squashfs.cpp
   src/formats/sqlite/sqlite.cpp
   src/formats/tar/tar.cpp
+  src/formats/tar/writer.cpp
   src/formats/zip/zip.cpp
   src/frontend/graph.cpp
   src/frontend/module.cpp
@@ -474,10 +518,14 @@ add_library(libliquid
   src/identity/custody/http.cpp
   src/identity/custody/lake.cpp
   src/identity/custody/shamir.cpp
+  src/identity/custody/tpm.cpp
+  src/identity/keys/keys.cpp
+  src/identity/keys/hid.cpp
   src/identity/taap.cpp
   src/install/faults.cpp
   src/install/install.cpp
   src/install/records.cpp
+  src/identity/threshold.cpp
   src/import/spack.cpp
   src/node_store.cpp
   src/node_store/service.cpp
@@ -489,6 +537,12 @@ add_library(libliquid
   src/protobuf/wire.cpp
   src/projection/helm.cpp
   src/projection/conflicts.cpp
+  src/projection/appimage_runtime.cpp
+  src/projection/attestations.cpp
+  src/projection/homebrew.cpp
+  src/projection/pkgbuild.cpp
+  src/projection/bundled.cpp
+  ${LIQUID_APPIMAGE_RUNTIME_SOURCE}
   src/projection/bootc.cpp
   src/projection/oci.cpp
   src/projection/ostree.cpp
@@ -581,6 +635,9 @@ target_compile_definitions(libliquid PRIVATE
   LIQUID_GRAMMAR_LOCK_DIGEST="sha256:${LIQUID_GRAMMAR_LOCK_SHA256}"
   LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
   LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
+if(NOT WIN32)
+  target_compile_definitions(libliquid PRIVATE LIQUID_HAS_APPIMAGE_RUNTIME=1)
+endif()
 add_dependencies(libliquid liquid-wrap-hook)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(libliquid PRIVATE
@@ -604,7 +661,17 @@ else()
                             $<TARGET_OBJECTS:liquid_monocypher_objects>)
 endif()
 if(WIN32)
-  target_link_libraries(libliquid PRIVATE bcrypt)
+  target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
+  target_link_libraries(libliquid PRIVATE bcrypt hid setupapi tbs winscard)
+elseif(APPLE)
+  target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
+  target_link_libraries(libliquid PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework PCSC")
+elseif(UNIX)
+  find_library(LIQUID_PCSC_LIBRARY pcsclite)
+  if(LIQUID_PCSC_LIBRARY)
+    target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
+    target_link_libraries(libliquid PRIVATE ${LIQUID_PCSC_LIBRARY})
+  endif()
 endif()
 include(GenerateExportHeader)
 generate_export_header(libliquid
@@ -671,12 +738,14 @@ if(LIQUID_BUILD_CLI)
     src/cli/repo.cpp
     src/cli/registry.cpp
     src/cli/review.cpp
+    src/cli/release.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
     src/cli/resolve.cpp
     src/cli/search.cpp
     src/cli/secret.cpp
     src/cli/session.cpp
+    src/cli/sign.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp

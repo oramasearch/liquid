@@ -54,6 +54,7 @@ owning issue in `error::context`.
 | `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()`, `grammar_digest()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97, #193 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `spawn_serial`, `offload`, `context` |
+| `liquid/session.hpp` | #30, #41, #42, #86 | implemented | move-only speculative `session`, session/delegation options, atomic publish reports, semantic lease claims, exclusive-lock rules and records, transient presence, and epoch values |
 | `liquid/session.hpp` | #30, #41, #86, #248 | implemented | move-only speculative `session`, session/delegation options, atomic publish reports, semantic lease claims, transient presence, epoch values, and per-line actor/session/change attribution records |
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
@@ -77,6 +78,7 @@ owning issue in `error::context`.
 | `liquid/frontend_abi.h` | #65, #66, #205, liquify #3 | implemented | versioned C frontend and liquify plugin descriptors, language/query/command/panel registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
 | `liquid/projection.hpp` | #28, #80 | implemented | package/image targets, result or install-tree sources, install intent, generated scripts, package and service metadata, batch and inventory conflict detection, replacement reports, coroutine projection, artifact and attestation reports, and stable JSON output |
 | `liquid/install.hpp` | #80 | implemented | canonical `install_intent/1`, strict validation, lifecycle-script inputs, atomic generation install/list/rollback tasks, and generation reports |
+| `liquid/projection.hpp` | #28, #77 | implemented | native package, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap targets; result or install-tree sources; package and service metadata; coroutine projection; artifact and attestation reports; stable JSON output |
 | `liquid/projection.hpp` | #28, #78 | implemented | package, OCI, Helm, OSTree, and bootc targets; result or tree sources with path-mounted overlays; OSTree ref and repository mode; package and service metadata; coroutine projection; commit, artifact, attestation, and stable JSON reports |
 | `liquid/frontend_abi.h` | #65, #66, #205, #248, liquify #3 | implemented | versioned C frontend and liquify plugin descriptors, language/query/command/panel registration, optional versioned presence/lease/attribution event callbacks, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
 | `liquid/projection.hpp` | #28 | implemented | package/image targets, result or install-tree sources, package and service metadata, projection options, coroutine projection, artifact and attestation reports, and stable JSON output |
@@ -92,21 +94,27 @@ owning issue in `error::context`.
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes and live data branches, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted data/REAPI/retention configuration, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
-| `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
+| `liquid/identity.hpp` | #4, #7, #51, #53, #81, #111 | implemented | TAAP `actor`, software/FIDO2/PIV `signer`, cross-backend identity rotation and chain verification, versioned data-key rotation, TPM sealing, keyring, and custody providers |
+| `liquid/release.hpp` | #81 | implemented | signed release policy and approval records plus distinct-identity, expiry, and compromise-aware threshold verification |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #27, #57, #60, #56, #58, #61, #87, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, public plans, input policy, configure facts, retention, tests, SBOMs, ABI publication, and session data environments | action execution and results, complete configured plan entries and stable JSON projection, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, wrapper ABI-break reports, and optional session-scoped data URL injection; no sandbox or index implementation types are public |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, remote-record, and streaming tree-import writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/resolve.hpp` | #25, #27 | implemented | plain spec/package/concretisation values, canonical record codecs, filesystem and repository universe loading, reuse, known-output and ABI-compatibility inputs, asynchronous CDCL resolution, minimal attributed conflict cores, stable explanations and JSON |
 | `liquid/configuration.hpp` | #74, #80 | implemented | typed `.liquid` AST and locations, exact diagnostics, synchronous parse/check/lower/format, canonical `target/1`, `source/1`, and nested `install_intent/1` codecs, generator and relocation-checked configured-target tasks, trace origins, and digest-declared source values |
+| `liquid/configuration.hpp` | #42, #74 | implemented | typed `.liquid` AST and locations, exact diagnostics, synchronous parse/check/lower/format including lock rules, canonical `target/1` and `source/1` codecs, generator and relocation-checked configured-target tasks, trace origins, and digest-declared source values |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #74, #85, #86, #116, #160, #165, #166, #174, #193, #200, #205 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; digest-verifying configuration source fetch; flow-controlled memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural-edit preview/apply with grouped undo; cost-planned working/ref search with common located hits and executed-plan explanations; stale-base validation; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote, agent, and flow configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/configuration.hpp` | #74 | implemented | typed `.liquid` AST and locations, exact diagnostics, synchronous parse/check/lower/format, canonical `target/1` and `source/1` codecs, generator and relocation-checked configured-target tasks, trace origins, and digest-declared source values |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #74, #85, #86, #116, #160, #165, #166, #174, #193, #200, #205, #248 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; digest-verifying configuration source fetch; flow-controlled memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural-edit preview/apply with grouped undo; cost-planned working/ref search with common located hits and executed-plan explanations; stale-base validation; redaction, structural key diff, public tree/change diff and text-anchor mapping, stable-node per-line attribution, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote, agent, and flow configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
+| `liquid/identity.hpp` | #4, #7, #51, #53, #81, #111 | implemented | TAAP `actor`, software/FIDO2/PIV `signer`, cross-backend identity rotation and chain verification, versioned data-key rotation, asynchronous key wrapping, TPM sealing, keyring inspection, URI-selected custody providers, and Shamir splitting |
+| `liquid/release.hpp` | #81 | implemented | signed release policy and approval records plus distinct-identity, expiry, and compromise-aware threshold verification |
+| `liquid/drive.hpp` | #195, #235 | implemented | three-tree sync, persisted path states and policy, pin/unpin hydration, pending-upload and hydration-debt status |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, asynchronous key wrapping, keyring inspection, URI-selected custody providers, and Shamir splitting |
 | `liquid/drive.hpp` | #195, #235, #247 | implemented | three-tree sync, persisted remote and path policy, first-pull repository identity adoption, pin/unpin hydration, pending-upload and hydration-debt status; composed by `liquid clone` for a fully materialized checkout |
 | `liquid/vfs.hpp` | #6, #235 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS, including drive xattrs and policy hydration; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #26, #27, #57, #60, #56, #58, #61, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, content-addressed outputs, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, named upstream result/tree inputs, canonical output-tree claims, signature-valid `known_outputs` enumeration, complete configured plan entries that preserve named input trees, stable JSON event projection, move-only build handles and subscriptions, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
+| `liquid/daemon.hpp` | #21, #23, #32, #42, #85, #193, #195, #200, #205 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured hot-update and drive sync, exclusive-lock snapshots, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, structural-edit preview/apply, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/daemon.hpp` | #21, #23, #32, #85, #193, #195, #200, #205, #248 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured hot-update and drive sync, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, structural-edit preview/apply, per-line attribution, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #26, #27, #57, #60, #56, #58, #61, #73, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, content-addressed and relocation-checked outputs, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, named upstream result/tree inputs, canonical output-tree claims, relocation findings and reports, install-prefix wrapper conventions and waiver, signature-valid `known_outputs` enumeration, complete configured plan entries that preserve named input trees, stable JSON event projection, move-only build handles and subscriptions, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
 | `liquid/daemon.hpp` | #21, #23, #193, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
@@ -820,7 +828,7 @@ are in [abi.md](abi.md).
 ### `liquid/attestation.hpp`
 
 ```cpp
-enum class attestation_subject_kind : std::uint8_t { actor, drip, change, artifact, model, library };
+enum class attestation_subject_kind : std::uint8_t { actor, drip, change, artifact, model, library, repository };
 enum class attestation_field_type : std::uint8_t { text, unsigned_integer, boolean, text_list };
 enum class attestation_status_kind : std::uint8_t { none, max_age, revocable };
 using attestation_value = std::variant<std::string, std::uint64_t, bool, std::vector<std::string>>;
@@ -844,6 +852,30 @@ result<attestation_verification> verify_attestation(const attestation&, const at
 `verify_attestation` rejects unknown profiles and validates the issuer signature, exact profile
 schema, subject kind, registered freshness rule, revocation status evidence, and disclosed
 commitments. [attestations.md](attestations.md) is the complete schema and wire-format guide.
+
+### `liquid/release.hpp`
+
+```cpp
+struct release_policy { attestation statement; };
+struct release_approval { attestation statement; };
+struct release_verification {
+  bool satisfied;
+  std::vector<std::string> distinct_valid_signers;
+  std::vector<std::string> missing;
+};
+runtime::task<release_policy> make_release_policy(digest repository, std::string role,
+  std::uint64_t threshold, std::vector<std::string> signers, std::string not_after,
+  signer& policy_signer);
+runtime::task<release_approval> approve_release(digest artifact, const release_policy&,
+  std::string release, signer& approving_signer);
+result<release_verification> verify_release(digest artifact, const release_policy&,
+  std::span<const release_approval> approvals, std::chrono::sys_seconds now = {});
+```
+
+The policy is a verified `release_policy/1` repository-subject attestation and each approval is a
+verified `release_approval/1` artifact-subject attestation. The threshold counts distinct allowed
+TAAP identity identifiers. [release-approval.md](release-approval.md) defines expiry, compromise,
+and TUF alignment.
 
 ### `liquid/object.hpp`
 
@@ -899,6 +931,26 @@ matches the branch-point fingerprint; it returns `conflict` after any base chang
 mutations use a repository-local process lock and run PostgreSQL tools as sandboxed, network-enabled
 actions without linking `libpq`. [data-branching.md](data-branching.md) defines the mechanisms and
 their limits.
+
+### Exclusive lock values
+
+```cpp
+struct lock_rule { std::string name; std::vector<std::string> paths; };
+struct lock_config { std::vector<lock_rule> rules; };
+enum class lock_authority : std::uint8_t { advisory, lake };
+struct exclusive_lock {
+  std::string path; actor holder; std::chrono::sys_seconds since;
+  std::string reason; lock_authority authority;
+};
+enum class lock_operation : std::uint8_t { acquire, release };
+struct lock_authorization_request { lock_operation operation; exclusive_lock value; };
+using lock_authorizer = std::function<runtime::task<void>(lock_authorization_request)>;
+```
+
+`repository_options::locks` persists the path rules at creation.
+`repository_options::authorize_lock` optionally asks a connected authority before acquire or
+release. Without it, lock records have advisory authority and reconcile through signed sync.
+[locks.md](locks.md) defines refusal and conflict behavior.
 
 ### `liquid/repository.hpp`
 
@@ -1007,8 +1059,11 @@ class repository {
   runtime::task<std::vector<operation_record>> operations(log_options = {}); // newest first
   runtime::task<undo_report> undo(op_id);
   runtime::task<undo_report> undo_session(session_id, undo_options = {});
-  runtime::task<void> lock(std::string path);            // #42
+  runtime::task<void> lock(std::string path, std::string reason = "exclusive checkout");
   runtime::task<void> unlock(std::string path);
+  runtime::task<std::vector<exclusive_lock>> locks();
+  runtime::task<void> set_lock_configuration(lock_config);
+  lock_config lock_configuration() const;
   runtime::task<digest> store_attestation(attestation);    // store canonical evidence; no trust implied
   runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
   runtime::task<retention_explanation> retain_explain(digest);       // live rule/lease or eviction
@@ -1306,7 +1361,8 @@ struct target { std::uint64_t v; std::string name; std::vector<std::string> comm
   configuration_record_origin origin; };
 struct lowered_configuration { std::vector<package_record> packages;
   std::vector<configuration_record_origin> package_origins; std::vector<target> targets;
-  std::vector<source> sources; std::vector<configuration_generator> generators; };
+  std::vector<source> sources; std::vector<configuration_generator> generators;
+  lock_config locks; };
 result<configuration_document> parse_configuration(std::string_view, std::filesystem::path);
 std::vector<configuration_diagnostic> check(const configuration_document&);
 result<lowered_configuration> lower(const configuration_document&);
@@ -1627,8 +1683,9 @@ class capture {                        // the journal, as a subscription
       std::function<void(const drip&, const journal_cursor&)>);
   runtime::task<void> pause();  runtime::task<void> resume();  result<capture_status> status();
 };
-struct actor { std::string taap_id; std::string fingerprint; std::vector<std::byte> public_key;
-               std::string key_fingerprint; };           // stable identity and current key identifiers
+struct actor { std::string taap_id; std::string algorithm; std::string fingerprint;
+               std::vector<std::byte> public_key; std::string key_fingerprint;
+               std::string custody; };                   // stable identity and current key identifiers
 struct compromise_declaration { std::string key_fingerprint_base32; std::string declared_at;
                                 std::optional<std::string> reason; };
 struct identity_document { actor subject; std::string key_label; std::string created_at; std::string updated_at;
@@ -1642,11 +1699,14 @@ class signer {
  public:
   runtime::task<signature> sign(std::string artifact_type, std::vector<std::byte> canonical_body);  // TAAP/1 §6.6
   runtime::task<identity_document> rotate(std::optional<compromise_declaration> compromise = {});
+  runtime::task<identity_document> rotate_to(std::string custody,
+    std::optional<compromise_declaration> compromise = {});
 };
 result<bool> verify(const actor&, std::string_view artifact_type, std::span<const std::byte> canonical_body, const signature&);
 result<verified_identity> verify_chain(std::span<const identity_document> documents);
 struct signature { std::string algorithm; std::string signing_key_identifier; std::string signing_key_label;
-                   std::string signature_purpose; std::string signed_at; std::vector<std::byte> bytes; };   // TAAP/1 §6.7
+                   std::string signature_purpose; std::string signed_at; std::vector<std::byte> bytes;
+                   std::vector<std::byte> authenticator_data, client_data_hash; };   // TAAP/1 §6.7 plus FIDO2 fields
 struct argon2_parameters { std::uint32_t memory_kib; std::uint32_t iterations; std::uint32_t lanes; };
 using key = std::array<std::byte, 32>;
 struct wrap_context { std::string key_id; std::uint64_t version; };
@@ -1731,6 +1791,8 @@ class daemon_target {
   virtual ~daemon_target() = default;
   virtual std::string name() const = 0;
   virtual runtime::task<void> deliver(daemon_delivery) = 0;
+  virtual runtime::task<void> deliver_presence(presence);
+  virtual runtime::task<void> deliver_locks(std::vector<exclusive_lock>);
   virtual std::optional<std::string> detail() const;
 };
 struct daemon_target_status {
@@ -1751,6 +1813,7 @@ struct daemon_options {
   std::uint32_t graph_validation_rate; std::chrono::milliseconds graph_validation_interval;
   query_registry graph_queries;
   capture_options capture; std::vector<std::shared_ptr<daemon_target>> targets;
+  lock_authorizer authorize_lock;
 };
 class daemon {
  public:
@@ -1766,6 +1829,9 @@ class daemon {
   runtime::task<build_handle> build(build_target);
   runtime::task<build_handle> build(action_input);
   runtime::task<void> report_consumer_lag(std::string name, std::uint64_t behind);
+  runtime::task<void> report_presence(presence);
+  runtime::task<void> lock(std::string path, std::string reason = "exclusive checkout");
+  runtime::task<void> unlock(std::string path);
   runtime::task<void> shutdown();
   runtime::task<void> wait();
 };
@@ -1817,8 +1883,8 @@ canonical CBOR, `decode_identity_document` rejects malformed or non-canonical in
 `verify_document` and `verify_chain` so callers explicitly choose their trust policy.
 `passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
 objects. The keyring retains held data-key versions, rotates future writes, rewraps every held
-version when the KEK changes, and records revocation after deleting a wrapped version. Recipient,
-TPM and hardware-token custody remain separate hardware work.
+version when the KEK changes, and records revocation after deleting a wrapped version. TPM PCR
+sealing and hardware-token identity custody are implemented behind their transport boundaries.
 
 ## Deliberately internal
 

@@ -5,8 +5,9 @@ directory unless a command names another repository; `wrap` instead snapshots th
 tree into its project cache. One-shot commands run library operations through `runtime::block_on`;
 `serve sync` awaits them on its listener executor. The CLI does not read repository storage directly.
 
-`init` imports regular files already present in its target directory through
-`repository::import_tree`; the local-tree form of `import` uses the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
+`init` lowers lock rules from `liquid.liquid`, or the first sorted top-level `.liquid` file, before
+it imports regular files through `repository::import_tree`; the local-tree form of `import` uses
+the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
 it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
 its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
 available, but daemon attachment returns the documented unsupported result because the current
@@ -20,6 +21,16 @@ drive client's ordinary on-demand hydration threshold. The remote remains config
 `drive status` and synchronization.
 
 Focused command contracts: [`build`](build-events.md) plans and events, and [`test`](test.md).
+
+## Offline operation
+
+Local commands do not require a network. The `liquid-offline` CTest suite sets
+`LIQUID_OFFLINE=1` inside liquid's network-denied sandbox and runs the complete `liquid-cli` test
+label. A command whose selected mode requires a network refuses before its handler starts, writes
+`liquid <verb>: needs the network for <reason>` to standard error, and exits 69. The complete
+allowlist is push, pull, remote execution, and the remote cache. Local wrapping, builds, cache
+inspection, repository operations, generated documentation, and artifact operations continue
+against local state.
 
 ## Commands and options
 
@@ -70,8 +81,8 @@ built binary under the build directory before CTest compares it with the committ
 | `diff` | `diff <a> <b> [path] [--text] [--formats] [--json]` | Compare refs or change digests, optionally decoding changed containers. | available |
 | `ops` | `ops [--json]` | Alias for `log --ops`. | available |
 | `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
-| `lock` | `lock <path>` | Advisory-lock a path. | available |
-| `unlock` | `unlock <path>` | Remove an advisory lock. | available |
+| `lock` | `lock <path> [--reason <text>]` | Acquire configured exclusive checkout for a path. | available |
+| `unlock` | `unlock <path>` | Release exclusive checkout held by the current identity. | available |
 | `session` | `session start <delegation>`, `session write <id> <path> --from <file>`, `session publish <id> [--message <text>]`, or `session discard <id>` | Manage a persisted private speculative replica. | available |
 | `compact` | `compact --epoch [--min-ack-peers <count>]` | Write and record a compact repository epoch. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
@@ -80,7 +91,9 @@ built binary under the build directory before CTest compares it with the committ
 | `import` | `import <path>`, `import git <path>`, or `import spack <export.json> --into <repository> [--report] [--json]` | Import a local tree, Git repository, or Spack universe. | available |
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
-| `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `identity` | `identity [show\|rotate [--to software\|fido2\|piv:9c]] [--json]` | Show or rotate the device identity and select its key custody. | available |
+| `sign` | `sign <drip\|change\|artifact> <digest>` | Sign a canonical digest value with the current identity backend. | available |
+| `release` | `release policy set --threshold <k> --signer <id>...` or `release <approve\|verify> <artifact>` | Manage signed threshold release approval. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
 | `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
@@ -100,6 +113,7 @@ built binary under the build directory before CTest compares it with the committ
 | `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart, with optional ownership checking. | available |
 | `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
 | `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into a native package, image, ecosystem recipe, or bundled-runtime format. | available |
 | `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm> <result\|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2\|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked tree into packages, OCI or bootc images, an OSTree commit, or a Helm chart. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
@@ -121,6 +135,9 @@ built binary under the build directory before CTest compares it with the committ
 
 ## Output and errors
 
+`lock` prints the acquired path and `unlock` prints the released path. Acquisition requires a
+matching `.liquid` lock rule. A conflicting write reports the holder identity, acquisition time,
+and reason; [exclusive checkout locks](../library/locks.md) defines offline and connected authority.
 Commands that use a lower support level print one shared line before the affected result:
 
 ```text
@@ -368,9 +385,25 @@ under a random Shamir KEK and prints the `n` shares once.
 
 Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
 `aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
-`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+`lake:<base-url>/<key>`, `shamir:<threshold>/<share-count>`, and `tpm:pcrs=<list>`. Secret credentials and Shamir
 shares are supplied through the environment described in
 [the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
+
+## Hardware identity and release approval
+
+`identity rotate --to software|fido2|piv:9c` creates a linked successor identity document while
+preserving the TAAP identity. `identity show` includes the active algorithm and custody. FIDO2
+prompts through the selected HID authenticator; PIV uses digital-signature slot `9c` through the OS
+PC/SC service. `sign <drip|change|artifact> <digest>` prints the canonical signature object as hex
+and the signer identity.
+
+`release policy set --threshold <k> --signer <id>...` signs the repository's release role and
+writes `.liquid/release/policy.cbor`. `--role` defaults to `targets`; `--not-after` accepts an RFC
+3339 UTC expiry. `release approve <artifact>` writes the current identity's approval, and `release
+verify <artifact>` counts distinct valid allowed identities, prints missing identities, and exits 1
+when the policy threshold is not met. See
+[`../library/release-approval.md`](../library/release-approval.md) for the signed profiles and trust
+models.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
 Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
 is itself the package directory. Specs containing spaces must be passed as one quoted argument.
@@ -491,7 +524,10 @@ Repeatable `--depends` values are additive to reader-derived dependencies. Helm 
 `name=repository@sha256:digest[,port=N][,env=K=V][,volume=P]`. `--compat-gzip` selects liquid's
 deterministic gzip encoder for Debian and OCI; `--allow-abi-break` records an explicit override.
 Text output lists artifact and attestation digests, while `--json` adds pinned image references,
-dependency labels, and the ABI override bit. See [projection.md](../library/projection.md).
+dependency labels, and the ABI override bit. Homebrew and PKGBUILD emit ecosystem recipes beside
+their payload archives; AppImage, Flatpak, and Snap emit bundled-runtime layouts. Formats without
+an attachment mechanism place DSSE evidence in `<artifact>.attestations.json`. See
+[projection.md](../library/projection.md).
 
 `install` accepts a liquid-projected `.deb`, `.rpm`, `.apk`, or an install-tree directory. It
 stages the next generation below `<root>/.liquid/generations`, applies embedded declarative intent,
@@ -675,7 +711,11 @@ liquid import spack spack-export.json --into ../packages --report
 liquid import spack --report --into ../packages --json
 liquid export git ../exported-repository main
 liquid retain explain blake3:<object-digest>
-liquid identity rotate
+liquid identity rotate --to fido2
+liquid sign artifact blake3:<artifact-digest>
+liquid release policy set --threshold 2 --signer <taap-id-a> --signer <taap-id-b>
+liquid release approve blake3:<artifact-digest>
+liquid release verify blake3:<artifact-digest>
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
 liquid attest image registry.example/app@sha256:<image-digest> --tree blake3:<tree-digest> --result blake3:<result-digest>

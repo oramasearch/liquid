@@ -38,6 +38,7 @@ struct LIQUID_EXPORT actor {
     std::string fingerprint;
     std::vector<std::byte> public_key;
     std::string key_fingerprint;
+    std::string custody;
 
     [[nodiscard]] std::string_view identifier() const noexcept;
 };
@@ -49,6 +50,8 @@ struct LIQUID_EXPORT signature {
     std::string signature_purpose;
     std::string signed_at;
     std::vector<std::byte> bytes;
+    std::vector<std::byte> authenticator_data;
+    std::vector<std::byte> client_data_hash;
 };
 
 struct LIQUID_EXPORT compromise_declaration {
@@ -93,6 +96,8 @@ public:
                                                 std::vector<std::byte> canonical_body);
     [[nodiscard]] runtime::task<identity_document>
     rotate(std::optional<compromise_declaration> compromise = {});
+    [[nodiscard]] runtime::task<identity_document>
+    rotate_to(std::string custody, std::optional<compromise_declaration> compromise = {});
 
     [[nodiscard]] actor identity() const;
 

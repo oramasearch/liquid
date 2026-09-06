@@ -139,6 +139,11 @@ auto removal_test(projection_target target) -> std::string {
     case projection_target::ostree_commit:
     case projection_target::bootc_image:
     case projection_target::helm_chart:
+    case projection_target::homebrew:
+    case projection_target::pkgbuild:
+    case projection_target::appimage:
+    case projection_target::flatpak:
+    case projection_target::snap:
         return "false";
     }
     return "false";

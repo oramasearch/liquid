@@ -25,6 +25,7 @@ add_executable(liquid-tests
   http2/test_codecs.cpp
   test_identity.cpp
   test_install.cpp
+  test_hardware_keys.cpp
   test_node_store.cpp
   test_object.cpp
   test_projection.cpp
@@ -97,6 +98,9 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/content.cpp
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/package/common.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/squashfs/squashfs.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/tar/writer.cpp
     ${PROJECT_SOURCE_DIR}/src/formats/ostree/ostree.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
     ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
@@ -105,6 +109,7 @@ if(BUILD_SHARED_LIBS)
   if(APPLE)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
   endif()
+  target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
@@ -130,6 +135,15 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_program(LIQUID_SWTPM_EXECUTABLE swtpm)
+  if(LIQUID_SWTPM_EXECUTABLE)
+    add_test(NAME tpm-swtpm
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tpm/run_swtpm.sh
+        $<TARGET_FILE:liquid-tests>
+        ${LIQUID_SWTPM_EXECUTABLE})
+  endif()
+endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME desktop-nautilus-badge-mapping
@@ -204,6 +218,11 @@ find_program(LIQUID_HELM_EXECUTABLE helm)
 if(LIQUID_HELM_EXECUTABLE)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_HELM_EXECUTABLE="${LIQUID_HELM_EXECUTABLE}")
+endif()
+find_program(LIQUID_UNSQUASHFS_EXECUTABLE unsquashfs)
+if(LIQUID_UNSQUASHFS_EXECUTABLE)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_UNSQUASHFS_EXECUTABLE="${LIQUID_UNSQUASHFS_EXECUTABLE}")
 endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
@@ -415,6 +434,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CONFIG_ROOT=${CMAKE_CURRENT_BINARY_DIR}/configuration-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/configuration.cmake)
+  add_test(NAME cli-locks
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_LOCK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lock-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/locks.cmake)
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -472,6 +496,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_test(NAME cli-release
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_RELEASE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/release-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/release.cmake)
   add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
   target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
   add_test(NAME cli-keys
@@ -499,6 +528,74 @@ if(LIQUID_BUILD_CLI)
       --json)
   set_tests_properties(cli-abi-diff-json PROPERTIES
     PASS_REGULAR_EXPRESSION "\"verdict\":\"compatible_additions\"[^\n]*\"liquid_abi_added\"")
+  set(LIQUID_CLI_TESTS
+    cli-scenario
+    cli-help-docs
+    cli-reference-docs
+    cli-docs-json
+    cli-man-pages
+    cli-configuration
+    cli-transparency-configuration
+    cli-delta
+    cli-diff
+    cli-secret
+    cli-format-diff
+    cli-why-json
+    cli-cache-stats-json
+    cli-public-includes
+    cli-identity-codec
+    cli-keys
+    cli-sbom-spdx
+    cli-sbom-cyclonedx
+    cli-abi-show-json
+    cli-abi-diff-json
+    retain-cli-explain
+    gc-cli-setup
+    gc-cli-explain
+    gc-cli-compact
+    gc-cli-clean)
+  if(NOT APPLE)
+    list(APPEND LIQUID_CLI_TESTS
+      symbols-cli-clean
+      symbols-cli-setup
+      symbols-cli-init
+      symbols-cli-build
+      symbols-cli)
+  endif()
+  if(LIQUID_BUILD_FRONTENDS)
+    list(APPEND LIQUID_CLI_TESTS symbols-cli-python)
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND LIQUID_CLI_TESTS guides-run)
+  endif()
+  set_tests_properties(${LIQUID_CLI_TESTS} PROPERTIES LABELS liquid-cli)
+
+  if(UNIX)
+    add_executable(liquid-offline-runner cli/offline_runner.cpp)
+    target_include_directories(liquid-offline-runner PRIVATE
+      ${PROJECT_SOURCE_DIR}/include
+      ${PROJECT_BINARY_DIR}/include
+      ${PROJECT_SOURCE_DIR}/src)
+    target_compile_features(liquid-offline-runner PRIVATE cxx_std_26)
+    if(APPLE)
+      target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
+    else()
+      target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/linux.cpp)
+    endif()
+    add_test(NAME cli-offline
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_OFFLINE_RUNNER=$<TARGET_FILE:liquid-offline-runner>
+        -DLIQUID_OFFLINE_SANDBOX=${CMAKE_CURRENT_BINARY_DIR}/cli-offline-sandbox
+        -DLIQUID_SOURCE_ROOT=${PROJECT_SOURCE_DIR}
+        -DLIQUID_BUILD_ROOT=${PROJECT_BINARY_DIR}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_CTEST=${CMAKE_CTEST_COMMAND}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/offline.cmake)
+    set_tests_properties(cli-offline PROPERTIES
+      LABELS "liquid-cli;liquid-offline"
+      RUN_SERIAL TRUE
+      TIMEOUT 1200)
+  endif()
 endif()
 
 add_executable(liquid-vfs-queue-tests
@@ -772,6 +869,19 @@ if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
       -DLIQUID_CONTENT_CHAIN_ROOT=${CMAKE_CURRENT_BINARY_DIR}/content-addressed-build-chain
       -P ${CMAKE_CURRENT_SOURCE_DIR}/build/content-addressed-chain.cmake)
   set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
+endif()
+
+find_program(LIQUID_FLATPAK_EXECUTABLE flatpak)
+find_program(LIQUID_FLATPAK_BUILDER_EXECUTABLE flatpak-builder)
+if(LIQUID_FLATPAK_EXECUTABLE AND LIQUID_FLATPAK_BUILDER_EXECUTABLE AND UNIX)
+  add_test(NAME projection-flatpak-realworld
+    COMMAND ${PROJECT_SOURCE_DIR}/tools/projection-peers/run-flatpak-interop.sh
+      $<TARGET_FILE:liquid-tests>
+      ${CMAKE_CURRENT_BINARY_DIR}/projection-flatpak-realworld)
+  set_tests_properties(projection-flatpak-realworld PROPERTIES
+    LABELS realworld
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1200)
 endif()
 
 option(LIQUID_SPACK_REALWORLD_TESTS "Register the opt-in imported-package build subset" OFF)

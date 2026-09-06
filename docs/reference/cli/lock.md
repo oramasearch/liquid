@@ -5,16 +5,18 @@
 ## Synopsis
 
 ```text
-liquid lock <path>
+liquid lock <path> [--reason <text>]
 ```
 
 ## Description
 
-Record an advisory lock for a repository path.
+Acquire an exclusive checkout for a path allowed by repository configuration.
 
 ## Options
 
-This command has no command-specific options.
+| Flag | Argument | Description | Default |
+|---|---|---|---|
+| `--reason` | `<text>` | Record why this exclusive checkout is needed. | exclusive checkout |
 
 ## Availability
 
@@ -23,7 +25,7 @@ available
 ## Examples
 
 ```sh
-liquid lock src/main.cpp
+liquid lock assets/archive.zip --reason "regenerate archive"
 ```
 
 ## Exit status

@@ -30,4 +30,4 @@ liquid push http://127.0.0.1:8080
 
 ## Exit status
 
-0 when every reference applied, 1 when transport fails or a reference is refused, and 2 for invalid usage.
+0 when every reference applied, 1 when transport fails or a reference is refused, 2 for invalid usage, and 69 when offline mode refuses the push.

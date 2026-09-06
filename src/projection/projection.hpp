@@ -58,6 +58,16 @@ struct prepared_projection {
 [[nodiscard]] auto
 project_package(repository& source, projection_target target, prepared_projection prepared)
     -> runtime::task<projection_report>;
+[[nodiscard]] auto project_homebrew(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_pkgbuild(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_appimage(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_flatpak(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_snap(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
 [[nodiscard]] auto project_oci(repository& source, prepared_projection prepared)
     -> runtime::task<projection_report>;
 [[nodiscard]] auto project_ostree(repository& source, prepared_projection prepared)

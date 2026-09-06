@@ -41,7 +41,9 @@ untouched directory documents lazy.
 Each checkout path contributes the device component of its automerge actor ID, preventing cloned
 repositories from authoring contradictory concurrent sequences under one actor.
 Sync import reconstructs a full-history candidate before receiving peer messages, so retries remain
-valid across either checkpoint encoding.
+valid across either checkpoint encoding. A receiver that becomes an active directory document uses
+the destination repository's actor rather than the transport's shared receiver identity, including
+when an empty repository adopts a remote identity.
 
 The build adapter uses the repository's device signer for result records and reproducibility
 attestations. It reads persisted cache, verification, and retention policy, synchronizes named ref
@@ -107,6 +109,13 @@ Sync export pages signed drips, changes, per-directory upstream messages, refs, 
 Import works on repository and directory candidates, verifies TAAP signatures and checked CRDT
 receives, and publishes one checkpoint only after the complete batch passes. An empty repository
 may adopt the incoming repository identity; a non-empty unrelated repository is rejected.
+
+Exclusive checkout persists named path-pattern rules and holder, time, reason, and authority
+records. Mutations allow the holder and reject a different actor with the complete lock details.
+Acquire, release, and rule replacement use signed version-4 drips. Import verifies each lock holder
+against the signing actor and turns concurrent different-holder records into issue #40 conflict
+values while retaining the local claim. An injected authorizer runs before connected acquire or
+release changes local state.
 
 Every document mutation records its operation, session, and before/after effects. Operation undo
 and filtered session undo derive inverses from those effects, skip state changed by newer intent,

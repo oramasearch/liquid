@@ -10,7 +10,7 @@ liquid unlock <path>
 
 ## Description
 
-Remove the caller's advisory lock from a repository path.
+Release the caller's exclusive checkout for a repository path.
 
 ## Options
 
@@ -23,7 +23,7 @@ available
 ## Examples
 
 ```sh
-liquid unlock src/main.cpp
+liquid unlock assets/archive.zip
 ```
 
 ## Exit status

@@ -47,6 +47,16 @@ auto write_wrap_profile(const wrap_launch_request& request, const std::filesyste
     if (!output)
         return std::unexpected(
             error{errc::io, "cannot create wrap sandbox profile", path.string()});
+    if (request.network_only) {
+        output << "(version 1)\n(allow default)\n(deny network*)\n";
+        output << "(allow network* (local unix-socket) (remote unix-socket))\n";
+        output.close();
+        if (!output) {
+            return std::unexpected(
+                error{errc::io, "cannot write wrap sandbox profile", path.string()});
+        }
+        return {};
+    }
     output << "(version 1)\n(deny default)\n(allow process*)\n";
     output << (request.network ? "(allow network*)\n" : "(deny network*)\n");
     if (request.network) {

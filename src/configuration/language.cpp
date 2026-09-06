@@ -866,11 +866,42 @@ auto check_source(const configuration_record& record, std::vector<configuration_
     }
 }
 
+auto check_lock(const configuration_record& record, std::vector<configuration_diagnostic>& output)
+    -> void {
+    static constexpr auto valid = std::array<std::string_view, 1>{"paths"};
+    check_named(record, "lock", output);
+    check_fields(record, valid, output);
+    const auto* paths = require_field(
+        record, "paths", "list of paths", "lock rules require paths: [path \"assets/**\"]", output);
+    if (require_type(paths, configuration_value_kind::list, output)) {
+        if (paths->value.list.empty()) {
+            output.push_back(diagnostic(paths->value.location,
+                                        "non-empty list of paths",
+                                        "empty list",
+                                        "declare at least one lock path pattern"));
+        }
+        for (const auto& value : paths->value.list) {
+            if (value.kind != configuration_value_kind::path) {
+                output.push_back(diagnostic(value.location,
+                                            "path pattern",
+                                            found(value),
+                                            type_hint(configuration_value_kind::path)));
+            }
+        }
+    }
+    for (const auto& child : record.records) {
+        output.push_back(diagnostic(child.location,
+                                    "lock field",
+                                    "record '" + child.kind + "'",
+                                    "lock rules contain only path fields"));
+    }
+}
+
 auto check_records(const std::vector<configuration_record>& records,
                    std::vector<configuration_diagnostic>& output,
                    std::set<std::pair<std::string, std::string>>& names) -> void {
-    static constexpr auto top =
-        std::array<std::string_view, 5>{"package", "build", "source", "generate", "include"};
+    static constexpr auto top = std::array<std::string_view, 6>{
+        "package", "build", "source", "lock", "generate", "include"};
     for (const auto& record : records) {
         if (record.kind == "include") {
             check_records(record.records, output, names);
@@ -896,6 +927,8 @@ auto check_records(const std::vector<configuration_record>& records,
             check_build(record, output, false);
         } else if (record.kind == "source") {
             check_source(record, output);
+        } else if (record.kind == "lock") {
+            check_lock(record, output);
         } else if (record.kind == "generate") {
             check_build(record, output, true);
         }
@@ -1240,6 +1273,9 @@ auto lower_records(const std::vector<configuration_record>& records,
                 return std::unexpected(lowered.error());
             }
             output.generators.push_back(std::move(*lowered));
+        } else if (record.kind == "lock") {
+            output.locks.rules.push_back(
+                {.name = *record.name, .paths = strings(field(record, "paths"))});
         }
     }
     return {};

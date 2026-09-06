@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <print>
 #include <string>
 #include <string_view>
@@ -40,6 +42,8 @@ auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
 auto keys(int argc, char** argv) -> int;
+auto release(int argc, char** argv) -> int;
+auto sign(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
@@ -232,6 +236,16 @@ constexpr auto flags_keys = std::to_array<flag>({
     {"--threshold", "<count>", "Set the number of shares required to recover a key.", "none"},
     {"--shares", "<count>", "Set the number of custody shares to create.", "none"},
 });
+constexpr auto flags_identity = std::to_array<flag>({
+    {"--to", "<software|fido2|piv:9c>", "Select the new identity-key custody.", "software"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_release = std::to_array<flag>({
+    {"--threshold", "<count>", "Require this many distinct release signers.", "required"},
+    {"--signer", "<TAAP-id>", "Allow this TAAP identity; repeatable.", "required"},
+    {"--role", "<name>", "Name the TUF-style release role.", "targets"},
+    {"--not-after", "<UTC>", "Set the signed policy expiry.", "90 days from creation"},
+});
 constexpr auto flags_attest = std::to_array<flag>({
     {"--tree", "<digest>", "Bind an image attestation to this repository tree.", "none"},
     {"--result", "<id>", "Bind an image attestation to this build result.", "none"},
@@ -247,6 +261,9 @@ constexpr auto flags_undo = std::to_array<flag>({
     {"--session", "<id>", "Undo operations from the named session.", "none"},
     {"--path", "<path>", "Limit a session undo to a path; repeatable.", "all session paths"},
     {"--drip", "<id>", "Limit a session undo to a drip; repeatable.", "all session drips"},
+});
+constexpr auto flags_lock = std::to_array<flag>({
+    {"--reason", "<text>", "Record why this exclusive checkout is needed.", "exclusive checkout"},
 });
 constexpr auto flags_mount = std::to_array<flag>({
     {"--read-only", {}, "Deny writes through the mounted working tree.", "false"},
@@ -415,6 +432,9 @@ constexpr auto flags_compact = std::to_array<flag>({
 
 constexpr auto normal_exit = "0 on success, 1 on an operation failure, and 2 for invalid usage.";
 constexpr auto information_exit = "0 when the information was written and 2 for invalid usage.";
+constexpr auto network_exit =
+    "0 on success, 1 on an operation failure, 2 for invalid usage, and 69 when offline mode "
+    "refuses a required network operation.";
 
 constexpr auto commands = std::to_array<command>({
     {"version",
@@ -533,7 +553,8 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::config},
     {"project",
-     "project <oci|ostree|bootc|deb|rpm|apk|helm> <result|tree> [--overlay [path=]<tree>] "
+     "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
+     "<result|tree> [--overlay [path=]<tree>] "
      "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] "
      "[--replaces <package>] [--service <value>] "
@@ -541,8 +562,8 @@ constexpr auto commands = std::to_array<command>({
      "project a build into an installable package, commit, image, or chart",
      "available",
      flags_project,
-     "Project a recorded result or tree into a package, OCI or bootc image, Helm chart, or OSTree "
-     "commit.",
+     "Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or "
+     "bundled-runtime artifact.",
      "liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json",
      normal_exit,
      argument_policy::ordinary,
@@ -657,8 +678,8 @@ constexpr auto commands = std::to_array<command>({
      flags_atomic,
      "Send signed metadata, requested references, and missing objects to a sync endpoint.",
      "liquid push http://127.0.0.1:8080",
-     "0 when every reference applied, 1 when transport fails or a reference is refused, and 2 for "
-     "invalid usage.",
+     "0 when every reference applied, 1 when transport fails or a reference is refused, 2 for "
+     "invalid usage, and 69 when offline mode refuses the push.",
      argument_policy::ordinary,
      liquid_cli::sync_push},
     {"pull",
@@ -668,7 +689,7 @@ constexpr auto commands = std::to_array<command>({
      {},
      "Receive signed metadata and missing objects from a sync endpoint.",
      "liquid pull http://127.0.0.1:8080",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::sync_pull},
     {"review",
@@ -701,7 +722,7 @@ constexpr auto commands = std::to_array<command>({
      flags_serve,
      "Serve repository synchronization, the repository CAS and ActionCache, or image admission.",
      "liquid serve sync . --listen 127.0.0.1 --port 8080",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::serve},
     {"move",
@@ -785,22 +806,22 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::history_undo},
     {"lock",
-     "lock <path>",
-     "advisory-lock a path",
+     "lock <path> [--reason <text>]",
+     "exclusively lock a configured path",
      "available",
-     {},
-     "Record an advisory lock for a repository path.",
-     "liquid lock src/main.cpp",
+     flags_lock,
+     "Acquire an exclusive checkout for a path allowed by repository configuration.",
+     "liquid lock assets/archive.zip --reason \"regenerate archive\"",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::locks_lock},
     {"unlock",
      "unlock <path>",
-     "remove an advisory lock",
+     "release an exclusive lock",
      "available",
      {},
-     "Remove the caller's advisory lock from a repository path.",
-     "liquid unlock src/main.cpp",
+     "Release the caller's exclusive checkout for a repository path.",
+     "liquid unlock assets/archive.zip",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::locks_unlock},
@@ -887,15 +908,35 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::retain},
     {"identity",
-     "identity [show|rotate] [--json]",
+     "identity [show|rotate [--to software|fido2|piv:9c]] [--json]",
      "show or rotate the device identity",
      "available",
-     flag_json,
+     flags_identity,
      "Show the device TAAP identity or rotate its signing key with a linked successor document.",
      "liquid identity rotate --json",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::identity},
+    {"sign",
+     "sign <drip|change|artifact> <digest>",
+     "sign a digest with the current identity key",
+     "available",
+     {},
+     "Sign the canonical digest value with the current software, FIDO2, or PIV identity key.",
+     "liquid sign artifact blake3:<artifact-digest>",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::sign},
+    {"release",
+     "release policy set --threshold <k> --signer <id>... | release <approve|verify> <artifact>",
+     "manage threshold release approval",
+     "available",
+     flags_release,
+     "Create a signed release policy, add an independent approval, or evaluate its threshold.",
+     "liquid release policy set --threshold 2 --signer taap:alice --signer taap:bob",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::release},
     {"keys",
      "keys <show|rewrap|rotate|revoke|split> ...",
      "inspect and manage data-key custody",
@@ -1049,7 +1090,7 @@ constexpr auto commands = std::to_array<command>({
      flags_wrap,
      "Run an unchanged build in the observed mount and reuse valid tool actions before they start.",
      "liquid wrap --jobs 8 --explain cmake --build build",
-     normal_exit,
+     network_exit,
      argument_policy::child_command,
      liquid_cli::wrap},
     {"build",
@@ -1062,7 +1103,7 @@ constexpr auto commands = std::to_array<command>({
      flags_build,
      "Plan or execute a configured graph, wrap a child command, stream events, or export a trace.",
      "liquid build --plan",
-     normal_exit,
+     network_exit,
      argument_policy::build_command,
      liquid_cli::build},
     {"test",
@@ -1123,7 +1164,7 @@ constexpr auto commands = std::to_array<command>({
      flags_scheduler,
      "Serve CAS, ActionCache, Execution, and the liquid worker lease queue.",
      "liquid scheduler --listen 0.0.0.0:50051",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::scheduler},
     {"worker",
@@ -1134,7 +1175,7 @@ constexpr auto commands = std::to_array<command>({
      flags_worker,
      "Poll a liquid scheduler and execute leased build actions in the Phase 2 sandbox.",
      "liquid worker --scheduler 127.0.0.1:50051",
-     normal_exit,
+     network_exit,
      argument_policy::ordinary,
      liquid_cli::worker},
     {"pause",
@@ -1209,6 +1250,47 @@ auto usage_error(std::string_view message) -> int {
     return 2;
 }
 
+auto has_argument(int argc, char** argv, std::string_view expected) -> bool {
+    for (auto index = 0; index < argc; ++index) {
+        if (std::string_view{argv[index]} == expected) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto offline_reason(std::string_view command_name, int argc, char** argv)
+    -> std::optional<std::string_view> {
+    const auto* configured = std::getenv("LIQUID_OFFLINE");
+    if (configured == nullptr || std::string_view{configured}.empty() ||
+        std::string_view{configured} == "0") {
+        return std::nullopt;
+    }
+    if (command_name == "push" && argc >= 1) {
+        return "push";
+    }
+    if (command_name == "pull" && argc == 1) {
+        return "pull";
+    }
+    if ((command_name == "scheduler" && has_argument(argc, argv, "--listen")) ||
+        (command_name == "worker" && has_argument(argc, argv, "--scheduler"))) {
+        return "remote execution";
+    }
+    if (command_name == "serve" && argc >= 1 && std::string_view{argv[0]} == "reapi") {
+        return "the remote cache";
+    }
+    if (command_name != "wrap" && command_name != "build") {
+        return std::nullopt;
+    }
+    if (has_argument(argc, argv, "--remote-publish")) {
+        return "the remote cache";
+    }
+    if (has_argument(argc, argv, "--remote") || has_argument(argc, argv, "--scheduler")) {
+        return "remote execution";
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 namespace liquid_cli {
@@ -1281,6 +1363,10 @@ int main(int argc, char** argv) {
     const auto flag_error = liquid_cli::validate_flags(*found, argc - 2, argv + 2);
     if (!flag_error.empty()) {
         return usage_error(flag_error);
+    }
+    if (const auto reason = offline_reason(command_name, argc - 2, argv + 2)) {
+        std::println(stderr, "liquid {}: needs the network for {}", command_name, *reason);
+        return 69;
     }
     if (command_name == "version") {
         if (argc != 2 && !(argc == 3 && std::string_view{argv[2]} == "--json")) {

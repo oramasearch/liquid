@@ -31,8 +31,15 @@ policy parsing through public repository APIs. Status projects persisted agent p
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
 
+`repo.cpp` also lowers top-level lock rules before repository initialization. `locks.cpp` attaches
+to the checkout daemon and acquires or releases exclusive checkout through the public daemon API;
+platforms without daemon transport use the public repository operations directly.
+
 `session.cpp` starts, publishes, and discards private replicas through the public session API.
 `attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
+`identity.cpp` selects software, FIDO2, or PIV rotation custody. `sign.cpp` signs a canonical digest
+with the active backend. `release.cpp` persists signed release policies and approvals and renders
+the distinct-signer threshold result.
 
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new
@@ -72,6 +79,9 @@ distinguishes stored results from bare tree digests, calls the public projection
 text or stable JSON reports. It does not read package writers or repository internals.
 `install.cpp` maps package or tree installation, generation listing, and rollback directly to the
 public atomic-generation tasks.
+`project.cpp` parses native-package, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap
+requests, distinguishes stored results from bare tree digests, calls the public projection task,
+and prints text or stable JSON reports. It does not read package writers or repository internals.
 `project.cpp` parses package, OCI, Helm, OSTree, and bootc requests, distinguishes stored results
 from bare tree digests, collects path-mounted overlay trees, reads `SOURCE_DATE_EPOCH`, and prints
 the commit checksum plus text or stable JSON reports. It does not read format writers or repository

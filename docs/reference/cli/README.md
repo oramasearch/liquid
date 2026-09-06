@@ -41,8 +41,8 @@ Each command page is generated from the same metadata used to validate flags and
 | [`combine`](combine.md) | combine another repository | available |
 | [`ops`](ops.md) | list recorded operations | available |
 | [`undo`](undo.md) | undo the newest, named, or session operations | available |
-| [`lock`](lock.md) | advisory-lock a path | available |
-| [`unlock`](unlock.md) | remove an advisory lock | available |
+| [`lock`](lock.md) | exclusively lock a configured path | available |
+| [`unlock`](unlock.md) | release an exclusive lock | available |
 | [`session`](session.md) | manage a private speculative replica | available |
 | [`compact`](compact.md) | checkpoint a repository epoch | available |
 | [`mount`](mount.md) | mount a lazy working tree | available where FUSE is available |
@@ -52,6 +52,8 @@ Each command page is generated from the same metadata used to validate flags and
 | [`export`](export.md) | export as a Git repository | available |
 | [`retain`](retain.md) | explain retention for an object | available |
 | [`identity`](identity.md) | show or rotate the device identity | available |
+| [`sign`](sign.md) | sign a digest with the current identity key | available |
+| [`release`](release.md) | manage threshold release approval | available |
 | [`keys`](keys.md) | inspect and manage data-key custody | available |
 | [`attest`](attest.md) | show, verify, or mint an image attestation | available |
 | [`delta`](delta.md) | create, apply, or fetch an artifact delta | available |

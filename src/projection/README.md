@@ -12,6 +12,11 @@ builds layouts, image layers, subject-bound attestation manifests, and indexes.
 templates. `conflicts.cpp` indexes owned package paths across a request batch or an installed
 inventory and derives explicit replacement relationships. Package projection embeds canonical
 intent and service-unit files and binds generated script digests into `projection/1` and SPDX.
+`homebrew.cpp` writes stable-gzip source and bottle archives plus their formula. `pkgbuild.cpp`
+writes the Arch recipe, `.SRCINFO`, and source archive. `bundled.cpp` writes AppImage, Flatpak, and
+Snap outputs with the owned SquashFS writer. `appimage_runtime.cpp` selects the embedded pinned
+type 2 runtime. `attestations.cpp` writes adjacent DSSE collections for formats without a native
+attachment mechanism.
 `ostree.cpp` writes `archive-z2` or `bare-user` repositories through the owned OSTree encoder.
 `bootc.cpp` constructs the OSTree container tar layout, component layers, bootc labels, manifest,
 and subject-bound attestation referrers.

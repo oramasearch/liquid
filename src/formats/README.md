@@ -32,6 +32,7 @@ adds each format's four native lifecycle-script locations and exposes payload by
 generation installation.
 `package/` owns common hashes, deterministic zstd, tar, and cpio construction. `deflate/` owns the
 deterministic RFC 1951 and gzip write path; zlib is used only for bounded read-side inflation.
+`squashfs/` owns the deterministic SquashFS 4 writer shared by AppImage and Snap projection.
 These package readers register as semantic-verbatim codecs. Their projection rules are documented
 in `docs/library/projection.md`.
 

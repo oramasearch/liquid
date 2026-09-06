@@ -10,9 +10,9 @@ program covers cases the declarative form cannot express while retaining action 
 provenance, caching, and traceability.
 
 **Implementation status.** The public parser, checker, lowerer, formatter, `package/1`, `target/1`,
-`source/1`, and `install_intent/1` projection, repository-local includes, digest-verifying source
-fetch, generators, relocation-checked target execution, and CLI commands are implemented. Install
-layout and validated declarative intent are retained on the target.
+`source/1`, and `install_intent/1` projection, lock-rule lowering, repository-local includes,
+digest-verifying source fetch, generators, relocation-checked target execution, and CLI commands
+are implemented. Install layout and validated declarative intent are retained on the target.
 Recipe import remains issue #75.
 
 ## Files and grammar
@@ -23,12 +23,13 @@ is unambiguous.
 
 ```ebnf
 document       = { declaration } ;
-declaration    = package | build | source | generator | include ;
+declaration    = package | build | source | lock | generator | include ;
 package        = "package", name, "{", package-item*, "}" ;
 package-item   = field | variant | depends-on | provides | conflicts | patch | when ;
 build          = "build", name, "{", build-item*, "}" ;
 build-item     = field | depends-on | install | when ;
 source         = "source", name, "{", field*, "}" ;
+lock           = "lock", name, "{", field*, "}" ;
 variant        = "variant", name, "{", field*, "}" ;
 depends-on     = "depends_on", name, "{", field*, "}" ;
 provides       = "provides", name, "{", field*, "}" ;
@@ -76,6 +77,7 @@ cycle. URLs and absolute or parent-directory includes are rejected.
 | `conflicts` | `constraint: spec` | `message: string` |
 | `patch` | `digest: digest` | none |
 | `source <name>` | `url: string`, `digest: digest`, `kind: archive|file` | none |
+| `lock <name>` | `paths: [path, ...]` | none |
 | `build <name>` | `command: [string, ...]` | `cwd`, `environment`, `sources`, `dependencies`, `outputs`, `inputs`, `toolchain`; `depends_on`, `when`, `install` |
 | `install` | none | `layout: prefix`, `prefix: path`; `service`, `user`, `group`, `directory`, `symlink`, `cache`, `alternatives` |
 | `service` | `name`, `exec`, `user`, `after`, `restart` | none |
@@ -129,6 +131,9 @@ Fetched source bytes enter the same immutable action-input mechanism below
 `deps/__liquid_sources/<algorithm>/<digest>`, so network activity finishes before sandbox execution
 and does not mutate the repository working tree. `source/1` is `{name, url, digest, kind, origin}`.
 Both records use canonical CBOR; decoders reject a non-canonical form.
+
+A `lock` becomes a `lock_rule` in `lowered_configuration::locks`. These repository-relative path
+patterns are persisted by `liquid init`; [locks.md](locks.md) defines matching and authority.
 
 An origin is either `source(file)` or `generated(file, result digest)`. Package origins are kept
 beside `package/1` because changing that already-shipped record would change its identity. Target
