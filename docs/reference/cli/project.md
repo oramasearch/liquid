@@ -5,23 +5,26 @@
 ## Synopsis
 
 ```text
-liquid project <oci|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
 
-Project a recorded build result or install tree into an ecosystem package or image.
+Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or bundled-runtime artifact.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
-| `--name` | `<name>` | Set the package, image, or chart name. | required |
-| `--version` | `<version>` | Set the package, image, or chart version. | required |
+| `--name` | `<name>` | Set the projected artifact name. | liquid-os for OS targets |
+| `--version` | `<version>` | Set the projected artifact version. | commit epoch for OS targets |
 | `--arch` | `<arch>` | Set the target architecture. | source architecture |
 | `--out` | `<dir>` | Write projected artifacts below this directory. | projection |
 | `--depends` | `<dependency>` | Declare a package dependency; repeatable. | none |
 | `--service` | `<value>` | Add a Helm service declaration; repeatable. | none |
+| `--ref` | `<name>` | Set the OSTree ref. | required for OS targets |
+| `--overlay` | `[path=]<tree>` | Overlay a tree at an optional relative path; repeatable. | none |
+| `--mode` | `<archive-z2\|bare-user>` | Select the OSTree repository mode. | archive-z2 |
 | `--compat-gzip` | — | Use gzip-compatible package compression. | false |
 | `--allow-abi-break` | — | Permit an incompatible ABI projection. | false |
 | `--json` | — | Write stable JSON instead of text. | false |

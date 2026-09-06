@@ -25,7 +25,11 @@ auto same_digest(const digest& left, const digest& right) -> bool {
 auto collect_tree(repository& source,
                   digest root,
                   std::string prefix,
-                  std::map<std::string, formats::package::file>& files) -> runtime::task<void> {
+                  std::string component,
+                  bool replace,
+                  std::map<std::string, formats::package::file>& files,
+                  std::map<std::string, std::uint32_t>& directories,
+                  std::map<std::string, std::string>& components) -> runtime::task<void> {
     auto tree = co_await source.tree(root);
     if (!tree) {
         co_return std::unexpected(tree.error());
@@ -33,7 +37,19 @@ auto collect_tree(repository& source,
     for (const auto& entry : tree->entries) {
         const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
         if (entry.kind == node_kind::tree) {
-            auto nested = co_await collect_tree(source, entry.ref, path, files);
+            if (replace) {
+                files.erase(path);
+                components.erase(path);
+                auto ancestor = std::filesystem::path{path}.parent_path();
+                while (!ancestor.empty()) {
+                    files.erase(ancestor.generic_string());
+                    components.erase(ancestor.generic_string());
+                    ancestor = ancestor.parent_path();
+                }
+            }
+            directories.insert_or_assign(path, entry.mode);
+            auto nested = co_await collect_tree(
+                source, entry.ref, path, component, replace, files, directories, components);
             if (!nested) {
                 co_return std::unexpected(nested.error());
             }
@@ -47,14 +63,25 @@ auto collect_tree(repository& source,
         if (!bytes) {
             co_return std::unexpected(bytes.error());
         }
-        auto value = formats::package::file{path, std::move(*bytes), entry.mode & 0777U};
+        auto value = formats::package::file{path, std::move(*bytes), entry.mode};
         const auto found = files.find(path);
-        if (found != files.end() &&
+        if (!replace && found != files.end() &&
             (found->second.mode != value.mode || found->second.bytes != value.bytes)) {
             co_return std::unexpected(
                 failure(errc::conflict, "projection sources claim different file bytes", path));
         }
+        if (replace) {
+            const auto descendant = path + "/";
+            std::erase_if(files,
+                          [&](const auto& item) { return item.first.starts_with(descendant); });
+            std::erase_if(directories,
+                          [&](const auto& item) { return item.first.starts_with(descendant); });
+            std::erase_if(components,
+                          [&](const auto& item) { return item.first.starts_with(descendant); });
+            directories.erase(path);
+        }
         files.insert_or_assign(path, std::move(value));
+        components.insert_or_assign(path, component);
     }
     co_return result<void>{};
 }
@@ -163,6 +190,12 @@ auto component_is_safe(std::string_view value) -> bool {
            value.find_first_of("/\\") == std::string_view::npos;
 }
 
+auto relative_path_is_safe(const std::filesystem::path& path) -> bool {
+    return !path.is_absolute() && std::ranges::none_of(path, [](const auto& component) {
+        return component == "." || component == "..";
+    });
+}
+
 auto options_are_safe(const projection_options& options) -> bool {
     const auto safe = [](std::string_view value) {
         return value.find_first_of("\r\n") == std::string_view::npos &&
@@ -216,7 +249,9 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
     if (request.sources.empty()) {
         co_return std::unexpected(failure(errc::invalid_argument, "projection has no source"));
     }
-    if (request.metadata.name.empty() || request.metadata.version.empty()) {
+    const auto os_target = request.target == projection_target::ostree_commit ||
+                           request.target == projection_target::bootc_image;
+    if (!os_target && (request.metadata.name.empty() || request.metadata.version.empty())) {
         co_return std::unexpected(
             failure(errc::invalid_argument, "projection requires package name and version"));
     }
@@ -224,18 +259,39 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
         co_return std::unexpected(
             failure(errc::invalid_argument, "projection metadata contains a control character"));
     }
-    if (!component_is_safe(request.metadata.name) || !component_is_safe(request.metadata.version) ||
-        !component_is_safe(request.metadata.release)) {
-        co_return std::unexpected(
-            failure(errc::invalid_argument, "package identity is not a safe path component"));
-    }
     if (!options_are_safe(request.options)) {
         co_return std::unexpected(
             failure(errc::invalid_argument, "projection options contain an invalid value"));
     }
     auto output = prepared_projection{.metadata = request.metadata, .options = request.options};
+    if (os_target && output.metadata.name.empty()) {
+        output.metadata.name = "liquid-os";
+    }
+    if (os_target && output.metadata.version.empty()) {
+        output.metadata.version = std::to_string(output.options.source_date_epoch);
+    }
+    if (!component_is_safe(output.metadata.name) || !component_is_safe(output.metadata.version) ||
+        !component_is_safe(output.metadata.release)) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "package identity is not a safe path component"));
+    }
+    if (os_target && output.options.ostree_ref.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "ostree projection requires a ref", "--ref"));
+    }
     auto files = std::map<std::string, formats::package::file>{};
-    for (const auto& source_value : request.sources) {
+    for (auto source_index = std::size_t{}; source_index < request.sources.size(); ++source_index) {
+        const auto& source_value = request.sources[source_index];
+        if (!relative_path_is_safe(source_value.path)) {
+            co_return std::unexpected(failure(errc::invalid_argument,
+                                              "projection source path is invalid",
+                                              source_value.path.string()));
+        }
+        if (os_target && source_index == 0 && !source_value.path.empty()) {
+            co_return std::unexpected(failure(errc::invalid_argument,
+                                              "ostree base source must be mounted at the root",
+                                              source_value.path.string()));
+        }
         auto tree = digest{};
         if (const auto* result_id = std::get_if<liquid::result_id>(&source_value.value)) {
             auto result = co_await build::result(source, *result_id);
@@ -281,7 +337,6 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
             }
             tree = *result->output_tree;
             output.source_results.push_back(*result_id);
-            output.source_ids.push_back(to_string(result_id->value));
             if (result->provenance) {
                 output.source_attestations.push_back(*result->provenance);
             }
@@ -289,18 +344,50 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
                 output.source_attestations.end(), result->sboms.begin(), result->sboms.end());
         } else {
             tree = std::get<digest>(source_value.value);
-            output.source_ids.push_back(to_string(tree));
         }
-        auto collected = co_await collect_tree(source, tree, {}, files);
+        const auto source_id =
+            os_target ? to_string(tree)
+            : std::holds_alternative<liquid::result_id>(source_value.value)
+                ? to_string(std::get<liquid::result_id>(source_value.value).value)
+                : to_string(tree);
+        output.source_ids.push_back(source_id);
+        if (source_index == 0) {
+            output.base_source = to_string(tree);
+        } else {
+            output.overlay_sources.push_back(to_string(tree));
+        }
+        const auto prefix = source_value.path.generic_string();
+        const auto component =
+            source_index == 0 ? std::string{"base"} : "overlay-" + std::to_string(source_index);
+        if (!prefix.empty()) {
+            if (os_target && source_index != 0) {
+                auto ancestor = std::filesystem::path{prefix};
+                while (!ancestor.empty()) {
+                    files.erase(ancestor.generic_string());
+                    output.components.erase(ancestor.generic_string());
+                    ancestor = ancestor.parent_path();
+                }
+            }
+            output.directory_modes.try_emplace(prefix, 0040755U);
+        }
+        auto collected = co_await collect_tree(source,
+                                               tree,
+                                               prefix,
+                                               component,
+                                               os_target && source_index != 0,
+                                               files,
+                                               output.directory_modes,
+                                               output.components);
         if (!collected) {
             co_return std::unexpected(collected.error());
         }
     }
-    if (output.metadata.architecture.empty()) {
+    if (output.metadata.architecture.empty() &&
+        request.target != projection_target::ostree_commit) {
         co_return std::unexpected(failure(
             errc::invalid_argument, "tree-digest projection requires an architecture", "--arch"));
     }
-    if (!component_is_safe(output.metadata.architecture)) {
+    if (!output.metadata.architecture.empty() && !component_is_safe(output.metadata.architecture)) {
         co_return std::unexpected(
             failure(errc::invalid_argument, "package architecture is not a safe path component"));
     }
@@ -315,6 +402,10 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
     }
     for (auto& [path, file] : files) {
         output.files.push_back(std::move(file));
+    }
+    if (os_target) {
+        output.source_attestations = unique_digests(std::move(output.source_attestations));
+        co_return output;
     }
     auto relocation_files = std::vector<build_detail::relocation_file>{};
     relocation_files.reserve(output.files.size());
@@ -357,6 +448,14 @@ runtime::task<digest> store_projection_attestation(repository& source,
                        {"source_result", prepared.source_ids},
                        {"normalisation", std::string{"epoch,uid=0,gid=0,modes,sorted"}},
                        {"tool", "liquid/" + std::string{version_string()}}}};
+    const auto os_target =
+        target == projection_target::ostree_commit || target == projection_target::bootc_image;
+    if (os_target && !prepared.base_source.empty()) {
+        statement.attributes.push_back({"base_tree", prepared.base_source});
+    }
+    if (os_target && !prepared.overlay_sources.empty()) {
+        statement.attributes.push_back({"overlay_tree", prepared.overlay_sources});
+    }
     auto signed_statement =
         co_await repository_detail::build_access::sign_attestation(source, statement);
     if (!signed_statement) {
@@ -389,6 +488,10 @@ std::string_view to_string(projection_target target) noexcept {
     switch (target) {
     case projection_target::oci_image:
         return "oci";
+    case projection_target::ostree_commit:
+        return "ostree";
+    case projection_target::bootc_image:
+        return "bootc";
     case projection_target::deb:
         return "deb";
     case projection_target::rpm:
@@ -411,6 +514,16 @@ std::string_view to_string(projection_target target) noexcept {
     return "oci";
 }
 
+std::string_view to_string(ostree_repository_mode mode) noexcept {
+    switch (mode) {
+    case ostree_repository_mode::archive_z2:
+        return "archive-z2";
+    case ostree_repository_mode::bare_user:
+        return "bare-user";
+    }
+    return "archive-z2";
+}
+
 runtime::task<projection_report> project(repository& source, projection_request request) {
     auto prepared = co_await projection_detail::prepare(source, request);
     if (!prepared) {
@@ -424,6 +537,10 @@ runtime::task<projection_report> project(repository& source, projection_request 
             source, request.target, std::move(*prepared));
     case projection_target::oci_image:
         co_return co_await projection_detail::project_oci(source, std::move(*prepared));
+    case projection_target::ostree_commit:
+        co_return co_await projection_detail::project_ostree(source, std::move(*prepared));
+    case projection_target::bootc_image:
+        co_return co_await projection_detail::project_bootc(source, std::move(*prepared));
     case projection_target::helm_chart:
         co_return co_await projection_detail::project_helm(
             source, std::move(*prepared), request.services);
@@ -520,7 +637,10 @@ result<std::string> projection_report_json(const projection_report& report) {
                   ",\"declared\":" + (report.dependencies[index].declared ? "true" : "false") + "}";
     }
     output += "],\"abi_break_allowed\":";
-    output += report.abi_break_allowed ? "true}" : "false}";
+    output += report.abi_break_allowed ? "true" : "false";
+    output += ",\"ostree_commit\":";
+    output += report.ostree_commit ? quote(to_string(*report.ostree_commit)) : "null";
+    output.push_back('}');
     return output;
 }
 

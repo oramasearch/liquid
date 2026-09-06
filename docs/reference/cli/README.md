@@ -7,6 +7,7 @@ Each command page is generated from the same metadata used to validate flags and
 | Command | Summary | Availability |
 |---|---|---|
 | [`version`](version.md) | print the version | available |
+| [`tiers`](tiers.md) | print declared language, format, and platform support | available |
 | [`init`](init.md) | create a repository and import its regular files | available |
 | [`status`](status.md) | show repository status | available |
 | [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |
@@ -15,7 +16,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`search`](search.md) | search paths and contents | available |
 | [`resolve`](resolve.md) | concretise package specifications | available |
 | [`config`](config.md) | check, lower, or format .liquid configuration | available |
-| [`project`](project.md) | project a build into an installable package, image, or chart | available |
+| [`project`](project.md) | project a build into an installable package, commit, image, or chart | available |
 | [`log`](log.md) | show or verify change, signed drip, timestamp, or transparency-log history | available |
 | [`cut`](cut.md) | cut the working change | available |
 | [`refs`](refs.md) | list repository references | available |

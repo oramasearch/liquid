@@ -46,6 +46,7 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_secret.cpp
   test_store.cpp
+  test_tiers.cpp
   test_temporary_directory.cpp
   test_lake_transparency.cpp
   test_transparency.cpp
@@ -95,6 +96,7 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/formats/package/common.cpp
     ${PROJECT_SOURCE_DIR}/src/formats/squashfs/squashfs.cpp
     ${PROJECT_SOURCE_DIR}/src/formats/tar/writer.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/ostree/ostree.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
     ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
@@ -103,6 +105,7 @@ if(BUILD_SHARED_LIBS)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
   endif()
   target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB)
+  target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
@@ -377,6 +380,23 @@ if(LIQUID_BUILD_CLI)
         --work ${CMAKE_CURRENT_BINARY_DIR}/guides-run)
     set_tests_properties(guides-run PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   endif()
+  if(LIQUID_BUILD_FRONTENDS)
+    add_test(NAME tiers-docs
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_UNIVERSALITY_DOC=${PROJECT_SOURCE_DIR}/docs/features/16-universality.md
+        -DLIQUID_FORMATS_DOC=${PROJECT_SOURCE_DIR}/docs/features/03-diff-and-merge.md
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/tiers-docs.cmake)
+    add_test(NAME cli-tiers-json
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/tiers-json.cmake)
+  endif()
+  add_test(NAME cli-wrap-tier
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_WRAP_TIER_ROOT=${CMAKE_CURRENT_BINARY_DIR}/wrap-tier
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/wrap-tier.cmake)
   add_test(NAME cli-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -591,6 +611,7 @@ add_executable(liquid-header-tests
   headers/session.cpp
   headers/store.cpp
   headers/sync.cpp
+  headers/tiers.cpp
   headers/tuf.cpp
   headers/version.cpp
   headers/vfs.cpp

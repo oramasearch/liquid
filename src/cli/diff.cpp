@@ -6,12 +6,17 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid_cli {
+
+auto print_tier(unsigned level, std::string_view mechanism) -> void;
+auto tier_json(unsigned level, std::string_view mechanism) -> std::string;
+
 namespace {
 
 auto fail(const liquid::error& error) -> int {
@@ -110,15 +115,26 @@ auto container_json(const liquid::container_diff& value) -> std::string {
     return output;
 }
 
-auto entry_json(const liquid::tree_diff_entry& entry) -> std::string {
+auto entry_tier(const liquid::tree_diff_entry& entry, bool text)
+    -> std::pair<unsigned, std::string> {
+    if (entry.container) {
+        return {static_cast<unsigned>(entry.container->tier),
+                "format(" + entry.container->codec + ")"};
+    }
+    return {0, text ? "text" : "chunking"};
+}
+
+auto entry_json(const liquid::tree_diff_entry& entry, bool text) -> std::string {
     auto changes = std::string{"["};
     for (auto index = std::size_t{}; index < entry.changes.size(); ++index) {
         changes += index == 0 ? "" : ",";
         changes += json_string(change_name(entry.changes[index]));
     }
     changes += ']';
-    return std::format("{{\"path\":{},\"changes\":{},\"container\":{}}}",
+    const auto [level, mechanism] = entry_tier(entry, text);
+    return std::format("{{\"path\":{},\"tier\":{},\"changes\":{},\"container\":{}}}",
                        json_string(entry.path),
+                       tier_json(level, mechanism),
                        changes,
                        entry.container ? container_json(*entry.container) : "null");
 }
@@ -140,7 +156,9 @@ auto print_container(const liquid::container_diff& value, std::size_t indent) ->
     }
 }
 
-auto print_entry(const liquid::tree_diff_entry& entry) -> void {
+auto print_entry(const liquid::tree_diff_entry& entry, bool text) -> void {
+    const auto [level, mechanism] = entry_tier(entry, text);
+    print_tier(level, mechanism);
     if (entry.container) {
         std::println("{} {} tier={}",
                      entry.path,
@@ -233,9 +251,9 @@ auto diff(int argc, char** argv) -> int {
             continue;
         }
         if (json) {
-            std::print("{}{}", emitted == 0 ? "" : ",", entry_json(entry));
+            std::print("{}{}", emitted == 0 ? "" : ",", entry_json(entry, options.text));
         } else {
-            print_entry(entry);
+            print_entry(entry, options.text);
         }
         ++emitted;
     }

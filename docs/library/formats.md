@@ -16,6 +16,8 @@ range of the original, an optional nested tree, and an explanation when an objec
 `format_registry::global()` contains the built-ins. `find_by_magic`, `find_by_extension`, and
 `recognise` identify candidates; `unpack` recursively expands recognised members. Codecs implement
 recognition, unpacking, canonicalisation, and logical diff. Merge and repack are optional.
+`support_matrix()` projects every live descriptor into `liquid tiers`; new codecs automatically
+appear in its JSON and generated format table.
 
 [`format_abi.h`](../../include/liquid/format_abi.h) is the versioned C11 module boundary. A module
 exports only `liquid_format_get_module_v1`, returning a `liquid_format_module_v1` descriptor. All

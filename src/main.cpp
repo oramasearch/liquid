@@ -82,6 +82,7 @@ auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
+auto tiers(int argc, char** argv) -> int;
 auto registry(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
@@ -94,6 +95,12 @@ using liquid_cli::flag;
 
 constexpr auto flag_json = std::to_array<flag>({
     {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_tiers = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--markdown", {}, "Write generated Markdown tables.", "false"},
+    {"--language", "<name>", "Limit language rows to this name.", "all languages"},
+    {"--format", "<name>", "Limit format rows to this name.", "all formats"},
 });
 constexpr auto flags_diff = std::to_array<flag>({
     {"--text", {}, "Include textual line-difference details.", "false"},
@@ -144,12 +151,21 @@ constexpr auto flags_drive = std::to_array<flag>({
     {"--watch", {}, "Continue synchronizing after the first successful transfer.", "false"},
 });
 constexpr auto flags_project = std::to_array<flag>({
-    {"--name", "<name>", "Set the package, image, or chart name.", "required"},
-    {"--version", "<version>", "Set the package, image, or chart version.", "required"},
+    {"--name", "<name>", "Set the projected artifact name.", "liquid-os for OS targets"},
+    {"--version",
+     "<version>",
+     "Set the projected artifact version.",
+     "commit epoch for OS targets"},
     {"--arch", "<arch>", "Set the target architecture.", "source architecture"},
     {"--out", "<dir>", "Write projected artifacts below this directory.", "projection"},
     {"--depends", "<dependency>", "Declare a package dependency; repeatable.", "none"},
     {"--service", "<value>", "Add a Helm service declaration; repeatable.", "none"},
+    {"--ref", "<name>", "Set the OSTree ref.", "required for OS targets"},
+    {"--overlay",
+     "[path=]<tree>",
+     "Overlay a tree at an optional relative path; repeatable.",
+     "none"},
+    {"--mode", "<archive-z2|bare-user>", "Select the OSTree repository mode.", "archive-z2"},
     {"--compat-gzip", {}, "Use gzip-compatible package compression.", "false"},
     {"--allow-abi-break", {}, "Permit an incompatible ABI projection.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
@@ -391,6 +407,16 @@ constexpr auto commands = std::to_array<command>({
      information_exit,
      argument_policy::ordinary,
      nullptr},
+    {"tiers",
+     "tiers [--json|--markdown] [--language <name>|--format <name>]",
+     "print declared language, format, and platform support",
+     "available",
+     flags_tiers,
+     "Report support tiers derived from the registered languages, formats, and host platforms.",
+     "liquid tiers --markdown",
+     information_exit,
+     argument_policy::ordinary,
+     liquid_cli::tiers},
     {"init",
      "init [path]",
      "create a repository and import its regular files",
@@ -475,13 +501,16 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::config},
     {"project",
-     "project <oci|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
-     "<result|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] "
-     "[--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]",
-     "project a build into an installable package, image, or chart",
+     "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
+     "<result|tree> [--overlay [path=]<tree>] "
+     "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
+     "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
+     "[--compat-gzip] [--allow-abi-break] [--json]",
+     "project a build into an installable package, commit, image, or chart",
      "available",
      flags_project,
-     "Project a recorded build result or install tree into an ecosystem package or image.",
+     "Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or "
+     "bundled-runtime artifact.",
      "liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json",
      normal_exit,
      argument_policy::ordinary,
