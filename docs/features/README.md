@@ -64,7 +64,9 @@ is wrong.
 7. **Provenance is a byproduct.** Every action already records everything an
    attestation needs. Signing is automatic.
 8. **Everything works offline, degraded but correct.** Remote cache, remote
-   execution and the artifact service are accelerators, never requirements.
+   execution and the artifact service are accelerators, never requirements. The
+   `liquid-offline` CTest suite runs every `liquid-cli` case in liquid's platform
+   sandbox with networking denied and pins every intentional network refusal.
 9. **Every write to disk is a versioned change.** Capture is automatic and
    continuous. There is no step at which history begins.
 10. **Every change is attributable.** Every drip carries a TAAP/1 signature from an
@@ -135,8 +137,8 @@ specifies it.
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented; a pinned Spack export seeds the package universe with explicit losses. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
-| [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
-| [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |
+| [10](10-supply-chain.md) | Supply chain and signing | Signed builds, hardware-held identity keys, threshold release approval, reproducibility verification, and input policy. |
+| [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, TPM sealing, and dedup-preserving encryption. |
 | [12](12-search.md) | Search | Local BM25F and positional-trigram search over the working tree and named refs is implemented; published-artifact search follows the format registry. |
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
 | [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |

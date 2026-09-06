@@ -24,6 +24,7 @@ add_executable(liquid-tests
   test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_hardware_keys.cpp
   test_node_store.cpp
   test_object.cpp
   test_projection.cpp
@@ -133,6 +134,15 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_program(LIQUID_SWTPM_EXECUTABLE swtpm)
+  if(LIQUID_SWTPM_EXECUTABLE)
+    add_test(NAME tpm-swtpm
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tpm/run_swtpm.sh
+        $<TARGET_FILE:liquid-tests>
+        ${LIQUID_SWTPM_EXECUTABLE})
+  endif()
+endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME desktop-nautilus-badge-mapping
@@ -472,6 +482,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_test(NAME cli-release
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_RELEASE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/release-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/release.cmake)
   add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
   target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
   add_test(NAME cli-keys
@@ -499,6 +514,74 @@ if(LIQUID_BUILD_CLI)
       --json)
   set_tests_properties(cli-abi-diff-json PROPERTIES
     PASS_REGULAR_EXPRESSION "\"verdict\":\"compatible_additions\"[^\n]*\"liquid_abi_added\"")
+  set(LIQUID_CLI_TESTS
+    cli-scenario
+    cli-help-docs
+    cli-reference-docs
+    cli-docs-json
+    cli-man-pages
+    cli-configuration
+    cli-transparency-configuration
+    cli-delta
+    cli-diff
+    cli-secret
+    cli-format-diff
+    cli-why-json
+    cli-cache-stats-json
+    cli-public-includes
+    cli-identity-codec
+    cli-keys
+    cli-sbom-spdx
+    cli-sbom-cyclonedx
+    cli-abi-show-json
+    cli-abi-diff-json
+    retain-cli-explain
+    gc-cli-setup
+    gc-cli-explain
+    gc-cli-compact
+    gc-cli-clean)
+  if(NOT APPLE)
+    list(APPEND LIQUID_CLI_TESTS
+      symbols-cli-clean
+      symbols-cli-setup
+      symbols-cli-init
+      symbols-cli-build
+      symbols-cli)
+  endif()
+  if(LIQUID_BUILD_FRONTENDS)
+    list(APPEND LIQUID_CLI_TESTS symbols-cli-python)
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND LIQUID_CLI_TESTS guides-run)
+  endif()
+  set_tests_properties(${LIQUID_CLI_TESTS} PROPERTIES LABELS liquid-cli)
+
+  if(UNIX)
+    add_executable(liquid-offline-runner cli/offline_runner.cpp)
+    target_include_directories(liquid-offline-runner PRIVATE
+      ${PROJECT_SOURCE_DIR}/include
+      ${PROJECT_BINARY_DIR}/include
+      ${PROJECT_SOURCE_DIR}/src)
+    target_compile_features(liquid-offline-runner PRIVATE cxx_std_26)
+    if(APPLE)
+      target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
+    else()
+      target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/linux.cpp)
+    endif()
+    add_test(NAME cli-offline
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_OFFLINE_RUNNER=$<TARGET_FILE:liquid-offline-runner>
+        -DLIQUID_OFFLINE_SANDBOX=${CMAKE_CURRENT_BINARY_DIR}/cli-offline-sandbox
+        -DLIQUID_SOURCE_ROOT=${PROJECT_SOURCE_DIR}
+        -DLIQUID_BUILD_ROOT=${PROJECT_BINARY_DIR}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_CTEST=${CMAKE_CTEST_COMMAND}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/offline.cmake)
+    set_tests_properties(cli-offline PROPERTIES
+      LABELS "liquid-cli;liquid-offline"
+      RUN_SERIAL TRUE
+      TIMEOUT 1200)
+  endif()
 endif()
 
 add_executable(liquid-vfs-queue-tests

@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid identity [show|rotate] [--json]
+liquid identity [show|rotate [--to software|fido2|piv:9c]] [--json]
 ```
 
 ## Description
@@ -16,6 +16,7 @@ Show the device TAAP identity or rotate its signing key with a linked successor 
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
+| `--to` | `<software\|fido2\|piv:9c>` | Select the new identity-key custody. | software |
 | `--json` | — | Write stable JSON instead of text. | false |
 
 ## Availability

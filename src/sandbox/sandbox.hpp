@@ -52,6 +52,7 @@ struct wrap_launch_request {
     std::vector<std::string> command;
     std::map<std::string, std::string> environment;
     bool network{};
+    bool network_only{};
 };
 
 [[nodiscard]] auto launch(const launch_request& request) -> result<launch_result>;

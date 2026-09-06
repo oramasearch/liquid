@@ -13,6 +13,12 @@ per-command manual pages. `public-includes.cmake` rejects a CLI source that incl
 outside the public `liquid/` header tree or the CLI's own metadata header. The `cli-why-json` and
 `cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
 cache.
+
+`offline.cmake` runs every test carrying the `liquid-cli` label through `offline_runner.cpp`,
+which invokes the same macOS or Linux sandbox launcher used by build wrapping with networking
+denied. It first pins exit 69 and the exact diagnostic for push, pull, remote execution, and the
+remote cache; any unclassified network use then fails inside the sandbox. The outer test carries
+the `liquid-offline` label for local and hosted selection.
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
 `configuration.cmake` checks a directory, lowers source origins in text and JSON, and formats the
@@ -59,6 +65,10 @@ and proves that the plaintext is absent from stderr.
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
 identity encode, decode, and verification APIs.
+The command table and generated-reference tests also cover the hardware `identity --to` option,
+direct `sign`, and the release policy, approval, and verification commands.
+`cli-release` creates two isolated identities, signs a two-of-two repository policy, persists both
+approvals, verifies the distinct signer count, and exercises direct artifact signing.
 
 The admission process test invokes `attest image` and verifies its printed digest through
 `attest verify`, then starts the built `serve admission` command over TLS and explicit insecure
