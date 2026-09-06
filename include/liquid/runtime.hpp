@@ -104,7 +104,35 @@ private:
     Executor executor_;
 };
 
+class yield_awaiter {
+public:
+    [[nodiscard]] bool await_ready() const noexcept {
+        return false;
+    }
+
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle,
+                                          const boost::capy::io_env* environment) noexcept {
+        continuation_.h = handle;
+        // Publishing the continuation is the last touch of this object: another runner may resume
+        // and destroy the frame before post returns.
+        environment->executor.post(continuation_);
+        return std::noop_coroutine();
+    }
+
+    void await_resume() const noexcept {}
+
+private:
+    boost::capy::continuation continuation_;
+};
+
 } // namespace detail
+
+/// Reschedule the current coroutine through its executor so other work can run. Unlike a zero
+/// delay it arms no timer and registers no stop callback, so it cannot resume before it is fully
+/// suspended.
+[[nodiscard]] inline detail::yield_awaiter yield() noexcept {
+    return {};
+}
 
 class LIQUID_EXPORT context {
 public:
@@ -122,10 +150,12 @@ private:
     std::unique_ptr<impl> impl_;
 
     context(unsigned runners, bool keep_alive);
+    context(unsigned runners, bool keep_alive, unsigned concurrency_hint);
     void run(boost::capy::task<> coroutine);
 
     template <class T> friend result<T> block_on(task<T> coroutine);
     friend context& default_context();
+    friend void spawn_serial(task<void> coroutine, std::function<void(result<void>)> on_done);
 };
 
 [[nodiscard]] LIQUID_EXPORT auto default_context() -> context&;
@@ -147,6 +177,7 @@ template <class T> result<T> block_on(task<T> coroutine) {
 }
 
 LIQUID_EXPORT void spawn(task<void> coroutine, std::function<void(result<void>)> on_done);
+LIQUID_EXPORT void spawn_serial(task<void> coroutine, std::function<void(result<void>)> on_done);
 
 template <class Callable> task<std::invoke_result_t<Callable>> offload(Callable callable) {
     using output_type = std::invoke_result_t<Callable>;

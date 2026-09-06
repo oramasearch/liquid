@@ -10,11 +10,48 @@ results, attestations, traces, and result-scoped SBOMs.
 The SBOM finalization bound publishes 24 producer actions and gives one final action 96 reads and
 24 outputs; result creation and cache validation must complete within twenty seconds.
 
+`test_abi.cpp` decodes digest-pinned ELF, Mach-O, and PE fixtures; extracts native shared-library
+exports; checks compatible additions, removals, changed signatures, object sizes, GNU symbol
+versions, and debug signatures; round-trips stored descriptors; verifies the signed compatibility
+attestation; and pins JSON ordering. The privileged `wrap/abi` fixture rebuilds a C shared library
+with a removed function and changed signature, then requires the `abi-break:` event and
+`--fail-on-abi-break` status. The repository-backed case also invokes a result-qualified CLI diff
+between its two stored builds.
+
+Filesystem fixtures allocate their named directories beneath the unique process root specified in
+the parent [`README.md`](../README.md).
+
+`test_events.cpp` covers subscription-point fan-out, terminal failure ordering, frontend-shaped
+diagnostics, and exact JSON-lines schema stability for the public build stream and configured
+plan. Public plan cases cover the named unconfigured error, root digest, complete inputs,
+output-derived dependency edges, one-call repository execution, and daemon round trips. The Linux wrap
+scenario edits a second input while a delayed action runs and checks that re-planning reports the
+untouched actions as hits. The mount-backed own-tree measurement edits a function body in
+`src/store/faults.cpp` inside a repository snapshot and prints call-to-start latency, event count,
+and load average.
+
 `test_graph.cpp` covers canonical demand, read-order dependencies, red-green validation, early
-cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Its
+cutoff, durability-filtered invalidation counts, cancellation and discarded computations. Clean
+validation cases cover the default one-in-twenty selection, a zero-divergence full pass, and a
+deliberately stale value that is named with its input, audited, evicted, recomputed, and retained
+as a divergence record after reopen. Its
 restart case kills `graph_crash_fixture.cpp` during an active demand, reopens the last complete
 root, counts one input fingerprint read and no query executions, and checks the public recorded
 query hook.
+
+`test_frontend.cpp` loads the Clang frontend dynamically, registers its descriptor statically,
+checks that its shared object exports only the ABI v1 entry point, and asks the tree-sitter fallback
+for a C definition. Its copied CMake fixture uses `VALUE` from a quoted header and compiles two
+definition objects with the configured compiler. A one-body edit executes one action and assembly,
+while a changed quoted header executes both recorded readers and assembly.
+`frontend-one-function-measure` is a registered macOS/Linux
+CTest that performs the same count assertion against `src/store/faults.cpp` and prints its elapsed
+milliseconds.
+`test_grammars.cpp` parses the lock-driven sample for every configured grammar without an `ERROR`
+node, runs tag queries for Python, Go, Rust, JavaScript, TypeScript, Java, and Ruby, checks explicit
+unsupported behavior when no tag query exists, rejects a descriptor with a mismatched grammar ABI,
+and checks public registry metadata. `liquid-grammar-measure` reports mean nanoseconds over 100
+parses of each fixture.
 
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
@@ -31,7 +68,7 @@ byte counts agree. It also tightens policy after a recorded build and proves `wh
 current refusal before treating the previous lookup as a hit or ordinary miss.
 
 `fixture.c` is the hermetic toolchain program materialised into each test repository. Its commands
-copy one input, print the fixed environment, emit random bytes, attempt denied access, or exercise
+copy or read one input, print the fixed environment, emit random bytes, attempt denied access, or exercise
 timeout cleanup. Its deterministic failure command writes fixed output, stdout, and stderr before
 returning a nonzero exit for replay coverage. Verification tests prove a pure agreement,
 signature-valid agreement and
@@ -47,20 +84,35 @@ The mixed-cost retention case writes a cheap large result and an expensive small
 real store, persists both index rows, exceeds the configured physical cap, and proves collection
 removes only the lower execution-cost-per-byte result.
 
-`wrap/` holds unchanged CMake, Autotools, recursive Make, and compilation-database projects built
+`wrap/` holds unchanged CMake, Autotools, recursive Make, compilation-database, and shared-library
+projects built
 with the container's system toolchain. `test_wrap.cpp` proves inner and outer hits, selective header
 invalidation with an explanation, fixed-root reuse in a second checkout, cached configure probes,
 cross-project configure facts with zero feature probes on reuse, foreign-target refusal before
 compiler entry, parallel compilation-database seeding, and sandbox-only hook variables. The Linux
-CLI case runs `liquid verify --all`, checks that every wrapped action agrees, then replays one action
-through `liquid replay --json`.
+CLI case runs `liquid verify --all` and `liquid verify --graph --all`, checks that every wrapped
+action and query agrees, then replays one action through `liquid replay --json`.
+It also parses every line from a failing `liquid build --events` run and checks that the command
+returns the recorded status.
+The configured-build CLI case parses every `liquid build --plan` line and checks the recorded
+compile and link actions, complete input fields, and dependency arrays.
 The CMake fixture also compares its generated SBOM components with every target manifest digest
-and toolchain-tree leaf. Its query-graph cases make a comment-only translation-unit edit execute
+and toolchain-tree leaf. The shared-library fixture exercises automatic ABI publication and the
+compatibility gate. The query-graph cases make a comment-only translation-unit edit execute
 one compiler while preserving the object and link result, then make a semantic edit execute the
 compiler and linker and change the link result.
+The fixture registers a labelled smoke test, and the wrap scenario verifies its public target
+metadata.
 
 `test_facts.cpp` is portable coverage for canonical probe normalization, durable records and
 bundles, and exact isolation across changed toolchain, sysroot, and target keys.
+
+`test_symbols.cpp` verifies the Clang frontend's derived action description, compiler-output
+record decoding, stable cross-file reference identifier, repository-store round trip, and the
+explicitly labelled tree-sitter fallback. The Linux `symbols-cli` fixture records a CMake-fixture
+compile with `liquid wrap`, then verifies compiler symbols for its header; macOS excludes that
+fixture because wrapped action execution requires macFUSE.
+The portable `symbols-cli-python` case verifies extension selection and a syntactic Python result.
 
 The real identical-execution cache test verifies every result's provenance and asserts that a hit
 reuses the original attestation digest.

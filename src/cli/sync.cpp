@@ -17,12 +17,27 @@ auto fail(const liquid::error& error) -> int {
 }
 
 auto usage(std::string_view command) -> int {
-    std::println(stderr, "error: usage: {} <url> ()", command);
+    const auto arguments = command == "push" ? "[--atomic] <url>" : "<url>";
+    std::println(stderr, "error: usage: {} {}", command, arguments);
     return 2;
 }
 
 auto run(int argc, char** argv, bool push) -> int {
-    if (argc != 1) {
+    auto url = std::string_view{};
+    auto atomic = false;
+    for (auto index = 0; index < argc; ++index) {
+        const auto argument = std::string_view{argv[index]};
+        if (push && argument == "--atomic" && !atomic) {
+            atomic = true;
+            continue;
+        }
+        if (url.empty()) {
+            url = argument;
+            continue;
+        }
+        return usage(push ? "push" : "pull");
+    }
+    if (url.empty() || (!push && atomic)) {
         return usage(push ? "push" : "pull");
     }
     auto opened =
@@ -34,8 +49,9 @@ auto run(int argc, char** argv, bool push) -> int {
     if (const auto* token = std::getenv("LIQUID_TOKEN")) {
         options.bearer_token = token;
     }
+    options.atomic = atomic;
     try {
-        auto endpoint = liquid::sync_endpoint{argv[0], std::move(options)};
+        auto endpoint = liquid::sync_endpoint{std::string{url}, std::move(options)};
         auto synced = push ? liquid::runtime::block_on(endpoint.push(*opened))
                            : liquid::runtime::block_on(endpoint.pull(*opened));
         if (!synced) {
@@ -47,7 +63,17 @@ auto run(int argc, char** argv, bool push) -> int {
         std::println("objects_received={}", synced->received.objects);
         std::println("bytes_received={}", synced->received.bytes);
         std::println("cursor={}", synced->cursor.token);
-        return 0;
+        auto refused = false;
+        for (const auto& reference : synced->references) {
+            if (reference.outcome == liquid::sync_ref_outcome_kind::applied) {
+                std::println("reference={} outcome=applied", reference.name);
+                continue;
+            }
+            refused = true;
+            std::println(
+                "reference={} outcome=refused reason={}", reference.name, reference.reason);
+        }
+        return refused ? 1 : 0;
     } catch (const std::exception& exception) {
         return fail(liquid::error{liquid::errc::invalid_argument, exception.what(), "sync URL"});
     }

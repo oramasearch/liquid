@@ -9,9 +9,11 @@
 #include <string>
 #include <vector>
 
+#include "liquid/build.hpp"
 #include "liquid/drip.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/graph.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -49,11 +51,16 @@ struct LIQUID_EXPORT daemon_status {
     std::uint64_t graph_values{};
     std::uint64_t graph_memory_bytes{};
     std::uint64_t graph_memory_ceiling{};
+    std::uint64_t graph_validation_backlog{};
+    std::optional<graph_validation_record> last_graph_divergence;
 };
 
 struct LIQUID_EXPORT daemon_options {
     std::chrono::milliseconds idle_timeout{std::chrono::minutes{5}};
     std::uint64_t graph_memory{256ULL * 1024ULL * 1024ULL};
+    std::uint32_t graph_validation_rate{20};
+    std::chrono::milliseconds graph_validation_interval{std::chrono::seconds{1}};
+    query_registry graph_queries{};
     capture_options capture{};
     std::vector<std::shared_ptr<daemon_target>> targets;
 };
@@ -73,6 +80,10 @@ public:
     [[nodiscard]] runtime::task<daemon_status> status();
     [[nodiscard]] runtime::task<void> pause_capture();
     [[nodiscard]] runtime::task<void> resume_capture();
+    [[nodiscard]] runtime::task<std::vector<build_plan_action>>
+    build_plan(build_target target = {});
+    [[nodiscard]] runtime::task<build_handle> build(build_target target);
+    [[nodiscard]] runtime::task<build_handle> build(action_input input);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();
 

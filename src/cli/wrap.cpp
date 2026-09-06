@@ -50,6 +50,22 @@ auto reason_name(liquid::cache_miss_reason reason) -> std::string_view {
     return "unknown";
 }
 
+auto change_name(liquid::abi_change_kind kind) -> std::string_view {
+    switch (kind) {
+    case liquid::abi_change_kind::added:
+        return "added";
+    case liquid::abi_change_kind::removed:
+        return "removed";
+    case liquid::abi_change_kind::type_changed:
+        return "type_changed";
+    case liquid::abi_change_kind::size_changed:
+        return "size_changed";
+    case liquid::abi_change_kind::version_changed:
+        return "version_changed";
+    }
+    return "type_changed";
+}
+
 auto hit_rate(const liquid::wrap_report& report) -> double {
     const auto total = report.hits + report.misses;
     return total == 0 ? 0.0 : static_cast<double>(report.hits) * 100.0 / static_cast<double>(total);
@@ -109,6 +125,7 @@ void print_miss(const liquid::cache_miss& miss) {
 
 auto wrap(int argc, char** argv) -> int {
     auto options = liquid::wrap_options{};
+    auto fail_on_abi_break = false;
     auto command = std::vector<std::string>{};
     for (auto index = 0; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
@@ -124,11 +141,24 @@ auto wrap(int argc, char** argv) -> int {
             options.explain = true;
             continue;
         }
+        if (command.empty() && argument == "--fail-on-abi-break") {
+            fail_on_abi_break = true;
+            continue;
+        }
         if (command.empty() && argument == "--remote") {
             if (++index == argc) {
                 return usage("wrap --remote requires an endpoint");
             }
             remote_options(options).endpoint = argv[index];
+            remote_options(options).backend = liquid::remote_backend::reapi;
+            continue;
+        }
+        if (command.empty() && argument == "--scheduler") {
+            if (++index == argc) {
+                return usage("wrap --scheduler requires an endpoint");
+            }
+            remote_options(options).endpoint = argv[index];
+            remote_options(options).backend = liquid::remote_backend::liquid_scheduler;
             continue;
         }
         if (command.empty() && argument == "--remote-instance") {
@@ -234,7 +264,7 @@ auto wrap(int argc, char** argv) -> int {
     if (command.empty())
         return usage("wrap requires a build command");
     if (options.remote && options.remote->endpoint.empty()) {
-        return usage("wrap remote options require --remote <endpoint>");
+        return usage("wrap remote options require --remote or --scheduler <endpoint>");
     }
     auto result = liquid::runtime::block_on(
         liquid::build::wrap(std::filesystem::current_path(), std::move(command), options));
@@ -252,6 +282,12 @@ auto wrap(int argc, char** argv) -> int {
                  result->cache.disk.bytes_transferred,
                  result->cache.disk.bytes_avoided,
                  result->cache.bytes_rebuilt);
+    std::println(
+        "graph_validation_backlog={} last_graph_divergence={} last_graph_query={}",
+        result->graph_validation_backlog,
+        result->last_graph_divergence ? liquid::to_string(result->last_graph_divergence->id)
+                                      : "none",
+        result->last_graph_divergence ? result->last_graph_divergence->query.kind : "none");
     if (result->cache.remote.available) {
         std::println("remote_hits={} remote_misses={} remote_bytes_transferred={} "
                      "remote_bytes_avoided={}",
@@ -299,7 +335,24 @@ auto wrap(int argc, char** argv) -> int {
     for (const auto& warning : result->policy_warnings) {
         std::println(stderr, "warning: {}", warning);
     }
-    return result->exit;
+    for (const auto& abi_break : result->abi_breaks) {
+        auto summary = std::string{};
+        const auto count = std::min<std::size_t>(abi_break.report.changes.size(), 3);
+        for (auto index = std::size_t{}; index < count; ++index) {
+            if (!summary.empty()) {
+                summary += "; ";
+            }
+            summary += abi_break.report.changes[index].symbol + " " +
+                       std::string{change_name(abi_break.report.changes[index].kind)};
+        }
+        std::println("abi-break: {} previous={} {}",
+                     abi_break.output,
+                     liquid::to_string(abi_break.previous),
+                     summary);
+    }
+    return result->exit != 0                                  ? result->exit
+           : fail_on_abi_break && !result->abi_breaks.empty() ? 1
+                                                              : 0;
 }
 
 } // namespace liquid_cli

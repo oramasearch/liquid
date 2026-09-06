@@ -5,6 +5,7 @@
 #include <format>
 #include <string_view>
 
+#include "build/abi.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
 #include "build/sbom.hpp"
@@ -227,6 +228,10 @@ runtime::task<result_id> store_result_with_provenance(repository& source, action
     if (!sboms) {
         co_return std::unexpected(sboms.error());
     }
+    auto abis = co_await build_detail::store_abis(source, value);
+    if (!abis) {
+        co_return std::unexpected(abis.error());
+    }
     auto subject = subject_digest(value);
     if (!subject) {
         co_return std::unexpected(subject.error());
@@ -259,6 +264,52 @@ runtime::task<result_id> store_result_with_provenance(repository& source, action
         co_await repository_detail::build_access::put_record(source, std::move(*result_bytes));
     if (!stored) {
         co_return std::unexpected(stored.error());
+    }
+    co_return result_id{*stored};
+}
+
+runtime::task<result_id> import_signed_result(repository& source, const action_result& value) {
+    auto signature_valid = signed_result_is_valid(value);
+    if (!signature_valid) {
+        co_return std::unexpected(signature_valid.error());
+    }
+    if (!*signature_valid) {
+        co_return std::unexpected(
+            error{errc::unauthorized, "remote worker result signature is invalid", value.worker});
+    }
+    if (!value.provenance) {
+        co_return std::unexpected(
+            error{errc::corrupt, "remote worker result has no provenance", value.worker});
+    }
+    auto encoded = objects::encode(value);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto stored = co_await repository_detail::build_access::put_record(
+        source, std::move(*encoded), value.action.alg);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    auto provenance = co_await build::verify_provenance(source, result_id{*stored});
+    if (!provenance) {
+        co_return std::unexpected(provenance.error());
+    }
+    if (!provenance->verified) {
+        co_return std::unexpected(
+            error{errc::unauthorized, "remote worker provenance is invalid", provenance->reason});
+    }
+    for (const auto& output : value.outputs) {
+        for (const auto format : {sbom_format::spdx, sbom_format::cyclonedx}) {
+            auto sbom =
+                co_await build::generate_sbom(source, result_id{*stored}, output.path, format);
+            if (!sbom) {
+                co_return std::unexpected(sbom.error());
+            }
+            if (!sbom->verified) {
+                co_return std::unexpected(
+                    error{errc::unauthorized, "remote worker SBOM is invalid", sbom->reason});
+            }
+        }
     }
     co_return result_id{*stored};
 }

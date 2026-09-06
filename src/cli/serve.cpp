@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -45,7 +46,9 @@ auto fail(const liquid::error& error) -> int {
 }
 
 auto usage() -> int {
-    std::println(stderr, "error: usage: serve sync <path> [--listen <address>] [--port <port>] ()");
+    std::println(stderr,
+                 "error: usage: serve sync <path> [--listen <address>] [--port <port>] "
+                 "[--allow-ref <glob>]...");
     return 2;
 }
 
@@ -307,7 +310,51 @@ struct serve_options {
     std::filesystem::path path;
     std::string address{"127.0.0.1"};
     std::uint16_t port{8080};
+    std::vector<std::string> allowed_refs;
 };
+
+auto glob_matches(std::string_view pattern, std::string_view value) -> bool {
+    auto previous = std::vector<bool>(value.size() + 1);
+    previous[0] = true;
+    for (const auto pattern_character : pattern) {
+        auto current = std::vector<bool>(value.size() + 1);
+        if (pattern_character == '*') {
+            current[0] = previous[0];
+            for (auto index = std::size_t{1}; index <= value.size(); ++index) {
+                current[index] = previous[index] || current[index - 1];
+            }
+        } else {
+            for (auto index = std::size_t{1}; index <= value.size(); ++index) {
+                current[index] = previous[index - 1] && (pattern_character == '?' ||
+                                                         pattern_character == value[index - 1]);
+            }
+        }
+        previous = std::move(current);
+    }
+    return previous[value.size()];
+}
+
+auto reference_authorizer(std::vector<std::string> patterns) -> liquid::sync_authorizer {
+    return [patterns = std::move(patterns)](const liquid::sync_item& item,
+                                            std::span<const liquid::sync_ref_update> updates)
+               -> liquid::runtime::task<std::vector<liquid::sync_ref_verdict>> {
+        auto verdicts = std::vector<liquid::sync_ref_verdict>{};
+        verdicts.reserve(updates.size());
+        for (const auto& update : updates) {
+            auto verdict = liquid::sync_ref_verdict{update.name};
+            const auto allowed = item.kind != liquid::sync_item_kind::reference ||
+                                 std::ranges::any_of(patterns, [&](const auto& pattern) {
+                                     return glob_matches(pattern, update.name);
+                                 });
+            if (!allowed) {
+                verdict.verdict = liquid::sync_ref_verdict_kind::refused;
+                verdict.reason = "reference is not allowed";
+            }
+            verdicts.push_back(std::move(verdict));
+        }
+        co_return verdicts;
+    };
+}
 
 auto parse_options(int argc, char** argv) -> std::optional<serve_options> {
     if (argc < 2 || std::string_view{argv[0]} != "sync") {
@@ -322,6 +369,10 @@ auto parse_options(int argc, char** argv) -> std::optional<serve_options> {
         const auto value = std::string_view{argv[index + 1]};
         if (name == "--listen" && !value.empty()) {
             options.address = value;
+            continue;
+        }
+        if (name == "--allow-ref" && !value.empty()) {
+            options.allowed_refs.emplace_back(value);
             continue;
         }
         if (name != "--port") {
@@ -383,7 +434,11 @@ auto serve(int argc, char** argv) -> int {
         return fail(opened.error());
     }
     try {
-        auto handler = liquid::sync_server{*opened};
+        auto server_options = liquid::sync_server_options{};
+        if (!options->allowed_refs.empty()) {
+            server_options.authorize = reference_authorizer(std::move(options->allowed_refs));
+        }
+        auto handler = liquid::sync_server{*opened, std::move(server_options)};
         auto context = boost::corosio::io_context{};
         auto server = sync_http_server{context, make_router(handler)};
         auto address = boost::corosio::endpoint{options->address};

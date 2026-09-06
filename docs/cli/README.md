@@ -12,6 +12,8 @@ its configured idle exit or `liquid daemon --shutdown`. Windows repository comma
 available, but daemon attachment returns the documented unsupported result because the current
 Corosio revision has no named-pipe transport.
 
+Focused command contracts: [`build`](build-events.md) plans and events, and [`test`](test.md).
+
 ## Commands
 
 This table is generated from the command table in `src/main.cpp`. The `cli-help-docs` test checks
@@ -22,21 +24,23 @@ that the table and `liquid --help` name the same commands.
 | `version` | `version [--json]` | Print the library version. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `status` | `status [--json]` | Show repository status. | available |
+| `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
-| `log` | `log [--json]` | Show change history. | available |
+| `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
-| `push` | `push <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
+| `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
-| `serve` | `serve sync <path> [--listen <address>] [--port <port>]` | Serve one repository over the sync protocol. | available |
+| `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
 | `anchor` | `anchor <path>:<line>@<change> --to <change>` | Map a text position between changes. | available |
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
 | `split` | `split <path> <into>` | Split a subtree into a repository. | available |
 | `combine` | `combine <repository> [--at <path>]` | Combine another repository. | available |
-| `ops` | `ops [--json]` | List recorded operations, newest first. | available |
-| `undo` | `undo [op-id]` | Undo the newest or named operation. | available |
+| `ops` | `ops [--json]` | List recorded operations. | available |
+| `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
 | `lock` | `lock <path>` | Advisory-lock a path. | available |
 | `unlock` | `unlock <path>` | Remove an advisory lock. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
@@ -48,10 +52,11 @@ that the table and `liquid --help` name the same commands.
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
-| `verify` | `verify <action\|--all\|--changed> [--explain]` | Re-execute and compare cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--no-cache] [--no-verify] [--explain] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
-| `build` | `build --profile <command> [args...] \| build trace [--chrome]` | Profile a build or export its timing, dependency, and scheduling trace. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
+| `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
@@ -59,31 +64,73 @@ that the table and `liquid --help` name the same commands.
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
 | `policy` | `policy <check\|explain> [target]` | Check or explain build-input policy. | available |
 | `sbom` | `sbom <target> <--spdx\|--cyclonedx>` | Print a graph-derived or explicitly inferred SBOM. | available |
+| `abi` | `abi <show\|diff> ... [--json]` | Show or compare linked-library ABI descriptors. | available |
+| `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
+| `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
+| `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
 
 ## Output and errors
 
-`status`, `log`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache stats` accept
-`--json`; `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered
-remotely but not present in the local store. Hydration and materialisation reduce the value chunk by
-chunk. Its `daemon` object reports availability, process id, the last triggered drip, and graph
-memory counts. Text status adds one `daemon_target` line per ordered target with its cursor,
-distance behind capture, and successful delivery count.
-`push` and `pull` print metadata item, object, byte, and cursor counts. They use `LIQUID_TOKEN` as
-an optional bearer credential and never print it. A URL must use HTTP or HTTPS and identify one
-lake repository.
+`status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
+stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
+and re-validation result. `ops --json` includes the stable operation-kind vocabulary and the
+32-digit session ID. `undo` prints one `applied <op-id>` line per inverse it appended and one
+`skipped <op-id> <path> <reason>` line when newer state prevented a path from changing. A session
+may be narrowed by repeating `--path` or `--drip`; those selectors require `--session` and cannot
+be combined with a positional operation ID.
+
+`status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
+but not present in the local store, plus `agents.require_base` and the configured actor list.
+Hydration and materialisation reduce the value chunk by
+chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
+counts, validation backlog, and the last graph divergence with its query and inputs. Text status
+adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
+successful delivery count.
+`push` and `pull` print metadata item, object, byte, and cursor counts. `push` then prints exactly
+one line per requested ref:
+
+```text
+reference=refs/heads/feature outcome=applied
+reference=refs/heads/main outcome=refused reason=branch requires approval
+```
+
+Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refuse every ref. A
+completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
+use `LIQUID_TOKEN` as an optional bearer credential and never print it. A URL must use HTTP or HTTPS
+and identify one lake repository.
+
+`log timestamps <log-url>` reads lake's current `transparency_checkpoint`, uses its checkpoint
+digest to read `timestamp_evidence`, and prints the checkpoint digest, signature digest, digest
+algorithm, and each archive timestamp summary. The command does not grant trust to lake's summary;
+it is an inspection view. `LIQUID_TOKEN` supplies the optional bearer credential for the evidence
+read and is never printed.
+
+`log verify --timestamps` reads the same two lake capabilities and verifies the exact decoded
+checkpoint signature value against the returned DER evidence record. Set `LIQUID_LOG_URL` to the
+lake base URL and `LIQUID_TSA_TRUST_CERT` to a PEM file containing one or more pinned TSA trust
+anchors. The trust-anchor default is none: an unset or empty trust path is refused, and the command
+never substitutes operating-system certificate roots. Successful output names the checkpoint,
+reports `timestamp_evidence=verified`, and prints each independently decoded archive timestamp.
+Lake checkpoint, tile, and proof authentication remains the separate `#207` verification layer.
+
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
 sets `approximate`; and a removed line or file sets `deleted`.
 `serve sync` opens the named existing repository and serves the sync routes with
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
-listener. It has no built-in authentication policy, so the default is appropriate for local use;
-network services embed the public server with their own authorization callback.
-`version --json` is also available for scripts. Text output is line-oriented and stable. A library
+listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
+pattern; `*` matches any sequence and `?` one character. Supplying the flag refuses each ref outside
+all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
+there is no built-in authentication policy, so the default is appropriate for local use; network
+services embed the public server with their own authorization callback.
+`version --json` is also available for scripts and returns
+`{"version":"0.0.1","grammar":"sha256:<canonical-lock-digest>"}`. Text output is line-oriented
+and stable. A library
 error always has this shape and exits with status 1:
 
 ```text
@@ -92,11 +139,27 @@ error: <code>: <message> (<context>)
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
 
+`write` is the scripted-agent file path. `--base` names the change the caller read and may append
+the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read
+while planning. The default `--on-stale refuse` returns a conflict when head or journal state moved;
+`disjoint` accepts only an untouched written/read set, and `force` records a caller that already
+re-planned against `repository::explain_stale`. `log --ops --json` projects `reasoned_from`, cursor,
+paths, and `revalidated` (`disjoint`, `forced`, or null) from the signed body.
+
 `delta create <source> <target>` stores both artifacts, a `zstd-patch` blob, its delta record, and
 a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <delta> <source>
 <destination>` checks the source, patch blob, and reconstructed target before writing. `delta fetch
 <target> <source> <destination>` uses a matching local signed catalog record and the store's
 registered remote blobs when necessary, then reports `method=delta` or `method=chunks`.
+
+`search` uses BM25F ranking over path and content fields. A query wrapped in double quotes selects
+exact literal matching; a query wrapped in slashes selects regex matching. The measured planner
+chooses verified trigrams or a current parallel mapped scan when those executors have identical
+results. `--ref` accepts a repository ref name or change digest, and `--limit` accepts 1 through
+1,000. Each result line contains optional score, path with one-based line and column, and snippet,
+separated by tabs. `--explain` executes the query and instead prints stable JSON with the chosen
+executor, estimates, actual cost, inputs, and all alternatives. Ranked plans state that scan has no
+equivalent result set.
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, and the
 number of uncached feature probes observed, plus the outer action's status. Its final timing line
@@ -106,8 +169,9 @@ adds one `miss:` line for each changed manifest path. `--jobs`
 sets driver parallelism and the compilation-database seed width; `--no-cache` executes and records
 the observation without publishing or serving cache entries. The persistent project cache defaults
 to the platform cache directory and can be relocated with `LIQUID_WRAP_CACHE`. On completion,
-`wrap` schedules the configured local verification sample on the shared runtime; `--no-verify`
-skips that background work.
+`wrap` reports graph validation backlog and the last divergence, then schedules the configured
+graph and action verification samples on the shared runtime; `--no-verify` skips that background
+work.
 
 `--target <triple>` selects configure facts for that target. A foreign target is lookup-only: if
 an Autotools `conftest` or CMake `try_compile` is not answered by matching facts, `wrap` reports an
@@ -121,6 +185,12 @@ record. `facts export` writes the `fact-bundle/1` JSON record used by later remo
 cached result, and `--changed` selects results without a recorded verification. Each line names the
 action, result, signed attestation, and agreement. Divergence prints a `critical:` line naming every
 differing output and exits with status 1; `--explain` adds the first differing byte and its values.
+`--graph` instead cleanly recomputes the default one-in-twenty query sample through new graph
+instances, retains an audit record for each comparison, and then runs the action sample in fresh
+sandboxes. `--graph --all` runs complete graph and action passes. Its summary reports considered,
+validated, divergent, backlog, verified-action, and elapsed counts. A graph disagreement prints a
+critical line naming the query, its recorded input paths and fingerprints, and both result
+fingerprints before exiting with status 1.
 
 `replay` opens the same cache and accepts an action or result digest. An action selects its newest
 indexed result. The action runs locally with its recorded input tree, toolchain, environment,
@@ -160,6 +230,20 @@ decision, timing history, size class, input and missing bytes, remote-query flag
 locality, batch capability and size, local and remote estimates, and decision reason. Chrome events
 carry the same fields in their `args` object.
 
+`liquid build --events <command> [args...]` runs the same observed wrapper and writes one versioned
+JSON object per event to standard output. It returns the build summary's exit status. The complete
+field and ordering contract is in [`build-events.md`](build-events.md).
+
+`liquid build --plan [target]` opens the recorded wrapper repository and prints one complete
+planned action per JSON line without executing. `liquid build [target]` starts the same selected
+action graph through the checkout daemon and prints its event stream. An empty target selects the
+whole configured build; a target names an exact recorded output. Both forms require an earlier
+`liquid wrap` configuration.
+
+`liquid test [filter]` opens the current project's wrap repository and runs CMake-discovered or
+natively registered test targets as cached actions. It prints one result line per selected target
+and returns nonzero when a selected test fails. See [`test.md`](test.md).
+
 `liquid why-slow <target>` accepts an output path, action digest, or result digest from the latest
 trace. It prints the longest dependency path ending at that action, followed by queued, sandbox,
 exec, hash, and store durations plus the recorded scheduling fields for every action. When both an
@@ -191,6 +275,9 @@ remote tier counts in text and JSON.
 header, deadline, and publication flags described in [`../library/reapi.md`](../library/reapi.md).
 Remote publication is off unless `--remote-publish` is supplied. `liquid serve reapi --listen
 <address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache.
+`--scheduler <endpoint>` selects liquid's scheduler beside the stock `--remote` REAPI backend and
+preserves the scheduler's signed scheduling record. `liquid scheduler` and `liquid worker` accept
+the flags and environment variables listed in [`../library/workers.md`](../library/workers.md).
 
 `policy check <target>` evaluates the current repository's `config.policy` against a cached action,
 result, or produced path without executing it. It exits non-zero when a `refuse` rule fails.
@@ -208,6 +295,15 @@ SPDX 2.3 or CycloneDX 1.5 document. A regular file with no producing result uses
 Mach-O, or PE composition analysis instead. The claim and every component then carry
 `inferred=true` and `derived=false`; the command never presents inferred components as graph facts.
 
+`abi show <path|digest> [--json]` prints a linked-library descriptor from a regular file or from the
+current repository's record for an output blob. `abi diff <a> <b> [--json]` compares two such
+operands; `<result-digest>:<output-path>` selects an exact build. The JSON projection is versioned
+and deterministic. An incompatible report is information and does not make `abi diff` fail.
+
+Successful wrapping prints one `abi-break:` line for every incompatible rebuilt library, including
+the previous blob and at most the first three sorted changes. It normally preserves the build exit
+status. `--fail-on-abi-break` changes a successful wrap to status 1 when any such event occurs.
+
 ## Examples
 
 ```sh
@@ -216,7 +312,11 @@ liquid init .
 liquid status --json
 liquid daemon
 liquid daemon --shutdown
+liquid search 'query graph'
+liquid search '"exact substring"' --ref main --limit 50
+liquid search --explain '/query.*graph/'
 liquid log --json
+liquid log --ops --json
 liquid cut "import existing files"
 liquid refs --json
 LIQUID_TOKEN="$token" liquid push https://lake.example/repositories/project
@@ -228,7 +328,8 @@ liquid nest ../shared-assets vendor/assets
 liquid split src ../src-repository
 liquid combine ../src-repository --at imported-src
 liquid ops --json
-liquid undo
+liquid undo blake3:<operation-id>
+liquid undo --session <32-hex-id> --path src --drip blake3:<operation-id>
 liquid lock src/main.cpp
 liquid unlock src/main.cpp
 liquid mount /tmp/liquid-mount --read-only
@@ -255,10 +356,19 @@ liquid policy check build/output.o
 liquid policy explain build/output.o
 liquid sbom build/output.o --spdx
 liquid sbom /usr/bin/tool --cyclonedx
+liquid abi show build/libexample.so --json
+liquid abi diff blake3:<old-result>:build/libexample.so blake3:<new-result>:build/libexample.so --json
 liquid wrap cmake -S . -B build -G Ninja
+liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
+liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081
+liquid wrap --scheduler 127.0.0.1:50051 make -j8
 liquid wrap --jobs 8 --explain cmake --build build
+liquid build --plan
+liquid build build/app
+liquid build --events cmake --build build
 liquid build --profile cmake --build build
 liquid build trace --chrome > build-trace.json
+liquid test quick
 liquid why build/CMakeFiles/app.dir/main.cpp.o
 liquid why blake3:<action-or-result-digest> --json
 liquid why-slow build/app
@@ -277,7 +387,8 @@ liquid watch
 
 Run the static and shared build proof from the repository root. The `cli-scenario` CTest creates
 two repositories, imports files, cuts changes, moves a path, nests a repository, splits a subtree,
-combines it, reads JSON history and operations, undoes the move, verifies a locked mutation is
+combines it, reads JSON history and signed drips through `log --ops`, reads recorded operations
+through `ops`, undoes a selected session path, verifies a locked mutation is
 refused, pauses and resumes capture, collects the repository, and reads the retained files back.
 `cli-help-docs` compares the documented command names to `--help`. `cli-delta` creates, applies,
 and fetches a delta through the built executable and compares the produced files by digest.

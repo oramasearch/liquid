@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
@@ -16,8 +17,8 @@ namespace {
 class redaction_repository {
 public:
     redaction_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-redaction-test-" + std::to_string(next_.fetch_add(1)))) {
+        : path_(liquid::test::fixture_path("liquid-redaction-test-" +
+                                           std::to_string(next_.fetch_add(1)))) {
         std::filesystem::remove_all(path_);
     }
 

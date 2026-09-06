@@ -6,6 +6,13 @@ state directory; the handle borrows the store, and repository, directory, ref, a
 owners carry the repository identity. Redaction persists the caller's replacement and a signed marker before targeted store
 tombstoning, pack compaction, and the required `not_found` verification.
 
+Issue #86 validates caller-stated write bases before blob registration, content storage, or CRDT
+mutation. Persisted `config.agents` selects the TAAP actors that must supply a base. Version 2
+signed drip bodies carry the liquid-selected base, touched paths, optional `reasoned_from`, and an
+optional disjoint or forced result; the reader retains version 1 support. Stale explanation uses
+the shared text-hunk implementation against historical and current blob records and appends no
+drip.
+
 Public tree comparison flattens immutable tree records into repository-relative paths, matches
 entries by `node_id`, and reports moves independently from mode and content changes. Change-level
 comparison also attaches the conflict values stored on each change. Text hunk generation reads
@@ -27,6 +34,13 @@ The build adapter uses the repository's device signer for result records and rep
 attestations. It reads persisted cache, verification, and retention policy, synchronizes named ref
 and result leases across reopen, retains the action-index root, and owns per-handle cache counters
 and critical alerts exposed by `repository::cache_stats`.
+`repository::build` starts the same event-producing action path exposed in `liquid/build.hpp`; the
+repository must outlive its build handle because execution continues against its store and signer.
+The `build_target` overload plans the recorded graph and starts every selected action, while
+`root_digest` returns the current stored tree record for public action construction.
+`register_test`, `tests`, and `run_tests` delegate native target storage, sorted discovery, and
+cached execution to `src/build/tests.cpp`. `open_build` resolves the persistent repository owned by
+an observed working-tree build so CLI test runs use the same target and action state as `wrap`.
 
 For build diagnostics, the same adapter resolves a path's current content to the newest matching
 write operation and signed drip. Content, node, actor, and timestamp must all agree; otherwise the
@@ -47,9 +61,14 @@ first, applies ref and result policy, releases results selected by the physical 
 then delegates byte reclamation to the store collector. `repository::retain_explain` uses a dry
 collector pass so the CLI does not inspect repository internals.
 
-The repository document persists `config.remote`: endpoint, instance, TLS trust and client-key
-paths, request headers, deadline, batch limit, and read-only-by-default publication. The public
+The repository document persists `config.remote`: endpoint, instance, stock REAPI or liquid
+scheduler backend, TLS trust and client-key paths, request headers, deadline, batch limit, and
+read-only-by-default publication. The public
 accessor lets later wrap runs reuse the configuration without exposing document internals.
+
+The private search adapter exposes only the repository checkout's `.liquid/index/` path to the
+search implementation. Public queries remain on `repository::search`; no index representation or
+oramacore type crosses the public boundary.
 
 Remote file entries use the same working tree and canonical blob reference as local files.
 `store_remote_blob` registers metadata without reading content, `write_remote` records the entry,
@@ -59,3 +78,14 @@ Sync export pages signed drips, changes, per-directory upstream messages, refs, 
 Import works on repository and directory candidates, verifies TAAP signatures and checked CRDT
 receives, and publishes one checkpoint only after the complete batch passes. An empty repository
 may adopt the incoming repository identity; a non-empty unrelated repository is rejected.
+
+Every document mutation records its operation, session, and before/after effects. Operation undo
+and filtered session undo derive inverses from those effects, skip state changed by newer intent,
+and append their results without rewriting source or imported records. Each touched directory uses
+one candidate transaction, and a failed plan, transaction, encoding, or journal publication
+restores all active state. Change version 2 also records document state and directory heads;
+historical document reads validate those heads against full archives without consulting active
+shallow documents.
+
+`repository::store_symbols` stores one canonical symbol record and its source-blob association.
+`repository::symbols` resolves and decodes that content-addressed value.

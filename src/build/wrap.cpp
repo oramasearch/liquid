@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -13,6 +14,9 @@
 #include <set>
 #include <sstream>
 #include <sys/stat.h>
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#endif
 #include <thread>
 
 #if !defined(_WIN32)
@@ -23,13 +27,16 @@
 #include <mach-o/dyld.h>
 #endif
 
+#include "build/abi.hpp"
 #include "build/budgets.hpp"
 #include "build/cache.hpp"
+#include "build/executor.hpp"
 #include "build/facts.hpp"
 #include "build/materialise.hpp"
 #include "build/policy.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "build/tests.hpp"
 #include "build/trace.hpp"
 #include "build/verify.hpp"
 #include "build/why.hpp"
@@ -37,6 +44,7 @@
 #include "formats/json.hpp"
 #include "liquid/graph.hpp"
 #include "objects/records.hpp"
+#include "sandbox/environment.hpp"
 #include "sandbox/sandbox.hpp"
 #include "vfs/backend.hpp"
 #include "vfs/repository_access.hpp"
@@ -1229,27 +1237,362 @@ auto shareable_probe_program(std::string_view program) -> bool {
            program.contains("CMAKE_HAVE_") || program.contains("HAVE_");
 }
 
+runtime::task<digest> store_toolchain(repository& source, const std::set<std::string>& executables);
+
+runtime::task<digest> store_phase2_tree(repository& source, tree value) {
+    std::ranges::sort(value.entries, {}, &tree_entry::name);
+    auto bytes = objects::encode(value);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    co_return co_await repository_detail::build_access::put_record(source, std::move(*bytes));
+}
+
+runtime::task<tree_entry>
+tree_file(repository& source, digest root, const std::filesystem::path& path) {
+    auto current = root;
+    auto components = std::vector<std::string>{};
+    for (const auto& component : path.lexically_normal()) {
+        const auto text = component.string();
+        if (!text.empty() && text != ".") {
+            components.push_back(text);
+        }
+    }
+    if (components.empty() || components.front() == "..") {
+        co_return std::unexpected(
+            wrap_error(errc::invalid_argument, "captured executable path is invalid", path));
+    }
+    for (auto index = std::size_t{}; index != components.size(); ++index) {
+        auto bytes = co_await repository_detail::build_access::get(source, current);
+        auto value = bytes ? objects::decode_tree(*bytes)
+                           : liquid::result<tree>{std::unexpected(bytes.error())};
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        const auto found = std::ranges::find(value->entries, components[index], &tree_entry::name);
+        if (found == value->entries.end()) {
+            co_return std::unexpected(
+                wrap_error(errc::not_found, "captured executable is absent from inputs", path));
+        }
+        if (index + 1 == components.size()) {
+            if (found->kind != node_kind::blob) {
+                co_return std::unexpected(
+                    wrap_error(errc::invalid_argument, "captured executable is not a file", path));
+            }
+            co_return *found;
+        }
+        if (found->kind != node_kind::tree) {
+            co_return std::unexpected(wrap_error(
+                errc::invalid_argument, "captured executable parent is not a directory", path));
+        }
+        current = found->ref;
+    }
+    co_return std::unexpected(
+        wrap_error(errc::internal, "captured executable lookup produced no result", path));
+}
+
+auto insert_tree_entry(tree& value, tree_entry entry) -> liquid::result<void> {
+    const auto found = std::ranges::find(value.entries, entry.name, &tree_entry::name);
+    if (found == value.entries.end()) {
+        value.entries.push_back(std::move(entry));
+        return {};
+    }
+    if (found->kind == entry.kind && same_digest(found->ref, entry.ref)) {
+        return {};
+    }
+    return std::unexpected(
+        wrap_error(errc::conflict, "toolchain contains duplicate file names", entry.name));
+}
+
+runtime::task<tree_entry>
+store_toolchain_file(repository& source, const std::filesystem::path& path, std::string name) {
+    auto blob = co_await repository_detail::build_access::put_file(source, path);
+    if (!blob) {
+        co_return std::unexpected(blob.error());
+    }
+    const auto status = std::filesystem::status(path);
+    co_return tree_entry{.name = std::move(name),
+                         .mode = static_cast<std::uint32_t>(status.permissions()) & 0777U,
+                         .kind = node_kind::blob,
+                         .id = *blob,
+                         .ref = *blob};
+}
+
+runtime::task<std::string> tool_output(std::string command) {
+    auto output =
+        co_await runtime::offload([command = std::move(command)]() -> liquid::result<std::string> {
+#if defined(_WIN32)
+            auto pipe = ::_popen(command.c_str(), "r");
+#else
+            auto pipe = ::popen(command.c_str(), "r");
+#endif
+            if (!pipe) {
+                return std::unexpected(wrap_error(errc::io, "cannot start toolchain inspector"));
+            }
+            auto text = std::string{};
+            auto buffer = std::array<char, 4096>{};
+            while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) {
+                text += buffer.data();
+            }
+#if defined(_WIN32)
+            const auto status = ::_pclose(pipe);
+            if (status != 0) {
+#else
+            const auto status = ::pclose(pipe);
+            if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+#endif
+                return std::unexpected(wrap_error(errc::io, "toolchain inspector failed", command));
+            }
+            return text;
+        });
+    if (!output) {
+        co_return std::unexpected(output.error());
+    }
+    co_return std::move(*output);
+}
+
+runtime::task<std::vector<std::filesystem::path>>
+dynamic_closure(std::filesystem::path executable) {
+#if defined(__linux__)
+    auto output = co_await tool_output("ldd -- " + shell_quote(executable.string()));
+#elif defined(__APPLE__)
+    auto output = co_await tool_output("otool -L " + shell_quote(executable.string()));
+#else
+    co_return std::vector<std::filesystem::path>{};
+#endif
+    if (!output) {
+        co_return std::unexpected(output.error());
+    }
+    auto paths = std::set<std::filesystem::path>{};
+    auto lines = std::istringstream{*output};
+    for (auto line = std::string{}; std::getline(lines, line);) {
+#if defined(__linux__)
+        if (line.contains("not a dynamic executable") || line.empty()) {
+            continue;
+        }
+        const auto marker = line.find("=>");
+        const auto start =
+            marker == std::string::npos ? line.find('/') : line.find('/', marker + 2);
+#elif defined(__APPLE__)
+        const auto start = line.find('/');
+#endif
+        if (start == std::string::npos) {
+            continue;
+        }
+        const auto end = line.find_first_of(" \t(", start);
+        const auto path = std::filesystem::path{line.substr(start, end - start)};
+        if (std::filesystem::is_regular_file(path)) {
+            paths.insert(path);
+        }
+    }
+    co_return std::vector<std::filesystem::path>{paths.begin(), paths.end()};
+}
+
+runtime::task<digest> store_directory(repository& source, const std::filesystem::path& directory) {
+    auto value = tree{};
+    auto code = std::error_code{};
+    for (std::filesystem::directory_iterator iterator{directory, code};
+         !code && iterator != std::filesystem::directory_iterator{};
+         iterator.increment(code)) {
+        const auto name = iterator->path().filename().string();
+        if (iterator->is_directory(code)) {
+            auto nested = co_await store_directory(source, iterator->path());
+            if (!nested) {
+                co_return std::unexpected(nested.error());
+            }
+            auto added = insert_tree_entry(value,
+                                           {.name = name,
+                                            .mode = 0755,
+                                            .kind = node_kind::tree,
+                                            .id = *nested,
+                                            .ref = *nested});
+            if (!added) {
+                co_return std::unexpected(added.error());
+            }
+            continue;
+        }
+        if (iterator->is_regular_file(code)) {
+            auto file = co_await store_toolchain_file(source, iterator->path(), name);
+            if (!file) {
+                co_return std::unexpected(file.error());
+            }
+            auto added = insert_tree_entry(value, std::move(*file));
+            if (!added) {
+                co_return std::unexpected(added.error());
+            }
+        }
+    }
+    if (code) {
+        co_return std::unexpected(wrap_error(errc::io, code.message(), directory));
+    }
+    co_return co_await store_phase2_tree(source, std::move(value));
+}
+
 runtime::task<digest> store_toolchain(repository& source,
                                       const std::set<std::string>& executables) {
-    auto value = tree{};
-    auto index = std::uint64_t{};
-    for (const auto& executable : executables) {
-        if (!std::filesystem::is_regular_file(executable))
+    auto bin = tree{};
+    auto lib = tree{};
+    auto etc = tree{};
+    auto resource_directories = std::map<std::string, digest>{};
+    for (const auto& text : executables) {
+        const auto executable = std::filesystem::path{text};
+        if (!std::filesystem::is_regular_file(executable)) {
             continue;
-        auto blob = co_await repository_detail::build_access::put_file(source, executable);
-        if (!blob)
-            co_return std::unexpected(blob.error());
-        auto status = std::filesystem::status(executable);
-        value.entries.push_back({.name = std::to_string(index++) + "-" + hex(executable),
-                                 .mode = static_cast<std::uint32_t>(status.permissions()) & 0777U,
-                                 .kind = node_kind::blob,
-                                 .id = *blob,
-                                 .ref = *blob});
+        }
+        auto file =
+            co_await store_toolchain_file(source, executable, executable.filename().string());
+        if (!file) {
+            co_return std::unexpected(file.error());
+        }
+        auto added = insert_tree_entry(bin, std::move(*file));
+        if (!added) {
+            co_return std::unexpected(added.error());
+        }
+        auto closure = co_await dynamic_closure(executable);
+        if (!closure) {
+            co_return std::unexpected(closure.error());
+        }
+        for (const auto& library : *closure) {
+            auto dependency =
+                co_await store_toolchain_file(source, library, library.filename().string());
+            if (!dependency) {
+                co_return std::unexpected(dependency.error());
+            }
+            added = insert_tree_entry(lib, std::move(*dependency));
+            if (!added) {
+                co_return std::unexpected(added.error());
+            }
+        }
+        if (!executable.filename().string().contains("clang")) {
+            continue;
+        }
+        auto resource =
+            co_await tool_output(shell_quote(executable.string()) + " -print-resource-dir");
+        if (!resource) {
+            co_return std::unexpected(resource.error());
+        }
+        resource->erase(resource->find_last_not_of("\r\n") + 1);
+        const auto resource_path = std::filesystem::path{*resource};
+        if (!std::filesystem::is_directory(resource_path)) {
+            co_return std::unexpected(wrap_error(
+                errc::not_found, "compiler resource directory is unavailable", resource_path));
+        }
+        auto captured = co_await store_directory(source, resource_path);
+        if (!captured) {
+            co_return std::unexpected(captured.error());
+        }
+        resource_directories.insert_or_assign(resource_path.filename().string(), *captured);
     }
-    auto encoded = objects::encode(value);
-    if (!encoded)
-        co_return std::unexpected(encoded.error());
-    co_return co_await repository_detail::build_access::put_record(source, std::move(*encoded));
+#if defined(__linux__)
+    for (const auto* name :
+         {"os-release", "lsb-release", "debian_version", "redhat-release", "alpine-release"}) {
+        const auto path = std::filesystem::path{"/etc"} / name;
+        if (!std::filesystem::is_regular_file(path)) {
+            continue;
+        }
+        auto release = co_await store_toolchain_file(source, path, name);
+        if (!release) {
+            co_return std::unexpected(release.error());
+        }
+        auto added = insert_tree_entry(etc, std::move(*release));
+        if (!added) {
+            co_return std::unexpected(added.error());
+        }
+    }
+#endif
+    if (!resource_directories.empty()) {
+        auto clang = tree{};
+        for (const auto& [name, id] : resource_directories) {
+            clang.entries.push_back(
+                {.name = name, .mode = 0755, .kind = node_kind::tree, .id = id, .ref = id});
+        }
+        auto clang_id = co_await store_phase2_tree(source, std::move(clang));
+        if (!clang_id) {
+            co_return std::unexpected(clang_id.error());
+        }
+        lib.entries.push_back({.name = "clang",
+                               .mode = 0755,
+                               .kind = node_kind::tree,
+                               .id = *clang_id,
+                               .ref = *clang_id});
+    }
+    auto bin_id = co_await store_phase2_tree(source, std::move(bin));
+    if (!bin_id) {
+        co_return std::unexpected(bin_id.error());
+    }
+    auto lib_id = co_await store_phase2_tree(source, std::move(lib));
+    if (!lib_id) {
+        co_return std::unexpected(lib_id.error());
+    }
+    auto root = tree{};
+    root.entries.push_back(
+        {.name = "bin", .mode = 0755, .kind = node_kind::tree, .id = *bin_id, .ref = *bin_id});
+    root.entries.push_back(
+        {.name = "lib", .mode = 0755, .kind = node_kind::tree, .id = *lib_id, .ref = *lib_id});
+    if (!etc.entries.empty()) {
+        auto etc_id = co_await store_phase2_tree(source, std::move(etc));
+        if (!etc_id) {
+            co_return std::unexpected(etc_id.error());
+        }
+        root.entries.push_back(
+            {.name = "etc", .mode = 0755, .kind = node_kind::tree, .id = *etc_id, .ref = *etc_id});
+    }
+    co_return co_await store_phase2_tree(source, std::move(root));
+}
+
+runtime::task<std::pair<digest, std::string>> phase2_toolchain_impl(repository& source,
+                                                                    digest recorded,
+                                                                    digest inputs,
+                                                                    std::string_view cwd,
+                                                                    std::string_view command) {
+    auto root_bytes = co_await repository_detail::build_access::get(source, recorded);
+    auto root = root_bytes ? objects::decode_tree(*root_bytes)
+                           : liquid::result<tree>{std::unexpected(root_bytes.error())};
+    if (!root) {
+        co_return std::unexpected(root.error());
+    }
+    const auto program = std::filesystem::path{command}.filename().string();
+    const auto bin = std::ranges::find(root->entries, "bin", &tree_entry::name);
+    if (bin == root->entries.end() || bin->kind != node_kind::tree) {
+        co_return std::unexpected(wrap_error(
+            errc::unsupported, "recorded toolchain is not a runnable input tree", program));
+    }
+    auto bin_bytes = co_await repository_detail::build_access::get(source, bin->ref);
+    auto entries = bin_bytes ? objects::decode_tree(*bin_bytes)
+                             : liquid::result<tree>{std::unexpected(bin_bytes.error())};
+    if (!entries) {
+        co_return std::unexpected(entries.error());
+    }
+    const auto executable = std::ranges::find(entries->entries, program, &tree_entry::name);
+    if (executable != entries->entries.end() && executable->kind == node_kind::blob) {
+        co_return std::pair{recorded, program};
+    }
+    auto command_path = std::filesystem::path{command};
+    if (command_path.is_absolute() && command_path.string().starts_with(virtual_root)) {
+        command_path = command_path.lexically_relative(virtual_root);
+    } else if (command_path.is_relative()) {
+        command_path = std::filesystem::path{cwd} / command_path;
+    }
+    auto input_executable = co_await tree_file(source, inputs, command_path);
+    if (!input_executable) {
+        co_return std::unexpected(input_executable.error());
+    }
+    input_executable->name = program;
+    auto inserted = insert_tree_entry(*entries, std::move(*input_executable));
+    if (!inserted) {
+        co_return std::unexpected(inserted.error());
+    }
+    auto bin_id = co_await store_phase2_tree(source, std::move(*entries));
+    if (!bin_id) {
+        co_return std::unexpected(bin_id.error());
+    }
+    bin->id = *bin_id;
+    bin->ref = *bin_id;
+    auto root_id = co_await store_phase2_tree(source, std::move(*root));
+    if (!root_id) {
+        co_return std::unexpected(root_id.error());
+    }
+    co_return std::pair{*root_id, program};
 }
 
 auto read_toolchain(const std::filesystem::path& path) -> liquid::result<std::optional<digest>> {
@@ -1431,6 +1774,19 @@ runtime::task<void> record_rebuilt_action(repository& source,
     }
     report.cache.bytes_rebuilt += *bytes;
     add_timing(report, result_id{saved.result}, *value, cache_status::miss, start_offset);
+    auto abi_breaks = co_await build_detail::abi_breaks(source, *value);
+    if (!abi_breaks) {
+        co_return std::unexpected(abi_breaks.error());
+    }
+    for (auto& abi_break : *abi_breaks) {
+        const auto present = std::ranges::any_of(report.abi_breaks, [&](const auto& existing) {
+            return existing.output == abi_break.output &&
+                   same_digest(existing.previous, abi_break.previous);
+        });
+        if (!present) {
+            report.abi_breaks.push_back(std::move(abi_break));
+        }
+    }
     if (!reason_recorded) {
         auto action = co_await load_action(source, value->action);
         if (!action) {
@@ -1465,6 +1821,12 @@ runtime::task<void> complete_report(const std::filesystem::path& cache_directory
         co_return std::unexpected(traced.error());
     }
     co_return build_detail::update_cache_stats(cache_directory, report);
+}
+
+void add_graph_validation_status(wrap_report& report, const graph& queries) {
+    const auto status = queries.validation_status();
+    report.graph_validation_backlog = status.backlog;
+    report.last_graph_divergence = status.last_divergence;
 }
 
 runtime::task<void> collect_manifest(repository& source,
@@ -1530,6 +1892,8 @@ runtime::task<std::optional<result_id>> import_remote_result(repository& source,
     }
     (*value)->provenance.reset();
     (*value)->sboms.clear();
+    (*value)->abis.clear();
+    (*value)->abi_compatibility.clear();
     (*value)->sig.clear();
     auto stored = co_await build_detail::store_result_with_provenance(source, **value);
     if (!stored) {
@@ -1586,6 +1950,7 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
         auto old_action = co_await load_action(source, old_result->action);
         if (!old_action)
             continue;
+        const auto action_sandbox = old_action->sandbox;
         auto input = old_action->input;
         input.inputs = input_tree;
         input.toolchain = toolchain;
@@ -1644,8 +2009,13 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
         }
         if (!reads_invalidated_output) {
             if (backend) {
-                auto imported = co_await import_remote_result(
-                    source, cache, *backend, input, sandbox, !old_result->manifest.empty(), report);
+                auto imported = co_await import_remote_result(source,
+                                                              cache,
+                                                              *backend,
+                                                              input,
+                                                              action_sandbox,
+                                                              !old_result->manifest.empty(),
+                                                              report);
                 if (!imported) {
                     co_return std::unexpected(imported.error());
                 }
@@ -1668,12 +2038,55 @@ runtime::task<cache_plan> prepare_cache_plan(repository& source,
                 }
             }
             auto cause = co_await build_detail::classify_miss(
-                source, input, sandbox, result_id{saved.result});
+                source, input, action_sandbox, result_id{saved.result});
             if (!cause) {
                 co_return std::unexpected(cause.error());
             }
             add_miss(report, std::move(*cause));
             output.reasoned_actions.insert(saved.key);
+            if (backend && backend->config().backend == remote_backend::liquid_scheduler &&
+                !old_result->manifest.empty()) {
+                auto history_candidate = cache.candidate_key(input, action_sandbox);
+                auto executor_sandbox = sandbox_detail::definition(input.platform);
+                if (!history_candidate || !executor_sandbox) {
+                    co_return std::unexpected(!history_candidate ? history_candidate.error()
+                                                                 : executor_sandbox.error());
+                }
+                auto execution_input = input;
+                for (const auto& name : executor_sandbox->fixed_environment) {
+                    execution_input.env.erase(name);
+                }
+                auto toolchain = co_await phase2_toolchain(source,
+                                                           execution_input.toolchain,
+                                                           execution_input.inputs,
+                                                           execution_input.cwd,
+                                                           execution_input.command.front());
+                if (!toolchain) {
+                    co_return std::unexpected(toolchain.error());
+                }
+                execution_input.toolchain = toolchain->first;
+                execution_input.command.front() = std::move(toolchain->second);
+                execution_input.remote_eligible = true;
+                auto executed = co_await liquid::build::execute_with_history_candidate(
+                    source, std::move(execution_input), backend->executor(), *history_candidate);
+                if (!executed) {
+                    co_return std::unexpected(executed.error());
+                }
+                auto value = co_await load_result(source, executed->value);
+                if (!value) {
+                    co_return std::unexpected(value.error());
+                }
+                auto materialised = co_await materialise_result(source, *value);
+                if (!materialised) {
+                    co_return std::unexpected(materialised.error());
+                }
+                output.processes.insert_or_assign(saved.key, 0);
+                output.next_actions.push_back({saved.key, executed->value});
+                output.lookups.push_back({cache_status::miss, *executed, result_id{saved.result}});
+                ++report.misses;
+                add_timing(report, *executed, *value, cache_status::miss);
+                continue;
+            }
         }
         ++report.misses;
         output.missed_actions.insert(saved.key);
@@ -1996,6 +2409,10 @@ runtime::task<void> publish_observed_run(repository& source,
     if (!toolchain) {
         for (const auto& process : run.processes) {
             state.tools.insert(process.executable);
+            if (!process.command.empty() &&
+                std::filesystem::is_regular_file(process.command.front())) {
+                state.tools.insert(process.command.front());
+            }
         }
         auto stored = co_await store_toolchain(source, state.tools);
         if (!stored) {
@@ -2256,6 +2673,14 @@ objects::sandbox_record wrap_sandbox_definition() {
 liquid::result<std::filesystem::path>
 wrap_cache_directory(const std::filesystem::path& working_tree) {
     return default_cache_directory(working_tree);
+}
+
+runtime::task<std::pair<digest, std::string>> phase2_toolchain(repository& source,
+                                                               digest recorded,
+                                                               digest inputs,
+                                                               std::string_view cwd,
+                                                               std::string_view command) {
+    co_return co_await phase2_toolchain_impl(source, recorded, inputs, cwd, command);
 }
 
 runtime::task<action_result> run_wrapped_action(repository& source,
@@ -2537,7 +2962,9 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!policy->allowed)
         co_return std::unexpected(build_detail::policy_refusal(*policy));
     auto plan = cache_plan{};
-    if (options.cache && *toolchain) {
+    const auto scheduler_backend =
+        backend && backend->config().backend == remote_backend::liquid_scheduler;
+    if (options.cache && *toolchain && !scheduler_backend) {
         auto served = co_await serve_outer_action(*source,
                                                   cache,
                                                   *queries,
@@ -2559,8 +2986,9 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
             if (!completed) {
                 co_return std::unexpected(completed.error());
             }
+            add_graph_validation_status(report, *queries);
             if (options.verify) {
-                build_detail::schedule_verification(std::move(*source));
+                build_detail::schedule_graph_validation(working_tree, *cache_directory);
                 report.verification_scheduled = true;
             }
             co_return report;
@@ -2640,6 +3068,13 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!published) {
         co_return std::unexpected(stage_error("publishing observed wrap run", published.error()));
     }
+    if (*toolchain) {
+        auto tests =
+            co_await build_detail::discover_cmake_tests(*source, working_tree, **toolchain);
+        if (!tests) {
+            co_return std::unexpected(tests.error());
+        }
+    }
     auto primed = co_await prime_wrap_actions(*queries, query_state, *state, *sandbox);
     if (!primed) {
         co_return std::unexpected(stage_error("priming wrap action cache", primed.error()));
@@ -2653,8 +3088,9 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
     if (!completed) {
         co_return std::unexpected(stage_error("recording wrap report", completed.error()));
     }
+    add_graph_validation_status(report, *queries);
     if (options.verify) {
-        build_detail::schedule_verification(std::move(*source));
+        build_detail::schedule_graph_validation(working_tree, *cache_directory);
         report.verification_scheduled = true;
     }
     co_return report;

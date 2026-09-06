@@ -467,6 +467,108 @@ auto decode_repo_ref(const cbor::value& value) -> result<repo_ref> {
     return repo_ref{*decoded_repository, *decoded_id};
 }
 
+auto encode_document_state(const document_state& value) -> cbor::value {
+    auto refs = cbor::value::array{};
+    for (const auto& [name, id] : value.refs) {
+        refs.push_back(map({{"name", cbor::value{name}}, {"id", encode_change_id(id)}}));
+    }
+    auto locks = cbor::value::array{};
+    for (const auto& lock : value.locks) {
+        locks.emplace_back(lock);
+    }
+    auto nested = cbor::value::array{};
+    for (const auto& pointer : value.nested) {
+        nested.push_back(map(
+            {{"path", cbor::value{pointer.path}}, {"ref", encode_repo_ref(pointer.reference)}}));
+    }
+    return map({{"refs", cbor::value{std::move(refs)}},
+                {"locks", cbor::value{std::move(locks)}},
+                {"nested", cbor::value{std::move(nested)}}});
+}
+
+auto decode_document_state(const cbor::value& value) -> result<document_state> {
+    const auto* refs_value = find(value, "refs");
+    const auto* locks_value = find(value, "locks");
+    const auto* nested_value = find(value, "nested");
+    const auto* refs = refs_value ? std::get_if<cbor::value::array>(&refs_value->data) : nullptr;
+    const auto* nested =
+        nested_value ? std::get_if<cbor::value::array>(&nested_value->data) : nullptr;
+    auto locks = decode_text_array(locks_value, "change document locks");
+    if (!refs || !nested || !locks) {
+        return std::unexpected(corrupt("invalid change document state"));
+    }
+    auto output = document_state{};
+    output.locks = std::move(*locks);
+    for (const auto& item : *refs) {
+        const auto* name_value = find(item, "name");
+        const auto* id_value = find(item, "id");
+        const auto* name = name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+        auto id = id_value ? decode_change_id(*id_value)
+                           : result<change_id>{std::unexpected(corrupt("missing document ref"))};
+        if (!name || !id || !output.refs.emplace(*name, *id).second) {
+            return std::unexpected(corrupt("invalid change document ref"));
+        }
+    }
+    for (const auto& item : *nested) {
+        const auto* path_value = find(item, "path");
+        const auto* ref_value = find(item, "ref");
+        const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+        auto reference = ref_value
+                             ? decode_repo_ref(*ref_value)
+                             : result<repo_ref>{std::unexpected(corrupt("missing nested pointer"))};
+        if (!path || !reference) {
+            return std::unexpected(corrupt("invalid nested pointer"));
+        }
+        output.nested.push_back({*path, *reference});
+    }
+    return output;
+}
+
+auto encode_document_heads(std::span<const document_heads> values) -> cbor::value {
+    auto output = cbor::value::array{};
+    for (const auto& directory : values) {
+        auto heads = cbor::value::array{};
+        for (const auto& head : directory.values) {
+            heads.push_back(byte_string(head));
+        }
+        output.push_back(map({{"directory", encode_node_id(directory.directory)},
+                              {"heads", cbor::value{std::move(heads)}}}));
+    }
+    return cbor::value{std::move(output)};
+}
+
+auto decode_document_heads(const cbor::value& value) -> result<std::vector<document_heads>> {
+    const auto* items = std::get_if<cbor::value::array>(&value.data);
+    if (!items) {
+        return std::unexpected(corrupt("invalid change document heads"));
+    }
+    auto output = std::vector<document_heads>{};
+    for (const auto& item : *items) {
+        const auto* directory_value = find(item, "directory");
+        const auto* heads_value = find(item, "heads");
+        const auto* heads =
+            heads_value ? std::get_if<cbor::value::array>(&heads_value->data) : nullptr;
+        auto directory = directory_value
+                             ? decode_node_id(*directory_value)
+                             : result<node_id>{std::unexpected(corrupt("missing head directory"))};
+        if (!directory || !heads) {
+            return std::unexpected(corrupt("invalid change document heads"));
+        }
+        auto decoded = document_heads{.directory = *directory};
+        for (const auto& head_value : *heads) {
+            const auto* head = std::get_if<cbor::value::bytes>(&head_value.data);
+            if (!head || head->size() != std::array<std::byte, 32>{}.size()) {
+                return std::unexpected(corrupt("invalid change document head"));
+            }
+            auto bytes = std::array<std::byte, 32>{};
+            std::ranges::copy(*head, bytes.begin());
+            decoded.values.push_back(bytes);
+        }
+        output.push_back(std::move(decoded));
+    }
+    return output;
+}
+
 auto decode_action_timing(const cbor::value& value) -> result<action_timing> {
     const auto* queued_value = find(value, "queued_ms");
     const auto* sandbox_value = find(value, "sandbox_ms");
@@ -655,6 +757,9 @@ auto encode(const tree& value) -> result<std::vector<std::byte>> {
 
 auto encode_change_body_value(const change& value, bool include_signature)
     -> result<std::vector<std::byte>> {
+    if (value.record_version < 1 || value.record_version > 2) {
+        return std::unexpected(corrupt("unsupported change record version"));
+    }
     auto parents = cbor::value::array{};
     for (const auto& parent : value.parents)
         parents.push_back(encode_change_ref(parent));
@@ -669,7 +774,7 @@ auto encode_change_body_value(const change& value, bool include_signature)
         conflicts.push_back(map({{"path", cbor::value{item.path}}, {"refs", std::move(refs)}}));
     }
     auto fields = cbor::value::map{
-        {"v", cbor::value{std::uint64_t{1}}},
+        {"v", cbor::value{value.record_version}},
         {"kind", "change"},
         {"parents", std::move(parents)},
         {"author", cbor::value{value.author.taap_id}},
@@ -679,6 +784,10 @@ auto encode_change_body_value(const change& value, bool include_signature)
         {"metadata", cbor::value{std::move(metadata)}},
         {"conflicts", std::move(conflicts)},
         {"symbols", value.symbols ? encode_digest(*value.symbols) : cbor::value{cbor::null{}}}};
+    if (value.record_version >= 2) {
+        fields.emplace_back("document", encode_document_state(value.document));
+        fields.emplace_back("heads", encode_document_heads(value.heads));
+    }
     if (include_signature) {
         fields.emplace_back("sig", cbor::value{value.sig});
     }
@@ -822,10 +931,21 @@ auto encode_result_value(const action_result& value, bool include_signature)
     for (const auto& sbom : value.sboms) {
         sboms.push_back(encode_digest(sbom));
     }
+    auto abis = cbor::value::array{};
+    for (const auto& abi : value.abis) {
+        abis.push_back(encode_digest(abi));
+    }
+    auto abi_compatibility = cbor::value::array{};
+    for (const auto& statement : value.abi_compatibility) {
+        abi_compatibility.push_back(encode_digest(statement));
+    }
     const auto exit_value = value.exit < 0 ? cbor::value{static_cast<std::int64_t>(value.exit)}
                                            : cbor::value{static_cast<std::uint64_t>(value.exit)};
-    if (value.record_version < 1 || value.record_version > 3) {
+    if (value.record_version < 1 || value.record_version > 4) {
         return std::unexpected(corrupt("unsupported result record version"));
+    }
+    if (value.record_version < 4 && (!value.abis.empty() || !value.abi_compatibility.empty())) {
+        return std::unexpected(corrupt("ABI references require result record version 4"));
     }
     auto timing = cbor::value{};
     if (value.record_version == 1) {
@@ -872,6 +992,12 @@ auto encode_result_value(const action_result& value, bool include_signature)
     }
     if (!value.sboms.empty()) {
         fields.emplace_back("sboms", cbor::value{std::move(sboms)});
+    }
+    if (!value.abis.empty()) {
+        fields.emplace_back("abis", cbor::value{std::move(abis)});
+    }
+    if (!value.abi_compatibility.empty()) {
+        fields.emplace_back("abi_compatibility", cbor::value{std::move(abi_compatibility)});
     }
     if (value.schedule) {
         fields.emplace_back("schedule", encode_schedule(*value.schedule));
@@ -967,6 +1093,45 @@ auto encode(const sbom_record& value) -> result<std::vector<std::byte>> {
                              {"kind", "sbom"},
                              {"format", cbor::value{value.format}},
                              {"document", byte_string(value.document)}}));
+}
+
+auto encode(const abi_descriptor& value) -> result<std::vector<std::byte>> {
+    auto symbols = cbor::value::array{};
+    for (const auto& symbol : value.exported_symbols) {
+        auto fields =
+            cbor::value::map{{"name", cbor::value{symbol.name}},
+                             {"kind", cbor::value{static_cast<std::uint64_t>(symbol.kind)}},
+                             {"size", cbor::value{symbol.size}},
+                             {"binding", cbor::value{symbol.binding}},
+                             {"visibility", cbor::value{symbol.visibility}}};
+        if (symbol.version) {
+            fields.emplace_back("version", *symbol.version);
+        }
+        if (symbol.signature) {
+            fields.emplace_back("signature", *symbol.signature);
+        }
+        symbols.emplace_back(cbor::value{std::move(fields)});
+    }
+    auto needed = cbor::value::array{};
+    for (const auto& library : value.needed_libraries) {
+        needed.emplace_back(library);
+    }
+    auto fields =
+        cbor::value::map{{"v", cbor::value{std::uint64_t{1}}},
+                         {"kind", "abi"},
+                         {"subject", encode_digest(value.subject)},
+                         {"binary", cbor::value{static_cast<std::uint64_t>(value.binary)}},
+                         {"architecture", cbor::value{value.architecture}},
+                         {"symbols", cbor::value{std::move(symbols)}},
+                         {"needed", cbor::value{std::move(needed)}}};
+    if (value.install_name) {
+        fields.emplace_back("install_name", *value.install_name);
+    }
+    return cbor::encode(cbor::value{std::move(fields)});
+}
+
+auto encode_execution_schedule(const execution_schedule& value) -> result<std::vector<std::byte>> {
+    return cbor::encode(encode_schedule(value));
 }
 
 auto decode_blob(std::span<const std::byte> bytes) -> result<blob> {
@@ -1085,7 +1250,7 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
 
 auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> hash_algorithm)
     -> result<change> {
-    auto source = decode(bytes, "change");
+    auto source = decode_versioned(bytes, "change", 2);
     if (!source)
         return std::unexpected(source.error());
     const auto* parents = find(*source, "parents");
@@ -1094,6 +1259,9 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
     const auto* message = find(*source, "message");
     const auto* root = find(*source, "root");
     const auto* metadata = find(*source, "metadata");
+    const auto* version_value = find(*source, "v");
+    const auto* version =
+        version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
     const auto* parent_values = parents ? std::get_if<cbor::value::array>(&parents->data) : nullptr;
     const auto* who = author ? std::get_if<std::string>(&author->data) : nullptr;
     const auto* signed_when = at ? std::get_if<std::int64_t>(&at->data) : nullptr;
@@ -1102,7 +1270,7 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
     if (!parent_values || !who ||
         (!signed_when &&
          (!unsigned_when || *unsigned_when > std::numeric_limits<std::int64_t>::max())) ||
-        !title || !root)
+        !title || !root || !version)
         return std::unexpected(corrupt("invalid change record"));
     auto root_digest = decode_digest(*root);
     if (!root_digest)
@@ -1118,7 +1286,10 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
                   {},
                   {},
                   std::nullopt,
-                  {}};
+                  {},
+                  {},
+                  {},
+                  *version};
     for (const auto& item : *parent_values) {
         auto parent = decode_change_ref(item);
         if (!parent)
@@ -1167,6 +1338,22 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
         output.symbols = *symbol;
     }
     output.sig = *sig;
+    if (*version >= 2) {
+        const auto* document_value = find(*source, "document");
+        const auto* heads_value = find(*source, "heads");
+        auto document =
+            document_value
+                ? decode_document_state(*document_value)
+                : result<document_state>{std::unexpected(corrupt("missing change document"))};
+        auto heads = heads_value ? decode_document_heads(*heads_value)
+                                 : result<std::vector<document_heads>>{
+                                       std::unexpected(corrupt("missing change heads"))};
+        if (!document || !heads) {
+            return std::unexpected(document ? heads.error() : document.error());
+        }
+        output.document = std::move(*document);
+        output.heads = std::move(*heads);
+    }
     if (hash_algorithm) {
         auto digest = digest_of(*hash_algorithm, bytes);
         if (!digest)
@@ -1394,7 +1581,7 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* version =
         version_value ? std::get_if<std::uint64_t>(&version_value->data) : nullptr;
     const auto* kind = kind_value ? std::get_if<std::string>(&kind_value->data) : nullptr;
-    if (!version || *version < 1 || *version > 3 || !kind || *kind != "result") {
+    if (!version || *version < 1 || *version > 4 || !kind || *kind != "result") {
         return std::unexpected(corrupt("unsupported result record version"));
     }
     const auto* action_value = find(*source, "action");
@@ -1432,6 +1619,8 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
     const auto* finished_value = find(*source, "finished_at");
     const auto* provenance_value = find(*source, "provenance");
     const auto* sboms_value = find(*source, "sboms");
+    const auto* abis_value = find(*source, "abis");
+    const auto* abi_compatibility_value = find(*source, "abi_compatibility");
     const auto* schedule_value = find(*source, "schedule");
     const auto* outputs =
         output_values ? std::get_if<cbor::value::array>(&output_values->data) : nullptr;
@@ -1508,6 +1697,36 @@ auto decode_result(std::span<const std::byte> bytes) -> result<action_result> {
             }
             output.sboms.push_back(*sbom);
         }
+    }
+    const auto decode_digest_list =
+        [](const cbor::value* value, std::string_view description) -> result<std::vector<digest>> {
+        if (!value) {
+            return std::vector<digest>{};
+        }
+        const auto* entries = std::get_if<cbor::value::array>(&value->data);
+        if (!entries) {
+            return std::unexpected(corrupt("invalid result " + std::string{description}));
+        }
+        auto output = std::vector<digest>{};
+        for (const auto& entry : *entries) {
+            auto decoded = decode_digest(entry);
+            if (!decoded) {
+                return std::unexpected(corrupt("invalid result " + std::string{description}));
+            }
+            output.push_back(*decoded);
+        }
+        return output;
+    };
+    auto abis = decode_digest_list(abis_value, "ABI references");
+    auto abi_compatibility =
+        decode_digest_list(abi_compatibility_value, "ABI compatibility references");
+    if (!abis || !abi_compatibility) {
+        return std::unexpected(abis ? abi_compatibility.error() : abis.error());
+    }
+    output.abis = std::move(*abis);
+    output.abi_compatibility = std::move(*abi_compatibility);
+    if (*version < 4 && (abis_value || abi_compatibility_value)) {
+        return std::unexpected(corrupt("ABI references require result record version 4"));
     }
     if (schedule_value) {
         auto schedule = decode_schedule(*schedule_value);
@@ -1754,6 +1973,96 @@ auto decode_sbom(std::span<const std::byte> bytes) -> result<sbom_record> {
         return std::unexpected(corrupt("invalid SBOM record"));
     }
     return sbom_record{*format, *document};
+}
+
+auto decode_abi(std::span<const std::byte> bytes) -> result<abi_descriptor> {
+    auto source = decode(bytes, "abi");
+    if (!source) {
+        return std::unexpected(source.error());
+    }
+    const auto* subject_value = find(*source, "subject");
+    const auto* binary_value = find(*source, "binary");
+    const auto* architecture_value = find(*source, "architecture");
+    const auto* symbols_value = find(*source, "symbols");
+    const auto* needed_value = find(*source, "needed");
+    auto subject = subject_value
+                       ? decode_digest(*subject_value)
+                       : result<digest>{std::unexpected(corrupt("ABI subject is missing"))};
+    const auto* binary = binary_value ? std::get_if<std::uint64_t>(&binary_value->data) : nullptr;
+    const auto* architecture =
+        architecture_value ? std::get_if<std::string>(&architecture_value->data) : nullptr;
+    const auto* symbols =
+        symbols_value ? std::get_if<cbor::value::array>(&symbols_value->data) : nullptr;
+    const auto* needed =
+        needed_value ? std::get_if<cbor::value::array>(&needed_value->data) : nullptr;
+    if (!subject || !binary || *binary > static_cast<std::uint64_t>(abi_binary_kind::pe) ||
+        !architecture || !symbols || !needed) {
+        return std::unexpected(corrupt("invalid ABI descriptor"));
+    }
+    auto output = abi_descriptor{.subject = *subject,
+                                 .binary = static_cast<abi_binary_kind>(*binary),
+                                 .architecture = *architecture};
+    if (const auto* install_name_value = find(*source, "install_name")) {
+        const auto* install_name = std::get_if<std::string>(&install_name_value->data);
+        if (!install_name) {
+            return std::unexpected(corrupt("invalid ABI install name"));
+        }
+        output.install_name = *install_name;
+    }
+    for (const auto& entry : *symbols) {
+        const auto* name_value = find(entry, "name");
+        const auto* kind_value = find(entry, "kind");
+        const auto* size_value = find(entry, "size");
+        const auto* binding_value = find(entry, "binding");
+        const auto* visibility_value = find(entry, "visibility");
+        const auto* name = name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+        const auto* kind = kind_value ? std::get_if<std::uint64_t>(&kind_value->data) : nullptr;
+        const auto* size = size_value ? std::get_if<std::uint64_t>(&size_value->data) : nullptr;
+        const auto* binding =
+            binding_value ? std::get_if<std::string>(&binding_value->data) : nullptr;
+        const auto* visibility =
+            visibility_value ? std::get_if<std::string>(&visibility_value->data) : nullptr;
+        if (!name || !kind || *kind > static_cast<std::uint64_t>(abi_symbol_kind::object) ||
+            !size || !binding || !visibility) {
+            return std::unexpected(corrupt("invalid ABI symbol"));
+        }
+        auto symbol = abi_symbol{.name = *name,
+                                 .kind = static_cast<abi_symbol_kind>(*kind),
+                                 .size = *size,
+                                 .binding = *binding,
+                                 .visibility = *visibility};
+        if (const auto* version_value = find(entry, "version")) {
+            const auto* version = std::get_if<std::string>(&version_value->data);
+            if (!version) {
+                return std::unexpected(corrupt("invalid ABI symbol version"));
+            }
+            symbol.version = *version;
+        }
+        if (const auto* signature_value = find(entry, "signature")) {
+            const auto* signature = std::get_if<std::string>(&signature_value->data);
+            if (!signature) {
+                return std::unexpected(corrupt("invalid ABI symbol signature"));
+            }
+            symbol.signature = *signature;
+        }
+        output.exported_symbols.push_back(std::move(symbol));
+    }
+    for (const auto& entry : *needed) {
+        const auto* library = std::get_if<std::string>(&entry.data);
+        if (!library) {
+            return std::unexpected(corrupt("invalid ABI needed library"));
+        }
+        output.needed_libraries.push_back(*library);
+    }
+    return output;
+}
+
+auto decode_execution_schedule(std::span<const std::byte> bytes) -> result<execution_schedule> {
+    auto decoded = cbor::decode(bytes);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    return decode_schedule(*decoded);
 }
 
 } // namespace liquid::objects

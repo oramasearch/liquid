@@ -225,26 +225,25 @@ runtime::task<collection_report> collector::run(collection_options options) {
                                         "store::collect"});
     }
 
-    auto previous = co_await load_collection_manifest(store_.root_);
-    if (!previous)
-        co_return std::unexpected(previous.error());
     if (options.compact_only) {
-        collection_report report;
-        report.epoch = previous->epoch;
         auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
         if (lock_error) {
             co_return std::unexpected(
                 error{errc::busy, lock_error.message(), "store::collect compaction"});
         }
+        auto committed = co_await load_collection_manifest(store_.root_);
+        if (!committed) {
+            co_return std::unexpected(committed.error());
+        }
+        collection_report report;
+        report.epoch = committed->epoch;
         compactor compact(store_);
-        auto compacted = co_await compact.run(options, *previous, report);
+        auto compacted = co_await compact.run(options, *committed, report);
         if (!compacted)
             co_return std::unexpected(compacted.error());
         co_return report;
     }
     collection_manifest committed;
-    committed.epoch = previous->epoch + 1;
-    committed.tombstones = previous->tombstones;
     std::uint32_t high_water_pack{};
     std::uint64_t high_water_offset{};
     std::map<std::uint32_t, std::vector<std::byte>> epoch_marks;
@@ -273,7 +272,6 @@ runtime::task<collection_report> collector::run(collection_options options) {
     }
 
     collection_report report;
-    report.epoch = committed.epoch;
     report.roots = live_leases.size();
     std::set<std::string> live_objects;
     std::set<std::string> live_chunks;
@@ -354,15 +352,23 @@ runtime::task<collection_report> collector::run(collection_options options) {
                 live_chunks.contains(to_string(entry.id)))
                 mark(bitmap, frame);
         }
-        auto [yield_error] = co_await runtime::delay(std::chrono::nanoseconds{1});
-        if (yield_error)
-            co_return std::unexpected(
-                error{errc::internal, yield_error.message(), "store::collect"});
+        co_await runtime::yield();
     }
 
     auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
     if (lock_error)
         co_return std::unexpected(error{errc::busy, lock_error.message(), "store::collect sweep"});
+    auto latest = co_await load_collection_manifest(store_.root_);
+    if (!latest) {
+        co_return std::unexpected(latest.error());
+    }
+    if (latest->epoch == std::numeric_limits<std::uint64_t>::max()) {
+        co_return std::unexpected(
+            collection_error(errc::io, "collection epoch space exhausted", store_.root_ / "gc"));
+    }
+    committed = std::move(*latest);
+    ++committed.epoch;
+    report.epoch = committed.epoch;
 
     // A root or object created while marking is conservatively retained. Objects
     // written after the high-water mark are live by the epoch rule.
@@ -453,8 +459,10 @@ runtime::task<collection_report> collector::run(collection_options options) {
             const auto& entry = pack.entries[frame];
             const auto frame_bytes = std::uint64_t{49} + entry.location.length;
             total_bytes += frame_bytes;
-            const auto is_live = after_high_water(high_water_pack, high_water_offset, entry) ||
-                                 live_chunks.contains(to_string(entry.id));
+            const auto was_dead = committed.dead(pack_id, frame);
+            const auto is_live =
+                !was_dead && (after_high_water(high_water_pack, high_water_offset, entry) ||
+                              live_chunks.contains(to_string(entry.id)));
             if (is_live) {
                 mark(bitmap, frame);
                 live_bytes += frame_bytes;
@@ -463,10 +471,12 @@ runtime::task<collection_report> collector::run(collection_options options) {
                     live_chunks.insert(to_string(entry.id));
                     reasons.try_emplace(to_string(entry.id), "written after epoch high-water mark");
                 }
-            } else {
+            } else if (!was_dead) {
                 assert(!after_high_water(high_water_pack, high_water_offset, entry));
                 mark(committed.tombstones[pack_id], frame);
                 ++report.dead_chunks;
+                dead_bytes += frame_bytes;
+            } else {
                 dead_bytes += frame_bytes;
             }
         }
@@ -553,7 +563,109 @@ runtime::task<collection_report> collector::run(collection_options options) {
     co_return report;
 }
 
+runtime::task<void> collector::remove_local(collection_manifest manifest,
+                                            std::set<std::string> target_objects,
+                                            std::set<std::string> target_chunks,
+                                            std::optional<std::string> excluded_remote,
+                                            bool compact,
+                                            bool refresh_subjects) {
+    auto changed = false;
+    for (const auto& key : target_objects) {
+        changed = store_.objects_.erase(key) != 0 || changed;
+    }
+    auto retained_chunks = std::set<std::string>{};
+    for (const auto& [unused, object] : store_.objects_) {
+        for (const auto& chunk : object.chunks) {
+            retained_chunks.insert(to_string(chunk));
+        }
+        if (object.has_descriptor) {
+            retained_chunks.insert(to_string(object.descriptor));
+        }
+    }
+    if (excluded_remote) {
+        for (const auto& [key, remote] : store_.remotes_) {
+            if (key == *excluded_remote) {
+                continue;
+            }
+            for (const auto& chunk : remote.chunks) {
+                retained_chunks.insert(to_string(chunk));
+            }
+        }
+    }
+
+    auto report = collection_report{};
+    auto retained_index = std::vector<index_entry>{};
+    for (const auto& [pack_id, pack] : store_.packs_) {
+        auto pack_changed = false;
+        auto total_bytes = std::uint64_t{};
+        auto live_bytes = std::uint64_t{};
+        for (auto frame = std::size_t{}; frame < pack.entries.size(); ++frame) {
+            const auto& entry = pack.entries[frame];
+            const auto frame_bytes = std::uint64_t{49} + entry.location.length;
+            total_bytes += frame_bytes;
+            const auto key = to_string(entry.id);
+            if (target_chunks.contains(key) && !retained_chunks.contains(key) &&
+                !manifest.dead(pack_id, frame)) {
+                mark(manifest.tombstones[pack_id], frame);
+                pack_changed = true;
+                changed = true;
+            }
+            if (!manifest.dead(pack_id, frame)) {
+                live_bytes += frame_bytes;
+                retained_index.push_back({entry.id, entry.location});
+            }
+        }
+        if (pack_changed && total_bytes != 0) {
+            report.partially_dead_packs.push_back(
+                {pack_id, static_cast<double>(live_bytes) / static_cast<double>(total_bytes)});
+        }
+    }
+    if (!changed) {
+        co_return result<void>{};
+    }
+
+    ++manifest.epoch;
+    report.epoch = manifest.epoch;
+    auto objects_staged = co_await store_.stage_objects();
+    if (!objects_staged) {
+        co_return std::unexpected(objects_staged.error());
+    }
+    auto manifest_saved = co_await save_collection_manifest(store_.root_, manifest);
+    if (!manifest_saved) {
+        co_return std::unexpected(manifest_saved.error());
+    }
+    auto objects_saved = co_await store_.publish_staged_objects();
+    if (!objects_saved) {
+        co_return std::unexpected(objects_saved.error());
+    }
+    store_.index_.set_collection_epoch(manifest.epoch);
+    auto rebuilt = co_await store_.index_.rebuild(std::move(retained_index));
+    if (!rebuilt) {
+        co_return std::unexpected(rebuilt.error());
+    }
+    if (refresh_subjects) {
+        auto subjects = co_await store_.rebuild_subject_index();
+        if (!subjects) {
+            co_return std::unexpected(subjects.error());
+        }
+    }
+    if (compact) {
+        auto options = collection_options{};
+        options.compact_below = 1.0;
+        compactor pack_compactor(store_);
+        auto compacted = co_await pack_compactor.run(options, manifest, report);
+        if (!compacted) {
+            co_return std::unexpected(compacted.error());
+        }
+    }
+    co_return result<void>{};
+}
+
 runtime::task<void> collector::redact(std::span<const digest> ids) {
+    auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(error{errc::busy, lock_error.message(), "store::redact"});
+    }
     auto manifest = co_await load_collection_manifest(store_.root_);
     if (!manifest) {
         co_return std::unexpected(manifest.error());
@@ -561,10 +673,6 @@ runtime::task<void> collector::redact(std::span<const digest> ids) {
     if (manifest->epoch == std::numeric_limits<std::uint64_t>::max()) {
         co_return std::unexpected(
             collection_error(errc::io, "collection epoch space exhausted", store_.root_ / "gc"));
-    }
-    auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
-    if (lock_error) {
-        co_return std::unexpected(error{errc::busy, lock_error.message(), "store::redact"});
     }
     auto target_objects = std::set<std::string>{};
     auto target_chunks = std::set<std::string>{};
@@ -586,70 +694,56 @@ runtime::task<void> collector::redact(std::span<const digest> ids) {
         co_return std::unexpected(
             error{errc::not_found, "redaction target is not present", "store::redact"});
     }
-    for (const auto& key : target_objects) {
-        store_.objects_.erase(key);
+    co_return co_await remove_local(std::move(*manifest),
+                                    std::move(target_objects),
+                                    std::move(target_chunks),
+                                    std::nullopt,
+                                    true,
+                                    false);
+}
+
+runtime::task<void> collector::evict(digest id) {
+    auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(error{errc::busy, lock_error.message(), "store::evict"});
     }
-    auto retained_chunks = std::set<std::string>{};
-    for (const auto& [key, object] : store_.objects_) {
-        for (const auto& chunk : object.chunks) {
-            retained_chunks.insert(to_string(chunk));
+    auto manifest = co_await load_collection_manifest(store_.root_);
+    if (!manifest) {
+        co_return std::unexpected(manifest.error());
+    }
+    if (manifest->epoch == std::numeric_limits<std::uint64_t>::max()) {
+        co_return std::unexpected(
+            collection_error(errc::io, "collection epoch space exhausted", store_.root_ / "gc"));
+    }
+    const auto key = to_string(id);
+    const auto remote = store_.remotes_.find(key);
+    if (remote == store_.remotes_.end()) {
+        co_return std::unexpected(error{errc::not_remote, "content is not registered remote", key});
+    }
+
+    auto target_objects = std::set<std::string>{};
+    auto target_chunks = std::set<std::string>{};
+    auto refresh_subjects = false;
+    for (const auto& chunk : remote->second.chunks) {
+        target_chunks.insert(to_string(chunk));
+    }
+    const auto object = store_.objects_.find(key);
+    if (object != store_.objects_.end()) {
+        target_objects.insert(key);
+        refresh_subjects = object->second.kind == "attestation";
+        for (const auto& chunk : object->second.chunks) {
+            target_chunks.insert(to_string(chunk));
         }
-        if (object.has_descriptor) {
-            retained_chunks.insert(to_string(object.descriptor));
+        if (object->second.has_descriptor) {
+            target_chunks.insert(to_string(object->second.descriptor));
         }
     }
-    ++manifest->epoch;
-    auto report = collection_report{};
-    report.epoch = manifest->epoch;
-    auto retained_index = std::vector<index_entry>{};
-    for (const auto& [pack_id, pack] : store_.packs_) {
-        auto changed = false;
-        auto total_bytes = std::uint64_t{};
-        auto live_bytes = std::uint64_t{};
-        for (std::size_t frame = 0; frame != pack.entries.size(); ++frame) {
-            const auto& entry = pack.entries[frame];
-            const auto frame_bytes = std::uint64_t{49} + entry.location.length;
-            total_bytes += frame_bytes;
-            const auto key = to_string(entry.id);
-            if (target_chunks.contains(key) && !retained_chunks.contains(key)) {
-                mark(manifest->tombstones[pack_id], frame);
-                changed = true;
-            }
-            if (!manifest->dead(pack_id, frame)) {
-                live_bytes += frame_bytes;
-                retained_index.push_back({entry.id, entry.location});
-            }
-        }
-        if (changed && total_bytes != 0) {
-            report.partially_dead_packs.push_back(
-                {pack_id, static_cast<double>(live_bytes) / static_cast<double>(total_bytes)});
-        }
-    }
-    auto objects_staged = co_await store_.stage_objects();
-    if (!objects_staged) {
-        co_return std::unexpected(objects_staged.error());
-    }
-    auto manifest_saved = co_await save_collection_manifest(store_.root_, *manifest);
-    if (!manifest_saved) {
-        co_return std::unexpected(manifest_saved.error());
-    }
-    auto objects_saved = co_await store_.publish_staged_objects();
-    if (!objects_saved) {
-        co_return std::unexpected(objects_saved.error());
-    }
-    store_.index_.set_collection_epoch(manifest->epoch);
-    auto rebuilt = co_await store_.index_.rebuild(std::move(retained_index));
-    if (!rebuilt) {
-        co_return std::unexpected(rebuilt.error());
-    }
-    auto options = collection_options{};
-    options.compact_below = 1.0;
-    compactor compact(store_);
-    auto compacted = co_await compact.run(options, *manifest, report);
-    if (!compacted) {
-        co_return std::unexpected(compacted.error());
-    }
-    co_return result<void>{};
+    co_return co_await remove_local(std::move(*manifest),
+                                    std::move(target_objects),
+                                    std::move(target_chunks),
+                                    key,
+                                    false,
+                                    refresh_subjects);
 }
 
 } // namespace liquid::store_detail

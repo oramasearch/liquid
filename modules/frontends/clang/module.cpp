@@ -3,10 +3,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "common/cbor.hpp"
 #include "common/module_support.hpp"
@@ -146,6 +149,186 @@ public:
 private:
     std::filesystem::path path_;
 };
+
+auto compiler_arguments(const cbor_value& context) -> std::vector<std::string> {
+    auto output = std::vector<std::string>{};
+    const auto* supplied = liquid_frontend::cbor_find(context, "arguments");
+    const auto* values = supplied ? std::get_if<cbor_value::array>(&supplied->data) : nullptr;
+    if (!values) {
+        return output;
+    }
+    for (const auto& value : *values) {
+        const auto* argument = std::get_if<std::string>(&value.data);
+        if (argument) {
+            output.push_back(*argument);
+        }
+    }
+    return output;
+}
+
+auto integer_field(const nlohmann::json& value, std::string_view name)
+    -> std::optional<std::size_t> {
+    const auto found = value.find(name);
+    if (found == value.end() || !found->is_number_unsigned()) {
+        return std::nullopt;
+    }
+    return found->get<std::size_t>();
+}
+
+auto node_offset(const nlohmann::json& node) -> std::optional<std::size_t> {
+    const auto location = node.find("loc");
+    if (location != node.end() && location->is_object()) {
+        if (const auto offset = integer_field(*location, "offset")) {
+            return offset;
+        }
+    }
+    const auto range = node.find("range");
+    if (range == node.end() || !range->is_object()) {
+        return std::nullopt;
+    }
+    const auto begin = range->find("begin");
+    return begin == range->end() || !begin->is_object() ? std::nullopt
+                                                        : integer_field(*begin, "offset");
+}
+
+auto node_end(const nlohmann::json& node, std::size_t start) -> std::size_t {
+    const auto range = node.find("range");
+    if (range == node.end() || !range->is_object()) {
+        return start;
+    }
+    const auto end = range->find("end");
+    if (end == range->end() || !end->is_object()) {
+        return start;
+    }
+    const auto offset = integer_field(*end, "offset");
+    const auto length = integer_field(*end, "tokLen");
+    return offset && length ? *offset + *length : start;
+}
+
+auto source_point_at(std::span<const std::uint8_t> source, std::size_t offset)
+    -> liquid_frontend::source_point {
+    offset = std::min(offset, source.size());
+    auto line = std::uint64_t{1};
+    auto column = std::uint64_t{1};
+    for (auto index = std::size_t{}; index < offset; ++index) {
+        if (source[index] == static_cast<std::uint8_t>('\n')) {
+            ++line;
+            column = 1;
+        } else {
+            ++column;
+        }
+    }
+    return liquid_frontend::source_point{offset, line, column};
+}
+
+auto definition_kind(std::string_view value) -> std::string_view {
+    if (value == "FunctionDecl" || value == "CXXMethodDecl" || value == "CXXConstructorDecl" ||
+        value == "CXXDestructorDecl") {
+        return "function";
+    }
+    if (value == "CXXRecordDecl" || value == "RecordDecl" || value == "EnumDecl" ||
+        value == "TypedefDecl" || value == "TypeAliasDecl") {
+        return "type";
+    }
+    if (value == "FieldDecl") {
+        return "field";
+    }
+    if (value == "ParmVarDecl") {
+        return "parameter";
+    }
+    if (value == "NamespaceDecl") {
+        return "namespace";
+    }
+    if (value == "VarDecl") {
+        return "variable";
+    }
+    return {};
+}
+
+auto has_body(const nlohmann::json& node) -> bool {
+    const auto inner = node.find("inner");
+    if (inner == node.end() || !inner->is_array()) {
+        return false;
+    }
+    return std::ranges::any_of(
+        *inner, [](const auto& child) { return child.value("kind", "") == "CompoundStmt"; });
+}
+
+void extract_symbols(const nlohmann::json& node,
+                     std::span<const std::uint8_t> source,
+                     std::string_view container,
+                     std::vector<liquid_frontend::syntax_symbol>& output) {
+    const auto kind = node.value("kind", "");
+    const auto offset = node_offset(node);
+    const auto name = node.value("name", "");
+    auto next_container = std::string{container};
+    const auto definition = definition_kind(kind);
+    if (offset && *offset < source.size() && !name.empty() && !definition.empty() &&
+        !node.value("isImplicit", false) &&
+        (kind != "FunctionDecl" && kind != "CXXMethodDecl" ? true : has_body(node))) {
+        auto symbol = std::string{"c++:"};
+        if (!container.empty()) {
+            symbol += std::string{container} + "::";
+        }
+        symbol += name;
+        output.push_back(
+            liquid_frontend::syntax_symbol{symbol,
+                                           name,
+                                           std::string{definition},
+                                           "definition",
+                                           source_point_at(source, *offset),
+                                           source_point_at(source, node_end(node, *offset)),
+                                           std::string{container}});
+        if (kind == "NamespaceDecl" || kind == "CXXRecordDecl" || kind == "RecordDecl" ||
+            kind == "EnumDecl" || kind == "FunctionDecl" || kind == "CXXMethodDecl") {
+            if (!next_container.empty()) {
+                next_container += "::";
+            }
+            next_container += name;
+        }
+    }
+    if (kind == "DeclRefExpr" && offset && *offset < source.size()) {
+        const auto referenced = node.find("referencedDecl");
+        const auto referenced_name =
+            referenced == node.end() ? std::string{} : referenced->value("name", "");
+        if (!referenced_name.empty()) {
+            output.push_back(
+                liquid_frontend::syntax_symbol{"c++:" + referenced_name,
+                                               referenced_name,
+                                               "unknown",
+                                               "reference",
+                                               source_point_at(source, *offset),
+                                               source_point_at(source, node_end(node, *offset)),
+                                               std::string{container}});
+        }
+    }
+    const auto inner = node.find("inner");
+    if (inner == node.end() || !inner->is_array()) {
+        return;
+    }
+    for (const auto& child : *inner) {
+        extract_symbols(child, source, next_container, output);
+    }
+}
+
+auto symbols_from_ast(std::span<const std::uint8_t> source,
+                      std::span<const std::uint8_t> action_output,
+                      std::string& failure)
+    -> std::optional<std::vector<liquid_frontend::syntax_symbol>> {
+    auto tree = nlohmann::json::parse(
+        reinterpret_cast<const char*>(action_output.data()),
+        reinterpret_cast<const char*>(action_output.data() + action_output.size()),
+        nullptr,
+        false);
+    if (tree.is_discarded()) {
+        failure = "the compiler produced invalid AST JSON";
+        return std::nullopt;
+    }
+    auto symbols = std::vector<liquid_frontend::syntax_symbol>{};
+    extract_symbols(tree, source, {}, symbols);
+    std::ranges::sort(symbols, {}, [](const auto& symbol) { return symbol.start.byte; });
+    return symbols;
+}
 
 auto units(void*,
            const char* language,
@@ -317,6 +500,93 @@ auto assemble(void*,
         liquid_frontend::cbor_encode(cbor_value{std::move(assembled)}), output);
 }
 
+auto symbols(void*,
+             const char* language,
+             liquid_frontend_bytes_v1 blob,
+             liquid_frontend_bytes_v1 context_bytes,
+             const liquid_frontend_callbacks_v1* callbacks,
+             liquid_frontend_owned_bytes_v1* output,
+             liquid_frontend_error_v1* error) -> int {
+    if (!language || std::string_view{language} != "c++" || !output ||
+        (!blob.data && blob.size != 0)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT, "clang frontend requires C++ source");
+    }
+    if (liquid_frontend::cancelled(callbacks)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_CANCELLED, "symbol extraction was cancelled");
+    }
+    const auto context = context_bytes.size == 0
+                             ? std::optional<cbor_value>{cbor_value{cbor_value::map{}}}
+                             : liquid_frontend::cbor_decode(bytes_value(context_bytes));
+    if (!context) {
+        return liquid_frontend::fail(error,
+                                     LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT,
+                                     "symbol context must be canonical CBOR");
+    }
+    const auto* compile_action = text_field(*context, "compile_action");
+    if (!compile_action || compile_action->empty()) {
+        return liquid_frontend::fail(error,
+                                     LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT,
+                                     "symbol context requires the recorded compile action");
+    }
+    auto reads = cbor_value::array{};
+    for (auto& read : quoted_includes({blob.data, blob.size})) {
+        reads.emplace_back(std::move(read));
+    }
+    if (const auto* value = liquid_frontend::cbor_find(*context, "reads")) {
+        if (const auto* supplied = std::get_if<cbor_value::array>(&value->data)) {
+            reads.insert(reads.end(), supplied->begin(), supplied->end());
+        }
+    }
+    auto flags = cbor_value::array{};
+    flags.emplace_back("-fsyntax-only");
+    flags.emplace_back("-fparse-all-comments");
+    flags.emplace_back("-Xclang");
+    flags.emplace_back("-ast-dump=json");
+    liquid_frontend::progress(callbacks, "symbols", 0, 1);
+    auto action = cbor_value::map{
+        {"v", std::uint64_t{1}},
+        {"kind", "clang-symbols"},
+        {"compile_action", *compile_action},
+        {"flags", std::move(flags)},
+        {"reads", std::move(reads)},
+        {"source", cbor_value::bytes{blob.data, blob.data + blob.size}},
+    };
+    liquid_frontend::progress(callbacks, "symbols", 1, 1);
+    return liquid_frontend::return_bytes(
+        liquid_frontend::cbor_encode(cbor_value{std::move(action)}), output);
+}
+
+auto symbols_from_output(void*,
+                         const char* language,
+                         liquid_frontend_bytes_v1 blob,
+                         liquid_frontend_bytes_v1 action_output,
+                         const liquid_frontend_callbacks_v1* callbacks,
+                         liquid_frontend_owned_bytes_v1* output,
+                         liquid_frontend_error_v1* error) -> int {
+    if (!language || std::string_view{language} != "c++" || !output ||
+        (!blob.data && blob.size != 0) || (!action_output.data && action_output.size != 0)) {
+        return liquid_frontend::fail(error,
+                                     LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT,
+                                     "clang frontend requires C++ symbol action output");
+    }
+    if (liquid_frontend::cancelled(callbacks)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_CANCELLED, "symbol decoding was cancelled");
+    }
+    auto failure = std::string{};
+    const auto found =
+        symbols_from_ast({blob.data, blob.size}, {action_output.data, action_output.size}, failure);
+    if (!found) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INTERNAL, "clang could not decode symbols: " + failure);
+    }
+    return liquid_frontend::return_bytes(
+        liquid_frontend::encode_symbols(liquid_frontend::syntax_language::cpp, "compiler", *found),
+        output);
+}
+
 constexpr const char* cpp_extensions[] = {".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx"};
 constexpr liquid_frontend_language_v1 languages[] = {{"c++", cpp_extensions, 6}};
 
@@ -330,7 +600,11 @@ const liquid_frontend_module_v1 module = {
     units,
     compile_unit,
     assemble,
+    symbols,
+    symbols_from_output,
     nullptr,
+    nullptr,
+    0,
 };
 
 } // namespace

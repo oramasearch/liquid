@@ -4,12 +4,16 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "liquid/abi.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/export.hpp"
+#include "liquid/frontend.hpp"
+#include "liquid/graph.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/remote.hpp"
@@ -18,6 +22,9 @@
 namespace liquid {
 
 class repository;
+namespace build_detail {
+struct event_access;
+}
 
 struct LIQUID_EXPORT platform {
     std::string os;
@@ -84,6 +91,21 @@ struct LIQUID_EXPORT execution_schedule {
 };
 
 enum class cache_status : std::uint8_t { miss, hit, divergent };
+
+struct LIQUID_EXPORT build_target {
+    std::string name;
+};
+
+struct LIQUID_EXPORT build_plan_action {
+    std::uint64_t v{1};
+    digest action;
+    action_input input;
+    std::vector<digest> dependencies;
+    cache_status state{cache_status::miss};
+    std::optional<result_id> result;
+};
+
+[[nodiscard]] LIQUID_EXPORT result<std::string> plan_json(const build_plan_action& action);
 
 enum class cache_miss_reason : std::uint8_t {
     input_changed,
@@ -234,8 +256,10 @@ struct LIQUID_EXPORT action_result {
     std::optional<std::chrono::sys_seconds> started_at;
     std::optional<std::chrono::sys_seconds> finished_at;
     std::optional<digest> provenance;
-    std::uint64_t record_version{3};
+    std::uint64_t record_version{4};
     std::vector<digest> sboms;
+    std::vector<digest> abis;
+    std::vector<digest> abi_compatibility;
     std::optional<execution_schedule> schedule;
 };
 
@@ -301,6 +325,105 @@ struct LIQUID_EXPORT critical_action {
     std::optional<execution_schedule> schedule;
 };
 
+enum class build_event_kind : std::uint8_t {
+    action_queued,
+    action_started,
+    action_hit,
+    action_done,
+    action_failed,
+    critical_path_updated,
+    test_result,
+    build_finished,
+};
+
+enum class action_execution_kind : std::uint8_t { local, remote };
+
+struct LIQUID_EXPORT action_execution {
+    action_execution_kind kind{action_execution_kind::local};
+    std::string worker;
+};
+
+enum class test_status : std::uint8_t { passed, failed };
+
+struct LIQUID_EXPORT test_result {
+    std::string name;
+    test_status status{test_status::passed};
+    std::string output;
+    std::chrono::milliseconds duration{};
+    bool hit{};
+};
+
+struct LIQUID_EXPORT test_target {
+    std::string name;
+    std::vector<std::string> command;
+    std::vector<std::string> labels;
+    std::vector<std::string> inputs;
+    std::string cwd;
+    digest toolchain;
+    liquid::platform platform;
+    std::optional<std::chrono::seconds> timeout;
+};
+
+struct LIQUID_EXPORT build_summary {
+    int exit{};
+    std::uint64_t actions{};
+    std::uint64_t hits{};
+    std::uint64_t failures{};
+    std::chrono::milliseconds duration{};
+};
+
+struct LIQUID_EXPORT build_event {
+    build_event_kind kind{build_event_kind::action_queued};
+    std::uint64_t sequence{};
+    std::optional<digest> action;
+    std::optional<result_id> result;
+    std::optional<action_execution> execution;
+    std::vector<action_output> outputs;
+    std::vector<frontend_diagnostic> diagnostics;
+    std::vector<critical_action> critical_path;
+    std::optional<liquid::test_result> test;
+    std::optional<build_summary> summary;
+};
+
+[[nodiscard]] LIQUID_EXPORT result<std::string> event_json(const build_event& event);
+
+class LIQUID_EXPORT build_event_subscription {
+public:
+    build_event_subscription() noexcept;
+    ~build_event_subscription();
+    build_event_subscription(build_event_subscription&&) noexcept;
+    auto operator=(build_event_subscription&&) noexcept -> build_event_subscription&;
+    build_event_subscription(const build_event_subscription&) = delete;
+    auto operator=(const build_event_subscription&) -> build_event_subscription& = delete;
+
+    [[nodiscard]] runtime::task<std::optional<build_event>> next();
+
+private:
+    struct impl;
+    explicit build_event_subscription(std::unique_ptr<impl> implementation) noexcept;
+    std::unique_ptr<impl> impl_;
+    friend class build_handle;
+};
+
+class LIQUID_EXPORT build_handle {
+public:
+    build_handle() noexcept;
+    ~build_handle();
+    build_handle(build_handle&&) noexcept;
+    auto operator=(build_handle&&) noexcept -> build_handle&;
+    build_handle(const build_handle&) = delete;
+    auto operator=(const build_handle&) -> build_handle& = delete;
+
+    [[nodiscard]] result<build_event_subscription> events() const;
+    [[nodiscard]] runtime::task<build_summary> wait();
+
+private:
+    struct impl;
+    explicit build_handle(std::unique_ptr<impl> implementation) noexcept;
+    std::unique_ptr<impl> impl_;
+    friend struct build_detail::event_access;
+};
+
 struct LIQUID_EXPORT build_trace_action {
     result_id result;
     digest action;
@@ -343,6 +466,14 @@ struct LIQUID_EXPORT wrap_report {
     std::vector<critical_action> critical_path;
     std::vector<build_trace_action> trace_actions;
     std::uint64_t probes_started{};
+    std::uint64_t graph_validation_backlog{};
+    std::optional<graph_validation_record> last_graph_divergence;
+    struct abi_break {
+        std::string output;
+        digest previous;
+        abi_report report;
+    };
+    std::vector<abi_break> abi_breaks;
 };
 
 struct LIQUID_EXPORT why_slow_report {
@@ -399,6 +530,18 @@ struct LIQUID_EXPORT verify_report {
     std::vector<verified_action> actions;
 };
 
+struct LIQUID_EXPORT graph_verify_options {
+    bool all{};
+    bool explain{};
+    std::uint32_t rate{20};
+    std::optional<std::filesystem::path> cache_directory;
+};
+
+struct LIQUID_EXPORT graph_verify_report {
+    graph_validation_report graph;
+    verify_report actions;
+};
+
 struct LIQUID_EXPORT replay_options {
     bool record{};
     std::optional<std::filesystem::path> cache_directory;
@@ -428,10 +571,19 @@ struct LIQUID_EXPORT why_report {
 
 namespace build {
 
+[[nodiscard]] LIQUID_EXPORT result<build_handle> start(repository& source, action_input input);
+[[nodiscard]] LIQUID_EXPORT result<build_handle>
+start(repository& source, action_input input, remote_executor& remote);
+[[nodiscard]] LIQUID_EXPORT result<build_handle> start_wrap(std::filesystem::path working_tree,
+                                                            std::vector<std::string> command,
+                                                            wrap_options options = {});
+
 [[nodiscard]] LIQUID_EXPORT auto choose_execution(scheduling_inputs inputs) -> execution_schedule;
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id> execute(repository& source,
                                                              action_input input);
+[[nodiscard]] LIQUID_EXPORT runtime::task<std::vector<std::byte>> execute_symbol_action(
+    repository& source, action_input compile_action, std::vector<std::byte> symbol_action);
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
 record_remote_result(repository& source, action_input input, action_result value);
 [[nodiscard]] LIQUID_EXPORT runtime::task<result_id>
@@ -458,10 +610,14 @@ generate_sbom(repository& source, std::string output_path, sbom_format format);
 [[nodiscard]] LIQUID_EXPORT runtime::task<wrap_report> wrap(std::filesystem::path working_tree,
                                                             std::vector<std::string> command,
                                                             wrap_options options = {});
+[[nodiscard]] LIQUID_EXPORT auto wrap_cache_directory(const std::filesystem::path& working_tree)
+    -> liquid::result<std::filesystem::path>;
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(repository& source,
                                                                 verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<verify_report> verify(std::filesystem::path working_tree,
                                                                 verify_options options = {});
+[[nodiscard]] LIQUID_EXPORT runtime::task<graph_verify_report>
+verify_graph(std::filesystem::path working_tree, graph_verify_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>
 replay(repository& source, digest target, replay_options options = {});
 [[nodiscard]] LIQUID_EXPORT runtime::task<replay_report>

@@ -10,3 +10,6 @@ keeps its reachable graph after repository reopen.
 checkpoint leases.
 `test_gc_sim_regression.cpp` replays seed 140: a collection or compaction crash must not remove a
 rooted object during a subsequent index reconstruction.
+
+Store fixtures allocate their named directories beneath the unique process root specified in the
+parent [`README.md`](../README.md).

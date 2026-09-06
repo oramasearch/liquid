@@ -10,11 +10,16 @@
 > Decisions that shape this page (bridge `docs/decisions.md`): §14 a clean native plugin API, §15
 > a retained GPU text layer inside Dear ImGui.
 
-**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, and per-definition
-frontend granularity in #65 are implemented, including persisted red-green validation,
+**Status:** the demand-driven query graph in #20, per-checkout daemon in #21, continuous clean
+ validation in #23, per-definition frontend granularity in #65, local search index in #22, symbol
+ records in #66, measured search planner in #67, public build/test streams in #193, and public
+ configured-build plans plus one-call repository builds in #200 are
+implemented, including persisted red-green validation,
 durability-filtered invalidation, cancellation, action-query integration, ordered cursor fan-out,
-bounded resident graph values, module loading, unit-keyed actions, and translation-unit assembly.
-The clean-rebuild scheduler, symbols, and planner remain with their listed issues.
+bounded resident graph values, module loading, unit-keyed actions, translation-unit assembly, and
+atomic per-drip search publication, current mapped scanning, cost explanations, and stale-index
+exclusion. Symbol records are implemented by #66. The clean-rebuild scheduler remains with its
+listed issue.
 
 Phases 2 and 3 built actions: pure functions from an input tree, a command and an environment to
 outputs, cached by digest, observed by the mount, verified by re-execution, served locally and
@@ -34,6 +39,48 @@ arguments. An **action** is the coarse end of the same spectrum: its inputs are 
 command, its value is a result record. The engine does not distinguish them: `execute` from Phase 2
 becomes the `action_result` query, `wrap`'s per-tool actions become nodes, and every derived thing
 liquify asks for (a parse, a stub, a symbol table, a diagnostic list, a completion) is a query too.
+
+## Tests are actions (#193)
+
+`repository::tests()` returns the test targets known by the repository, sorted by name. A
+`test_target` contains its name, command, labels, observed input paths, working directory,
+toolchain, platform, and optional timeout. `repository::register_test(test_target)` is the native
+definition hook: it validates and persists the target without coupling the public API to CMake.
+
+During a successful observed CMake build, `wrap` reads generated `CTestTestfile.cmake` files. It
+records each `add_test` command and its `LABELS`; an executable produced inside the working tree is
+copied into the wrap repository and pinned by the wrap toolchain digest. Target records live under
+the wrapper repository's `.liquid-build/tests/` projection. They are rebuildable metadata rather
+than a new object-store record kind.
+
+`repository::run_tests(filter)` returns the same `build_handle` used by builds. An empty filter
+selects every target. Otherwise a target is selected when its name or one label contains the
+filter. Each selected test is passed through `build::execute`, so the action cache validates the
+paths the test actually read. An unchanged manifest produces `action_hit` and reuses stdout,
+stderr, exit status, and duration; a changed observed input produces an ordinary miss and new
+result. After each terminal action event, the stream publishes:
+
+```text
+test_result { name, status: passed | failed, output, duration, hit }
+```
+
+`output` is combined stdout and stderr. A nonzero test exit produces both `action_failed` with a
+frontend-shaped diagnostic and a failed test result, then the build continues with the remaining
+selected tests. `build_finished.exit` is zero only when all selected tests pass. The stored target's
+input list is refreshed from the latest observed manifest, so `tests()` reports the dependencies
+the cache will validate.
+
+The daemon carries build handles through `build_start` and `build_next` operations on its existing
+version-1 framed CBOR connection. Each server session owns its repository, handle, and subscription
+until `build_finished`; an attached in-process consumer receives decoded public `build_event`
+values rather than protocol types. This is the interface liquify uses for inline build and test
+results.
+
+Issue #200 adds `build_plan` and `build_repository` beside that direct-action path. The first
+returns complete configured action inputs, producer dependencies, and validated hit state. The
+second selects the same plan by optional output target and forwards every action through the
+existing `build_next` cursor. A client opening a configured repository therefore does not need to
+reconstruct commands, roots, toolchains, or platform values.
 
 Every query value carries a **fingerprint**: the digest of its canonical encoding. Every query
 records the queries and inputs it read while computing (the observed-dependency principle from the
@@ -167,13 +214,32 @@ definitions that recorded it.
 
 ## Symbols and the search planner (#66, #67, #22)
 
-Compiler-derived symbols are a byproduct of building: the frontend module emits a SCIP-equivalent
-symbol record per translation unit as an action output, content-addressed like everything else,
-with tree-sitter's syntactic symbols as the fallback. The local search index (#22) is oramacore-cpp
-BM25F and lake's trigram index run in the daemon, updated per drip from the fan-out, indexed by
-blob once. The **planner** (#67) chooses per query among BM25F, the trigram index and a brute-force
-scan over blobs by cost (index availability, term selectivity, corpus size), and explains its
-choice the way `liquid why` explains a cache miss.
+Compiler-derived symbols are produced by a query over a recorded compile action: the derived action
+uses the compile's input and toolchain trees and replaces its object-output arguments with AST
+extraction arguments. It emits one SCIP-equivalent, content-addressed symbol record per
+translation unit, with tree-sitter's syntactic symbols as the fallback. The `symbols` query
+returns the canonical record for its source blob; [`symbols.md`](symbols.md) fixes its public
+shape. Compile and relink do not demand the symbols query, so extraction remains off the edit
+path. The local search index (#22) uses
+oramacore-cpp BM25F and a positional-trigram format, runs in the daemon, updates per drip from
+the fan-out, and indexes each blob once. Immutable segments and an atomically replaced manifest
+make every change visible as a unit. The implementation, layout, and query interface are in
+[`search.md`](search.md). The implemented **planner** (#67) chooses per query among BM25F, the
+trigram index, and a current mapped blob scan from measured size, freshness, selectivity, and
+machine calibration inputs. Its public plan and stable CLI JSON report estimates, actual execution
+cost, and every rejected alternative.
+
+**Measurement.** On the Apple M3 Max macOS host on 2026-09-04, at
+`sysctl -n vm.loadavg` = `{ 110.96 68.28 57.47 }`, the Clang frontend extracted 41 occurrences
+from liquid's `src/store/faults.cpp` in one translation unit:
+
+```text
+symbol extraction: file=src/store/faults.cpp units=1 occurrences=41 elapsed_ms=14039 per_unit_ms=14039
+frontend one-function edit: symbols=disabled elapsed_ms=766 symbols=enabled elapsed_ms=713 delta_ms=-53
+```
+
+The edit measurements were taken in the same session; the symbol demand followed the edit. The
+small delta confirms that compile and relink do not demand extraction.
 
 ## liquify on the graph
 
@@ -210,7 +276,7 @@ in-process:
    fallback), #66 (symbols), #22 (local index on drip), #23 (validation on the reference projects);
    liquify #5 (interactive analysis)
    and #1 (the editor on the graph).
-3. liquid #67 (the planner); liquify #6 (inline build, test, deploy).
+3. liquid #67 (**implemented:** the planner); liquify #6 (inline build, test, deploy).
 
 ## How to verify
 
@@ -222,8 +288,13 @@ while a one-line semantic edit executes one compile and the link and changes the
 `FrontendModule` and `FrontendGraph` prove dynamic and static registration, C fallback units, exact
 definition actions, one action plus assembly after a body edit, and every recorded reader plus
 assembly after a header edit. `liquid-frontend-measure` records the own-tree edit result in
-[`frontends.md`](frontends.md). Remaining phase exit measurements belong to the issues that add the
-daemon and editor diagnostics.
+[`frontends.md`](frontends.md).
+Issue #22's measurement over liquid's checkout indexed 3,812 paths and 3,672 unique blobs
+(46,572,788 content bytes) in 22,629 ms. Ten representative queries averaged 488,424 us. With #67's
+active catalog lookup and verified candidates, the same host measured 207,101 us over 3,820 paths
+and 3,680 unique blobs. The reproduction command, load average, query mix, and scan/index crossover
+curve are documented in [`search.md`](search.md). Remaining phase exit
+measurements belong to the issues that add editor diagnostics.
 
 ## How to change
 

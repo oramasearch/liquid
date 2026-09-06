@@ -21,6 +21,9 @@
 #include "build/repository_access.hpp"
 #include "build/sbom.hpp"
 #include "build/wrap.hpp"
+#include "formats/binary/elf.hpp"
+#include "formats/binary/macho.hpp"
+#include "formats/binary/pe.hpp"
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
 #include "objects/records.hpp"
@@ -767,228 +770,6 @@ auto render_attached(const sbom_model& model,
     return render_document(model, format, std::move(*attachment));
 }
 
-auto read_u16(std::span<const std::byte> bytes, std::size_t offset, bool little)
-    -> std::optional<std::uint16_t> {
-    if (offset + 2 > bytes.size()) {
-        return std::nullopt;
-    }
-    const auto a = std::to_integer<std::uint16_t>(bytes[offset]);
-    const auto b = std::to_integer<std::uint16_t>(bytes[offset + 1]);
-    return little ? static_cast<std::uint16_t>(a | (b << 8U))
-                  : static_cast<std::uint16_t>((a << 8U) | b);
-}
-
-auto read_u32(std::span<const std::byte> bytes, std::size_t offset, bool little)
-    -> std::optional<std::uint32_t> {
-    if (offset + 4 > bytes.size()) {
-        return std::nullopt;
-    }
-    auto output = std::uint32_t{};
-    for (auto index = 0U; index < 4; ++index) {
-        const auto source = little ? index : 3U - index;
-        output |= std::to_integer<std::uint32_t>(bytes[offset + source]) << (index * 8U);
-    }
-    return output;
-}
-
-auto read_u64(std::span<const std::byte> bytes, std::size_t offset, bool little)
-    -> std::optional<std::uint64_t> {
-    if (offset + 8 > bytes.size()) {
-        return std::nullopt;
-    }
-    auto output = std::uint64_t{};
-    for (auto index = 0U; index < 8; ++index) {
-        const auto source = little ? index : 7U - index;
-        output |= std::to_integer<std::uint64_t>(bytes[offset + source]) << (index * 8U);
-    }
-    return output;
-}
-
-auto fixed_string(std::span<const std::byte> bytes, std::size_t offset, std::size_t size)
-    -> std::string {
-    if (offset >= bytes.size()) {
-        return {};
-    }
-    size = std::min(size, bytes.size() - offset);
-    auto output = std::string{};
-    for (auto index = std::size_t{}; index < size; ++index) {
-        const auto value = std::to_integer<unsigned char>(bytes[offset + index]);
-        if (value == 0) {
-            break;
-        }
-        if (value < 0x20 || value > 0x7e) {
-            return {};
-        }
-        output.push_back(static_cast<char>(value));
-    }
-    return output;
-}
-
-auto printable_strings(std::span<const std::byte> bytes) -> std::vector<std::string> {
-    auto output = std::vector<std::string>{};
-    auto current = std::string{};
-    for (const auto byte : bytes) {
-        const auto value = std::to_integer<unsigned char>(byte);
-        if (value >= 0x20 && value <= 0x7e) {
-            if (current.size() < 512) {
-                current.push_back(static_cast<char>(value));
-            }
-            continue;
-        }
-        if (current.size() >= 4 && output.size() < 20'000) {
-            output.push_back(std::move(current));
-        }
-        current.clear();
-    }
-    if (current.size() >= 4 && output.size() < 20'000) {
-        output.push_back(std::move(current));
-    }
-    return output;
-}
-
-void inspect_elf(std::span<const std::byte> bytes,
-                 std::vector<std::string>& sections,
-                 std::vector<std::string>& symbols) {
-    if (bytes.size() < 64 || std::to_integer<unsigned char>(bytes[4]) < 1 ||
-        std::to_integer<unsigned char>(bytes[4]) > 2) {
-        return;
-    }
-    const auto is64 = std::to_integer<unsigned char>(bytes[4]) == 2;
-    const auto little = std::to_integer<unsigned char>(bytes[5]) == 1;
-    const auto section_offset = is64 ? read_u64(bytes, 40, little)
-                                     : std::optional<std::uint64_t>{read_u32(bytes, 32, little)};
-    const auto entry_size = read_u16(bytes, is64 ? 58 : 46, little);
-    const auto count = read_u16(bytes, is64 ? 60 : 48, little);
-    const auto string_index = read_u16(bytes, is64 ? 62 : 50, little);
-    if (!section_offset || !entry_size || !count || !string_index || *string_index >= *count) {
-        return;
-    }
-    const auto header = *section_offset + static_cast<std::uint64_t>(*entry_size) * *string_index;
-    const auto names_offset =
-        is64 ? read_u64(bytes, header + 24, little)
-             : std::optional<std::uint64_t>{read_u32(bytes, header + 16, little)};
-    const auto names_size =
-        is64 ? read_u64(bytes, header + 32, little)
-             : std::optional<std::uint64_t>{read_u32(bytes, header + 20, little)};
-    if (!names_offset || !names_size || *names_offset + *names_size > bytes.size()) {
-        return;
-    }
-    for (auto index = std::uint16_t{}; index < *count; ++index) {
-        const auto at = *section_offset + static_cast<std::uint64_t>(*entry_size) * index;
-        const auto name = read_u32(bytes, at, little);
-        if (!name || *name >= *names_size) {
-            continue;
-        }
-        const auto value = fixed_string(bytes, *names_offset + *name, 96);
-        if (!value.empty()) {
-            sections.push_back(value);
-        }
-    }
-    const auto strings = printable_strings(bytes);
-    for (const auto& value : strings) {
-        if ((value.starts_with("_") || value.find("::") != std::string::npos ||
-             value.starts_with("GLIBC")) &&
-            symbols.size() < 256) {
-            symbols.push_back(value);
-        }
-    }
-}
-
-void inspect_macho(std::span<const std::byte> bytes,
-                   std::vector<std::string>& sections,
-                   std::vector<std::string>& symbols) {
-    const auto magic = read_u32(bytes, 0, true);
-    if (!magic) {
-        return;
-    }
-    const auto is64 = *magic == 0xfeedfacfU || *magic == 0xcffaedfeU;
-    const auto little = *magic == 0xfeedfaceU || *magic == 0xfeedfacfU;
-    const auto commands = read_u32(bytes, 16, little);
-    auto offset = static_cast<std::size_t>(is64 ? 32 : 28);
-    if (!commands) {
-        return;
-    }
-    for (auto index = std::uint32_t{}; index < *commands && offset + 8 <= bytes.size(); ++index) {
-        const auto command = read_u32(bytes, offset, little);
-        const auto size = read_u32(bytes, offset + 4, little);
-        if (!command || !size || *size < 8 || offset + *size > bytes.size()) {
-            return;
-        }
-        if (*command == (is64 ? 0x19U : 0x1U)) {
-            const auto count = read_u32(bytes, offset + (is64 ? 64 : 48), little).value_or(0);
-            auto section = offset + (is64 ? 72 : 56);
-            const auto stride = static_cast<std::size_t>(is64 ? 80 : 68);
-            for (auto item = std::uint32_t{}; item < count && section + stride <= offset + *size;
-                 ++item) {
-                const auto name = fixed_string(bytes, section, 16);
-                if (!name.empty()) {
-                    sections.push_back(name);
-                }
-                section += stride;
-            }
-        }
-        if (*command == 0x2U) {
-            const auto symbol_offset = read_u32(bytes, offset + 8, little).value_or(0);
-            const auto symbol_count = read_u32(bytes, offset + 12, little).value_or(0);
-            const auto string_offset = read_u32(bytes, offset + 16, little).value_or(0);
-            const auto string_size = read_u32(bytes, offset + 20, little).value_or(0);
-            const auto stride = static_cast<std::size_t>(is64 ? 16 : 12);
-            for (auto item = std::uint32_t{};
-                 item < symbol_count && symbols.size() < 256 &&
-                 symbol_offset + (static_cast<std::uint64_t>(item) + 1) * stride <= bytes.size();
-                 ++item) {
-                const auto name =
-                    read_u32(bytes, symbol_offset + item * stride, little).value_or(0);
-                if (name < string_size) {
-                    const auto value = fixed_string(bytes, string_offset + name, 160);
-                    if (!value.empty()) {
-                        symbols.push_back(value);
-                    }
-                }
-            }
-        }
-        offset += *size;
-    }
-}
-
-void inspect_pe(std::span<const std::byte> bytes,
-                std::vector<std::string>& sections,
-                std::vector<std::string>& symbols) {
-    const auto pe_offset = read_u32(bytes, 0x3c, true);
-    if (!pe_offset || *pe_offset + 24 > bytes.size() ||
-        fixed_string(bytes, *pe_offset, 4) != "PE") {
-        return;
-    }
-    const auto count = read_u16(bytes, *pe_offset + 6, true).value_or(0);
-    const auto symbol_offset = read_u32(bytes, *pe_offset + 12, true).value_or(0);
-    const auto symbol_count = read_u32(bytes, *pe_offset + 16, true).value_or(0);
-    const auto optional_size = read_u16(bytes, *pe_offset + 20, true).value_or(0);
-    auto section = static_cast<std::size_t>(*pe_offset + 24 + optional_size);
-    for (auto index = std::uint16_t{}; index < count && section + 40 <= bytes.size(); ++index) {
-        const auto name = fixed_string(bytes, section, 8);
-        if (!name.empty()) {
-            sections.push_back(name);
-        }
-        section += 40;
-    }
-    const auto string_table = symbol_offset + static_cast<std::uint64_t>(symbol_count) * 18U;
-    for (auto index = std::uint32_t{};
-         index < symbol_count && symbols.size() < 256 &&
-         symbol_offset + (static_cast<std::uint64_t>(index) + 1) * 18U <= bytes.size();
-         ++index) {
-        const auto at = symbol_offset + static_cast<std::uint64_t>(index) * 18U;
-        auto name = fixed_string(bytes, at, 8);
-        if (read_u32(bytes, at, true).value_or(1) == 0) {
-            const auto string_offset = read_u32(bytes, at + 4, true).value_or(0);
-            name = fixed_string(bytes, string_table + string_offset, 160);
-        }
-        if (!name.empty()) {
-            symbols.push_back(std::move(name));
-        }
-        index += std::to_integer<unsigned char>(bytes[at + 17]);
-    }
-}
-
 auto known_version(std::span<const std::string> strings, std::string_view needle)
     -> std::optional<std::string> {
     for (const auto& value : strings) {
@@ -1013,6 +794,38 @@ auto known_version(std::span<const std::string> strings, std::string_view needle
     return std::nullopt;
 }
 
+auto printable_strings(std::span<const std::byte> bytes) -> std::vector<std::string> {
+    auto output = std::vector<std::string>{};
+    auto current = std::string{};
+    for (const auto byte : bytes) {
+        const auto value = std::to_integer<unsigned char>(byte);
+        if (value >= 0x20 && value <= 0x7e) {
+            if (current.size() < 512) {
+                current.push_back(static_cast<char>(value));
+            }
+            continue;
+        }
+        if (current.size() >= 4 && output.size() < 20'000) {
+            output.push_back(std::move(current));
+        }
+        current.clear();
+    }
+    if (current.size() >= 4 && output.size() < 20'000) {
+        output.push_back(std::move(current));
+    }
+    return output;
+}
+
+auto little_u32(std::span<const std::byte> bytes) -> std::uint32_t {
+    if (bytes.size() < 4) {
+        return 0;
+    }
+    return std::to_integer<std::uint32_t>(bytes[0]) |
+           (std::to_integer<std::uint32_t>(bytes[1]) << 8U) |
+           (std::to_integer<std::uint32_t>(bytes[2]) << 16U) |
+           (std::to_integer<std::uint32_t>(bytes[3]) << 24U);
+}
+
 auto analyse_binary(const std::filesystem::path& artifact) -> result<sbom_model> {
     auto input = std::ifstream{artifact, std::ios::binary | std::ios::ate};
     if (!input) {
@@ -1035,19 +848,26 @@ auto analyse_binary(const std::filesystem::path& artifact) -> result<sbom_model>
     auto format = std::string{"unknown"};
     auto sections = std::vector<std::string>{};
     auto symbols = std::vector<std::string>{};
+    auto inspected = result<formats::binary::image>{std::unexpected(
+        error{errc::unsupported, "foreign artifact format is unknown", artifact.string()})};
     if (bytes.size() >= 4 && bytes[0] == std::byte{0x7f} && bytes[1] == std::byte{'E'} &&
         bytes[2] == std::byte{'L'} && bytes[3] == std::byte{'F'}) {
         format = "ELF";
-        inspect_elf(bytes, sections, symbols);
-    } else if (bytes.size() >= 4 && (read_u32(bytes, 0, true) == 0xfeedfaceU ||
-                                     read_u32(bytes, 0, true) == 0xfeedfacfU ||
-                                     read_u32(bytes, 0, true) == 0xcefaedfeU ||
-                                     read_u32(bytes, 0, true) == 0xcffaedfeU)) {
+        inspected = formats::binary::inspect_elf(bytes);
+    } else if (bytes.size() >= 4 &&
+               (little_u32(bytes) == 0xfeedfaceU || little_u32(bytes) == 0xfeedfacfU ||
+                little_u32(bytes) == 0xcefaedfeU || little_u32(bytes) == 0xcffaedfeU)) {
         format = "Mach-O";
-        inspect_macho(bytes, sections, symbols);
+        inspected = formats::binary::inspect_macho(bytes);
     } else if (bytes.size() >= 2 && bytes[0] == std::byte{'M'} && bytes[1] == std::byte{'Z'}) {
         format = "PE";
-        inspect_pe(bytes, sections, symbols);
+        inspected = formats::binary::inspect_pe(bytes);
+    }
+    if (inspected) {
+        for (const auto& section : inspected->sections) {
+            sections.push_back(section.name);
+        }
+        symbols = inspected->symbol_names;
     }
     auto code = std::error_code{};
     const auto modified = std::filesystem::last_write_time(artifact, code);

@@ -4,6 +4,7 @@
 #include <array>
 #include <charconv>
 #include <filesystem>
+#include <format>
 #include <limits>
 #include <map>
 #include <memory>
@@ -23,10 +24,16 @@
 #include "http2/connection.hpp"
 #include "http2/grpc.hpp"
 #include "liquid/store.hpp"
+#include "liquid/workers.hpp"
+#include "objects/records.hpp"
 #include "reapi/conversion.hpp"
 #include "reapi/messages.hpp"
 #include "repository/store_access.hpp"
+#include "sandbox/environment.hpp"
 #include "store/pack.hpp"
+#include "workers/control.hpp"
+#include "workers/protocol.hpp"
+#include "workers/scheduler.hpp"
 
 namespace liquid {
 namespace {
@@ -48,20 +55,26 @@ constexpr auto update_action_result_method =
 constexpr auto read_method = "/google.bytestream.ByteStream/Read";
 constexpr auto write_method = "/google.bytestream.ByteStream/Write";
 constexpr auto query_write_method = "/google.bytestream.ByteStream/QueryWriteStatus";
+constexpr auto execute_method = "/build.bazel.remote.execution.v2.Execution/Execute";
+constexpr auto wait_method = "/build.bazel.remote.execution.v2.Execution/WaitExecution";
+constexpr auto cancel_method = "/google.longrunning.Operations/CancelOperation";
 
 struct resource_digest {
     reapi::Digest wire;
-    digest native;
 };
 
 struct server_state {
-    server_state(store objects, std::filesystem::path action_cache, std::string instance)
+    server_state(store objects,
+                 std::filesystem::path action_cache,
+                 std::string instance,
+                 std::shared_ptr<workers::scheduler> executions = {})
         : objects(std::move(objects)), action_cache(std::move(action_cache)),
-          instance(std::move(instance)) {}
+          instance(std::move(instance)), executions(std::move(executions)) {}
 
     store objects;
     std::filesystem::path action_cache;
     std::string instance;
+    std::shared_ptr<workers::scheduler> executions;
     std::mutex mutex;
     std::map<std::string, std::vector<std::byte>> partial_writes;
 };
@@ -152,6 +165,16 @@ send_message(http2::connection& connection, std::uint32_t stream, const Message&
     co_return co_await send_status(connection, stream, 0, {}, std::move(*encoded));
 }
 
+template <typename Message>
+runtime::task<void>
+send_worker_message(http2::connection& connection, std::uint32_t stream, const Message& response) {
+    auto encoded = workers::encode(response);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return co_await send_status(connection, stream, 0, {}, std::move(*encoded));
+}
+
 runtime::task<void>
 send_failure(http2::connection& connection, std::uint32_t stream, const error& value) {
     co_return co_await send_status(
@@ -194,11 +217,274 @@ auto resource(std::string_view name) -> result<resource_digest> {
             server_error(errc::invalid_argument, "invalid ByteStream size", std::string{name}));
     }
     auto wire = reapi::Digest{.hash = std::string{hash}, .size_bytes = size};
-    auto native = native_digest(wire, algorithm::sha256);
-    if (!native) {
-        return std::unexpected(native.error());
+    return resource_digest{std::move(wire)};
+}
+
+auto resource_id(const resource_digest& value, algorithm hash_algorithm) -> result<digest> {
+    return native_digest(value.wire, hash_algorithm);
+}
+
+runtime::task<std::pair<digest, std::vector<std::byte>>>
+read_resource(server_state& state, const resource_digest& requested) {
+    const auto algorithms = state.executions ? std::array{algorithm::blake3, algorithm::sha256}
+                                             : std::array{algorithm::sha256, algorithm::sha256};
+    auto last = server_error(errc::not_found, "ByteStream resource is unavailable");
+    for (const auto hash_algorithm : algorithms) {
+        auto id = resource_id(requested, hash_algorithm);
+        if (!id) {
+            last = id.error();
+            continue;
+        }
+        auto contents = co_await state.objects.get(*id);
+        if (contents) {
+            co_return std::pair{*id, std::move(*contents)};
+        }
+        last = contents.error();
     }
-    return resource_digest{std::move(wire), *native};
+    co_return std::unexpected(last);
+}
+
+auto written_algorithm(const resource_digest& requested,
+                       std::span<const std::byte> contents,
+                       bool scheduler) -> result<algorithm> {
+    const auto algorithms = scheduler ? std::array{algorithm::blake3, algorithm::sha256}
+                                      : std::array{algorithm::sha256, algorithm::sha256};
+    for (const auto hash_algorithm : algorithms) {
+        auto actual = reapi::make_digest(hash_algorithm, contents);
+        if (actual && actual->hash == requested.wire.hash &&
+            actual->size_bytes == requested.wire.size_bytes) {
+            return hash_algorithm;
+        }
+    }
+    return std::unexpected(
+        server_error(errc::invalid_argument, "written blob digest does not match"));
+}
+
+auto host_platform() -> platform {
+#if defined(__linux__)
+    constexpr auto os = "linux";
+#elif defined(__APPLE__)
+    constexpr auto os = "macos";
+#elif defined(_WIN32)
+    constexpr auto os = "windows";
+#else
+    constexpr auto os = "unknown";
+#endif
+#if defined(__x86_64__) || defined(_M_X64)
+    constexpr auto arch = "x86_64";
+#elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
+    constexpr auto arch = "arm64";
+#else
+    constexpr auto arch = "unknown";
+#endif
+    return {os, arch};
+}
+
+auto platform_property(const reapi::Platform& source, std::string_view name)
+    -> std::optional<std::string> {
+    const auto found = std::ranges::find(source.properties, name, &reapi::PlatformProperty::name);
+    return found == source.properties.end() ? std::nullopt
+                                            : std::optional<std::string>{found->value};
+}
+
+auto safe_node_name(std::string_view name) -> bool {
+    return !name.empty() && name != "." && name != ".." && !name.contains('/') &&
+           !name.contains('\\');
+}
+
+runtime::task<digest>
+store_blob_record(server_state& state, std::vector<std::byte> contents, algorithm hash_algorithm) {
+    const auto size = contents.size();
+    auto content = co_await repository_detail::store_access::put_plain(
+        state.objects, std::move(contents), hash_algorithm);
+    if (!content) {
+        co_return std::unexpected(content.error());
+    }
+    auto record =
+        blob{.chunks = {*content}, .size = size, .chunk_sizes = {size}, .content = *content};
+    auto encoded = objects::encode(record);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return co_await repository_detail::store_access::put_plain(
+        state.objects, std::move(*encoded), hash_algorithm);
+}
+
+runtime::task<digest> import_directory(server_state& state,
+                                       const reapi::Digest& requested,
+                                       algorithm hash_algorithm,
+                                       std::map<std::string, digest>& cache,
+                                       std::set<std::string>& active) {
+    const auto key = requested.hash + "/" + std::to_string(requested.size_bytes);
+    if (const auto found = cache.find(key); found != cache.end()) {
+        co_return found->second;
+    }
+    if (!active.insert(key).second) {
+        co_return std::unexpected(
+            server_error(errc::corrupt, "REAPI input directory contains a cycle", key));
+    }
+    auto directory_id = native_digest(requested, hash_algorithm);
+    auto directory_bytes =
+        directory_id ? co_await state.objects.get(*directory_id)
+                     : result<std::vector<std::byte>>{std::unexpected(directory_id.error())};
+    auto directory = directory_bytes
+                         ? reapi::decode_message<reapi::Directory>(*directory_bytes)
+                         : result<reapi::Directory>{std::unexpected(directory_bytes.error())};
+    if (!directory) {
+        active.erase(key);
+        co_return std::unexpected(directory.error());
+    }
+    auto value = tree{};
+    for (const auto& file : directory->files) {
+        if (!safe_node_name(file.name) || !file.digest) {
+            active.erase(key);
+            co_return std::unexpected(
+                server_error(errc::corrupt, "REAPI input file is invalid", file.name));
+        }
+        auto content_id = native_digest(*file.digest, hash_algorithm);
+        auto contents = content_id
+                            ? co_await state.objects.get(*content_id)
+                            : result<std::vector<std::byte>>{std::unexpected(content_id.error())};
+        if (!contents || contents->size() != static_cast<std::size_t>(file.digest->size_bytes)) {
+            active.erase(key);
+            co_return std::unexpected(
+                contents ? server_error(errc::corrupt, "REAPI input file size changed", file.name)
+                         : contents.error());
+        }
+        auto record = co_await store_blob_record(state, std::move(*contents), hash_algorithm);
+        if (!record) {
+            active.erase(key);
+            co_return std::unexpected(record.error());
+        }
+        value.entries.push_back({.name = file.name,
+                                 .mode = file.is_executable ? 0100755U : 0100644U,
+                                 .kind = node_kind::blob,
+                                 .id = *record,
+                                 .ref = *record});
+    }
+    for (const auto& child : directory->directories) {
+        if (!safe_node_name(child.name) || !child.digest) {
+            active.erase(key);
+            co_return std::unexpected(
+                server_error(errc::corrupt, "REAPI input directory is invalid", child.name));
+        }
+        auto nested =
+            co_await import_directory(state, *child.digest, hash_algorithm, cache, active);
+        if (!nested) {
+            active.erase(key);
+            co_return std::unexpected(nested.error());
+        }
+        value.entries.push_back({.name = child.name,
+                                 .mode = 0040755U,
+                                 .kind = node_kind::tree,
+                                 .id = *nested,
+                                 .ref = *nested});
+    }
+    for (const auto& link : directory->symlinks) {
+        if (!safe_node_name(link.name) || link.target.starts_with('/')) {
+            active.erase(key);
+            co_return std::unexpected(
+                server_error(errc::corrupt, "REAPI input symlink is invalid", link.name));
+        }
+        auto contents = std::vector<std::byte>{
+            reinterpret_cast<const std::byte*>(link.target.data()),
+            reinterpret_cast<const std::byte*>(link.target.data() + link.target.size())};
+        auto record = co_await store_blob_record(state, std::move(contents), hash_algorithm);
+        if (!record) {
+            active.erase(key);
+            co_return std::unexpected(record.error());
+        }
+        value.entries.push_back({.name = link.name,
+                                 .mode = 0120777U,
+                                 .kind = node_kind::blob,
+                                 .id = *record,
+                                 .ref = *record});
+    }
+    auto encoded = objects::encode(value);
+    auto stored = encoded ? co_await repository_detail::store_access::put_plain(
+                                state.objects, std::move(*encoded), hash_algorithm)
+                          : result<digest>{std::unexpected(encoded.error())};
+    active.erase(key);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    cache.insert_or_assign(key, *stored);
+    co_return *stored;
+}
+
+runtime::task<reapi::DecodedAction> import_standard_action(server_state& state,
+                                                           const reapi::Action& action,
+                                                           const reapi::Command& command,
+                                                           algorithm hash_algorithm) {
+    if (!action.command_digest || !action.input_root_digest) {
+        co_return std::unexpected(server_error(errc::corrupt, "REAPI Action is missing a digest"));
+    }
+    auto command_bytes = reapi::encode(command);
+    auto actual_command = command_bytes
+                              ? reapi::make_digest(hash_algorithm, *command_bytes)
+                              : result<reapi::Digest>{std::unexpected(command_bytes.error())};
+    if (!actual_command || actual_command->hash != action.command_digest->hash ||
+        actual_command->size_bytes != action.command_digest->size_bytes) {
+        co_return std::unexpected(
+            actual_command ? server_error(errc::corrupt, "REAPI Command digest does not match")
+                           : actual_command.error());
+    }
+    auto cache = std::map<std::string, digest>{};
+    auto active = std::set<std::string>{};
+    auto inputs =
+        co_await import_directory(state, *action.input_root_digest, hash_algorithm, cache, active);
+    if (!inputs) {
+        co_return std::unexpected(inputs.error());
+    }
+    auto target = host_platform();
+    const auto* properties = action.platform    ? &*action.platform
+                             : command.platform ? &*command.platform
+                                                : nullptr;
+    if (properties) {
+        target.os = platform_property(*properties, "OSFamily").value_or(target.os);
+        target.arch = platform_property(*properties, "ISA").value_or(target.arch);
+    }
+    auto sandbox = sandbox_detail::definition(target);
+    auto sandbox_bytes = sandbox ? objects::encode(*sandbox)
+                                 : result<std::vector<std::byte>>{std::unexpected(sandbox.error())};
+    auto sandbox_id = sandbox_bytes ? co_await repository_detail::store_access::put_plain(
+                                          state.objects, std::move(*sandbox_bytes), hash_algorithm)
+                                    : result<digest>{std::unexpected(sandbox_bytes.error())};
+    if (!sandbox_id) {
+        co_return std::unexpected(sandbox_id.error());
+    }
+    auto environment = std::map<std::string, std::string>{};
+    constexpr auto fixed = std::array{"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"};
+    for (const auto& item : command.environment_variables) {
+        if (!std::ranges::contains(fixed, item.name)) {
+            environment.insert_or_assign(item.name, item.value);
+        }
+    }
+    auto outputs = command.output_paths;
+    if (outputs.empty()) {
+        outputs = command.output_files;
+        outputs.insert(
+            outputs.end(), command.output_directories.begin(), command.output_directories.end());
+    }
+    auto timeout = std::optional<std::chrono::seconds>{};
+    if (action.timeout) {
+        if (action.timeout->seconds < 0 || action.timeout->nanos != 0) {
+            co_return std::unexpected(server_error(
+                errc::corrupt, "REAPI Action timeout is not a whole non-negative second"));
+        }
+        timeout = std::chrono::seconds{action.timeout->seconds};
+    }
+    co_return reapi::DecodedAction{.input = {.command = command.arguments,
+                                             .cwd = command.working_directory,
+                                             .env = std::move(environment),
+                                             .outputs = std::move(outputs),
+                                             .inputs = *inputs,
+                                             .toolchain = *inputs,
+                                             .platform = std::move(target),
+                                             .timeout = timeout,
+                                             .remote_eligible = true},
+                                   .sandbox = *sandbox_id,
+                                   .input_root_digest = *action.input_root_digest};
 }
 
 auto validate_instance(std::string_view configured, std::string_view requested) -> result<void> {
@@ -225,18 +511,25 @@ runtime::task<void> handle_capabilities(http2::connection& connection,
     if (!valid) {
         co_return co_await send_failure(connection, stream, valid.error());
     }
+    const auto scheduler = state.executions != nullptr;
     auto response = reapi::ServerCapabilities{
         .cache_capabilities =
             reapi::CacheCapabilities{
-                .digest_functions = {reapi::DigestFunctionValue::sha256},
+                .digest_functions = scheduler ? std::vector{reapi::DigestFunctionValue::blake3,
+                                                            reapi::DigestFunctionValue::sha256}
+                                              : std::vector{reapi::DigestFunctionValue::sha256},
                 .action_cache_update_capabilities = reapi::ActionCacheUpdateCapabilities{true},
                 .max_batch_total_size_bytes = 4U * 1024U * 1024U,
                 .symlink_absolute_path_strategy = reapi::SymlinkAbsolutePathStrategy::disallowed,
                 .max_cas_blob_size_bytes = std::numeric_limits<std::int64_t>::max()},
         .execution_capabilities =
-            reapi::ExecutionCapabilities{.digest_function = reapi::DigestFunctionValue::sha256,
-                                         .exec_enabled = false,
-                                         .digest_functions = {reapi::DigestFunctionValue::sha256}},
+            reapi::ExecutionCapabilities{
+                .digest_function = scheduler ? reapi::DigestFunctionValue::blake3
+                                             : reapi::DigestFunctionValue::sha256,
+                .exec_enabled = scheduler,
+                .digest_functions = scheduler ? std::vector{reapi::DigestFunctionValue::blake3,
+                                                            reapi::DigestFunctionValue::sha256}
+                                              : std::vector{reapi::DigestFunctionValue::sha256}},
         .low_api_version = reapi::SemVer{.major = 2},
         .high_api_version = reapi::SemVer{.major = 2, .minor = 3}};
     co_return co_await send_message(connection, stream, response);
@@ -347,13 +640,14 @@ runtime::task<void> handle_batch_update(http2::connection& connection,
 
 runtime::task<void> collect_directories(server_state& state,
                                         const reapi::Digest& requested,
+                                        algorithm hash_algorithm,
                                         std::set<std::string>& seen,
                                         std::vector<reapi::Directory>& output) {
     const auto key = requested.hash + "/" + std::to_string(requested.size_bytes);
     if (!seen.insert(key).second) {
         co_return result<void>{};
     }
-    auto id = native_digest(requested, algorithm::sha256);
+    auto id = native_digest(requested, hash_algorithm);
     if (!id) {
         co_return std::unexpected(id.error());
     }
@@ -372,7 +666,8 @@ runtime::task<void> collect_directories(server_state& state,
             co_return std::unexpected(
                 server_error(errc::corrupt, "directory child has no digest", child.name));
         }
-        auto collected = co_await collect_directories(state, *child.digest, seen, output);
+        auto collected =
+            co_await collect_directories(state, *child.digest, hash_algorithm, seen, output);
         if (!collected) {
             co_return std::unexpected(collected.error());
         }
@@ -390,21 +685,19 @@ runtime::task<void> handle_get_tree(http2::connection& connection,
     }
     auto valid = validate_instance(state.instance, request->instance_name);
     auto hash_algorithm = request_algorithm(request->digest_function);
-    if (!valid || !hash_algorithm || *hash_algorithm != algorithm::sha256 ||
-        !request->root_digest) {
+    if (!valid || !hash_algorithm || !request->root_digest) {
         co_return co_await send_failure(
             connection,
             stream,
-            !valid            ? valid.error()
-            : !hash_algorithm ? hash_algorithm.error()
-            : !request->root_digest
-                ? server_error(errc::invalid_argument, "root directory digest is missing")
-                : server_error(errc::unsupported, "GetTree requires SHA-256"));
+            !valid ? valid.error()
+            : !hash_algorithm
+                ? hash_algorithm.error()
+                : server_error(errc::invalid_argument, "root directory digest is missing"));
     }
     auto response = reapi::GetTreeResponse{};
     auto seen = std::set<std::string>{};
-    auto collected =
-        co_await collect_directories(state, *request->root_digest, seen, response.directories);
+    auto collected = co_await collect_directories(
+        state, *request->root_digest, *hash_algorithm, seen, response.directories);
     if (!collected) {
         co_return co_await send_failure(connection, stream, collected.error());
     }
@@ -427,19 +720,20 @@ runtime::task<void> handle_read(http2::connection& connection,
             requested ? server_error(errc::invalid_argument, "invalid ByteStream read range")
                       : requested.error());
     }
-    auto contents = co_await state.objects.get(requested->native);
-    if (!contents) {
-        co_return co_await send_failure(connection, stream, contents.error());
+    auto loaded = co_await read_resource(state, *requested);
+    if (!loaded) {
+        co_return co_await send_failure(connection, stream, loaded.error());
     }
-    const auto offset = std::min<std::size_t>(contents->size(), request->read_offset);
-    auto count = contents->size() - offset;
+    auto& contents = loaded->second;
+    const auto offset = std::min<std::size_t>(contents.size(), request->read_offset);
+    auto count = contents.size() - offset;
     if (request->read_limit != 0) {
         count = std::min<std::size_t>(count, request->read_limit);
     }
     auto response =
         reapi::ReadResponse{.data = std::vector<std::byte>{
-                                contents->begin() + static_cast<std::ptrdiff_t>(offset),
-                                contents->begin() + static_cast<std::ptrdiff_t>(offset + count)}};
+                                contents.begin() + static_cast<std::ptrdiff_t>(offset),
+                                contents.begin() + static_cast<std::ptrdiff_t>(offset + count)}};
     co_return co_await send_message(connection, stream, response);
 }
 
@@ -509,16 +803,13 @@ runtime::task<void> handle_write(http2::connection& connection,
         }
         committed = request->write_offset + static_cast<std::int64_t>(request->data.size());
         if (request->finish_write) {
-            auto actual = reapi::make_digest(algorithm::sha256, complete);
-            if (!actual || actual->hash != requested->wire.hash ||
-                actual->size_bytes != requested->wire.size_bytes) {
-                co_return co_await send_failure(
-                    connection,
-                    stream,
-                    server_error(errc::invalid_argument, "written blob digest does not match"));
+            auto hash_algorithm =
+                written_algorithm(*requested, complete, state.executions != nullptr);
+            if (!hash_algorithm) {
+                co_return co_await send_failure(connection, stream, hash_algorithm.error());
             }
             auto stored = co_await repository_detail::store_access::put_plain(
-                state.objects, std::move(complete), algorithm::sha256);
+                state.objects, std::move(complete), *hash_algorithm);
             if (!stored) {
                 co_return co_await send_failure(connection, stream, stored.error());
             }
@@ -540,16 +831,16 @@ runtime::task<void> handle_query_write(http2::connection& connection,
     if (!requested) {
         co_return co_await send_failure(connection, stream, requested.error());
     }
-    auto present = co_await state.objects.contains(requested->native);
-    if (!present) {
-        co_return co_await send_failure(connection, stream, present.error());
-    }
-    if (*present) {
+    auto loaded = co_await read_resource(state, *requested);
+    if (loaded) {
         co_return co_await send_message(
             connection,
             stream,
             reapi::QueryWriteStatusResponse{.committed_size = requested->wire.size_bytes,
                                             .complete = true});
+    }
+    if (loaded.error().code != errc::not_found) {
+        co_return co_await send_failure(connection, stream, loaded.error());
     }
     auto committed = std::int64_t{};
     auto found_write = false;
@@ -631,6 +922,302 @@ runtime::task<void> handle_update_action(http2::connection& connection,
     co_return co_await send_message(connection, stream, *request->action_result);
 }
 
+runtime::task<reapi::Operation> submit_execution(server_state& state,
+                                                 const reapi::Digest& action_digest,
+                                                 reapi::DigestFunctionValue function,
+                                                 execution_schedule schedule,
+                                                 std::optional<digest> native_action = {},
+                                                 std::optional<bool> remote_eligible = {}) {
+    if (!state.executions) {
+        co_return std::unexpected(server_error(errc::unsupported, "REAPI execution is disabled"));
+    }
+    auto hash_algorithm = request_algorithm(function);
+    if (!hash_algorithm) {
+        co_return std::unexpected(hash_algorithm.error());
+    }
+    auto action_id = native_digest(action_digest, *hash_algorithm);
+    if (!action_id) {
+        co_return std::unexpected(action_id.error());
+    }
+    auto action_bytes = co_await state.objects.get(*action_id);
+    if (!action_bytes) {
+        co_return std::unexpected(action_bytes.error());
+    }
+    auto action = reapi::decode_message<reapi::Action>(*action_bytes);
+    if (!action || !action->command_digest) {
+        co_return std::unexpected(
+            action ? server_error(errc::corrupt, "REAPI action has no command digest")
+                   : action.error());
+    }
+    auto command_id = native_digest(*action->command_digest, *hash_algorithm);
+    if (!command_id) {
+        co_return std::unexpected(command_id.error());
+    }
+    auto command_bytes = co_await state.objects.get(*command_id);
+    if (!command_bytes) {
+        co_return std::unexpected(command_bytes.error());
+    }
+    auto command = reapi::decode_message<reapi::Command>(*command_bytes);
+    if (!command) {
+        co_return std::unexpected(command.error());
+    }
+    const auto effective_function = function == reapi::DigestFunctionValue::unknown
+                                        ? reapi::DigestFunctionValue::sha256
+                                        : function;
+    auto decoded = reapi::from_reapi_action(*action, *command, effective_function);
+    auto queued_action = std::move(*action_bytes);
+    auto queued_command = std::move(*command_bytes);
+    if (!decoded) {
+        decoded = co_await import_standard_action(state, *action, *command, *hash_algorithm);
+        if (!decoded) {
+            co_return std::unexpected(decoded.error());
+        }
+        auto messages = reapi::to_reapi_action(
+            decoded->input, decoded->input_root_digest, decoded->sandbox, *hash_algorithm);
+        auto encoded_action =
+            messages ? reapi::encode(messages->action)
+                     : result<std::vector<std::byte>>{std::unexpected(messages.error())};
+        auto encoded_command =
+            messages ? reapi::encode(messages->command)
+                     : result<std::vector<std::byte>>{std::unexpected(messages.error())};
+        if (!encoded_action || !encoded_command) {
+            co_return std::unexpected(!encoded_action ? encoded_action.error()
+                                                      : encoded_command.error());
+        }
+        queued_action = std::move(*encoded_action);
+        queued_command = std::move(*encoded_command);
+    }
+    if (remote_eligible) {
+        decoded->input.remote_eligible = *remote_eligible;
+    }
+    auto native_bytes = objects::encode(objects::action_record{decoded->input, decoded->sandbox});
+    auto reconstructed = native_bytes ? objects::digest_of(decoded->input.inputs.alg, *native_bytes)
+                                      : result<digest>{std::unexpected(native_bytes.error())};
+    if (!reconstructed) {
+        co_return std::unexpected(reconstructed.error());
+    }
+    if (native_action && (native_action->alg != reconstructed->alg ||
+                          native_action->bytes != reconstructed->bytes)) {
+        co_return std::unexpected(server_error(
+            errc::corrupt, "native action does not match REAPI action", to_string(*native_action)));
+    }
+    co_return state.executions->submit(action_digest,
+                                       effective_function,
+                                       std::move(queued_action),
+                                       std::move(queued_command),
+                                       std::move(*decoded),
+                                       *reconstructed,
+                                       std::move(schedule));
+}
+
+runtime::task<void> handle_execute(http2::connection& connection,
+                                   std::uint32_t stream,
+                                   server_state& state,
+                                   std::span<const std::byte> bytes) {
+    auto request = reapi::decode_message<reapi::ExecuteRequest>(bytes);
+    if (!request) {
+        co_return co_await send_failure(connection, stream, request.error());
+    }
+    auto valid = validate_instance(state.instance, request->instance_name);
+    if (!valid || !request->action_digest) {
+        co_return co_await send_failure(
+            connection,
+            stream,
+            !valid ? valid.error()
+                   : server_error(errc::invalid_argument, "execution action digest is missing"));
+    }
+    auto schedule =
+        execution_schedule{.decision = execution_decision::remote,
+                           .inputs = {.size_class = action_size_class::medium},
+                           .reason = "stock REAPI submission entered the scheduler queue"};
+    auto operation = co_await submit_execution(
+        state, *request->action_digest, request->digest_function, std::move(schedule));
+    if (!operation) {
+        co_return co_await send_failure(connection, stream, operation.error());
+    }
+    co_return co_await send_message(connection, stream, *operation);
+}
+
+runtime::task<void> handle_submit(http2::connection& connection,
+                                  std::uint32_t stream,
+                                  server_state& state,
+                                  std::span<const std::byte> bytes) {
+    auto request = workers::decode<workers::submit_request>(bytes);
+    if (!request) {
+        co_return co_await send_failure(connection, stream, request.error());
+    }
+    auto valid = validate_instance(state.instance, request->instance);
+    if (!valid) {
+        co_return co_await send_failure(connection, stream, valid.error());
+    }
+    auto operation = co_await submit_execution(state,
+                                               request->action,
+                                               reapi::DigestFunctionValue::blake3,
+                                               std::move(request->schedule),
+                                               request->native_action,
+                                               request->remote_eligible);
+    if (!operation) {
+        co_return co_await send_failure(connection, stream, operation.error());
+    }
+    co_return co_await send_message(connection, stream, *operation);
+}
+
+runtime::task<void> handle_wait(http2::connection& connection,
+                                std::uint32_t stream,
+                                server_state& state,
+                                std::span<const std::byte> bytes) {
+    if (!state.executions) {
+        co_return co_await send_status(connection, stream, 12, "REAPI execution is disabled");
+    }
+    auto request = reapi::decode_message<reapi::WaitExecutionRequest>(bytes);
+    if (!request) {
+        co_return co_await send_failure(connection, stream, request.error());
+    }
+    for (;;) {
+        auto operation = state.executions->operation(request->name);
+        if (!operation) {
+            co_return co_await send_failure(connection, stream, operation.error());
+        }
+        if (operation->done) {
+            co_return co_await send_message(connection, stream, *operation);
+        }
+        auto [delay_error] = co_await runtime::delay(std::chrono::milliseconds{25});
+        if (delay_error) {
+            co_return std::unexpected(
+                server_error(errc::unavailable, delay_error.message(), request->name));
+        }
+    }
+}
+
+runtime::task<void> handle_cancel(http2::connection& connection,
+                                  std::uint32_t stream,
+                                  server_state& state,
+                                  std::span<const std::byte> bytes) {
+    if (!state.executions) {
+        co_return co_await send_status(connection, stream, 12, "REAPI execution is disabled");
+    }
+    auto request = reapi::decode_message<reapi::CancelOperationRequest>(bytes);
+    auto cancelled = request ? state.executions->cancel(request->name)
+                             : result<void>{std::unexpected(request.error())};
+    if (!cancelled) {
+        co_return co_await send_failure(connection, stream, cancelled.error());
+    }
+    co_return co_await send_message(connection, stream, reapi::Empty{});
+}
+
+runtime::task<void> handle_lease(http2::connection& connection,
+                                 std::uint32_t stream,
+                                 server_state& state,
+                                 std::span<const std::byte> bytes) {
+    if (!state.executions) {
+        co_return co_await send_status(connection, stream, 12, "worker scheduling is disabled");
+    }
+    auto request = workers::decode<workers::worker_request>(bytes);
+    if (!request) {
+        co_return co_await send_failure(connection, stream, request.error());
+    }
+    auto valid = validate_instance(state.instance, request->instance);
+    auto leased = valid ? state.executions->lease(*request)
+                        : result<workers::lease_response>{std::unexpected(valid.error())};
+    if (!leased) {
+        co_return co_await send_failure(connection, stream, leased.error());
+    }
+    co_return co_await send_worker_message(connection, stream, *leased);
+}
+
+runtime::task<void> handle_heartbeat(http2::connection& connection,
+                                     std::uint32_t stream,
+                                     server_state& state,
+                                     std::span<const std::byte> bytes) {
+    auto request = workers::decode<workers::heartbeat_request>(bytes);
+    if (!request || !state.executions) {
+        co_return co_await send_failure(
+            connection,
+            stream,
+            request ? server_error(errc::unsupported, "worker scheduling is disabled")
+                    : request.error());
+    }
+    co_return co_await send_worker_message(
+        connection, stream, state.executions->heartbeat(*request));
+}
+
+runtime::task<void> handle_complete(http2::connection& connection,
+                                    std::uint32_t stream,
+                                    server_state& state,
+                                    std::span<const std::byte> bytes) {
+    auto request = workers::decode<workers::complete_request>(bytes);
+    if (!request || !state.executions) {
+        co_return co_await send_failure(
+            connection,
+            stream,
+            request ? server_error(errc::unsupported, "worker scheduling is disabled")
+                    : request.error());
+    }
+    if (!request->failure.empty()) {
+        co_return co_await send_worker_message(
+            connection, stream, state.executions->fail(*request));
+    }
+    auto result = reapi::decode_message<reapi::ActionResult>(request->result);
+    if (!result) {
+        co_return co_await send_failure(connection, stream, result.error());
+    }
+    auto accepted = state.executions->complete(*request, *result);
+    if (accepted.accepted) {
+        auto action = state.executions->action_digest(request->operation);
+        auto encoded = reapi::encode(*result);
+        if (!action || !encoded) {
+            co_return co_await send_failure(
+                connection, stream, !action ? action.error() : encoded.error());
+        }
+        auto written =
+            co_await store_detail::write_file(cache_path(state, *action), std::move(*encoded));
+        if (!written) {
+            co_return co_await send_failure(connection, stream, written.error());
+        }
+    }
+    co_return co_await send_worker_message(connection, stream, accepted);
+}
+
+runtime::task<void> handle_read_object(http2::connection& connection,
+                                       std::uint32_t stream,
+                                       server_state& state,
+                                       std::span<const std::byte> bytes) {
+    auto request = workers::decode<workers::read_object_request>(bytes);
+    auto id =
+        request ? parse_digest(request->digest) : result<digest>{std::unexpected(request.error())};
+    auto contents = id ? co_await state.objects.get(*id)
+                       : result<std::vector<std::byte>>{std::unexpected(id.error())};
+    if (!contents) {
+        co_return co_await send_failure(connection, stream, contents.error());
+    }
+    co_return co_await send_worker_message(
+        connection, stream, workers::read_object_response{std::move(*contents)});
+}
+
+runtime::task<void>
+handle_scheduler_status(http2::connection& connection, std::uint32_t stream, server_state& state) {
+    if (!state.executions) {
+        co_return co_await send_status(connection, stream, 12, "worker scheduling is disabled");
+    }
+    co_return co_await send_worker_message(connection, stream, state.executions->status());
+}
+
+runtime::task<void> handle_scheduler_operation(http2::connection& connection,
+                                               std::uint32_t stream,
+                                               server_state& state,
+                                               std::span<const std::byte> bytes) {
+    if (!state.executions) {
+        co_return co_await send_status(connection, stream, 12, "worker scheduling is disabled");
+    }
+    auto request = reapi::decode_message<reapi::WaitExecutionRequest>(bytes);
+    auto operation = request ? state.executions->operation(request->name)
+                             : result<reapi::Operation>{std::unexpected(request.error())};
+    if (!operation) {
+        co_return co_await send_failure(connection, stream, operation.error());
+    }
+    co_return co_await send_message(connection, stream, *operation);
+}
+
 runtime::task<void> dispatch(http2::connection& connection,
                              std::uint32_t stream,
                              server_state& state,
@@ -662,6 +1249,36 @@ runtime::task<void> dispatch(http2::connection& connection,
     }
     if (method == update_action_result_method) {
         co_return co_await handle_update_action(connection, stream, state, bytes);
+    }
+    if (method == execute_method) {
+        co_return co_await handle_execute(connection, stream, state, bytes);
+    }
+    if (method == wait_method) {
+        co_return co_await handle_wait(connection, stream, state, bytes);
+    }
+    if (method == cancel_method) {
+        co_return co_await handle_cancel(connection, stream, state, bytes);
+    }
+    if (method == workers::submit_method) {
+        co_return co_await handle_submit(connection, stream, state, bytes);
+    }
+    if (method == workers::lease_method) {
+        co_return co_await handle_lease(connection, stream, state, bytes);
+    }
+    if (method == workers::heartbeat_method) {
+        co_return co_await handle_heartbeat(connection, stream, state, bytes);
+    }
+    if (method == workers::complete_method) {
+        co_return co_await handle_complete(connection, stream, state, bytes);
+    }
+    if (method == workers::read_object_method) {
+        co_return co_await handle_read_object(connection, stream, state, bytes);
+    }
+    if (method == workers::status_method) {
+        co_return co_await handle_scheduler_status(connection, stream, state);
+    }
+    if (method == workers::operation_method) {
+        co_return co_await handle_scheduler_operation(connection, stream, state, bytes);
     }
     co_return co_await send_status(connection, stream, 12, "method is not implemented");
 }
@@ -720,7 +1337,8 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
 
 } // namespace
 
-runtime::task<void> serve_reapi(reapi_serve_options options) {
+runtime::task<void> serve_reapi_impl(reapi_serve_options options,
+                                     std::shared_ptr<workers::scheduler> executions) {
     auto endpoint = boost::corosio::endpoint{};
     if (const auto code = boost::corosio::parse_endpoint(options.listen, endpoint)) {
         co_return std::unexpected(
@@ -740,8 +1358,10 @@ runtime::task<void> serve_reapi(reapi_serve_options options) {
     if (code) {
         co_return std::unexpected(server_error(errc::io, code.message(), action_cache.string()));
     }
-    auto state = std::make_shared<server_state>(
-        std::move(*opened), std::move(action_cache), std::move(options.instance_name));
+    auto state = std::make_shared<server_state>(std::move(*opened),
+                                                std::move(action_cache),
+                                                std::move(options.instance_name),
+                                                std::move(executions));
     const auto executor = co_await boost::capy::this_coro::executor;
     auto acceptor = boost::corosio::tcp_acceptor{executor.context(), endpoint};
     for (;;) {
@@ -753,6 +1373,7 @@ runtime::task<void> serve_reapi(reapi_serve_options options) {
         }
         runtime::spawn(session(state, std::move(socket)), [](result<void> outcome) {
             if (!outcome && outcome.error().message != "End of file" &&
+                outcome.error().message != "eof" &&
                 outcome.error().message != "peer has sent GOAWAY") {
                 std::println(stderr,
                              "REAPI connection error: {} ({})",
@@ -761,6 +1382,51 @@ runtime::task<void> serve_reapi(reapi_serve_options options) {
             }
         });
     }
+}
+
+runtime::task<void> serve_reapi(reapi_serve_options options) {
+    co_return co_await serve_reapi_impl(std::move(options), {});
+}
+
+runtime::task<void> serve_scheduler(scheduler_options options) {
+    if (options.lease_duration <= std::chrono::milliseconds{}) {
+        co_return std::unexpected(
+            server_error(errc::invalid_argument, "scheduler lease duration must be positive"));
+    }
+    auto executions = std::make_shared<workers::scheduler>(options.lease_duration);
+    runtime::spawn(
+        workers::serve_control(
+            std::move(options.control_listen),
+            workers::control_status{.component = "scheduler",
+                                    .ready = [executions] { return executions->ready(); },
+                                    .metrics =
+                                        [executions] {
+                                            const auto status = executions->status();
+                                            return std::format("liquid_scheduler_queued {}\n"
+                                                               "liquid_scheduler_in_flight {}\n"
+                                                               "liquid_scheduler_completed {}\n"
+                                                               "liquid_scheduler_failed {}\n"
+                                                               "liquid_scheduler_requeued {}\n"
+                                                               "liquid_scheduler_workers {}\n",
+                                                               status.queued,
+                                                               status.in_flight,
+                                                               status.completed,
+                                                               status.failed,
+                                                               status.requeued,
+                                                               status.workers);
+                                        }}),
+        [](result<void> outcome) {
+            if (!outcome) {
+                std::println(stderr,
+                             "scheduler control server error: {} ({})",
+                             outcome.error().message,
+                             outcome.error().context);
+            }
+        });
+    auto reapi_options = reapi_serve_options{.store_directory = std::move(options.store_directory),
+                                             .listen = std::move(options.listen),
+                                             .instance_name = std::move(options.instance_name)};
+    co_return co_await serve_reapi_impl(std::move(reapi_options), std::move(executions));
 }
 
 } // namespace liquid

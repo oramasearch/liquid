@@ -8,6 +8,7 @@
 #include <mutex>
 #include <ranges>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -17,14 +18,15 @@
 #include "liquid/hash.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-daemon-test-" + std::to_string(next_.fetch_add(1)))) {
+        : path_(liquid::test::fixture_path("liquid-daemon-test-" +
+                                           std::to_string(next_.fetch_add(1)))) {
         std::filesystem::remove_all(path_);
         auto created = liquid::runtime::block_on(liquid::repository::create(path_));
         if (!created) {
@@ -205,6 +207,45 @@ TEST(Daemon, drip_invalidates_only_changed_paths_and_advances_targets) {
     EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
 }
 
+TEST(Daemon, idle_capacity_validates_and_reports_graph_divergence) {
+    temporary_repository location;
+    const auto graph_directory = location.path() / ".liquid" / "daemon" / "query-graph";
+    auto initial_registry = liquid::query_registry{};
+    ASSERT_TRUE(initial_registry.add({.name = "echo", .compute = echo_query}));
+    auto initial = liquid::runtime::block_on(
+        liquid::graph::open(graph_directory, std::move(initial_registry)));
+    ASSERT_TRUE(initial) << initial.error().message;
+    const auto key = liquid::query_key{"echo", bytes("correct")};
+    ASSERT_TRUE(liquid::runtime::block_on(initial->demand(key)));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(initial->inject_stale_value_for_testing(key, bytes("stale"))));
+    initial = liquid::graph{};
+
+    auto daemon_options = options();
+    daemon_options.graph_validation_interval = std::chrono::milliseconds{1};
+    ASSERT_TRUE(daemon_options.graph_queries.add({.name = "echo", .compute = echo_query}));
+    auto started =
+        liquid::runtime::block_on(liquid::daemon::start(location.path(), daemon_options));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+    auto status = liquid::result<liquid::daemon_status>{};
+    for (auto attempt = 0; attempt != 500; ++attempt) {
+        status = liquid::runtime::block_on(started->status());
+        ASSERT_TRUE(status) << status.error().message;
+        if (status->last_graph_divergence) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    }
+    ASSERT_TRUE(status->last_graph_divergence);
+    EXPECT_EQ(status->last_graph_divergence->query.kind, "echo");
+    EXPECT_EQ(status->last_graph_divergence->query.arguments, bytes("correct"));
+    EXPECT_FALSE(status->last_graph_divergence->agreement);
+    EXPECT_EQ(status->graph_validation_backlog, 0U);
+
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+}
+
 TEST(Daemon, command_starts_on_first_use_and_attaches_to_same_process) {
     temporary_repository location;
     const auto output = location.path() / "status.json";
@@ -219,6 +260,8 @@ TEST(Daemon, command_starts_on_first_use_and_attaches_to_same_process) {
     auto input = std::ifstream{output};
     const auto json = std::string{std::istreambuf_iterator<char>{input}, {}};
     EXPECT_NE(json.find("\"pid\":" + std::to_string(status->process_id)), std::string::npos);
+    EXPECT_NE(json.find("\"graph_validation_backlog\":0"), std::string::npos);
+    EXPECT_NE(json.find("\"last_graph_divergence\":null"), std::string::npos);
 
     EXPECT_TRUE(liquid::runtime::block_on(attached->shutdown()));
 }
@@ -234,7 +277,7 @@ TEST(Daemon, windows_reports_missing_named_pipe_transport) {
 #endif
 
 TEST(DaemonFanout, ordered_targets_advance_once_for_duplicate_delivery) {
-    const auto directory = std::filesystem::temp_directory_path() / "liquid-daemon-fanout-test";
+    const auto directory = liquid::test::fixture_path("liquid-daemon-fanout-test");
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
     auto order = std::vector<std::string>{};
@@ -261,7 +304,7 @@ TEST(DaemonFanout, ordered_targets_advance_once_for_duplicate_delivery) {
 }
 
 TEST(DaemonGraph, least_recently_demanded_eviction_keeps_metadata_and_persists) {
-    const auto directory = std::filesystem::temp_directory_path() / "liquid-daemon-graph-test";
+    const auto directory = liquid::test::fixture_path("liquid-daemon-graph-test");
     std::filesystem::remove_all(directory);
     std::filesystem::create_directories(directory);
     auto first_fingerprint = liquid::digest{};

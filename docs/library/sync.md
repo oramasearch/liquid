@@ -3,11 +3,11 @@
 **What.** The HTTP/1.1 protocol used by libliquid clients and lake to exchange repository
 metadata and content. lake's `docs/api/sync.md` mirrors this page.
 
-**Status: implemented by liquid #160 and #165.** Metadata export and import are bounded by
-caller-provided spans. Imports verify the complete batch before changing repository state. Content
-negotiation and transfer reuse `remote_blob_source` and the store's pack-entry framing. The public
-`sync_server` owns protocol decoding and repository dispatch; `liquid serve sync` is its local
-HTTP/1.1 adapter.
+**Status: implemented by liquid #160, #165, #177, and #189.** Metadata export and import are
+bounded by caller-provided spans. Imports verify the selected metadata before changing repository
+state, while reference authorization and application are reported per ref. Content negotiation and
+transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
+owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
 
 ## Repository URL and requests
 
@@ -25,11 +25,20 @@ HTTP read boundaries.
 | `GET <repository>/sync/chunks/<digest>?offset=<n>&length=<n>` | none | raw verified logical bytes for the requested range |
 
 The metadata header is a canonical-CBOR map with `v: 1`, `cursor`, sorted `refs`, and sorted
-`objects`. A push header cursor is the end of the exported client journal. A pull request cursor is
-the last server cursor observed by that client. A response cursor is the next opaque cursor to
-persist for that peer.
+`objects`. A push request may add `atomic: true`. A push reply may add `outcomes`, an array in
+request ref order whose entries are `{name, outcome: "applied"}` or
+`{name, outcome: "refused", reason}`. A push header cursor is the end of the exported client
+journal. A pull request cursor is the last server cursor observed by that client. A response cursor
+is the next opaque cursor to persist for that peer.
 `objects` contains the roots referenced by the metadata stream. Missing-object negotiation walks
 their content-addressed graph and sends only objects the receiver reports absent.
+
+The wire version remains 1 for one compatibility version. A v1 decoder predating #189 ignores the
+new header keys and therefore reads a new successful reply. A #189 client also reads a legacy
+successful reply with no `outcomes` and reports every requested ref as applied. A legacy server
+already treats pushes as all-or-nothing, so `atomic: true` remains safe when that server ignores the
+new request key. A legacy authorization failure remains an HTTP error because it cannot supply
+per-ref reasons.
 
 An optional `Authorization: Bearer <token>` header carries lake authentication. The CLI reads the
 token from `LIQUID_TOKEN`; credentials never appear in the URL or output.
@@ -61,9 +70,10 @@ receiving peer messages. A retry can therefore name a dependency older than the 
 heads without contradicting the shallow document's retained actor sequence.
 
 Before import changes state, the receiver parses every frame, verifies each actor identifier and
-TAAP signature, checks each change digest and referenced object, applies every directory message to
-candidate documents through the checked patch-returning path, and validates all refs. Any failure
-rejects the whole batch. The error `item` is the zero-based metadata-frame index that failed.
+TAAP signature, checks each change digest and referenced object, applies every selected directory
+message to candidate documents through the checked patch-returning path, and validates the
+accepted refs. A validation failure rejects the selected import. The error `item` is the zero-based
+metadata-frame index that failed.
 
 ## Chunk stream
 
@@ -103,7 +113,8 @@ Non-success responses use `Content-Type: application/vnd.liquid.error-v1` and a 
 
 An interrupted request has no success response and is retried from the last acknowledged cursor.
 Servers do not advance that cursor until metadata import and required chunk publication both
-succeed.
+succeed. A successful reply acknowledges the batch even when it reports refusals; refs are exported
+on every later push, so a refused ref is offered again without rewinding the drip cursor.
 
 ## Public server and client contract
 
@@ -114,33 +125,84 @@ queries, pack-frame uploads, and logical range reads; the canonical codecs remai
 `sync_server::encode_error` produces the error body described above so an adapter need only choose
 the transport status.
 
-`sync_server_options::authorize` is an optional asynchronous per-change callback. Push invokes it
-in frame order before calling repository import. A callback failure returns that error and leaves
-repository metadata unchanged; object uploads that arrived earlier remain unreferenced
-content-addressed data eligible for collection. Embedders can perform authorization and audit work
-in this callback without reimplementing the wire format.
+`sync_server_options::authorize` is an optional asynchronous callback for changes and reference
+updates. Its second argument is a span of `sync_ref_update` values:
+
+```cpp
+struct sync_ref_update {
+    std::string name;
+    std::optional<change_id> old_head;
+    change_id new_head;
+    bool fast_forward;
+};
+
+enum class sync_ref_verdict_kind : std::uint8_t { accepted = 1, refused = 2 };
+struct sync_ref_verdict {
+    std::string name;
+    sync_ref_verdict_kind verdict;
+    std::string reason;
+};
+```
+
+The callback returns `runtime::task<std::vector<sync_ref_verdict>>`. A returned vector reads more
+clearly in the public header than a caller-mutated output span: the coroutine result owns every
+reason string, and there is no parallel-span lifetime or indexing contract. It contains exactly one
+verdict for every input update, identified by name. Wrong counts, duplicate names, and names absent
+from the input are authorizer contract errors.
+
+Before invoking the callback, push reads the server's current refs and walks the stored change
+graph from every proposed head. A new ref is a fast-forward. An update is a fast-forward when its
+old head is reachable from its proposed new head; an unchanged head is therefore also a
+fast-forward. The callback never trusts a client-provided fast-forward claim.
+
+Callbacks preserve metadata-frame order while skipping drips and directory frames. A change
+callback receives the ref updates whose proposed graph newly reaches that change compared with the
+corresponding old graph, in reference-frame order. A change already reachable from a ref's old
+head is not presented under that ref again. A reference callback receives a one-element span with
+its name, the server's pre-batch head when one exists, proposed head, and computed fast-forward
+value. Thus all change decisions precede the exported ref frames that follow them, while each
+decision has the complete ref context.
+
+All graph walks and callbacks finish before repository import starts. The first refusal recorded for
+a ref supplies its outcome reason verbatim. Refusals do not prevent later callbacks from evaluating
+the other refs. A callback task error or thrown exception refuses every ref with its message; no
+exception leaves the coroutine boundary.
+
+The server imports shared drip, change, and directory metadata with the accepted ref frames, leaves
+refused refs at their pre-push heads, and returns one `sync_ref_outcome` per requested ref. When no
+ref is accepted, it skips metadata import entirely. Object uploads happen before authorization and
+remain in the content-addressed store regardless of every outcome. With `atomic: true`, any refusal
+prevents metadata import: originally refused refs retain their reasons, and otherwise accepted refs
+use `atomic push refused because another reference was refused`.
 
 `repository::export_drips` writes as many `sync_item` values as fit in the supplied span and
 returns the next cursor plus an end flag. `repository::import_drips` accepts a span, verifies it as
 one atomic batch, and reports the number imported. `sync_session` sends or receives an object graph
 through a `remote_blob_source` after `find_missing`. `sync_endpoint` implements that source and the
 push/pull requests over the vendored `oramasearch/http` module. A caller may put its last observed
-cursor in `sync_endpoint_options`; the returned report supplies the next cursor to retain. All
-waiting operations are Capy tasks.
+cursor and the push's `atomic` choice in `sync_endpoint_options`; `sync_report::references` exposes
+the applied or refused result and reason for each ref, and the returned report supplies the next
+cursor to retain. All waiting operations are Capy tasks.
 
 ## Local server command
 
 `liquid serve sync <path>` opens an existing repository and serves the five routes above with the
 vendored `oramasearch/http` router and serializer. It binds `127.0.0.1:8080` by default;
-`--listen <address>` and `--port <port>` select another listener. The command deliberately supplies
-no authentication policy. Keep the loopback default for local exchange, or embed `sync_server`
-with an authorization callback when exposing a service boundary.
+`--listen <address>` and `--port <port>` select another listener. Repeating `--allow-ref <glob>`
+installs a reference policy that permits only names matching at least one supplied glob; `*`
+matches any sequence and `?` matches one character. A disallowed ref is refused while allowed refs
+from the same non-atomic push apply. Without that flag the command supplies no authentication
+policy. Keep the loopback default for local exchange, or embed `sync_server` with an authorization
+callback when exposing a service boundary.
 
 ## How to verify
 
 The sync tests exchange two on-disk repositories through `sync_server`, prove that a second
 exchange transfers only newly introduced chunks, retry unchanged metadata, and pull into an empty
-repository. They also corrupt a TAAP signature and reject a change through the authorization
-callback without changing repository state. The CLI test spawns `liquid serve sync` and runs the
-real `liquid push` and `liquid pull` commands against it. Static, shared, and Linux-container proofs
-run these tests with the rest of the suite.
+repository. They also corrupt a TAAP signature, associate newly reachable changes with their refs,
+report false for a divergent update's fast-forward field, apply mixed outcomes, preserve refusal
+reasons, keep an all-refused repository unchanged, retain uploaded objects, make atomic pushes
+all-or-nothing, convert an authorizer exception into per-ref refusals, and decode a legacy reply.
+The CLI test spawns `liquid serve sync --allow-ref main`, observes one line per ref for ordinary and
+atomic pushes, and runs the real `liquid push` and `liquid pull` commands. Static, shared, and
+Linux-container proofs run these tests with the rest of the suite.

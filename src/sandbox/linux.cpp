@@ -101,6 +101,20 @@ auto write_bootstrap(const launch_request& request,
            << quote(rooted(request.toolchain_root).string()) << "\n";
     stream << "/usr/bin/mount -o remount,bind,ro " << quote(rooted(request.toolchain_root).string())
            << "\n";
+    for (const auto* alias : {"etc", "lib", "lib64"}) {
+        const auto source = request.toolchain / alias;
+        if (!std::filesystem::is_directory(source)) {
+            continue;
+        }
+        const auto destination = request.sandbox_root / alias;
+        auto created = ensure_directory(destination);
+        if (!created) {
+            return created;
+        }
+        stream << "/usr/bin/mount --bind " << quote(source.string()) << ' '
+               << quote(destination.string()) << "\n";
+        stream << "/usr/bin/mount -o remount,bind,ro " << quote(destination.string()) << "\n";
+    }
     for (const auto& output : request.outputs) {
         const auto directory = output.ends_with('/');
         const auto relative = directory ? output.substr(0, output.size() - 1) : output;

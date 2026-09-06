@@ -10,7 +10,7 @@ constexpr auto fixed_names =
 
 auto mechanism_for(std::string_view os) -> result<std::string> {
     if (os == "linux")
-        return "user+mount+pid+net namespaces";
+        return "user+mount+pid+net namespaces with declared runtime aliases";
     if (os == "macos")
         return "sandbox-exec";
     if (os == "windows")

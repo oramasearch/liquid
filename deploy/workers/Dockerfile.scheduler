@@ -1,0 +1,10 @@
+ARG LIQUID_BASE=liquid-linux-ci
+FROM ${LIQUID_BASE}
+
+ARG LIQUID_BINARY=build-linux/liquid
+COPY ${LIQUID_BINARY} /usr/local/bin/liquid
+
+VOLUME ["/var/lib/liquid-scheduler"]
+EXPOSE 50051 8080
+ENTRYPOINT ["/usr/local/bin/liquid", "scheduler"]
+CMD ["--listen", "0.0.0.0:50051", "--control-listen", "0.0.0.0:8080", "--store", "/var/lib/liquid-scheduler"]

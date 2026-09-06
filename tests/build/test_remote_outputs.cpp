@@ -9,6 +9,7 @@
 
 #include "remote_blob_source.hpp"
 
+#include "../temporary_directory.hpp"
 #include "liquid/build.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
@@ -21,8 +22,8 @@ namespace {
 class temporary_directory {
 public:
     temporary_directory()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-remote-output-test-" + std::to_string(next_++))) {
+        : path_(
+              liquid::test::fixture_path("liquid-remote-output-test-" + std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

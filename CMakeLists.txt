@@ -69,6 +69,7 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # libliquid — everything under include/liquid/ is the public API.
 # -----------------------------------------------------------------------------
 include(FetchContent)
+include(cmake/Grammars.cmake)
 find_package(ZLIB REQUIRED)
 
 if(NOT TARGET Boost::capy)
@@ -169,36 +170,24 @@ FetchContent_Declare(zstd_source
 FetchContent_MakeAvailable(zstd_source)
 
 if(LIQUID_BUILD_FRONTENDS)
-  FetchContent_Declare(tree_sitter_source
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
-    GIT_TAG        v0.25.9
-    GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  liquid-no-upstream-cmake)
-  FetchContent_Declare(tree_sitter_c_source
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
-    GIT_TAG        v0.24.1
-    GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  liquid-no-upstream-cmake)
-  FetchContent_Declare(tree_sitter_cpp_source
-    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
-    GIT_TAG        v0.23.4
-    GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  liquid-no-upstream-cmake)
-  FetchContent_MakeAvailable(tree_sitter_source tree_sitter_c_source tree_sitter_cpp_source)
+  liquid_configure_grammars(
+    OUT_RUNTIME_SOURCE LIQUID_TREE_SITTER_RUNTIME_SOURCE
+    OUT_RUNTIME_INCLUDE LIQUID_TREE_SITTER_RUNTIME_INCLUDE
+    OUT_SOURCES LIQUID_GRAMMAR_SOURCES
+    OUT_INCLUDES LIQUID_GRAMMAR_INCLUDES
+    OUT_GENERATED LIQUID_GRAMMAR_GENERATED_SOURCE
+    OUT_SOURCE_MAP LIQUID_GRAMMAR_SOURCE_MAP)
 
   add_library(liquid_frontend_syntax STATIC
     modules/frontends/common/cbor.cpp
     modules/frontends/common/syntax.cpp
-    ${tree_sitter_source_SOURCE_DIR}/lib/src/lib.c
-    ${tree_sitter_c_source_SOURCE_DIR}/src/parser.c
-    ${tree_sitter_cpp_source_SOURCE_DIR}/src/parser.c
-    ${tree_sitter_cpp_source_SOURCE_DIR}/src/scanner.c)
+    ${LIQUID_GRAMMAR_GENERATED_SOURCE}
+    ${LIQUID_TREE_SITTER_RUNTIME_SOURCE}
+    ${LIQUID_GRAMMAR_SOURCES})
   target_include_directories(liquid_frontend_syntax PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
-    ${tree_sitter_source_SOURCE_DIR}/lib/include
-    ${tree_sitter_source_SOURCE_DIR}/lib/src
-    ${tree_sitter_c_source_SOURCE_DIR}/src
-    ${tree_sitter_cpp_source_SOURCE_DIR}/src)
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE}
+    ${LIQUID_GRAMMAR_INCLUDES})
   target_compile_features(liquid_frontend_syntax PRIVATE c_std_11 cxx_std_26)
   target_compile_definitions(liquid_frontend_syntax PRIVATE TREE_SITTER_HIDE_SYMBOLS)
   set_target_properties(liquid_frontend_syntax PROPERTIES
@@ -210,7 +199,8 @@ if(LIQUID_BUILD_FRONTENDS)
   add_library(liquid-frontend-tree-sitter MODULE modules/frontends/tree_sitter/module.cpp)
   target_include_directories(liquid-frontend-tree-sitter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
   target_link_libraries(liquid-frontend-tree-sitter PRIVATE liquid_frontend_syntax)
   set_target_properties(liquid-frontend-tree-sitter PROPERTIES
     PREFIX ""
@@ -223,7 +213,8 @@ if(LIQUID_BUILD_FRONTENDS)
   add_library(liquid-frontend-clang MODULE modules/frontends/clang/module.cpp)
   target_include_directories(liquid-frontend-clang PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
   target_link_libraries(liquid-frontend-clang PRIVATE liquid_frontend_syntax)
   set_target_properties(liquid-frontend-clang PROPERTIES
     PREFIX ""
@@ -236,7 +227,8 @@ if(LIQUID_BUILD_FRONTENDS)
   add_library(liquid-frontend-clang-static STATIC modules/frontends/clang/module.cpp)
   target_include_directories(liquid-frontend-clang-static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends)
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
   target_link_libraries(liquid-frontend-clang-static PRIVATE liquid_frontend_syntax)
   set_target_properties(liquid-frontend-clang-static PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -332,6 +324,18 @@ set_target_properties(automerge-cpp PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   EXCLUDE_FROM_ALL ON)
 
+# oramacore-cpp supplies the private BM25F engine. Keep its own test tree out of
+# liquid's build and fold its static target into shared libliquid with hidden symbols.
+block()
+  set(BUILD_TESTING OFF)
+  add_subdirectory(modules/oramacore-cpp EXCLUDE_FROM_ALL)
+endblock()
+set_target_properties(oramacore-cpp PROPERTIES
+  CXX_VISIBILITY_PRESET hidden
+  VISIBILITY_INLINES_HIDDEN ON
+  POSITION_INDEPENDENT_CODE ON
+  EXCLUDE_FROM_ALL ON)
+
 add_library(liquid_metadata_objects OBJECT
   src/crdt/document.cpp
   src/crdt/journal.cpp
@@ -349,23 +353,31 @@ set_target_properties(liquid_metadata_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 
 add_library(libliquid
+  src/asn1.cpp
+  src/abi.cpp
   src/attestation/registry.cpp
+  src/build/abi.cpp
   src/build/cache.cpp
+  src/build/events.cpp
   src/build/executor.cpp
   src/build/distribution.cpp
   src/build/enumeration.cpp
+  src/build/frontend.cpp
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
+  src/build/plan.cpp
   src/build/provenance.cpp
   src/build/trace.cpp
   src/build/why.cpp
   src/build/policy.cpp
   src/build/sbom.cpp
+  src/build/tests.cpp
   src/build/wrap.cpp
   src/capture/coalesce.cpp
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
+  src/cms.cpp
   src/daemon.cpp
   src/daemon/fanout.cpp
   src/drip.cpp
@@ -373,9 +385,13 @@ add_library(libliquid
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
+  src/formats/binary/elf.cpp
+  src/formats/binary/macho.cpp
+  src/formats/binary/pe.cpp
   src/formats/json.cpp
   src/frontend/graph.cpp
   src/frontend/module.cpp
+  src/frontend/symbols.cpp
   src/graph.cpp
   src/hash.cpp
   src/hash/sha256.c
@@ -390,6 +406,7 @@ add_library(libliquid
   src/identity.cpp
   src/identity/taap.cpp
   src/crypto/crypto.cpp
+  src/crypto/signature.cpp
   src/object.cpp
   src/objects/records.cpp
   src/protobuf/wire.cpp
@@ -398,6 +415,11 @@ add_library(libliquid
   src/reapi/messages.cpp
   src/reapi/remote_client.cpp
   src/reapi/server.cpp
+  src/workers/protocol.cpp
+  src/workers/control.cpp
+  src/workers/scheduler.cpp
+  src/workers/worker.cpp
+  src/x509.cpp
   src/repository/diff.cpp
   src/repository/merge.cpp
   src/remote.cpp
@@ -405,6 +427,8 @@ add_library(libliquid
   src/runtime/runtime.cpp
   src/sandbox/environment.cpp
   src/scan/detectors.cpp
+  src/search/index.cpp
+  src/search/repository.cpp
   src/store.cpp
   src/store/chunker.cpp
   src/store/collector.cpp
@@ -421,6 +445,7 @@ add_library(libliquid
   src/sync/endpoint.cpp
   src/sync/server.cpp
   src/sync/session.cpp
+  src/transparency.cpp
   src/version.cpp
   src/vfs.cpp
   src/vfs/fuse_fs.cpp
@@ -452,9 +477,11 @@ target_include_directories(libliquid PUBLIC
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${blake3_source_SOURCE_DIR}/c
           ${monocypher_source_SOURCE_DIR}/src
-          ${monocypher_source_SOURCE_DIR}/src/optional)
+          ${monocypher_source_SOURCE_DIR}/src/optional
+          ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include)
 target_compile_features(libliquid PUBLIC cxx_std_26)
 target_compile_definitions(libliquid PRIVATE
+  LIQUID_GRAMMAR_LOCK_DIGEST="sha256:${LIQUID_GRAMMAR_LOCK_SHA256}"
   LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
   LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
 add_dependencies(libliquid liquid-wrap-hook)
@@ -467,7 +494,8 @@ endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio Boost::corosio_openssl Boost::http libzstd_static ZLIB::ZLIB
-          ${CMAKE_DL_LIBS} $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>)
+          ${CMAKE_DL_LIBS} $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>
+          $<BUILD_INTERFACE:orama::oramacore-cpp>)
 if(LIQUID_FUSE_TARGET)
   target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
   target_link_libraries(libliquid PRIVATE ${LIQUID_FUSE_TARGET})
@@ -495,6 +523,7 @@ endif()
 if(LIQUID_BUILD_CLI)
   add_executable(liquid-cli
     src/main.cpp
+    src/cli/abi.cpp
     src/cli/anchor.cpp
     src/cli/attestation.cpp
     src/cli/capture.cpp
@@ -510,20 +539,24 @@ if(LIQUID_BUILD_CLI)
     src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/sbom.cpp
+    src/cli/symbols.cpp
     src/cli/serve.cpp
     src/cli/sync.cpp
-    src/cli/serve.cpp
+    src/cli/transparency.cpp
+    src/cli/test.cpp
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
+    src/cli/search.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp
     src/cli/why.cpp
+    src/cli/workers.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
   target_link_libraries(liquid-cli PRIVATE
-    liquid::liquid Boost::corosio Boost::http)
+    liquid::liquid Boost::corosio Boost::corosio_openssl Boost::http Boost::json)
 endif()
 
 # -----------------------------------------------------------------------------

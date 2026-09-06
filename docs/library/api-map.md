@@ -51,35 +51,41 @@ owning issue in `error::context`.
 | Header | Phase | Status | What it exposes |
 |---|---|---|---|
 | `liquid/liquid.hpp` | now | implemented | umbrella |
-| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
+| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()`, `grammar_digest()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
-| `liquid/runtime.hpp` | #97 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `offload`, `context` |
-| `liquid/error.hpp` | #39 | implemented | `errc`, `error`, `result<T>` |
+| `liquid/runtime.hpp` | #97, #193 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `spawn_serial`, `offload`, `context` |
+| `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
+| `liquid/abi.hpp` | #27 | implemented | synchronous ELF/Mach-O/PE ABI extraction, stable descriptors, compatibility verdicts and change reports, and JSON projection |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
-| `liquid/graph.hpp` | #20, #21 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, and the #23 comparison hook |
-| `liquid/frontend_abi.h` | #65 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, and `assemble` operations |
-| `liquid/frontend.hpp` | #65 | implemented | checked shared/static frontend loading, language registry, source units, and the unit-keyed query-graph coordinator |
+| `liquid/asn1.hpp` | #210 | implemented | strict DER element reader with exact encoded spans plus unsigned-integer and object-identifier decoding |
+| `liquid/x509.hpp` | #210 | implemented | certificate parsing, explicit TSA trust anchors, historical path validation, key usage, and critical timestamp-signing purpose |
+| `liquid/cms.hpp` | #210 | implemented | embedded CMS SignedData content, signed-attribute, signer, signature, and historical certificate-path verification |
+| `liquid/transparency.hpp` | #207, #210 | implemented (#210) | RFC 3161 timestamp-token and RFC 4998 evidence-chain verification over checkpoint signature values with explicit TSA trust anchors |
+| `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
+| `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
+| `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
-| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116 | implemented | `store`: memory and streaming-file content in and out; local/remote/absent blob availability and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #40, #41, #42, #50, #52, #53, #58, #116, #160, #165, #166, #174 | implemented | `repository`: open on local or caller-owned stores; encrypted, plaintext, and remote reads; memory, streaming-file, remote-record, and streaming tree-import writes; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, cache statistics, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, remote-record, and streaming tree-import writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
-| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #57, #60, #56, #58, #61 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, input policy, configure facts, retention, and SBOMs | action execution and results, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, reproducibility verification and explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, and marked binary inference; no sandbox or index implementation types are public |
-| `liquid/daemon.hpp` | #21 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory status, attach, and shutdown |
-| `liquid/remote.hpp` | #16, #17, #18 | implemented | REAPI endpoint, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations; and the move-only negotiated REAPI client handle |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #27, #57, #60, #56, #58, #61, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, complete configured plan entries and stable JSON projection, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
+| `liquid/daemon.hpp` | #21, #23, #193, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
+| `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
-| `liquid/sync.hpp` | #160, #165, Phase 6 | implemented | signed metadata items and reports, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
+| `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
 
 ```cpp
 enum class errc : std::uint16_t {
   ok = 0, not_found, already_exists, conflict, invalid_argument, unsupported,
-  corrupt, io, locked, unauthorized, unavailable, busy, internal
+  corrupt, io, locked, unauthorized, unavailable, busy, internal, not_remote
 };
 struct error { errc code; std::string message; std::string context; };  // context: a path, a digest, an op id
 template <class T> using result = std::expected<T, error>;
@@ -101,7 +107,9 @@ boost::capy::any_executor context::executor() const;
 context& default_context();           // process-wide shared context for spawned I/O work
 template <class T> result<T> block_on(task<T>);                // run to completion on a private context (CLI, tests)
 void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared runtime context
+void spawn_serial(task<void>, std::function<void(result<void>)> on_done); // fire-and-forget on a single-runner I/O context
 template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking CPU work on the compute pool; resumes on the caller's executor
+detail::yield_awaiter yield() noexcept;                            // reschedule through the caller's executor; no timer, no stop callback
 }
 ```
 
@@ -115,7 +123,9 @@ capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard
 |---|---|---|
 | `block_on` | CLI and tests | a new private context, run to task completion |
 | `spawn` | long-lived I/O work | the process-wide shared runtime context |
+| `spawn_serial` | ordered long-lived I/O work | the process-wide single-runner event context |
 | `offload` | blocking CPU work | the compute pool; resumes on the caller executor |
+| `yield` | let other work run between steps of a long loop | posts the continuation to the caller executor |
 
 ### `liquid/hash.hpp`
 
@@ -162,6 +172,20 @@ struct graph_statistics {
   std::uint64_t invalidation_walks, discarded_computations;
   std::uint64_t keys, resident_values, resident_value_bytes, memory_ceiling;
 };
+struct graph_validation_record {
+  digest id; query_key query; std::vector<recorded_dependency> inputs;
+  digest incremental, clean; bool agreement; std::chrono::sys_seconds at;
+};
+struct graph_validation_options { std::uint32_t rate; bool all; std::uint64_t limit; };
+struct graph_validation_status {
+  std::uint64_t eligible, validated, backlog, records;
+  std::optional<graph_validation_record> last_divergence;
+};
+struct graph_validation_report {
+  std::uint64_t considered, validated, divergences, backlog; std::chrono::milliseconds elapsed;
+  std::vector<graph_validation_record> records;
+  std::optional<graph_validation_record> last_divergence;
+};
 using query_argument_encoder =
   std::function<result<std::vector<std::byte>>(std::span<const std::byte>)>;
 using query_compute =
@@ -191,6 +215,10 @@ class graph {
   result<std::uint64_t> mark_changed(graph_input_key, durability);
   result<std::uint64_t> mark_changed(query_key);
   runtime::task<std::optional<recorded_query>> recorded(query_key);
+  runtime::task<graph_validation_report> validate(graph_validation_options = {});
+  graph_validation_status validation_status() const;
+  runtime::task<std::vector<graph_validation_record>> validation_records();
+  runtime::task<void> inject_stale_value_for_testing(query_key, std::vector<std::byte>);
   runtime::task<void> flush();
   graph_statistics statistics() const;
 };
@@ -215,10 +243,14 @@ its completed value to force recomputation. `set_input` and `clear_input` manage
 environment, and toolchain leaves; working-tree leaves otherwise read relative to
 `graph_options::working_tree`. A nonzero `graph_options::memory_ceiling` evicts resident values in
 least-recently-demanded order while retaining keys, fingerprints, dependencies, and stored value
-identifiers. `recorded` loads a completed value and returns the comparison
-surface for #23; a query with no completed value returns an empty optional. `flush` atomically
-republishes the current graph root, and `statistics` returns counters since open plus the current
-resident-value accounting.
+identifiers. `recorded` loads a completed value and returns the clean-comparison surface; a query
+with no completed value returns an empty optional. `validate` samples completed nodes or runs a
+full pass, computes each through a new empty graph, retains its comparison record, and evicts a
+divergent value. `validation_status` is the non-I/O backlog and latest-divergence view;
+`validation_records` returns the durable audit history. The explicitly named test hook corrupts a
+completed value while preserving an otherwise valid graph node. `flush` atomically republishes the
+current graph root, and `statistics` returns counters since open plus the current resident-value
+accounting.
 
 ### `liquid/frontend_abi.h` and `liquid/frontend.hpp`
 
@@ -263,6 +295,9 @@ every successful result buffer; the loader copies and releases it before returni
 canonical schemas are in [`frontends.md`](frontends.md).
 
 ```cpp
+enum class frontend_diagnostic_severity { note, warning, error, fatal };
+struct frontend_diagnostic { std::string file; std::uint64_t line, column;
+                             frontend_diagnostic_severity severity; std::string message; };
 enum class frontend_unit_kind : std::uint8_t { declaration = 1, definition = 2, type = 3 };
 struct frontend_source_position { std::uint64_t byte, line, column; };
 struct frontend_source_range { frontend_source_position start, end; };
@@ -274,6 +309,11 @@ struct frontend_callbacks {
   std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
   std::function<bool()> cancelled;
 };
+enum class frontend_tier_mechanism : std::uint8_t { frontend = 1, grammar = 2 };
+struct frontend_language {
+  std::string language; std::vector<std::string> extensions;
+  frontend_tier_mechanism tier_mechanism; std::string grammar_digest;
+};
 class frontend_module {
  public:
   frontend_module() noexcept; ~frontend_module();
@@ -282,6 +322,7 @@ class frontend_module {
   static result<frontend_module> load(std::filesystem::path shared_object);
   static result<frontend_module> linked(const liquid_frontend_module_v1* descriptor);
   std::string_view name() const; std::vector<std::string> languages() const;
+  std::vector<frontend_language> language_details() const;
   bool supports(std::string_view language) const;
   result<std::vector<frontend_unit>> units(std::string_view language,
       std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
@@ -290,6 +331,12 @@ class frontend_module {
       std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
   result<std::vector<std::byte>> assemble(std::span<const std::byte> unit_outputs_cbor,
       std::span<const std::byte> context_cbor = {}, frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> symbols(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
+      frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> symbols_from_output(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> action_output,
+      frontend_callbacks = {}) const;
 };
 class frontend_registry {
  public:
@@ -298,9 +345,10 @@ class frontend_registry {
   frontend_registry& operator=(frontend_registry&&) noexcept;
   result<void> add(frontend_module); result<void> load(std::filesystem::path shared_object);
   result<const frontend_module*> find(std::string_view language) const;
+  std::vector<frontend_language> languages() const;
 };
 struct frontend_build_request {
-  std::string language, source_path; std::vector<std::byte> source, context_cbor;
+  std::string language, source_path, compile_action; std::vector<std::byte> source, context_cbor;
 };
 struct frontend_unit_output {
   frontend_unit unit; std::vector<std::byte> action, output; bool action_ran;
@@ -318,21 +366,43 @@ class frontend_graph {
       std::filesystem::path working_tree, std::shared_ptr<frontend_module>,
       frontend_action_executor);
   runtime::task<frontend_build_report> build(frontend_build_request);
+  runtime::task<symbol_record> symbols(frontend_build_request);
   result<std::uint64_t> mark_changed(std::string path, durability = durability::low);
   graph_statistics statistics() const;
 };
 ```
 
 `frontend_module` validates the descriptor, ownership contract, and canonical CBOR before values
-cross into C++. `frontend_registry` rejects duplicate language registrations. `frontend_graph`
+cross into C++. Optional ABI-v1 language metadata identifies compiler frontends and grammar-backed
+languages while preserving compatibility with the original descriptor size. `frontend_registry`
+rejects duplicate language registrations and projects names, extensions, mechanism, and grammar
+identity. `frontend_graph`
 registers the action and assembly query kinds, records action read paths through `query_context`,
 and runs the potentially blocking assembly operation through `runtime::offload`. The caller's
 `frontend_action_executor` owns compiler-action scheduling and returns object bytes. All three
 handles are move-only; their public copy operations are deleted.
 
+`symbol_record` is `{ subject, language, origin, grammar, occurrences }`; `grammar` is empty for
+compiler records and carries the canonical lock identity for syntactic records. Each occurrence carries its stable
+identifier, display name, kind, definition/reference role, source range, and optional container and
+documentation. `encode_symbols` and `decode_symbols` round-trip the canonical stored record.
+`decode_frontend_symbols(subject, bytes)` binds a frontend operation's per-unit output to its blob
+subject. `frontend_module::symbols(language, blob, context, callbacks)` describes a symbol action,
+and `frontend_module::symbols_from_output(language, blob, stdout, callbacks)` decodes its action
+output. `frontend_graph::symbols(request)` is separate from `build(request)` and invokes the
+injected action executor only when the symbol query is demanded.
+`repository::store_symbols(record)` stores and associates a record, while
+`repository::symbols(subject)` returns the associated public value.
+
 ### `liquid/store.hpp`
 
 ```cpp
+class blob_write_through {
+ public:
+  virtual runtime::task<void> put(digest content, std::span<const std::byte> bytes,
+                                  std::span<const digest> chunks,
+                                  std::span<const std::uint64_t> chunk_sizes) = 0;
+};
 struct store_options {
   algorithm hash_algorithm{algorithm::blake3};
   std::uint64_t pack_size{};
@@ -340,6 +410,7 @@ struct store_options {
   std::string write_key;               // empty selects keyring::default_key_id()
   bool durable{};
   std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
+  std::shared_ptr<blob_write_through> write_through;
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -369,6 +440,7 @@ class store {                          // the chunk store: chunks, packs, liquid
   runtime::task<bool> contains(digest);
   runtime::task<blob_availability> has(digest);
   runtime::task<void> register_remote(blob);
+  runtime::task<void> evict(digest);
   std::vector<digest> attestations(digest subject) const;
   runtime::task<std::optional<object_key_version>> key_version(digest);
   runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
@@ -380,14 +452,17 @@ Chunking (FastCDC), packs, compression, the index and its tuning are internal; n
 appears in a signature. File I/O is Corosio's `random_access_file` and `stream_file` on the
 io_context's worker pool, behind the private boundary. `store_options` names the plaintext hash
 algorithm, pack size, optional keyring, optional write key id, optional durable pack-write
-acknowledgement, and the remote source map. A non-null keyring enables trust-domain encrypted objects; see
+acknowledgement, remote source map, and optional write-through callback. `store::evict` returns
+`errc::not_remote` unless the whole-content digest has a persisted remote registration. A non-null
+keyring enables trust-domain encrypted objects; see
 [encryption.md](encryption.md).
 
 ### `liquid/remote.hpp`
 
 ```cpp
 struct remote_blob_location { std::string source, instance; };
-struct remote_config { /* endpoint, instance, TLS, headers, deadline, batch limit, publish */ };
+enum class remote_backend { reapi, liquid_scheduler };
+struct remote_config { /* endpoint, instance, backend, TLS, headers, deadline, batch limit, publish */ };
 class remote_blob_source {
  public:
   virtual runtime::task<std::vector<digest>> find_missing(std::string, std::vector<digest>) = 0;
@@ -402,6 +477,9 @@ class remote_executor {
   virtual std::uint64_t queue_depth() const noexcept = 0;
   virtual bool supports_batch() const noexcept = 0;
   virtual runtime::task<action_result> execute(action_input) = 0;
+  virtual runtime::task<action_result> execute_prepared(action_input, digest action,
+                                                         digest sandbox,
+                                                         execution_schedule);
   virtual runtime::task<std::vector<action_result>> execute_batch(std::vector<action_input>) = 0;
 };
 class remote {
@@ -433,8 +511,20 @@ not expose transport implementation types.
 enum class sync_item_kind : std::uint8_t { drip = 1, change = 2, directory = 3, reference = 4 };
 struct sync_item;       // signed actor/body, repository and directory IDs, root marker, ref value
 struct sync_export { journal_cursor cursor; std::size_t count; bool done; std::vector<digest> objects; };
-struct sync_report { journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received; };
-using sync_authorizer = std::function<runtime::task<void>(const sync_item&)>;
+enum class sync_ref_outcome_kind : std::uint8_t { applied = 1, refused = 2 };
+struct sync_ref_outcome { std::string name; sync_ref_outcome_kind outcome; std::string reason; };
+struct sync_report {
+  journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received;
+  std::vector<sync_ref_outcome> references;
+};
+struct sync_endpoint_options { /* token, cursor, batch size */ bool atomic; };
+struct sync_ref_update {
+  std::string name; std::optional<change_id> old_head; change_id new_head; bool fast_forward;
+};
+enum class sync_ref_verdict_kind : std::uint8_t { accepted = 1, refused = 2 };
+struct sync_ref_verdict { std::string name; sync_ref_verdict_kind verdict; std::string reason; };
+using sync_authorizer = std::function<runtime::task<std::vector<sync_ref_verdict>>(
+    const sync_item&, std::span<const sync_ref_update>)>;
 struct sync_server_options { sync_authorizer authorize; std::size_t batch_items{256}; };
 class sync_server {
  public:
@@ -461,7 +551,11 @@ class sync_endpoint final : public remote_blob_source {
 ```
 
 `sync_server` verifies that an explicitly supplied store belongs to the repository. Its optional
-authorization task runs for change items before an atomic metadata import; transport adapters call
+authorization task runs in metadata-frame order for changes and refs before import. Change calls
+carry the ref updates that newly reach them; ref calls carry the server-known old head, proposed
+new head, and a fast-forward value computed from the change graph. The task returns one named
+verdict per update. The server applies accepted refs, returns each outcome through `sync_report`,
+and makes the set all-or-nothing when endpoint options request `atomic`. Transport adapters call
 the byte-span handlers and do not include private codec headers.
 `repository::export_drips(cursor, span)` emits bounded pages of journal records, signed changes,
 upstream directory sync messages, refs, and referenced object roots. `import_drips(span)` verifies
@@ -500,6 +594,52 @@ records the measurement it must beat.
 The records' shapes and the metadata document are designed in [`object-model.md`](object-model.md).
 Lease destruction has no storage effect; expiry is the authority. Collection reports are plain
 values, and [gc.md](gc.md) defines their epoch and crash semantics.
+
+### `liquid/abi.hpp`
+
+```cpp
+enum class abi_binary_kind : std::uint8_t { elf, macho, pe };
+enum class abi_symbol_kind : std::uint8_t { function, object };
+struct abi_symbol {
+  std::string name;
+  std::optional<std::string> version;
+  abi_symbol_kind kind;
+  std::uint64_t size;
+  std::string binding;
+  std::string visibility;
+  std::optional<std::string> signature;
+};
+struct abi_descriptor {
+  digest subject;
+  abi_binary_kind binary;
+  std::string architecture;
+  std::optional<std::string> install_name;
+  std::vector<abi_symbol> exported_symbols;
+  std::vector<std::string> needed_libraries;
+};
+enum class abi_verdict : std::uint8_t { compatible, compatible_additions, incompatible };
+enum class abi_change_kind : std::uint8_t {
+  added, removed, type_changed, size_changed, version_changed
+};
+struct abi_change {
+  std::string symbol;
+  abi_change_kind kind;
+  std::string detail;
+};
+struct abi_report {
+  abi_verdict verdict;
+  std::vector<abi_change> changes;
+};
+result<abi_descriptor> extract_abi(std::span<const std::byte> binary);
+abi_report diff_abi(const abi_descriptor&, const abi_descriptor&);
+result<std::string> abi_json(const abi_descriptor&);
+result<std::string> abi_json(const abi_report&);
+```
+
+`repository::abi(digest library_blob)` asynchronously retrieves the stored descriptor for an
+output blob. Extraction and diffing remain synchronous so callers can place CPU work according to
+their runtime; result publication uses `runtime::offload`. The canonical record and verdict rules
+are in [abi.md](abi.md).
 
 ### `liquid/attestation.hpp`
 
@@ -584,30 +724,53 @@ struct result_filter { std::optional<result_id> id; std::optional<digest> action
 struct repository_attestation { digest id; attestation value; };
 struct attestation_filter { std::optional<digest> id, subject; std::optional<std::string> profile, issuer;
                             record_page_options page; };
+struct search_options { std::optional<std::string> ref; std::uint64_t limit{20}; };
+enum class search_executor { bm25f, trigram, scan };
+enum class search_query_kind { ranked_text, literal, regex_with_literal_core,
+                               regex_without_literal_core };
+struct search_hit { std::string path; digest blob; std::uint64_t line, column;
+                    std::string snippet; std::optional<double> score; };
+struct search_alternative { search_executor executor; std::uint64_t estimated_cost_us;
+                            std::optional<std::uint64_t> actual_cost_us; bool eligible;
+                            std::string reason; };
+struct search_plan { search_executor executor; search_query_kind query_kind;
+                     std::uint64_t estimated_cost_us, actual_cost_us;
+                     std::uint64_t working_set_blobs, working_set_bytes,
+                                   drips_since_index_update, scan_nanoseconds_per_blob,
+                                   scan_parallelism;
+                     double trigram_selectivity; std::vector<search_alternative> alternatives; };
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
   static runtime::task<repository> open(std::filesystem::path, repository_options = {});
+  static runtime::task<repository> open_build(std::filesystem::path working_tree,
+                                               repository_options = {});
   runtime::task<tree> root();                            // the working copy is a change
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);
   runtime::task<std::vector<std::byte>> read_decrypted(std::string path);  // explicit leaf/file decryption
+  runtime::task<std::vector<search_hit>> search(std::string query, search_options = {});
+  runtime::task<search_plan> plan_search(std::string query, search_options = {});
   runtime::task<void> write(std::string path, std::vector<std::byte>);   // becomes a drip
   runtime::task<void> redact(std::string path, std::optional<change_id> = {});
   runtime::task<void> redact(std::string path, std::vector<std::byte> replacement,
                              std::optional<change_id> = {});
   runtime::task<std::vector<std::string>> diff_keys(std::string path, change_id a, change_id b);
-  runtime::task<void> write_file(std::string path, std::filesystem::path source);   // streams a large file in; one drip
-  runtime::task<void> write_remote(std::string path, blob);
+  runtime::task<void> write_file(std::string path, std::filesystem::path source,
+                                 write_options = {});   // streams a large file in; one drip
+  runtime::task<void> write_remote(std::string path, blob, write_options = {});
   runtime::task<digest> store_remote_blob(blob);
-  runtime::task<void> move(std::string from, std::string to);           // recorded, never inferred; same node_id
-  runtime::task<void> remove(std::string path);
+  runtime::task<void> move(std::string from, std::string to, write_options = {});
+  runtime::task<void> remove(std::string path, write_options = {});
   runtime::task<change_id> cut(std::string message);      // name the current change; the working copy starts a new one
   runtime::task<std::vector<ref>> refs();                 // name → change_id
   runtime::task<void> set_ref(std::string name, change_id);
   result<repository_status> status();                     // includes bytes still remote in this tree
   runtime::task<std::vector<change>> log(log_options = {});
-  runtime::task<snapshot> at(change_id);                 // time travel
+  runtime::task<snapshot> at(change_id);                  // historical tree
+  runtime::task<document_state> document_at(change_id);   // historical refs, locks, and nesting
+  runtime::task<std::vector<drip>> drips();
+  runtime::task<stale_base_report> explain_stale(write_base, std::vector<std::string> paths);
   runtime::task<std::vector<tree_diff_entry>> diff(change_id old, change_id next,
                                                     tree_diff_options = {});
   runtime::task<std::vector<tree_diff_entry>> diff(digest old_tree, digest next_tree,
@@ -618,24 +781,35 @@ class repository {
   runtime::task<std::vector<mapped_anchor>> map_anchors(std::span<const text_anchor>,
                                                         change_id target);
   runtime::task<record_page<repository_result>> results(result_filter = {});
+  runtime::task<action_input> action(digest); // action or result record
   runtime::task<record_page<repository_attestation>> attestations(attestation_filter = {});
   runtime::task<record_page<repository_attestation>> attestations(digest subject,
                                                                    record_page_options = {});
   runtime::task<record_page<build_trace>> traces(record_page_options = {});
   runtime::task<record_page<sbom_report>> sboms(result_id, record_page_options = {});
+  runtime::task<abi_descriptor> abi(digest library_blob);
   runtime::task<readability_report> readability(std::optional<change_id> = {});
   runtime::task<void> nest(repository source, std::string path);
   runtime::task<repository> split(std::string path, std::filesystem::path into);
   runtime::task<void> combine(repository other, std::optional<std::string> at);
   runtime::task<std::vector<conflict>> conflicts();      // #40: conflicts are values
   runtime::task<std::vector<operation_record>> operations(log_options = {}); // newest first
-  runtime::task<void> undo(op_id);                       // #41: the operation log
+  runtime::task<undo_report> undo(op_id);
+  runtime::task<undo_report> undo_session(session_id, undo_options = {});
   runtime::task<void> lock(std::string path);            // #42
   runtime::task<void> unlock(std::string path);
   runtime::task<digest> store_attestation(attestation);    // store canonical evidence; no trust implied
   runtime::task<collection_report> collect(collection_options = {}); // checkpoints and collects
   runtime::task<retention_explanation> retain_explain(digest);       // live rule/lease or eviction
   runtime::task<cache_report> cache_stats();               // hits, misses, bytes, critical alerts
+  runtime::task<digest> root_digest();                     // current tree record
+  runtime::task<std::vector<build_plan_action>> build_plan(build_target = {});
+  result<build_handle> build(build_target = {});           // configured repository build
+  result<build_handle> build(action_input);
+  result<build_handle> build(action_input, remote_executor&);
+  runtime::task<void> register_test(test_target);           // native definition hook
+  runtime::task<std::vector<test_target>> tests();
+  result<build_handle> run_tests(std::string filter = {});
   runtime::task<void> set_policy(policy_config);           // validate and checkpoint config.policy
   runtime::task<sync_export> export_drips(journal_cursor, std::span<sync_item>);
   runtime::task<sync_import_report> import_drips(std::span<const sync_item>);
@@ -647,13 +821,26 @@ class repository {
   runtime::task<std::vector<std::string>> metadata_keys(std::string prefix);
   runtime::task<tree> tree(digest);                              // a tree record from the store (historical snapshots)
   runtime::task<std::vector<std::byte>> blob(digest);            // a blob's bytes by digest
-  runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);   // mode-aware
+  runtime::task<void> write(std::string path, std::vector<std::byte>, write_options);
   runtime::task<tree_import_report> import_tree(std::filesystem::path root, import_options = {});
   runtime::task<void> nest_ref(std::string path, repo_ref);      // a nested-repository placeholder without the repository present
 };
 struct change_input { std::vector<change_ref> parents; actor author; std::chrono::sys_seconds at; std::string message;
                       std::map<std::string, std::string> metadata; std::optional<std::string> ref; };
-struct write_options { std::uint32_t mode{0100644}; };
+struct agents_config { bool require_base; std::vector<std::string> actors; };
+struct write_base { change_id change; std::optional<journal_cursor> cursor; };
+struct write_options {
+  enum class stale_action : std::uint8_t { refuse, accept_if_disjoint, force };
+  std::uint32_t mode{0100644};
+  std::optional<write_base> base;
+  std::vector<std::string> depends_on;
+  stale_action on_stale{stale_action::refuse};
+};
+struct stale_path_change { std::string path; std::vector<line_change> hunks; };
+struct stale_base_report {
+  write_base base; change_id head; std::vector<stale_path_change> changed;
+  std::uint64_t since_drips;
+};
 struct import_options { std::vector<std::string> ignore_patterns; bool follow_symlinks{}; std::string message{"import tree"}; };
 struct tree_import_report { std::optional<op_id> drip; std::uint64_t files_seen, changed, bytes_hashed, bytes_written; };
 // log_options gains: std::optional<change_id> from; bool first_parent{false};  (full DAG, topological order, by default)
@@ -664,12 +851,21 @@ encrypted_regex }`. The first repository-relative glob match selects leaf or fil
 is implemented for JSON and `.env`; [leaf-encryption.md](leaf-encryption.md) defines its envelope,
 normalization, enforcement, and JSON Pointer key paths.
 
+`search_options` selects the working tree by default or a named ref and limits results to 20 by
+default. Plain queries use BM25F; quoted and slash-delimited queries let the measured planner choose
+verified trigrams or a current mapped scan. `search_hit` carries the repository-relative path,
+content digest, one-based line and column, one-line snippet, and a score only for ranked results.
+`plan_search` executes the query and returns the same choice with estimates, actual cost, measured
+inputs, and alternatives that preserve or reject the requested result set. Publication, freshness,
+and the private index format are documented in [search.md](search.md).
+
 `ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
-`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`.
+`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`, and `agents`.
 `repository_options` is a plain record with `checkpoint_interval`, caller-owned `store`, local
-`storage`, `encrypt`, `cache`, `verify`, `policy`, `retention`, and `defer_tree_load`.
-`defer_tree_load` is for streaming tree import: it leaves the root paged until the caller imports
-or reads it. `storage` selects the
+`storage`, `encrypt`, `cache`, `verify`, `agents`, `policy`, and `retention`. The persisted
+`agents` record has `require_base` and a list of TAAP actor identifiers; the base requirement
+applies only to listed actors. `defer_tree_load` leaves the root paged until the caller imports or
+reads it. `storage` selects the
 object-store hash algorithm and key custody when `store` is null. When `store` points to an open
 caller-owned store, that store's configuration is authoritative and the caller keeps it alive for
 the repository's lifetime. Pass the same placement to `create` and `open` so later writes and reads
@@ -706,16 +902,31 @@ means forever); result rules have a base duration scaled by recorded execution c
 the sorted key-version set used by its blobs. `readability_report` contains those revision rows and
 the three required rotation, revocation, and metadata-disclosure statements.
 
-`operation_record` is `{ op_id id, std::string kind, std::string from, std::string to, actor by,
-std::chrono::sys_seconds at }`. Each operation ID is unique, so it selects one operation for
-`undo`. `operations()` returns the repository document's recorded operations newest first.
+`session_id` is a printable 16-byte identifier. `repository_options::session` fixes it for an
+opened handle; an omitted value generates a random identifier per handle. `operation_record` is
+`{ op_id id, std::string kind, std::string from, std::string to, actor by,
+std::chrono::sys_seconds at, session_id session }`. Each operation ID is unique, so it selects one
+operation for `undo`. `operations()` returns the repository document's recorded operations newest
+first. `to_string(session_id)` and `parse_session_id` use 32 lowercase hexadecimal digits.
+
+`undo_report` has ordered `applied` operation IDs and `skipped` entries of `{ op, path, reason }`.
+An inverse applies only where current state still matches that operation's recorded after-state.
+`undo_session` reverses matching operations newest first and accepts optional path and drip-ID
+filters through `undo_options`; each affected directory is committed as one transaction and no
+candidate document is published when planning or a transaction fails.
+
+`document_state` contains the reference map, lock paths, and `{ path, repo_ref }` nested pointers
+recorded in a version 2 change. `document_at` validates that change's directory heads through
+full-history archives and never reads from or mutates the active shallow documents. Version 1
+change records continue to support `at`, but have no document projection.
 
 `repository::collect` checkpoints the working tree, retains leases for that tree, every current ref
 head, the checkpoint document, and its lazy directory documents, then delegates to
 `store::collect`. Repository callers use this operation instead of collecting the repository's store
 directly.
-Existing repository documents without operation metadata remain readable; their records return an
-empty actor and epoch timestamp.
+Existing repository documents without the added operation metadata remain readable; their records
+return an empty actor, epoch timestamp, and zero session. Their legacy operations cannot be undone
+when no inverse effects were recorded.
 
 Tree diffs match paths by `node_id`, expose independent change kinds plus both blob and mode sides,
 and read UTF-8 blob contents only when `tree_diff_options::text` requests `line_change` hunks.
@@ -772,6 +983,31 @@ enum class cache_miss_reason { input_changed, command_changed, environment_chang
   toolchain_changed, sandbox_changed, never_built, divergent_result_quarantined, unknown,
   policy_refused, non_hermetic_read };
 struct action_input { /* command, roots, platform, timeout */ bool remote_eligible; };
+enum class build_event_kind { action_queued, action_started, action_hit, action_done,
+  action_failed, critical_path_updated, test_result, build_finished };
+enum class action_execution_kind { local, remote };
+struct action_execution { action_execution_kind kind; std::string worker; };
+enum class test_status { passed, failed };
+struct test_result { std::string name; test_status status; std::string output;
+                     std::chrono::milliseconds duration; bool hit; };
+struct test_target { std::string name; std::vector<std::string> command, labels, inputs;
+                     std::string cwd; digest toolchain; liquid::platform platform;
+                     std::optional<std::chrono::seconds> timeout; };
+struct build_target { std::string name; }; // empty means the whole configured build
+struct build_plan_action { std::uint64_t v; digest action; action_input input;
+  std::vector<digest> dependencies; cache_status state; std::optional<result_id> result; };
+result<std::string> plan_json(const build_plan_action&);
+struct build_summary { int exit; std::uint64_t actions, hits, failures;
+                       std::chrono::milliseconds duration; };
+struct build_event { build_event_kind kind; std::uint64_t sequence;
+  std::optional<digest> action; std::optional<result_id> result;
+  std::optional<action_execution> execution; std::vector<action_output> outputs;
+  std::vector<frontend_diagnostic> diagnostics; std::vector<critical_action> critical_path;
+  std::optional<test_result> test; std::optional<build_summary> summary; };
+class build_event_subscription { public: runtime::task<std::optional<build_event>> next(); };
+class build_handle { public: result<build_event_subscription> events() const;
+                     runtime::task<build_summary> wait(); };
+result<std::string> event_json(const build_event&);
 struct cache_miss { cache_miss_reason reason; std::string path;
   std::optional<digest> expected, actual; /* argv, environment, tool, line, attribution, detail */ };
 enum class policy_scope : std::uint8_t { paths, toolchain, all_inputs };
@@ -865,6 +1101,11 @@ struct verified_action {
   std::vector<reproducibility_difference> differences;
 };
 struct verify_report { std::uint64_t considered; std::vector<verified_action> actions; };
+struct graph_verify_options {
+  bool all, explain; std::uint32_t rate;
+  std::optional<std::filesystem::path> cache_directory;
+};
+struct graph_verify_report { graph_validation_report graph; verify_report actions; };
 struct replay_options {
   bool record; std::optional<std::filesystem::path> cache_directory;
 };
@@ -873,16 +1114,25 @@ struct replay_report {
   std::vector<reproducibility_difference> differences; std::optional<digest> attestation;
 };
 namespace build {
+result<build_handle> start(repository&, action_input);
+result<build_handle> start(repository&, action_input, remote_executor&);
+result<build_handle> start_wrap(std::filesystem::path, std::vector<std::string>,
+                                wrap_options = {});
 execution_schedule choose_execution(scheduling_inputs);
 runtime::task<result_id> execute(repository&, action_input);
+runtime::task<std::vector<std::byte>> execute_symbol_action(repository&, action_input,
+                                                             std::vector<std::byte>);
 runtime::task<result_id> record_remote_result(repository&, action_input, action_result);
 runtime::task<result_id> execute(repository&, action_input, remote_executor&);
 runtime::task<std::vector<result_id>> execute_batch(repository&, std::vector<action_input>,
                                                     remote_executor&);
 runtime::task<action_result> result(repository&, result_id);
 runtime::task<wrap_report> wrap(std::filesystem::path, std::vector<std::string>, wrap_options = {});
+result<std::filesystem::path> wrap_cache_directory(const std::filesystem::path&);
 runtime::task<verify_report> verify(repository&, verify_options = {});
 runtime::task<verify_report> verify(std::filesystem::path, verify_options = {});
+runtime::task<graph_verify_report> verify_graph(std::filesystem::path,
+                                                graph_verify_options = {});
 runtime::task<replay_report> replay(repository&, digest target, replay_options = {});
 runtime::task<replay_report> replay(std::filesystem::path, digest target, replay_options = {});
 runtime::task<provenance_report> verify_provenance(repository&, result_id);
@@ -927,7 +1177,9 @@ only the winner and cancels the other task. The interfaces have no REAPI, gRPC, 
 worker implementation dependency. `verify` re-executes
 selected cache entries with their recorded sandbox definition, compares exit status and output
 digests, and returns the signed attestation digest plus any differences. A divergent index entry is
-permanently excluded from lookup.
+permanently excluded from lookup. `verify_graph` first cleanly recomputes the wrap graph's sampled
+or complete `action_result` nodes, then runs the matching action-verification selection; its two
+reports keep graph and action evidence distinct.
 `replay` uses the same reconstruction, sandbox launch, and comparison for one action or result.
 It returns both exit values and byte-level differences without an attestation by default. Setting
 `replay_options::record` records the ordinary verification attestation and quarantine decision.
@@ -942,7 +1194,8 @@ result. See
 current/prior identifiers and a typed cause. It re-evaluates current policy before classifying a
 hit or ordinary miss and uses `cache_miss_reason::policy_refused` for an unsatisfied refuse rule.
 `wrap_report` includes action counts, its per-wrap `cache_report`, typed miss details, the retained
-trace digest, phase totals, achieved parallelism, and the dependency-aware critical path.
+trace digest, phase totals, achieved parallelism, the dependency-aware critical path, graph
+validation backlog, and the last graph divergence.
 `why_report`, trace actions, critical-path actions, and Chrome events carry the stored schedule, so
 diagnostics expose history, size class, byte counts, queue depth, locality, batching, estimates, and
 reason without recalculating the choice. `latest_trace`, `why_slow`, and `chrome_trace` query and
@@ -961,8 +1214,11 @@ probe.
 ### `liquid/drip.hpp` and `liquid/identity.hpp`
 
 ```cpp
+enum class stale_revalidation : std::uint8_t { disjoint, forced };
 struct drip { drip_id id; change_id base; std::vector<path_op> ops; actor by;
               std::vector<std::byte> signature; std::chrono::sys_seconds at;
+              std::optional<write_base> reasoned_from;
+              std::optional<stale_revalidation> revalidated;
               std::optional<digest> scan_attestation; std::optional<scan_block> block; bool redacted; };
 struct scan_allow_rule { std::string path; std::vector<std::string> detectors; };
 struct scan_configuration { std::vector<scan_allow_rule> allow;
@@ -1040,9 +1296,13 @@ struct daemon_status {
   std::optional<drip_id> last_drip; std::vector<std::string> invalidated_paths;
   std::vector<daemon_target_status> targets; capture_status capture;
   std::uint64_t graph_keys, graph_values, graph_memory_bytes, graph_memory_ceiling;
+  std::uint64_t graph_validation_backlog;
+  std::optional<graph_validation_record> last_graph_divergence;
 };
 struct daemon_options {
   std::chrono::milliseconds idle_timeout; std::uint64_t graph_memory;
+  std::uint32_t graph_validation_rate; std::chrono::milliseconds graph_validation_interval;
+  query_registry graph_queries;
   capture_options capture; std::vector<std::shared_ptr<daemon_target>> targets;
 };
 class daemon {
@@ -1055,6 +1315,9 @@ class daemon {
   runtime::task<daemon_status> status();
   runtime::task<void> pause_capture();
   runtime::task<void> resume_capture();
+  runtime::task<std::vector<build_plan_action>> build_plan(build_target = {});
+  runtime::task<build_handle> build(build_target);
+  runtime::task<build_handle> build(action_input);
   runtime::task<void> shutdown();
   runtime::task<void> wait();
 };
@@ -1063,9 +1326,14 @@ class daemon {
 The opaque handle is either the host returned by `start` or a local client returned by `attach`.
 All waiting operations are Capy tasks. A host owns capture, persists the graph on idle or explicit
 shutdown, and processes targets in vector order. Cursor publication follows successful target
-delivery. `daemon_status` contains capture telemetry, the last invalidated paths, every target's
-cursor distance and error, plus graph key, resident-value, byte-use, and ceiling counts. The local
-wire payload is canonical CBOR in the sync protocol's five-byte frame. Windows entry points return
+delivery. During otherwise idle slices, the host validates one pending graph target through the
+supplied query registry. `daemon_status` contains capture telemetry, the last invalidated paths,
+every target's cursor distance and error, graph key, resident-value, byte-use, and ceiling counts,
+plus validation backlog and the most recent divergence. The local
+wire payload is canonical CBOR in the sync protocol's five-byte frame. Build sessions accept the
+`build_plan`, `build_repository`, and direct-action `build_start` operations; `build_next` forwards
+every public event through that same frame.
+Windows entry points return
 `errc::unsupported` while Corosio lacks named-pipe transport.
 
 `capture_status` makes overflow and recrawl visible because watcher events are hints, not a
@@ -1108,13 +1376,15 @@ KMS, Vault, TPM, and Shamir custody remain liquid #51 work; signing remains liqu
 frontend-query state), `src/crdt/` (checked automerge-cpp
 access, compact/shallow metadata checkpoints, upstream sync framing, and patch observation),
 `src/sync/` (canonical metadata and pack wire codecs plus the Corosio/Boost.HTTP client),
-`src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/vfs/` (Cloud
+`src/capture/` (the journal, OS watchers, coalescing), `src/daemon/` (cursor fan-out), `src/search/`
+(manifest, segments, BM25F term records, and positional trigrams), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
 
 ## ABI policy
 
-- **Boost.Capy is a public dependency** (`Boost::capy` linked `PUBLIC`); Corosio and the
+- **Boost.Capy is a public dependency** (`Boost::capy` linked `PUBLIC`); Corosio,
+  `oramasearch/oramacore-cpp` at `9b74ce177f47d63024532ae6000c2cd62c73e0cd`, and the
   `oramasearch/http` client module at `af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4` are private.
   Consumers get Capy transitively and may await liquid tasks from their own Capy coroutines.
 - **Static by default.** One binary to ship; liquify and lake link `liquid::liquid` as a pinned

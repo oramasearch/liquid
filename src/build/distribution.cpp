@@ -188,6 +188,61 @@ runtime::task<void> hydrate_result(repository& destination,
             co_return std::unexpected(hydrated.error());
         }
     }
+    if (value.provenance) {
+        auto hydrated = co_await hydrate_object(
+            destination, source, instance, *value.provenance, graph_object_kind::bytes, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    for (const auto& id : value.sboms) {
+        auto hydrated = co_await hydrate_object(
+            destination, source, instance, id, graph_object_kind::bytes, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+        auto bytes = co_await repository_detail::build_access::get(destination, id);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto statement = objects::decode_attestation(*bytes);
+        if (!statement) {
+            co_return std::unexpected(statement.error());
+        }
+        const auto document = std::ranges::find(
+            statement->attributes, std::string{"document"}, &attestation_attribute::name);
+        if (document == statement->attributes.end()) {
+            co_return std::unexpected(
+                error{errc::corrupt, "remote SBOM has no document", to_string(id)});
+        }
+        const auto* text = std::get_if<std::string>(&document->value);
+        auto document_id =
+            text ? parse_digest(*text)
+                 : liquid::result<digest>{std::unexpected(
+                       error{errc::corrupt, "remote SBOM document is invalid", to_string(id)})};
+        if (!document_id) {
+            co_return std::unexpected(document_id.error());
+        }
+        hydrated = co_await hydrate_object(
+            destination, source, instance, *document_id, graph_object_kind::bytes, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    for (const auto& id : value.abis) {
+        auto hydrated = co_await hydrate_object(
+            destination, source, instance, id, graph_object_kind::bytes, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
+    for (const auto& id : value.abi_compatibility) {
+        auto hydrated = co_await hydrate_object(
+            destination, source, instance, id, graph_object_kind::bytes, seen);
+        if (!hydrated) {
+            co_return std::unexpected(hydrated.error());
+        }
+    }
     co_return liquid::result<void>{};
 }
 
@@ -252,9 +307,12 @@ boost::capy::io_task<action_result> run_local_candidate(repository& source,
     co_return boost::capy::io_result<action_result>{{}, std::move(*value)};
 }
 
-runtime::task<action_result>
-run_remote_candidate(repository& source, const prepared_action& prepared, remote_executor& remote) {
-    auto value = co_await remote.execute(prepared.input);
+runtime::task<action_result> run_remote_candidate(repository& source,
+                                                  const prepared_action& prepared,
+                                                  const execution_schedule& schedule,
+                                                  remote_executor& remote) {
+    auto value = co_await remote.execute_prepared(
+        prepared.input, prepared.action, prepared.sandbox, schedule);
     if (!value) {
         co_return std::unexpected(value.error());
     }
@@ -268,9 +326,10 @@ run_remote_candidate(repository& source, const prepared_action& prepared, remote
 
 boost::capy::io_task<action_result> run_remote_race_candidate(repository& source,
                                                               const prepared_action& prepared,
+                                                              const execution_schedule& schedule,
                                                               remote_executor& remote,
                                                               std::optional<error>& failure) {
-    auto value = co_await run_remote_candidate(source, prepared, remote);
+    auto value = co_await run_remote_candidate(source, prepared, schedule, remote);
     if (!value) {
         failure = value.error();
         co_return boost::capy::io_result<action_result>{
@@ -369,7 +428,10 @@ auto choose_execution(scheduling_inputs inputs) -> execution_schedule {
                           : "local execution estimate is lower"};
 }
 
-runtime::task<result_id> execute(repository& source, action_input input, remote_executor& remote) {
+runtime::task<result_id> execute_selected(repository& source,
+                                          action_input input,
+                                          remote_executor& remote,
+                                          std::optional<digest> history_candidate) {
     auto prepared = co_await prepare_action(source, std::move(input));
     if (!prepared) {
         co_return std::unexpected(prepared.error());
@@ -380,7 +442,7 @@ runtime::task<result_id> execute(repository& source, action_input input, remote_
         co_return *prepared->hit;
     }
 
-    auto recorded = co_await history(source, prepared->candidate);
+    auto recorded = co_await history(source, history_candidate.value_or(prepared->candidate));
     if (!recorded) {
         co_return std::unexpected(recorded.error());
     }
@@ -445,13 +507,13 @@ runtime::task<result_id> execute(repository& source, action_input input, remote_
             co_return std::unexpected(uploaded.error());
         }
         if (selected.decision == execution_decision::remote) {
-            value = co_await run_remote_candidate(source, *prepared, remote);
+            value = co_await run_remote_candidate(source, *prepared, selected, remote);
         } else {
             auto local_failure = std::optional<error>{};
             auto remote_failure = std::optional<error>{};
             auto winner = co_await boost::capy::when_any(
                 run_local_candidate(source, *prepared, local_failure),
-                run_remote_race_candidate(source, *prepared, remote, remote_failure));
+                run_remote_race_candidate(source, *prepared, selected, remote, remote_failure));
             if (winner.index() == 1) {
                 value = std::move(std::get<1>(winner));
             } else if (winner.index() == 2) {
@@ -469,9 +531,23 @@ runtime::task<result_id> execute(repository& source, action_input input, remote_
     if (!value) {
         co_return std::unexpected(value.error());
     }
-    value->schedule = std::move(selected);
-    value->record_version = 3;
+    if (!value->schedule) {
+        value->schedule = std::move(selected);
+    }
+    value->record_version = 4;
     co_return co_await finish_action(source, *prepared, std::move(*value));
+}
+
+runtime::task<result_id> execute(repository& source, action_input input, remote_executor& remote) {
+    co_return co_await execute_selected(source, std::move(input), remote, std::nullopt);
+}
+
+runtime::task<result_id> execute_with_history_candidate(repository& source,
+                                                        action_input input,
+                                                        remote_executor& remote,
+                                                        digest history_candidate) {
+    co_return co_await execute_selected(
+        source, std::move(input), remote, std::move(history_candidate));
 }
 
 runtime::task<std::vector<result_id>>
@@ -594,7 +670,7 @@ execute_batch(repository& source, std::vector<action_input> inputs, remote_execu
                 co_return std::unexpected(hydrated.error());
             }
             value.schedule = action.schedule;
-            value.record_version = 3;
+            value.record_version = 4;
         }
         for (auto index = std::size_t{}; index != batched.size(); ++index) {
             auto& action = pending[batched[index]];

@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 
+#include "../temporary_directory.hpp"
 #include "formats/json.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -15,8 +16,8 @@ namespace {
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-leaf-repository-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-leaf-repository-test-" +
+                                           std::to_string(next_++))) {
         auto code = std::error_code{};
         std::filesystem::remove_all(path_, code);
     }

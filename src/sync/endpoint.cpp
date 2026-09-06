@@ -227,7 +227,9 @@ auto parse_error_code(std::string_view value) -> std::optional<errc> {
                             errc::unauthorized,
                             errc::unavailable,
                             errc::busy,
-                            errc::internal}) {
+                            errc::internal,
+                            errc::not_remote,
+                            errc::not_configured}) {
         if (to_string(code) == value) {
             return code;
         }
@@ -378,6 +380,37 @@ auto endpoint_target(const parsed_url& url, std::string_view suffix) -> std::str
     return output;
 }
 
+auto reference_outcomes(std::span<const sync_item> sent, std::span<const sync_ref_outcome> received)
+    -> result<std::vector<sync_ref_outcome>> {
+    auto expected = std::vector<std::string>{};
+    for (const auto& item : sent) {
+        if (item.kind == sync_item_kind::reference) {
+            expected.push_back(item.name);
+        }
+    }
+    if (received.empty()) {
+        auto legacy = std::vector<sync_ref_outcome>{};
+        legacy.reserve(expected.size());
+        for (auto& name : expected) {
+            legacy.push_back(sync_ref_outcome{std::move(name)});
+        }
+        return legacy;
+    }
+    if (received.size() != expected.size()) {
+        return std::unexpected(
+            sync_error(errc::corrupt, "push reply has the wrong number of reference outcomes"));
+    }
+    auto output = std::vector<sync_ref_outcome>{received.begin(), received.end()};
+    for (const auto& name : expected) {
+        const auto count = std::ranges::count(output, name, &sync_ref_outcome::name);
+        if (count != 1) {
+            return std::unexpected(
+                sync_error(errc::corrupt, "push reply has an invalid reference outcome", name));
+        }
+    }
+    return output;
+}
+
 } // namespace
 
 struct sync_endpoint::impl {
@@ -486,6 +519,7 @@ runtime::task<sync_report> sync_endpoint::push(repository& source) {
         }
     }
     document.cursor = cursor;
+    document.atomic = impl_->options.atomic;
     auto session = sync_session{repository_detail::sync_access::objects(source), *this, {}};
     auto sent = co_await session.send(document.objects);
     if (!sent) {
@@ -510,6 +544,10 @@ runtime::task<sync_report> sync_endpoint::push(repository& source) {
     if (!incoming) {
         co_return std::unexpected(incoming.error());
     }
+    auto references = reference_outcomes(document.items, incoming->outcomes);
+    if (!references) {
+        co_return std::unexpected(references.error());
+    }
     auto received = co_await session.receive(incoming->objects);
     if (!received) {
         co_return std::unexpected(received.error());
@@ -521,7 +559,8 @@ runtime::task<sync_report> sync_endpoint::push(repository& source) {
     co_return sync_report{.cursor = incoming->cursor,
                           .metadata_items = document.items.size(),
                           .sent = *sent,
-                          .received = *received};
+                          .received = *received,
+                          .references = std::move(*references)};
 }
 
 runtime::task<sync_report> sync_endpoint::pull(repository& destination) {

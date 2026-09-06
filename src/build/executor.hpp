@@ -24,6 +24,11 @@ struct prepared_action {
 [[nodiscard]] runtime::task<prepared_action>
 prepare_action(repository& source, action_input input, bool lookup_cache = true);
 
+[[nodiscard]] runtime::task<result_id> execute_with_history_candidate(repository& source,
+                                                                      action_input input,
+                                                                      remote_executor& remote,
+                                                                      digest history_candidate);
+
 [[nodiscard]] runtime::task<action_result> run_action(repository& source,
                                                       action_input input,
                                                       digest action,

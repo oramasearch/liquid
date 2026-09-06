@@ -12,11 +12,13 @@
 
 #include "remote_blob_source.hpp"
 
+#include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/repository_access.hpp"
 #include "identity/taap.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/build.hpp"
+#include "liquid/daemon.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
@@ -27,8 +29,7 @@ namespace {
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-build-test-" + std::to_string(next_++))) {
+        : path_(liquid::test::fixture_path("liquid-build-test-" + std::to_string(next_++))) {
         std::error_code code;
         std::filesystem::remove_all(path_, code);
     }
@@ -206,6 +207,48 @@ TEST(BuildCache, unsigned_publish_is_refused_when_writes_are_enabled) {
     EXPECT_EQ(published.error().message, "cache result signature is invalid");
 }
 
+TEST(BuildPlan, repository_without_configuration_has_named_error) {
+    temporary_repository location;
+    auto opened = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    auto plan = liquid::runtime::block_on(opened->build_plan());
+    ASSERT_FALSE(plan);
+    EXPECT_EQ(plan.error().code, liquid::errc::not_configured);
+    EXPECT_NE(plan.error().message.find("liquid wrap"), std::string::npos);
+#ifndef _WIN32
+    auto options = liquid::daemon_options{};
+    options.idle_timeout = std::chrono::seconds{5};
+    options.capture.scan = false;
+    auto daemon = liquid::runtime::block_on(liquid::daemon::start(location.path(), options));
+    ASSERT_TRUE(daemon) << daemon.error().message;
+    auto daemon_plan = liquid::runtime::block_on(daemon->build_plan());
+    ASSERT_FALSE(daemon_plan);
+    EXPECT_EQ(daemon_plan.error().code, liquid::errc::not_configured);
+    EXPECT_NE(daemon_plan.error().message.find("liquid wrap"), std::string::npos);
+    EXPECT_TRUE(liquid::runtime::block_on(daemon->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(daemon->wait()));
+
+    auto working_tree = temporary_repository{};
+    auto unconfigured = liquid::runtime::block_on(liquid::daemon::start(working_tree.path()));
+    ASSERT_FALSE(unconfigured);
+    EXPECT_EQ(unconfigured.error().code, liquid::errc::not_configured);
+    EXPECT_NE(unconfigured.error().message.find("liquid wrap"), std::string::npos);
+#endif
+}
+
+TEST(Repository, root_digest_names_the_current_tree_record) {
+    temporary_repository location;
+    auto opened = liquid::runtime::block_on(liquid::repository::create(location.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(opened->write("source.txt", bytes("source"))));
+    auto root = liquid::runtime::block_on(opened->root_digest());
+    ASSERT_TRUE(root) << root.error().message;
+    auto decoded = liquid::runtime::block_on(opened->tree(*root));
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    ASSERT_EQ(decoded->entries.size(), 1U);
+    EXPECT_EQ(decoded->entries.front().name, "source.txt");
+}
+
 TEST(BuildCache, size_cap_evicts_a_cheap_large_result_before_an_expensive_small_result) {
     temporary_repository location;
     auto options = liquid::repository_options{};
@@ -294,6 +337,31 @@ TEST(BuildCache, size_cap_evicts_a_cheap_large_result_before_an_expensive_small_
 }
 
 #if LIQUID_BUILD_HAS_FUSE
+auto collect_events(liquid::build_handle& handle)
+    -> liquid::result<std::vector<liquid::build_event>> {
+    auto subscription = handle.events();
+    if (!subscription) {
+        return std::unexpected(subscription.error());
+    }
+    auto output = std::vector<liquid::build_event>{};
+    while (true) {
+        auto next = liquid::runtime::block_on(subscription->next());
+        if (!next) {
+            return std::unexpected(next.error());
+        }
+        if (!*next) {
+            return output;
+        }
+        output.push_back(std::move(**next));
+    }
+}
+
+auto test_event(const std::vector<liquid::build_event>& events) -> const liquid::test_result* {
+    const auto found = std::ranges::find_if(
+        events, [](const liquid::build_event& event) { return event.test.has_value(); });
+    return found == events.end() ? nullptr : &*found->test;
+}
+
 auto blob_contents(liquid::repository& repository, liquid::digest id)
     -> liquid::result<std::vector<std::byte>> {
     auto record =
@@ -312,6 +380,329 @@ auto blob_contents(liquid::repository& repository, liquid::digest id)
     return liquid::runtime::block_on(
         liquid::repository_detail::build_access::get(repository, blob->chunks.front()));
 }
+
+TEST(BuildEvents, public_handle_reports_miss_then_hit) {
+    action_fixture fixture;
+    const auto input =
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
+    auto first = fixture.repository.build(input);
+    ASSERT_TRUE(first) << first.error().message;
+    auto first_events = collect_events(*first);
+    ASSERT_TRUE(first_events) << first_events.error().message;
+    ASSERT_GE(first_events->size(), 5U);
+    EXPECT_EQ(first_events->front().kind, liquid::build_event_kind::action_queued);
+    EXPECT_EQ((*first_events)[1].kind, liquid::build_event_kind::action_started);
+    EXPECT_NE(std::ranges::find(
+                  *first_events, liquid::build_event_kind::action_done, &liquid::build_event::kind),
+              first_events->end());
+    EXPECT_EQ(first_events->back().kind, liquid::build_event_kind::build_finished);
+
+    auto second = fixture.repository.build(input);
+    ASSERT_TRUE(second) << second.error().message;
+    auto second_events = collect_events(*second);
+    ASSERT_TRUE(second_events) << second_events.error().message;
+    EXPECT_NE(std::ranges::find(
+                  *second_events, liquid::build_event_kind::action_hit, &liquid::build_event::kind),
+              second_events->end());
+    ASSERT_TRUE(second_events->back().summary);
+    EXPECT_EQ(second_events->back().summary->hits, 1U);
+}
+
+auto event_result(const std::vector<liquid::build_event>& events) -> liquid::result_id {
+    const auto found = std::ranges::find_if(
+        events, [](const liquid::build_event& event) { return event.result.has_value(); });
+    EXPECT_NE(found, events.end());
+    return found == events.end() ? liquid::result_id{} : *found->result;
+}
+
+void write_build_configuration(const std::filesystem::path& repository,
+                               const std::vector<liquid::result_id>& results) {
+    const auto directory = repository / ".liquid-build";
+    auto code = std::error_code{};
+    std::filesystem::create_directories(directory, code);
+    ASSERT_FALSE(code) << code.message();
+    auto output = std::ofstream{directory / "configuration", std::ios::trunc};
+    ASSERT_TRUE(output.is_open());
+    for (auto index = std::size_t{}; index != results.size(); ++index) {
+        output << "A\t" << std::hex << index + 1 << '\t' << liquid::to_string(results[index].value)
+               << '\n';
+    }
+    output.close();
+    ASSERT_TRUE(output);
+}
+
+TEST(BuildPlan, plans_dependencies_and_starts_the_repository_build) {
+    action_fixture fixture;
+    auto first = fixture.repository.build(
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"}));
+    ASSERT_TRUE(first) << first.error().message;
+    auto first_events = collect_events(*first);
+    ASSERT_TRUE(first_events) << first_events.error().message;
+    const auto first_result = event_result(*first_events);
+
+    ASSERT_TRUE(liquid::runtime::block_on(
+        fixture.repository.write("out/copy.txt", bytes("input"), {.mode = 0100644})));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        fixture.repository.write("out/final.txt", {}, {.mode = 0100644})));
+    fixture.cut("record intermediate output");
+    auto second = fixture.repository.build(
+        fixture.input({"fixture", "copy", "out/copy.txt", "out/final.txt"}, {"out/final.txt"}));
+    ASSERT_TRUE(second) << second.error().message;
+    auto second_events = collect_events(*second);
+    ASSERT_TRUE(second_events) << second_events.error().message;
+    const auto second_result = event_result(*second_events);
+    write_build_configuration(fixture.location.path(), {first_result, second_result});
+
+    auto plan = liquid::runtime::block_on(
+        fixture.repository.build_plan(liquid::build_target{"out/final.txt"}));
+    ASSERT_TRUE(plan) << plan.error().message;
+    ASSERT_EQ(plan->size(), 2U);
+    EXPECT_EQ((*plan)[0].input.command.front(), "fixture");
+    EXPECT_FALSE((*plan)[0].input.outputs.empty());
+    EXPECT_EQ((*plan)[0].state, liquid::cache_status::hit);
+    ASSERT_EQ((*plan)[1].dependencies.size(), 1U);
+    EXPECT_EQ(liquid::to_string((*plan)[1].dependencies.front()),
+              liquid::to_string((*plan)[0].action));
+
+    auto built = fixture.repository.build(liquid::build_target{"out/final.txt"});
+    ASSERT_TRUE(built) << built.error().message;
+    auto events = collect_events(*built);
+    ASSERT_TRUE(events) << events.error().message;
+    EXPECT_EQ(std::ranges::count(
+                  *events, liquid::build_event_kind::action_hit, &liquid::build_event::kind),
+              2);
+    ASSERT_TRUE(events->back().summary);
+    EXPECT_EQ(events->back().summary->actions, 2U);
+    EXPECT_EQ(events->back().summary->hits, 2U);
+
+    ASSERT_TRUE(liquid::runtime::block_on(
+        fixture.repository.write("input.txt", bytes("changed"), {.mode = 0100644})));
+    fixture.cut("change configured build input");
+    auto rebuilt = fixture.repository.build(liquid::build_target{"out/final.txt"});
+    ASSERT_TRUE(rebuilt) << rebuilt.error().message;
+    auto rebuilt_events = collect_events(*rebuilt);
+    ASSERT_TRUE(rebuilt_events) << rebuilt_events.error().message;
+    EXPECT_EQ(std::ranges::count(*rebuilt_events,
+                                 liquid::build_event_kind::action_done,
+                                 &liquid::build_event::kind),
+              2);
+    ASSERT_TRUE(rebuilt_events->back().summary);
+    EXPECT_EQ(rebuilt_events->back().summary->actions, 2U);
+    EXPECT_EQ(rebuilt_events->back().summary->hits, 0U);
+}
+
+TEST(BuildEvents, failed_action_precedes_critical_path_and_summary) {
+    action_fixture fixture;
+    auto handle = fixture.repository.build(
+        fixture.input({"fixture", "fail", "out/copy.txt"}, {"out/copy.txt"}));
+    ASSERT_TRUE(handle) << handle.error().message;
+    auto events = collect_events(*handle);
+    ASSERT_TRUE(events) << events.error().message;
+    const auto failed = std::ranges::find(
+        *events, liquid::build_event_kind::action_failed, &liquid::build_event::kind);
+    const auto critical = std::ranges::find(
+        *events, liquid::build_event_kind::critical_path_updated, &liquid::build_event::kind);
+    ASSERT_NE(failed, events->end());
+    ASSERT_NE(critical, events->end());
+    EXPECT_LT(failed, critical);
+    ASSERT_EQ(failed->diagnostics.size(), 1U);
+    EXPECT_NE(failed->diagnostics.front().message.find("recorded failure stderr"),
+              std::string::npos);
+    EXPECT_EQ(events->back().kind, liquid::build_event_kind::build_finished);
+    ASSERT_TRUE(events->back().summary);
+    EXPECT_EQ(events->back().summary->exit, 37);
+}
+
+TEST(BuildEvents, own_tree_one_function_edit_measurement) {
+    action_fixture fixture;
+    auto input_file =
+        std::ifstream{std::filesystem::path{LIQUID_SOURCE_ROOT} / "src/store/faults.cpp"};
+    auto source =
+        std::string{std::istreambuf_iterator<char>{input_file}, std::istreambuf_iterator<char>{}};
+    ASSERT_FALSE(source.empty());
+    ASSERT_TRUE(
+        liquid::runtime::block_on(fixture.repository.write("src/store/faults.cpp", bytes(source))));
+    fixture.cut("record measurement source");
+    auto input = fixture.input({"fixture", "read", "src/store/faults.cpp"}, {});
+    auto warm = fixture.repository.build(input);
+    ASSERT_TRUE(warm);
+    ASSERT_TRUE(collect_events(*warm));
+
+    const auto marker = source.find("injector->visit(event);");
+    ASSERT_NE(marker, std::string::npos);
+    source.insert(marker + std::string_view{"injector->visit(event);"}.size(),
+                  " /* one-function edit */");
+    ASSERT_TRUE(
+        liquid::runtime::block_on(fixture.repository.write("src/store/faults.cpp", bytes(source))));
+    fixture.cut("edit measurement function");
+    input.inputs = fixture.root;
+    input.toolchain = fixture.root;
+
+    const auto called = std::chrono::steady_clock::now();
+    auto handle = fixture.repository.build(std::move(input));
+    ASSERT_TRUE(handle);
+    auto subscription = handle->events();
+    ASSERT_TRUE(subscription);
+    auto count = std::uint64_t{};
+    auto first_started = std::optional<std::chrono::milliseconds>{};
+    while (true) {
+        auto event = liquid::runtime::block_on(subscription->next());
+        ASSERT_TRUE(event);
+        if (!*event) {
+            break;
+        }
+        ++count;
+        if (!first_started && (**event).kind == liquid::build_event_kind::action_started) {
+            first_started = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - called);
+        }
+    }
+    ASSERT_TRUE(first_started);
+    auto load = std::ifstream{"/proc/loadavg"};
+    auto load_text = std::string{};
+    std::getline(load, load_text);
+    std::cout << "build event measurement: file=src/store/faults.cpp first_action_started_ms="
+              << first_started->count() << " event_count=" << count << " load_average=" << load_text
+              << '\n';
+    EXPECT_EQ(count, 5U);
+}
+
+TEST(BuildTests, filters_hits_and_reruns_changed_inputs) {
+    action_fixture fixture;
+    ASSERT_TRUE(liquid::runtime::block_on(
+        fixture.repository.register_test({.name = "alpha",
+                                          .command = {"fixture", "read", "input.txt"},
+                                          .labels = {"quick"},
+                                          .inputs = {"input.txt"},
+                                          .toolchain = fixture.root,
+                                          .platform = action_fixture::host()})));
+    ASSERT_TRUE(liquid::runtime::block_on(
+        fixture.repository.register_test({.name = "beta",
+                                          .command = {"fixture", "read", "other.txt"},
+                                          .labels = {"slow"},
+                                          .inputs = {"other.txt"},
+                                          .toolchain = fixture.root,
+                                          .platform = action_fixture::host()})));
+    auto targets = liquid::runtime::block_on(fixture.repository.tests());
+    ASSERT_TRUE(targets);
+    ASSERT_EQ(targets->size(), 2U);
+    EXPECT_EQ(targets->front().name, "alpha");
+
+    auto first = fixture.repository.run_tests("quick");
+    ASSERT_TRUE(first);
+    auto first_events = collect_events(*first);
+    ASSERT_TRUE(first_events);
+    const auto* first_result = test_event(*first_events);
+    ASSERT_NE(first_result, nullptr);
+    EXPECT_EQ(first_result->name, "alpha");
+    EXPECT_EQ(first_result->status, liquid::test_status::passed);
+    EXPECT_FALSE(first_result->hit);
+
+    auto second = fixture.repository.run_tests("alpha");
+    ASSERT_TRUE(second);
+    auto second_events = collect_events(*second);
+    ASSERT_TRUE(second_events);
+    const auto* second_result = test_event(*second_events);
+    ASSERT_NE(second_result, nullptr);
+    EXPECT_TRUE(second_result->hit);
+
+    ASSERT_TRUE(
+        liquid::runtime::block_on(fixture.repository.write("input.txt", bytes("changed input"))));
+    fixture.cut("change test input");
+    auto third = fixture.repository.run_tests("alpha");
+    ASSERT_TRUE(third);
+    auto third_events = collect_events(*third);
+    ASSERT_TRUE(third_events);
+    const auto* third_result = test_event(*third_events);
+    ASSERT_NE(third_result, nullptr);
+    EXPECT_FALSE(third_result->hit);
+
+    ASSERT_TRUE(liquid::runtime::block_on(
+        fixture.repository.register_test({.name = "failure",
+                                          .command = {"fixture", "unknown"},
+                                          .labels = {"failure"},
+                                          .toolchain = fixture.root,
+                                          .platform = action_fixture::host()})));
+    auto failed = fixture.repository.run_tests("failure");
+    ASSERT_TRUE(failed);
+    auto failed_events = collect_events(*failed);
+    ASSERT_TRUE(failed_events);
+    const auto* failed_result = test_event(*failed_events);
+    ASSERT_NE(failed_result, nullptr);
+    EXPECT_EQ(failed_result->status, liquid::test_status::failed);
+    EXPECT_FALSE(failed_result->hit);
+    ASSERT_TRUE(failed_events->back().summary);
+    EXPECT_EQ(failed_events->back().summary->exit, 1);
+
+    auto failed_hit = fixture.repository.run_tests("failure");
+    ASSERT_TRUE(failed_hit);
+    auto failed_hit_events = collect_events(*failed_hit);
+    ASSERT_TRUE(failed_hit_events);
+    const auto* failed_hit_result = test_event(*failed_hit_events);
+    ASSERT_NE(failed_hit_result, nullptr);
+    EXPECT_EQ(failed_hit_result->status, liquid::test_status::failed);
+    EXPECT_TRUE(failed_hit_result->hit);
+    ASSERT_TRUE(failed_hit_events->back().summary);
+    EXPECT_EQ(failed_hit_events->back().summary->exit, 1);
+}
+
+#ifndef _WIN32
+TEST(BuildEvents, daemon_client_preserves_the_stream) {
+    action_fixture fixture;
+    auto daemon_options = liquid::daemon_options{};
+    daemon_options.idle_timeout = std::chrono::seconds{5};
+    daemon_options.capture.scan = false;
+    auto daemon = liquid::runtime::block_on(
+        liquid::daemon::start(fixture.location.path(), std::move(daemon_options)));
+    ASSERT_TRUE(daemon) << daemon.error().message;
+    auto handle = liquid::runtime::block_on(daemon->build(
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"})));
+    ASSERT_TRUE(handle) << handle.error().message;
+    auto events = collect_events(*handle);
+    ASSERT_TRUE(events) << events.error().message;
+    ASSERT_FALSE(events->empty());
+    EXPECT_EQ(events->front().kind, liquid::build_event_kind::action_queued);
+    EXPECT_EQ(events->back().kind, liquid::build_event_kind::build_finished);
+    EXPECT_TRUE(liquid::runtime::block_on(daemon->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(daemon->wait()));
+}
+
+TEST(BuildPlan, daemon_preserves_the_repository_plan_and_event_sequence) {
+    action_fixture fixture;
+    auto recorded = fixture.repository.build(
+        fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"}));
+    ASSERT_TRUE(recorded) << recorded.error().message;
+    auto recorded_events = collect_events(*recorded);
+    ASSERT_TRUE(recorded_events) << recorded_events.error().message;
+    write_build_configuration(fixture.location.path(), {event_result(*recorded_events)});
+
+    auto local = fixture.repository.build(liquid::build_target{});
+    ASSERT_TRUE(local) << local.error().message;
+    auto local_events = collect_events(*local);
+    ASSERT_TRUE(local_events) << local_events.error().message;
+
+    auto options = liquid::daemon_options{};
+    options.idle_timeout = std::chrono::seconds{5};
+    options.capture.scan = false;
+    auto daemon = liquid::runtime::block_on(
+        liquid::daemon::start(fixture.location.path(), std::move(options)));
+    ASSERT_TRUE(daemon) << daemon.error().message;
+    auto daemon_plan = liquid::runtime::block_on(daemon->build_plan());
+    ASSERT_TRUE(daemon_plan) << daemon_plan.error().message;
+    ASSERT_EQ(daemon_plan->size(), 1U);
+    EXPECT_EQ(daemon_plan->front().input.command.front(), "fixture");
+    auto remote = liquid::runtime::block_on(daemon->build(liquid::build_target{}));
+    ASSERT_TRUE(remote) << remote.error().message;
+    auto remote_events = collect_events(*remote);
+    ASSERT_TRUE(remote_events) << remote_events.error().message;
+    ASSERT_EQ(remote_events->size(), local_events->size());
+    for (auto index = std::size_t{}; index != local_events->size(); ++index) {
+        EXPECT_EQ((*remote_events)[index].kind, (*local_events)[index].kind);
+    }
+    EXPECT_TRUE(liquid::runtime::block_on(daemon->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(daemon->wait()));
+}
+#endif
 
 TEST(Build, copies_declared_output_and_records_only_read_input) {
     action_fixture fixture;

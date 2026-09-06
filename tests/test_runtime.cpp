@@ -11,6 +11,7 @@
 
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
@@ -148,7 +149,7 @@ TEST(Runtime, SpawnReportsCompletion) {
 }
 
 TEST(Runtime, SpawnUsesSharedContextForStoreIo) {
-    const auto root = std::filesystem::temp_directory_path() / "liquid-runtime-spawn-store";
+    const auto root = liquid::test::fixture_path("liquid-runtime-spawn-store");
     std::filesystem::remove_all(root);
     std::promise<liquid::result<void>> completion;
     auto completed = completion.get_future();

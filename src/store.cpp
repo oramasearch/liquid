@@ -197,6 +197,14 @@ runtime::task<void> store::register_remote(blob value) {
     co_return co_await impl_->value->register_remote(std::move(value));
 }
 
+runtime::task<void> store::evict(digest id) {
+    if (!impl_) {
+        co_return std::unexpected(
+            error{errc::invalid_argument, "store is not open", "store::evict"});
+    }
+    co_return co_await impl_->value->evict(id);
+}
+
 runtime::task<std::optional<object_key_version>> store::key_version(digest id) {
     if (!impl_) {
         co_return std::unexpected(

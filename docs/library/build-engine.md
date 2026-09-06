@@ -15,7 +15,8 @@ dependencies come from the same code path that serves checkouts, with no interpo
 The cache key then covers exactly what was read, and a miss can name the input that
 changed.
 
-**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, and #18 implement
+**Implementation status.** Issues #10, #11, #12, #13, #14, #15, #57, #60, #56, #58, #61, #18,
+#23, #193, and #200 implement
 the local action path, disk cache, `liquid wrap`, reproducibility verification, automatic SLSA
 provenance, cache diagnostics, build-input attestation policy, configure facts, build observability,
 cost-aware retention, graph-derived SBOMs, and transport-independent remote scheduling:
@@ -29,14 +30,139 @@ unsupported until Phase 6. The disk cache validates observed manifests before a 
 result's TAAP signature and persists its action index. `wrap` discovers a project's invoked tools,
 pins their content tree in `config.wrap.toolchain`, splits the mount stream at output-producing leaf
 processes, publishes the inner and outer actions, and serves valid results through the sandbox-only
-exec hook. Verification re-executes sampled cached actions, emits signed attestations, and
-quarantines divergent results. Each result references verified, device-signed `slsa_provenance/1`
+exec hook. Verification re-executes sampled cached actions, while graph verification cleanly
+recomputes persisted `action_result` nodes before that sandbox pass. Both paths quarantine
+divergent values. Each result references verified, device-signed `slsa_provenance/1`
 and `sbom/1` attestations derived from its action and manifest. Before execution, repository policy
 can require verified registered-profile attestations for source and toolchain blobs. Issue #18 adds
 a remote executor alongside #17's remote blob interface, input and toolchain transfer, cost-based
 local/remote/race selection, remote batching, and loser cancellation. Issue #16 supplies the REAPI
-network transport and validated remote cache tier. Production workers remain separate. Configure checks additionally populate a
-shared content-addressed fact base and can be answered across projects without starting the probe.
+network transport and validated remote cache tier. Issue #63 supplies liquid's scheduler and
+TAAP-signed worker fleet. Configure checks additionally populate a shared content-addressed fact
+base and can be answered across projects without starting the probe.
+
+## Public repository plans and builds (#200)
+
+`repository::build_plan(build_target)` exposes the configured build recorded by `liquid wrap`.
+Each `build_plan_action` contains a complete `action_input`, its planned action digest, the
+digests of producer actions it depends on, its currently validated `hit` or `miss` state, and the
+selected result on a hit. The planner derives an edge when a recorded manifest path is produced by
+another configured action. Empty targets select the whole configured build; a nonempty target
+selects the action producing that exact repository-relative output and all of its transitive
+dependencies.
+
+Planning replaces each recorded action's input-tree digest with `repository::root_digest()`,
+recomputes its action digest, then uses the ordinary signed, manifest-validating disk-cache lookup.
+Commands, declared outputs,
+environment, toolchain, platform, timeout, and remote eligibility remain the recorded values. A
+repository without wrapper configuration returns `errc::not_configured` and tells the caller to
+run `liquid wrap <command>` first. An unknown nonempty target returns `errc::not_found`.
+
+`repository::build(build_target)` starts the selected graph on the existing `build_handle` stream.
+Actions run in dependency order. Before each action, the planner refreshes the current root and
+hit state so an upstream output written by this build cannot leave a dependent action with a stale
+decision. A hit is materialised into the repository; a miss uses the ordinary action executor and
+then materialises its declared outputs. When materialisation changes the tree, the build records
+that tree before planning the dependent action, as required by the action executor; materialising
+identical hit outputs does not add a change. The stream reports queue, start, terminal state,
+critical path update, and final summary events for the complete build.
+
+`daemon::build_plan` and `daemon::build(build_target)` use the protocol operations `build_plan` and
+`build_repository`; event consumption remains on `build_next`. The older `build_start` operation
+continues to accept a caller-supplied `action_input`. Daemon start and attach resolve an ordinary
+wrapped working tree to its recorded repository, while direct repository paths remain valid.
+`liquid build --plan [target]` writes one version-1 JSON object per planned action, and `liquid
+build [target]` starts the repository build through the daemon. The plan JSON schema is documented in
+[`../cli/build-events.md`](../cli/build-events.md).
+
+`repository::root_digest()` stores and returns the current working tree record without decoding it,
+while `repository::root()` continues to return decoded entries.
+
+## Public build handles and events (#193)
+
+`repository::build(action_input)` starts a direct action and returns a move-only `build_handle`.
+`build::start_wrap` does the same for an observed existing build; `daemon::build` forwards a handle
+over the daemon's framed CBOR protocol. A caller obtains any number of move-only subscriptions with
+`handle.events()` and awaits `subscription.next()`. `next()` returns the next event, then an empty
+optional after the terminal event. `handle.wait()` independently awaits the final summary.
+
+Each subscription is live rather than replayed. It sees every event published after its successful
+`events()` call, in increasing `sequence` order. Two subscriptions made at the same point therefore
+receive equal future events. A subscription made after completion is immediately closed. The
+repository and any caller-owned remote executor supplied to a direct build must outlive that build;
+wrapped and daemon builds own the state they need.
+
+The producer gives the first caller an asynchronous startup guard in which to call `events()` or
+`wait()`. This keeps an immediate subscription from racing the first queued event without retaining
+history for later subscribers. The guard is bounded, so an unobserved handle does not prevent its
+build from starting.
+
+The event kinds and ordering contract are:
+
+1. `action_queued` precedes `action_started` for an action. `action_started.execution` is `local` or
+   `remote`; a remote execution also carries the worker name once the scheduler supplies it.
+2. Exactly one of `action_hit`, `action_done`, or `action_failed` is the terminal state for that
+   queued action. A hit names the stored result. Done carries declared outputs. Failed carries one
+   or more frontend-shaped diagnostics: `file`, `line`, `column`, `severity`, and `message`.
+3. `critical_path_updated` follows the action terminal states represented by that path. More than
+   one update may occur when a wrapped build is planned again.
+4. `build_finished` is the last event. Its summary contains the process exit status, action, hit,
+   and failure counts, plus wall duration. No event follows it.
+
+The wrapper publishes one orchestration action first. Its `action` and `result` are null because it
+exists before the observed child action identities; it is not included in the summary's action
+count. Child actions then carry their content identities. Direct builds and tests likewise publish
+queue/start before the result-derived action digest is available, then place the digest on the
+terminal event.
+
+The stream is a Capy coroutine sequence. Publishers only enqueue values and post saved
+continuations to the subscribing executor. Filesystem snapshots, socket operations, and other
+blocking work use `runtime::offload`; no worker calls `block_on`, and no stream path creates a raw
+thread.
+
+Each build producer runs on Capy's single-runner event context. This preserves event order and keeps
+repository mutations serialized even when the process-wide runtime has multiple executor threads.
+Subscribers may consume the stream from different executors.
+
+### Editing during a wrapped build
+
+`start_wrap` snapshots source-file metadata when the orchestration action starts. After the command
+finishes it excludes paths produced by recorded actions and compares the remaining source files. A
+source edit during the run starts a new graph-backed wrap pass before `build_finished`. The second
+pass publishes ordinary action events, so untouched actions appear as `action_hit` and changed
+readers run again. The final summary describes the new pass.
+
+### JSON-lines projection
+
+`event_json` is the version-1 stable projection used by `liquid build --events`. Every line contains
+`v`, `sequence`, `type`, `action`, and `result`. Digests are text or null. Kind-specific members are:
+
+| Type | Additional member |
+|---|---|
+| `action_started` | `execution: {kind, worker}`; `worker` is null for local work |
+| `action_done` | `outputs: [{path, mode, blob}]` |
+| `action_failed` | `diagnostics: [{file, line, column, severity, message}]` |
+| `critical_path_updated` | `critical_path: [{action, result, duration_ms, hit}]` |
+| `test_result` | `test: {name, status, output, duration_ms, hit}` |
+| `build_finished` | `summary: {exit, actions, hits, failures, duration_ms}` |
+
+Fields not applicable to an event are omitted, except the five common fields. Strings use JSON
+escaping and each event is printed as one complete line. The command returns the summary exit
+status, including a recorded nonzero action result.
+
+### Own-tree measurement
+
+`BuildEvents.own_tree_one_function_edit_measurement` stores liquid's
+`src/store/faults.cpp` in an action repository, warms the observed read, inserts a comment in the
+body containing `injector->visit(event)`, and starts the changed action through
+`repository::build`. In the privileged Linux container on 2026-09-04 it reported:
+
+```text
+build event measurement: file=src/store/faults.cpp first_action_started_ms=2 event_count=5 load_average=8.81 11.74 10.25 4/680 655
+```
+
+The three load-average values are recorded beside the latency because the host was busy. The five
+events were queued, started, done, critical-path update, and finished.
 
 ## Records in the store
 
@@ -53,6 +179,7 @@ result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, 
           timing: { queued_ms, sandbox_ms, exec_ms, hash_ms, store_ms }, worker: string, observed_at: time,
           started_at: time, finished_at: time, provenance: digest(attestation),
           sboms: [ digest(attestation) … ],
+          abis: [ digest(abi/1) … ], abi_compatibility: [ digest(attestation) … ],
           schedule: { decision, history, size_class, input_bytes, remote_state_queried,
                       remote_missing_bytes, remote_queue_depth, remote_cache_locality_permille,
                       batch_supported, batch_size, local_estimate_ms, remote_estimate_ms, reason },
@@ -62,16 +189,21 @@ build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outpu
               cache: { hits, misses, bytes_served, bytes_rebuilt, bytes_avoided } }
 ```
 
-New result records use version 3. Its phase durations are non-overlapping and their sum is the
+New result records use version 4. Its phase durations are non-overlapping and their sum is the
 recorded action duration: queue wait, sandbox preparation, tool execution, result analysis and
-hashing, then local-store writes. Version 3 adds the immutable scheduling decision and every cost
-model input; it does not change the five timing phases. The decoder continues to accept versions 1
-and 2 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded into
-local store time; absent bytes and the transfer estimate are explicit schedule fields.
+hashing, then local-store writes. Version 4 adds descriptor and compatibility-attestation
+references for shared-library outputs. Version 3 added the immutable scheduling decision and every
+cost model input without changing the five timing phases. The decoder continues to accept versions
+1 through 3 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded
+into local store time; absent bytes and the transfer estimate are explicit schedule fields.
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
   materialised into the sandbox from the store and addressed by content; the `toolchain`
-  field is that tree's digest. `PATH` inside the sandbox points only at it.
+  field is that tree's digest. `PATH` inside the sandbox points only at it. `wrap` records
+  each executable below `bin/`, its dynamic-library closure below `lib/` (from `ldd` on
+  Linux and `otool -L` on macOS), and Clang's `-print-resource-dir` below `lib/clang/`.
+  Linux captures the distribution-identification files that Clang's driver reads below
+  `etc/`; those paths are mounted from the toolchain rather than read from the worker image.
 - The **manifest** is the observed read set with hashes. It is three things at once
   (features/05): the validation key for the next lookup, the dependency edge set, and the
   provenance record (#14 wraps it in a `slsa_provenance/1` attestation).
@@ -104,6 +236,9 @@ and `TMPDIR` to sandbox-private directories, `LANG=C.UTF-8`, `TZ=UTC`, `SOURCE_D
 from the change's time, nothing inherited). The sandbox definition (the mount layout, the
 environment, the enforcement profile) is itself a record and its digest is in the action, so
 two machines with different sandbox definitions never share a cache entry by accident.
+On Linux, optional `etc`, `lib`, and `lib64` directories from that same toolchain are mounted at
+their conventional absolute paths for dynamic executables and compiler driver configuration; no
+worker-image runtime file is exposed.
 
 `action_input::remote_eligible` defaults off. When enabled on Linux, the read guard observes open
 system calls across the action's process tree and reports the first path outside the input and
@@ -127,8 +262,8 @@ Issue #11 implements both stages through `src/build/cache.{hpp,cpp}`. Validation
 manifest path from the action's current input-tree record and compares the referenced blob digest;
 it never hashes a checkout path. Missing paths have no actual digest. Results are tried newest
 first. A candidate is served only when its result and action records decode, the action derives the
-same candidate key, the producer's TAAP `result` signature and referenced provenance and SBOMs verify, every
-manifest entry matches, and every output and stream blob record still exists.
+same candidate key, the producer's TAAP `result` signature and referenced provenance, SBOM, and ABI
+records verify, every manifest entry matches, and every output and stream blob record still exists.
 `action_result::cache` and `why` describe the current execution request and are not part of the
 immutable producer-signed result bytes.
 `src/build/why.cpp` turns recorded comparisons into the public `why_report` and persists the
@@ -331,6 +466,14 @@ command completes on the shared runtime and returns without waiting; `--no-verif
 The on-demand forms are `liquid verify <action>`, `liquid verify --all`, and `liquid verify
 --changed`.
 
+`liquid verify --graph` first compares sampled persisted `action_result` query values with new
+graph instances that resolve current nondivergent action-index entries without reading graph
+values. `--all` performs the full graph pass. It then invokes this section's action verifier with
+the matching sample or full selection, which reconstructs and executes actions in fresh recorded
+sandboxes. Each graph comparison is retained as an audit record; divergence names its query and
+inputs, evicts the graph value, and exits nonzero. The complete graph contract is in
+[`incremental-engine.md`](incremental-engine.md#continuous-clean-rebuild-validation-23).
+
 Each selected action is reconstructed from its content-addressed input and re-executed in a fresh
 instance of the exact recorded sandbox definition. Verification compares exit status, stdout,
 stderr, and every declared output by digest. Agreement writes a device-signed
@@ -341,9 +484,10 @@ marks every index row for that result permanently divergent, and appends a criti
 and outputs and exits non-zero; `--explain` reports the first differing byte because Phase 2 has no
 structured output codecs.
 
-Local replay is the Phase 2 trust check. Verification through a networked production worker remains
-Phase 3 work; it uses the same comparison and attestation records. Issue #18's local second-store
-worker proves the executor and toolchain-transfer boundary without adding a transport.
+Local replay is the Phase 2 trust check. Issue #63 runs the same executor through liquid's
+networked scheduler and worker fleet while preserving signed result, provenance, SBOM, and
+scheduling records. Issue #18's local second-store worker proves the executor and
+toolchain-transfer boundary without adding a transport.
 
 Issue #19 exposes that re-execution path as `liquid replay <action|result>`. Verification and replay
 share action reconstruction, sandbox selection, execution, and comparison. Verification always
@@ -441,12 +585,12 @@ the host.
 
 ## What remains beyond Phase 2
 
-The demand-driven graph now makes action results and ordinary queries one engine in Phase 4 #20;
+The demand-driven graph now makes action results and ordinary queries one engine in Phase 4 #20,
+and #23 continuously validates its saved values;
 its contract and proof are in [`incremental-engine.md`](incremental-engine.md). Issue #65 adds
 unit-keyed definition actions and translation-unit assembly through replaceable frontend modules;
-the ABI and proof are in [`frontends.md`](frontends.md). There is no production worker (Phase 3) or
-daemon. Actions remain the coarse end of the spectrum features/04 describes; frontend queries add
-the fine end.
+the ABI and proof are in [`frontends.md`](frontends.md). Actions remain the coarse end of the
+spectrum features/04 describes; frontend queries add the fine end.
 
 Measured remote transfer timing remains Phase 3 work; #18 records absent bytes and its deterministic
 transfer estimate. Continuous daemon profiles remain Phase 4 work. The stored trace and its Chrome
@@ -461,8 +605,8 @@ trace-event projection expose recorded scheduling fields but do not invent measu
 - A pure action receives a signature-valid `reproducibility/1` attestation.
 - An action that writes random bytes is detected, named in the alert, marked divergent, and not
   served after reopening the repository.
-- A rate of one verifies every action, and `liquid verify --all` verifies every action in a wrapped
-  recursive-Make fixture.
+- A rate of one verifies every action. The wrapped recursive-Make fixture requires both `liquid
+  verify --all` and `liquid verify --graph --all` to report no divergence.
 - `liquid replay` reproduces a recorded nonzero exit with identical stdout, stderr, and output,
   replays an indexed hit by action digest, reports the first changed output byte, and fetches a
   missing input chunk through the on-disk remote double. Its default leaves verification and

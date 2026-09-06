@@ -13,3 +13,6 @@
 	path = modules/http
 	url = git@github.com:oramasearch/http.git
 	branch = zetta-patches
+[submodule "modules/oramacore-cpp"]
+	path = modules/oramacore-cpp
+	url = git@github.com:oramasearch/oramacore-cpp.git

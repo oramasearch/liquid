@@ -12,6 +12,8 @@ struct metadata_document {
     journal_cursor cursor;
     std::vector<digest> objects;
     std::vector<sync_item> items;
+    std::vector<sync_ref_outcome> outcomes;
+    bool atomic{};
 };
 
 [[nodiscard]] auto encode_metadata(const metadata_document& document)

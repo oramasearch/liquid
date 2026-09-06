@@ -78,12 +78,12 @@ is wrong.
 | [04](04-build-engine.md) | Build engine | The incremental query graph, actions, early cutoff, compile-as-you-type, and local critical-path traces. |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
-| [07](07-dependency-resolution.md) | Dependency resolution | Spack-grade constraint solving over variants, compilers, targets and virtual providers. |
-| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more. |
+| [07](07-dependency-resolution.md) | Dependency resolution | Spack-grade constraint solving plus implemented linked-library ABI extraction and compatibility reports. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
 | [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |
-| [12](12-search.md) | Search | Full-text and code search over the working tree, history, and published artifacts. |
+| [12](12-search.md) | Search | Local BM25F and positional-trigram search over the working tree and named refs is implemented; published-artifact search follows the format registry. |
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
 | [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |
 | [15](15-consumer-sync-and-web.md) | Consumer sync and web | The Dropbox/Drive-style interface for non-developers, local and web. |

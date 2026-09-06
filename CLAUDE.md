@@ -15,7 +15,8 @@ Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
 error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
-store, liquid #4's TAAP/1 actor identities,
+store, liquid #199's pre-pack write-through callback and remote-registered local eviction,
+liquid #4's TAAP/1 actor identities,
 liquid #111's identity-key rotation and chain verification, and signed drips and changes, liquid #7's
 trust-domain encrypted objects, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
@@ -39,38 +40,64 @@ and policy check/explain commands. Liquid #56 adds content-keyed Autotools and C
 facts, fact-bundle export, and lookup-only foreign-target probing through `wrap --target`.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
 and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
-SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
-remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
-materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
-refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
+SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #27 adds ELF, Mach-O, and
+PE `abi/1` extraction, automatic result publication, signed compatibility attestations, public
+descriptor lookup and diffing, wrapper break reports, and the `liquid abi` command. Liquid #17 adds
+transport-neutral remote blob records, local/remote/absent store availability, chunk-range
+hydration and on-demand materialisation, remote-byte status, metadata-only remote result recording,
+and opt-in Linux read refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
 blob interfaces, source and toolchain transfer from the store, recorded local/remote/race cost
 decisions, short-action batching, and race-loser cancellation; private HTTP/2 and gRPC framing are
 implemented. Liquid #16 adds the REAPI client, validated remote cache tier, repository configuration,
-and `liquid serve reapi` CAS and ActionCache; production workers remain a later issue. Liquid #156
+and `liquid serve reapi` CAS and ActionCache. Liquid #63 adds liquid's action-digest scheduler,
+size-class worker fleet, bounded requeue, TAAP-signed remote results, and deployable control
+surfaces. Liquid #156
 adds the dependency-free protobuf codec, REAPI v2.3 message set, native tree/action/result
 conversions, and BLAKE3/SHA-256 capability selection. Liquid #19 adds explicit local replay of recorded actions and results, byte-level
 comparison, and optional verification recording; remote inputs hydrate through the registered
 transport-neutral blob source. Liquid #20 adds the persisted demand-driven query graph, canonical
 query and input fingerprints, red-green validation, early cutoff, durability-filtered invalidation,
 cooperative cancellation, recorded-input retrieval, and `action_result` nodes for direct and
-wrapped builds. Liquid #65 adds the versioned frontend C ABI, dynamic and static module
+wrapped builds. Liquid #23 adds sampled clean recomputation in fresh graph instances, durable
+validation records, divergence reporting and eviction, idle scheduling, and graph-wide CLI
+verification. Liquid #65 adds the versioned frontend C ABI, dynamic and static module
 registration, tree-sitter C/C++ unit discovery, Clang C++ definition actions, relocatable-object
 assembly, and unit-keyed graph invalidation. Liquid #64 adds signed zstd delta delivery with
 verified local and registered-remote blob fetch plus chunk fallback. Liquid #21 adds the
 macOS/Linux per-checkout daemon, start-on-first-use CLI attachment, capture ownership, ordered
 cursor fan-out, status reporting, idle shutdown, graph persistence, and bounded resident graph
-values; Windows reports unsupported until Corosio supplies named-pipe transport. Liquid #59
-configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
-`liquid wrap`, requires a fully cached second run, and compares the wrapped static library and CLI
-byte for byte with the CMake bootstrap. The REAPI transport and scheduling policy remain later
-Phase 3 work. The repository
-object model, internal CRDT metadata document, canonical CBOR codec, and drip journal are
-implemented. Directory
+resident graph values; Windows reports unsupported until Corosio supplies named-pipe transport.
+Liquid #22 adds the content-addressed local BM25F and positional-trigram index, atomic segment
+publication, per-drip search fan-out target, public working/ref query API, and `liquid search`.
+Liquid #67 adds measured selection among BM25F, verified trigrams, and parallel mapped scans,
+cursor-based stale-index exclusion, common located hit records, the public executed-plan API, and
+`liquid search --explain`.
+Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
+forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
+and `liquid test`.
+Liquid #200 adds public configured-build plans with complete action inputs, dependency edges and
+validated hit state, one-call repository and daemon builds, the current root-tree digest, and
+`liquid build --plan`.
+Liquid #72 replaces tag-selected tree-sitter inputs with one canonical lock for the runtime and 49
+public grammars. Configure-time archives and every compiled parser/scanner and tag query are pinned
+by SHA-256; the generated registry, public language metadata, syntax fallback, and grammar-set
+provenance all derive from that lock.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+local-intent operation and session undo reports, operation-log CLI output, and historical refs,
+locks, and nested pointers. Directory
+Liquid #59 configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
+`liquid wrap`, retains configured CMake inputs, requires a fully cached second run, and compares
+the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI transport and
+scheduling policy remain later Phase 3 work. The repository object model, internal CRDT metadata
+document, canonical CBOR codec, and drip journal are implemented. Directory
 documents use compact shallow checkpoints, upstream sync framing, checked external application, and
 patch-based remote observation. Repositories can use a caller-owned shared store with independent
 checkpoint, journal, and lease namespaces. Liquid #160 adds atomic signed repository metadata import/export,
 missing-object sessions, the HTTP/1.1 lake client, and CLI push/pull. Liquid #165 adds the public
-repository sync server, per-change authorization, and the `serve sync` HTTP adapter. Full materialisation works on
+repository sync server and the `serve sync` HTTP adapter; liquid #177 adds per-change and
+change-graph-derived reference authorization; liquid #189 adds per-reference accepted/refused
+outcomes and opt-in atomic pushes. Full materialisation works on
 every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,
@@ -79,8 +106,16 @@ benchmarks live under `bench/` and are excluded unless their build option is ena
 
 Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
 enumeration used by CLI record views.
+Liquid #66 adds content-addressed compiler and syntactic-fallback symbol records derived from
+recorded compile actions, graph retrieval,
+repository access, and the `liquid symbols` command.
 Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and report shifted,
 approximate, or deleted positions across changes.
+Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
+line-hunk stale reports, and signed disjoint or forced re-validation records.
+Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
+3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
+anchors and historical certificate validation.
 
 ### Vocabulary — use these words exactly
 
@@ -240,7 +275,7 @@ chosen options once they are made.
 | [`oramasearch/orama-operator`](https://github.com/oramasearch/orama-operator) | **The Orama operator** (renamed from `orama-cloud-v1-operator`; the Zetta operator). lake is deployed by adding a `Lake` CR to it — there is no separate lake operator. Running in production on AKS. |
 | [`oramasearch/k0s`](https://github.com/oramasearch/k0s) | **Private copy** of `k0sproject/k0s`, synced with upstream, modified for drips. `main` is a pristine upstream mirror; our changes live on `liquid`. See its `ORAMA-FORK.md`. |
 | [`oramasearch/automerge-cpp`](https://github.com/oramasearch/automerge-cpp) | The MIT-licensed CRDT datastore ([17](docs/features/17-implementation.md)), consumed here as a pinned private submodule. |
-| [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F search engine ([12](docs/features/12-search.md)). Private; currently a scaffold. |
+| [`oramasearch/oramacore-cpp`](https://github.com/oramasearch/oramacore-cpp) | BM25F tokenizer and scorer ([12](docs/features/12-search.md)), consumed as a private pinned submodule by liquid's local index. |
 | [`oramasearch/corosio`](https://github.com/oramasearch/corosio) | **Private patch carrier** for `cppalliance/corosio` — `orama-main` carries an epoll hang-up fix that is **not upstream**. Zetta consumes it. **Consume this, never `cppalliance/corosio` directly.** (An earlier claim here that Zetta had drifted to upstream was wrong — it came from a stale standalone clone.) |
 | [`oramasearch/http`](https://github.com/oramasearch/http) | **Private patch carrier** for `cppalliance/http`, branch `zetta-patches`. Same rule: consume this, never upstream directly. |
 | `cppalliance/capy` | No private copy. Consume upstream `develop` until there is a patch to carry. |
@@ -341,6 +376,18 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
    same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
    `docs/library/distribution.md`.
+10. **TSA signature verification is liquid's own, verification only** (Steve, 2026-09-05;
+    bridge decision 32). RFC 3161 and RFC 4998 verification uses liquid's strict DER, CMS, X.509,
+    RSA, and NIST-curve ECDSA readers and verifiers. It does not generate keys or signatures and
+    does not link a general-purpose cryptography library for these operations. Design:
+    `docs/library/transparency.md`.
+10. **Tier 2 tree-sitter grammars are fetched at configure time and pinned by digest** (liquid #72,
+    2026-09-05). One canonical lock names an exact public-upstream commit, archive SHA-256,
+    generated parser SHA-256, every hand-written scanner SHA-256, tag-query SHA-256, language ABI,
+    licence, and extensions. Generated parsers do not live in-tree: the digest-checked bytes have
+    the same trust boundary as vendored bytes without adding hundreds of megabytes or an aggregate
+    mirror maintenance obligation. `LIQUID_GRAMMAR_MIRROR` remains the explicit URL-root change for
+    an organisation or air-gapped mirror. See [`docs/library/grammars.md`](docs/library/grammars.md).
 
 **Still open:**
 

@@ -1,7 +1,7 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process stores with local chunks and registered remote blobs
-(liquid #1, #7, #8, #17, #46, #116).**
+**Status: implemented for single-process stores with local chunks, registered remote blobs,
+pre-pack write-through, and local eviction (liquid #1, #7, #8, #17, #46, #116, #199, #208).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -115,6 +115,46 @@ hashed before `put_plain`, and the assembled object is hashed before `get` succe
 therefore enter packs through the same verified, deduplicated path as local writes. The separate
 metadata file is atomically replaced and survives reopen; it carries locations, not content.
 
+## Write-through ordering
+
+`store_options::write_through` is an optional shared `blob_write_through`. For a new whole-content
+identity, the store computes the whole digest and the complete ordered chunk digest/size table,
+then awaits exactly one `blob_write_through::put(content, bytes, chunks, chunk_sizes)` call before
+the first chunk or descriptor reaches a pack. A successful callback permits the ordinary local
+write. An error is returned unchanged; no pack frame, index run, index manifest, object map, or
+collection manifest is modified, and a previously unknown digest remains `absent`. A duplicate
+whole-content identity that is already present returns without another callback.
+
+The callback is a lazy Capy coroutine running on the caller's runtime executor. It performs its own
+I/O with Corosio or `runtime::offload`; it must not block the executor or call `runtime::block_on`.
+The byte and table spans remain valid until the returned task completes. The `chunks` and
+`chunk_sizes` spans have equal length, sizes sum to `bytes.size()`, and concatenating those logical
+chunks yields `bytes`. Plain stores report the selected BLAKE3 or SHA-256 identities. Encrypted
+stores report keyed chunk and whole-content identities while `bytes` remains plaintext.
+
+For `store::put`, `bytes` spans the caller-supplied in-memory content even when FastCDC produces
+many chunks. For `store::put_file`, the store first computes the digest and chunk table with its
+bounded 8 MiB streaming scan. It then gives the callback one read-only, file-backed mapping of the
+complete source; the mapping is not a heap copy and is valid only for that callback. The store
+verifies the mapped chunks against the streaming scan before invoking the callback and copies at
+most one chunk into the pack path at a time after success. An empty file is represented by an
+empty byte span and one zero-length chunk. Thus large files retain bounded heap use while the
+single callback can consume the content sequentially from `bytes`.
+
+## Evicting a local remote copy
+
+`store::evict(content)` requires a persisted registration for `content` in `remotes.meta`; an
+unregistered digest returns `errc::not_remote` and changes nothing. Eviction removes the local
+object entry and tombstones locally cached content chunks and the local chunk-list descriptor when
+they are not shared by another local object or registered remote blob. It publishes the object
+map, collection tombstones, and rebuilt chunk index in crash-safe order without changing the
+remote registration. Evicting an already remote-only registration succeeds without a write.
+
+When no retained object or registration shares every chunk, `has(content)` reports `remote`, and
+`get` or `read` hydrates verified bytes again through the registered `remote_blob_source`; range
+reads still fetch only intersecting chunks. Eviction does not rewrite a pack. Whole dead packs and
+space in partially dead packs are reclaimed by the existing collection and compaction paths.
+
 `put` acknowledges a chunk after its complete frame has been written. `store_options::durable`
 defaults to `false`; setting it to `true` calls `sync_data` on the pack before acknowledgement.
 The ordering makes a process crash safe: complete frames can be found by the recovery scan, and torn
@@ -127,9 +167,10 @@ is always verified against its digest, and collection reclaims unleased orphans.
 `store::put_file` opens its source with Corosio `random_access_file` and reads 8 MiB windows. A
 stateful FastCDC chunker carries only the current chunk across window boundaries, so it produces
 the same ordered cuts as `put` without retaining the input. BLAKE3, keyed BLAKE3, or SHA-256 is
-updated for each window and finalized only after the last byte. Each completed chunk is
-deduplicated and framed immediately; the whole-object chunk-list descriptor and `LQOBJ4` metadata
-are published at the end.
+updated for each window and finalized only after the last byte. Without a callback, each completed
+chunk is deduplicated and framed immediately. With a callback, the scan writes no frame; the
+verified file mapping is followed by chunk-at-a-time framing only after the callback succeeds. The
+whole-object chunk-list descriptor and `LQOBJ4` metadata are published at the end.
 
 `store::get_to_file` loads and verifies one chunk at a time and writes it with Corosio
 `random_access_file`. It incrementally verifies the whole-object digest before acknowledging the
@@ -197,6 +238,64 @@ dead chunks before wholly dead packs are removed. Sparse packs below the collect
 compacted as described below. The full lease model, crash order, report fields, and verification
 are in [gc.md](gc.md).
 
+### The collector's yield and the mutation mutex
+
+Two defects met in `GarbageCollection.PutAfterEpochHighWaterSurvives`; liquid #208 fixes both.
+
+The crash. The collector gave up its executor between packs with `runtime::delay(1ns)`. Capy's
+`delay_awaitable::await_suspend` arms the timer first and registers its `std::stop_callback`
+afterwards. A one-nanosecond timer fires inside that window: the timer thread posts the
+continuation, another runner resumes the coroutine, `await_resume` sees no active stop callback
+and skips it, the awaiter is destroyed with its frame slot, and the suspending thread then
+constructs and registers a `std::stop_callback` in memory the frame no longer owns. That node stays
+in the stop state's intrusive list. The collector's next awaiter, the sweep's mutex waiter, reuses
+the memory, and when it registers its own callback on the same token the list splice writes the
+node's address over the waiter's executor reference; the put's `unlock` then posts through the
+corrupted vtable (`pc = 0x0` in `executor_ref::post`, caught with gdb in `put_selected`'s
+`lock_guard` destructor; a core shows `executor_ref::vt_` equal to the address of the waiter's own
+callback storage). Release 29 of 50 runs on `20e5407` in the `liquid-linux-ci` container; the
+write-through change altered the timing enough to make it reproduce on most runs. The collector
+now yields with `runtime::yield`, which posts the continuation to the caller's executor and arms
+nothing (see [runtime.md](runtime.md)); `liquid verify`'s scheduled graph validation used the same
+one-nanosecond delay and was changed too. The ordering in Capy's `delay.hpp` is a Capy defect to
+report upstream.
+
+The mutex. ThreadSanitizer on the same tree also reports a real data race in Capy's
+`async_mutex`: `collector::run`'s inlined `lock_awaiter::await_suspend` writing the waiter queue
+on one `block_on` runner thread against `async_mutex::unlock`'s `pop_front` reading it on another,
+inside the backend's `mutation_` member. `async_mutex` is documented for one executor only, while
+`runtime::block_on` and the default context each run one `io_context` on several threads, and
+Corosio resumes a coroutine after file I/O directly on the completing runner
+(`posix_random_access_file::raf_op::operator()` calls `coro.resume()` without dispatching through
+the awaiter's executor), so a store coroutine that holds the lock across a pack write comes back on
+an arbitrary thread and a Capy `strand` cannot keep the lock on one executor. The backend therefore
+serializes mutation with liquid's own `mutation_mutex` (`src/store/mutation_mutex.hpp`): an
+asynchronous mutex safe from any thread that follows Capy's IoAwaitable protocol (`io_env`,
+`continuation`, `executor_ref`, stop tokens), so call sites read exactly as with
+`async_mutex::scoped_lock`. Waiters queue in FIFO order under a short native mutex, resume through
+the executor they suspended on, become visible only after every field another thread may read is
+written, and are not touched after they are published; an atomic state resolves the race between
+unlock and cancellation.
+
+Two strand designs were measured before the cause was found and are recorded because they looked
+like fixes: one strand per store over the shared default context, and one per store in the
+caller's context. Both replaced the collector's environment through `capy::run` and so masked the
+corruption in this test; the first crashed `Sync.DivergentReferenceUpdateIsNotFastForward` with a
+bus error when the caller's `io_context` shut down with a cross-context post still queued, and the
+second reproduced the original crash in `Store.EvictionDuringCollectionStaysRemote`. Neither is in
+the tree.
+
+The ordering invariant the collector relies on is: a put holds the mutation lock from before its
+write-through callback until its object is published, and appends no pack frame before that
+callback succeeds; collection records its pack and offset high-water position under the same lock,
+then treats every later frame as live when it reacquires the lock for sweep. Eviction and
+redaction load and advance the committed tombstone epoch while holding that lock, and the sweep
+reloads the latest committed manifest under the lock, so a tombstone committed while it marked
+stays dead in the rebuilt index even when the frame is after the high-water mark or reachable from
+the snapshot. Thus a put is either inside the collection snapshot or retained after its high-water
+mark, and an eviction is ordered wholly before the sweep commit or wholly after it and survives
+either way.
+
 ## Pack compaction
 
 `collection_options::compact_below` defaults to `0.5`. A partially dead pack is compacted when
@@ -254,7 +353,8 @@ written to a temporary file, synchronized, and atomically renamed.
 If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
 tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
 
-Concurrent coroutines on one store serialize mutation with `capy::async_mutex`. Reads use immutable
+Concurrent coroutines on one store serialize mutation with the store's thread-safe
+`mutation_mutex`. Reads use immutable
 runs and are not given that mutation lock. Cross-process access is outside this issue's contract.
 
 ## Tuning and verification

@@ -11,9 +11,11 @@
 namespace liquid_cli {
 
 auto set_executable(std::filesystem::path path) -> void;
+auto frontend_module_path(bool compiler) -> std::filesystem::path;
 
 auto repo_init(int argc, char** argv) -> int;
 auto repo_status(int argc, char** argv) -> int;
+auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
 auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
@@ -47,6 +49,7 @@ auto cache(int argc, char** argv) -> int;
 auto git_import(int argc, char** argv) -> int;
 auto git_export(int argc, char** argv) -> int;
 auto build(int argc, char** argv) -> int;
+auto test(int argc, char** argv) -> int;
 auto why_slow(int argc, char** argv) -> int;
 auto facts(int argc, char** argv) -> int;
 auto delta(int argc, char** argv) -> int;
@@ -54,6 +57,11 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto scheduler(int argc, char** argv) -> int;
+auto worker(int argc, char** argv) -> int;
+auto search(int argc, char** argv) -> int;
+auto symbols(int argc, char** argv) -> int;
+auto abi(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -77,16 +85,31 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"write",
+     "write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... "
+     "[--on-stale refuse|disjoint|force]",
+     "write a file from a stated base",
+     "available",
+     liquid_cli::repo_write},
     {"daemon",
      "daemon [--shutdown]",
      "start or stop the checkout daemon",
      "available on macOS and Linux",
      liquid_cli::daemon_command},
-    {"log", "log [--json]", "show change history", "available", liquid_cli::repo_log},
+    {"search",
+     "search [--explain] <query> [--ref <name>] [--limit <count>]",
+     "search paths and contents",
+     "available",
+     liquid_cli::search},
+    {"log",
+     "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps",
+     "show or verify change, signed drip, or timestamp history",
+     "available",
+     liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
     {"push",
-     "push <url>",
+     "push [--atomic] <url>",
      "push repository changes and objects",
      "available",
      liquid_cli::sync_push},
@@ -96,7 +119,7 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::sync_pull},
     {"serve",
-     "serve sync <path> [--listen <address>] [--port <port>]",
+     "serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...",
      "serve a repository over the sync protocol",
      "available",
      liquid_cli::serve},
@@ -128,8 +151,8 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::history_operations},
     {"undo",
-     "undo [op-id]",
-     "undo the newest or named operation",
+     "undo [op-id] | undo --session <id> [--path <path>]... [--drip <id>]...",
+     "undo the newest, named, or session operations",
      "available",
      liquid_cli::history_undo},
     {"lock", "lock <path>", "advisory-lock a path", "available", liquid_cli::locks_lock},
@@ -180,8 +203,8 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::delta},
     {"verify",
-     "verify <action|--all|--changed> [--explain]",
-     "re-execute and compare cached actions",
+     "verify <action|--all|--changed> [--explain] | verify --graph [--all] [--explain]",
+     "re-execute and compare cached actions or the query graph",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::verify},
     {"replay",
@@ -204,19 +227,36 @@ constexpr auto commands = std::to_array<command>({
      "print a derived or explicitly inferred SBOM",
      "available",
      liquid_cli::sbom},
+    {"abi",
+     "abi <show|diff> ... [--json]",
+     "show or compare library ABIs",
+     "available",
+     liquid_cli::abi},
+    {"symbols",
+     "symbols <path>",
+     "show compiler or syntactic symbols for a source path",
+     "available",
+     liquid_cli::symbols},
     {"wrap",
-     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>] [remote options] "
-     "[--no-cache] [--no-verify] [--explain] <command> "
+     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
+     "[remote options] "
+     "[--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> "
      "[args...]",
      "run an existing build as cached actions",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::wrap},
     {"build",
-     "build --profile [--remote <endpoint>] [remote options] <command> [args...] | build trace "
-     "[--chrome]",
-     "profile a build or export its trace",
+     "build [target] | build --plan [target] | build --events <command> [args...] | "
+     "build --profile [remote options] <command> [args...] | build trace [--chrome]",
+     "plan or start a configured repository build, profile a command, stream events, or export a "
+     "trace",
      "available on Linux with FUSE and on macOS with macFUSE",
      liquid_cli::build},
+    {"test",
+     "test [filter]",
+     "run discovered tests as cached actions",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::test},
     {"why",
      "why <target> [--json]",
      "explain the latest cache lookup",
@@ -242,6 +282,16 @@ constexpr auto commands = std::to_array<command>({
      "serve the repository CAS and action cache over REAPI",
      "available",
      liquid_cli::serve},
+    {"scheduler",
+     "scheduler --listen <address> [options]",
+     "run the remote-execution scheduler and CAS",
+     "available",
+     liquid_cli::scheduler},
+    {"worker",
+     "worker --scheduler <address> [options]",
+     "run a remote-execution worker",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     liquid_cli::worker},
     {"pause", "pause", "pause working-tree capture", "available", liquid_cli::capture_pause},
     {"resume", "resume", "resume working-tree capture", "available", liquid_cli::capture_resume},
     {"watch", "watch", "capture changes until Ctrl-C", "available", liquid_cli::capture_watch},
@@ -285,7 +335,9 @@ int main(int argc, char** argv) {
             return usage_error("version accepts only --json");
         }
         if (argc == 3) {
-            std::println("{{\"version\":\"{}\"}}", liquid::version_string());
+            std::println("{{\"version\":\"{}\",\"grammar\":\"{}\"}}",
+                         liquid::version_string(),
+                         liquid::grammar_digest());
             return 0;
         }
         std::println("liquid {}", liquid::version_string());
