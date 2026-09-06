@@ -6,6 +6,9 @@ offload task with a fixed environment. The repository adapter exposes only persi
 configuration, private promotion fingerprints, live records, the active handle session, and the
 repository-owned action directory.
 
+The internal session-environment resolver and database probes retain shared-library visibility so
+the static and shared test suites exercise the same implementation.
+
 Template copies are the portable lifecycle implementation. The filesystem capability probe and
 automatic selector cover the reflink decision; explicit reflink requests report `unsupported`
 until the declaration carries the local cluster control metadata described in
