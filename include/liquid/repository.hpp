@@ -329,10 +329,6 @@ struct LIQUID_EXPORT readability_report {
     std::vector<std::string> limits;
 };
 
-struct LIQUID_EXPORT op_id {
-    digest value;
-};
-
 struct LIQUID_EXPORT import_options {
     std::vector<std::string> ignore_patterns;
     bool follow_symlinks{};

@@ -295,7 +295,7 @@ hashes every included regular file through the object store, and compares the re
 identity with the current working tree. Only added, removed, content-changed, or mode-changed
 entries alter the tree. A non-empty import records one `import` drip whose entry list contains only
 the changed paths; an unchanged tree returns no drip. `tree_import_report` returns that optional
-drip identifier plus `files_seen`, `changed`,
+shared `op_id` drip identifier plus `files_seen`, `changed`,
 `bytes_hashed`, and `bytes_written`.
 
 `import_options::ignore_patterns` supplements `.gitignore` and `.liquidignore` at the imported
