@@ -16,6 +16,7 @@ notes so that each claim has a clear role.
 | [`api/README.md`](api/README.md) | Scheduler and worker network capability maps. |
 | [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, flow watermarks, in-process consumer lag, build-stream forwarding, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
 | [`library/frontends.md`](library/frontends.md) | The versioned frontend C ABI, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
+| [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
 | [`library/search.md`](library/search.md) | Issues #22 and #67's BM25F, positional-trigram, and mapped-scan executors; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
 | [`library/symbols.md`](library/symbols.md) | Content-addressed per-translation-unit symbol records, query behavior, fallback labelling, public repository access, and CLI use. |
 | [`library/reapi-codec.md`](library/reapi-codec.md) | Dependency-free protobuf wire encoding, the REAPI v2.3 structs, native record conversion, hash selection, and pinned reference fixtures. |
