@@ -89,6 +89,11 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.attributes = {{"image", "registry.example/liquid@sha256:image"},
                             {"tree", "blake3:tree"},
                             {"result", "blake3:result"}};
+    } else if (profile == "projection/1") {
+        value.attributes = {{"target", "oci"},
+                            {"source_result", std::vector<std::string>{"blake3:result"}},
+                            {"normalisation", "epoch,uid=0,gid=0,modes,sorted"},
+                            {"tool", "liquid/test"}};
     }
     return value;
 }
@@ -123,7 +128,7 @@ auto sign_unknown_profile(liquid::attestation value) -> liquid::attestation {
 
 TEST(AttestationRegistry, all_profiles_accept_examples_and_reject_missing_required_fields) {
     const auto& registry = liquid::attestation_profile_registry::global();
-    ASSERT_EQ(registry.profiles().size(), 13U);
+    ASSERT_EQ(registry.profiles().size(), 14U);
     for (const auto& profile : registry.profiles()) {
         auto accepted = registry.validate(example(profile.name));
         ASSERT_TRUE(accepted) << profile.name << ": " << accepted.error().message;

@@ -92,6 +92,9 @@ is implemented; local cluster control metadata remains required for that lifecyc
 Liquid #29 adds the versioned format-codec C ABI and registry; dependency-free ZIP, tar, HDF5,
 Parquet, and SQLite readers; deterministic tar output; opt-in container diff; archive search; and
 content-addressed retention of decoded Tier 1 and Tier 2 entries.
+Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
+binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
+attestation artifacts; and the `liquid project` command.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.

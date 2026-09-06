@@ -73,6 +73,7 @@ auto abi(int argc, char** argv) -> int;
 auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
+auto project(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 
@@ -130,6 +131,13 @@ constexpr auto commands = std::to_array<command>({
      "concretise package specifications",
      "available",
      liquid_cli::resolve},
+    {"project",
+     "project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> "
+     "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
+     "[--compat-gzip] [--allow-abi-break] [--json]",
+     "project a build into an installable package, image, or chart",
+     "available",
+     liquid_cli::project},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
      "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "

@@ -418,13 +418,19 @@ add_library(libliquid
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
+  src/formats/apk/apk.cpp
+  src/formats/deb/deb.cpp
+  src/formats/deflate/deflate.cpp
   src/formats/hdf5/hdf5.cpp
   src/formats/binary/elf.cpp
   src/formats/binary/macho.cpp
   src/formats/binary/pe.cpp
   src/formats/json.cpp
   src/formats/parquet/parquet.cpp
+  src/formats/package/common.cpp
+  src/formats/package/codecs.cpp
   src/formats/registry.cpp
+  src/formats/rpm/rpm.cpp
   src/formats/sqlite/sqlite.cpp
   src/formats/tar/tar.cpp
   src/formats/zip/zip.cpp
@@ -466,6 +472,11 @@ add_library(libliquid
   src/object.cpp
   src/objects/records.cpp
   src/protobuf/wire.cpp
+  src/projection/helm.cpp
+  src/projection/oci.cpp
+  src/projection/package.cpp
+  src/projection/projection.cpp
+  src/projection/rules.cpp
   src/reapi/conversion.cpp
   src/reapi/client.cpp
   src/reapi/messages.cpp
@@ -619,6 +630,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/node_store.cpp
     src/cli/policy.cpp
     src/cli/provenance.cpp
+    src/cli/project.cpp
     src/cli/sbom.cpp
     src/cli/symbols.cpp
     src/cli/serve.cpp
