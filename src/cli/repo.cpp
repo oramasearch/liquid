@@ -219,6 +219,25 @@ auto strings_json(const std::vector<std::string>& values) -> std::string {
     return output;
 }
 
+auto data_branches_json(const std::vector<liquid::data_branch_record>& branches) -> std::string {
+    auto output = std::string{"["};
+    for (std::size_t index = 0; index < branches.size(); ++index) {
+        const auto& branch = branches[index];
+        output +=
+            std::format("{}{{\"id\":{},\"session\":{},\"database\":{},\"url\":{},\"mechanism\":{},"
+                        "\"created_at\":{}}}",
+                        index == 0 ? "" : ",",
+                        json_string(branch.id),
+                        json_string(liquid::to_string(branch.session)),
+                        json_string(branch.database),
+                        json_string(branch.url),
+                        json_string(liquid::to_string(branch.mechanism)),
+                        branch.created_at.time_since_epoch().count());
+    }
+    output += ']';
+    return output;
+}
+
 } // namespace
 
 auto repo_init(int argc, char** argv) -> int {
@@ -338,6 +357,7 @@ auto repo_status(int argc, char** argv) -> int {
         std::println(
             "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
             "directories\":{},\"head\":{},\"agents\":{{\"require_base\":{},\"actors\":{}}},"
+            "\"data_branches\":{},"
             "\"capture\":{{\"state\":{},\"pending_drips\":{},"
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
             "\"flow\":{},"
@@ -354,6 +374,7 @@ auto repo_status(int argc, char** argv) -> int {
             current->head ? json_string(head) : "null",
             current->agents.require_base ? "true" : "false",
             strings_json(current->agents.actors),
+            data_branches_json(current->data_branches),
             json_string(daemon_current && daemon_current->capture.state ==
                                               liquid::capture_status::state::paused
                             ? "paused"
@@ -387,6 +408,14 @@ auto repo_status(int argc, char** argv) -> int {
         std::println("agents_require_base={}", current->agents.require_base);
         for (const auto& actor : current->agents.actors) {
             std::println("agent_actor={}", actor);
+        }
+        for (const auto& branch : current->data_branches) {
+            std::println("data_branch={} session={} database={} mechanism={} url={}",
+                         branch.id,
+                         liquid::to_string(branch.session),
+                         branch.database,
+                         liquid::to_string(branch.mechanism),
+                         branch.url);
         }
         std::println("daemon_available={}", daemon_current.has_value());
         std::println("capture_state={}",

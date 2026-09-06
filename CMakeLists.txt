@@ -410,10 +410,12 @@ add_library(libliquid
   src/configuration/records.cpp
   src/daemon.cpp
   src/daemon/fanout.cpp
+  src/data.cpp
   src/drip.cpp
   src/drive/client.cpp
   src/drive/settings.cpp
   src/delta.cpp
+  src/deploy.cpp
   src/edit.cpp
   src/edit_codec.cpp
   src/encryption/leaf.cpp
@@ -602,7 +604,9 @@ if(LIQUID_BUILD_CLI)
     src/cli/daemon.cpp
     src/cli/compose.cpp
     src/cli/configuration.cpp
+    src/cli/data.cpp
     src/cli/delta.cpp
+    src/cli/deploy.cpp
     src/cli/diff.cpp
     src/cli/edit.cpp
     src/cli/drive.cpp

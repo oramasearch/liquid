@@ -9,7 +9,9 @@ add_executable(liquid-tests
   test_asn1.cpp
   test_drip.cpp
   test_delta.cpp
+  test_deploy.cpp
   test_daemon.cpp
+  test_data.cpp
   test_error.cpp
   test_forge.cpp
   test_hash.cpp
@@ -83,6 +85,9 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
     ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
+  if(APPLE)
+    target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
+  endif()
 endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)

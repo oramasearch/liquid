@@ -168,6 +168,10 @@ auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesys
     stream << "/usr/bin/mount --make-rprivate /\n";
     stream << "/usr/bin/mount --bind " << quote(request.input_mount.string()) << ' '
            << quote(rooted("/liquid/work").string()) << "\n";
+    if (!request.toolchain_mount.empty()) {
+        stream << "/usr/bin/mount --bind " << quote(request.toolchain_mount.string()) << ' '
+               << quote(rooted("/liquid/toolchain").string()) << "\n";
+    }
     for (const auto* path : {"/usr", "/usr/local", "/bin", "/lib", "/lib64", "/etc"}) {
         if (!std::filesystem::exists(path))
             continue;
@@ -331,6 +335,11 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
     auto created = ensure_directory(request.sandbox_root / "liquid/work");
     if (!created)
         return std::unexpected(created.error());
+    if (!request.toolchain_mount.empty()) {
+        created = ensure_directory(request.sandbox_root / "liquid/toolchain");
+        if (!created)
+            return std::unexpected(created.error());
+    }
     for (const auto* path :
          {"usr", "usr/local", "bin", "lib", "lib64", "etc", "dev", "tmp", "proc"}) {
         created = ensure_directory(request.sandbox_root / path);
@@ -346,8 +355,12 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
     auto written = write_wrap_bootstrap(request, script);
     if (!written)
         return std::unexpected(written.error());
-    auto arguments = std::vector<std::string>{
-        "unshare", "--user", "--map-root-user", "--mount", "--net", "/bin/sh", script.string()};
+    auto arguments = std::vector<std::string>{"unshare", "--user", "--map-root-user", "--mount"};
+    if (!request.network) {
+        arguments.push_back("--net");
+    }
+    arguments.push_back("/bin/sh");
+    arguments.push_back(script.string());
     auto argument_pointers = pointers(arguments);
     auto environment = environment_block({});
     auto environment_pointers = pointers(environment);

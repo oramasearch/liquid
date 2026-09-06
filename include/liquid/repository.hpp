@@ -15,6 +15,7 @@
 
 #include "liquid/abi.hpp"
 #include "liquid/build.hpp"
+#include "liquid/data.hpp"
 #include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
@@ -32,6 +33,7 @@ struct source;
 
 namespace repository_detail {
 struct build_access;
+struct data_access;
 struct search_access;
 struct testing;
 struct vfs_access;
@@ -39,15 +41,6 @@ struct git_access;
 struct drive_access;
 struct sync_access;
 } // namespace repository_detail
-
-struct LIQUID_EXPORT session_id {
-    std::array<std::byte, 16> bytes{};
-
-    auto operator==(const session_id&) const -> bool = default;
-};
-
-[[nodiscard]] LIQUID_EXPORT std::string to_string(const session_id& value);
-[[nodiscard]] LIQUID_EXPORT result<session_id> parse_session_id(std::string_view text);
 
 enum class encryption_mode : std::uint8_t { leaf, file };
 
@@ -89,6 +82,20 @@ struct LIQUID_EXPORT hot_update_config {
     std::vector<hot_update_target_config> targets;
 
     auto operator==(const hot_update_config&) const -> bool = default;
+};
+
+enum class deploy_on_push : std::uint8_t { none, preview };
+
+struct LIQUID_EXPORT deploy_environment_config {
+    std::optional<std::string> domain;
+    std::map<std::string, std::string> env;
+    std::vector<std::string> secrets;
+};
+
+struct LIQUID_EXPORT deployment_config {
+    std::string control_plane;
+    std::map<std::string, deploy_environment_config> environments;
+    deploy_on_push on_push{deploy_on_push::none};
 };
 
 struct LIQUID_EXPORT ref_retention_rule {
@@ -139,10 +146,12 @@ struct LIQUID_EXPORT repository_options {
     verify_config verify{};
     agents_config agents{};
     hot_update_config hot_update{};
+    deployment_config deploy{};
     policy_config policy{};
     retention_config retention{};
     flow_config flow{};
     std::optional<remote_config> remote;
+    data_config data{};
     std::optional<session_id> session;
     bool defer_tree_load{};
 };
@@ -197,6 +206,7 @@ struct LIQUID_EXPORT repository_status {
     std::vector<std::string> oversized_directories;
     std::optional<change_id> head;
     agents_config agents;
+    std::vector<data_branch_record> data_branches;
 };
 
 struct LIQUID_EXPORT snapshot {
@@ -451,6 +461,7 @@ public:
     [[nodiscard]] static runtime::task<repository> open_build(std::filesystem::path working_tree,
                                                               repository_options options = {});
     [[nodiscard]] runtime::task<tree> root();
+    [[nodiscard]] result<node_id> id() const;
     [[nodiscard]] runtime::task<digest> root_digest();
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
@@ -554,6 +565,7 @@ public:
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
     [[nodiscard]] hot_update_config hot_update_configuration() const;
+    [[nodiscard]] deployment_config deploy_configuration() const;
     [[nodiscard]] flow_config flow_configuration() const;
     [[nodiscard]] std::vector<flow_bucket_status> flow_buckets() const;
 
@@ -565,6 +577,7 @@ private:
     redact_impl(std::string path, std::vector<std::byte> replacement, digest target);
 
     friend struct repository_detail::build_access;
+    friend struct repository_detail::data_access;
     friend struct repository_detail::search_access;
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;

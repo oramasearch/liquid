@@ -76,7 +76,13 @@ owning issue in `error::context`.
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/node_store.hpp` | #202 | implemented | per-node shared chunk store, metadata-only image receipt, reference-counted read-only image mounts, hydration/reuse counters, logical byte budget and remote-content eviction, local snapshotter API, and TCP control surfaces |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
+| `liquid/data.hpp` | #87 | implemented for PostgreSQL template copies; reflink capability selection implemented | session identifiers, persisted application-database declarations, branch records, and coroutine-native create/list/discard/promote operations |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes and live data branches, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted data/REAPI/retention configuration, retention explanations, and bounded signed sync export/import |
+| `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
+| `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
+| `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
+| `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #27, #57, #60, #56, #58, #61, #87, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, public plans, input policy, configure facts, retention, tests, SBOMs, ABI publication, and session data environments | action execution and results, complete configured plan entries and stable JSON projection, move-only build handles and subscriptions, stable JSON event projection, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, wrapper ABI-break reports, and optional session-scoped data URL injection; no sandbox or index implementation types are public |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, remote-record, and streaming tree-import writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/resolve.hpp` | #25, #27 | implemented | plain spec/package/concretisation values, canonical record codecs, filesystem and repository universe loading, reuse, known-output and ABI-compatibility inputs, asynchronous CDCL resolution, minimal attributed conflict cores, stable explanations and JSON |
@@ -844,6 +850,36 @@ from the first commit because they
 cannot be added later: an optional `symbols` reference on built artifacts (liquid #47) and an
 optional `conflict` record on a change (liquid #40).
 
+### `liquid/data.hpp`
+
+```cpp
+struct session_id { std::array<std::byte, 16> bytes; };
+enum class data_branch_mechanism { template_copy, reflink, automatic };
+struct data_database {
+  std::string name, url_env{"DATABASE_URL"}, base_url;
+  data_branch_mechanism mechanism{data_branch_mechanism::automatic};
+};
+struct data_config { std::vector<data_database> databases; };
+struct data_branch_record {
+  std::string id; session_id session; std::string database, url;
+  data_branch_mechanism mechanism; std::chrono::sys_seconds created_at;
+};
+namespace data_branch {
+runtime::task<data_branch_record> create(repository&, session_id, data_database);
+runtime::task<std::vector<data_branch_record>> list(repository&);
+runtime::task<void> discard(repository&, std::string id);
+runtime::task<void> promote(repository&, std::string id);
+}
+```
+
+`repository_options::data` persists the declared databases. `create` selects the declaration by
+name, refuses a second live branch for the same session and database, and returns the URL exported
+to that session's sandbox as `url_env`. `promote` replaces the base only when its logical dump still
+matches the branch-point fingerprint; it returns `conflict` after any base change. Lifecycle
+mutations use a repository-local process lock and run PostgreSQL tools as sandboxed, network-enabled
+actions without linking `libpq`. [data-branching.md](data-branching.md) defines the mechanisms and
+their limits.
+
 ### `liquid/repository.hpp`
 
 ```cpp
@@ -1016,9 +1052,12 @@ content digest, one-based line and column, one-line snippet, and a score only fo
 inputs, and alternatives that preserve or reject the requested result set. Publication, freshness,
 and the private index format are documented in [search.md](search.md).
 
-`ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record: `pending_drips`, `paused`,
-`conflicts`, `oversized_directories` (paths with more than 10,000 entries), `head`, and `agents`.
+`ref` is `{ std::string name; change_id id; }`; `repository_status` is a plain record:
+`pending_drips`, `paused`, `conflicts`, `oversized_directories` (paths with more than 10,000
+entries), `head`, `agents`, and live `data_branches`.
 `repository_options` is a plain record with `checkpoint_interval`, caller-owned `store`, local
+`storage`, `encrypt`, `cache`, `verify`, `agents`, `policy`, `retention`, `data`, and optional
+`session`. The persisted
 `storage`, `encrypt`, `cache`, `verify`, `agents`, `policy`, `retention`, and `flow`. The persisted
 `agents` record has `require_base` and a list of TAAP actor identifiers; the base requirement
 applies only to listed actors. `defer_tree_load` leaves the root paged until the caller imports or
@@ -1742,3 +1781,9 @@ refactor.
   first header; see rules 4 and 6.
 - ~~Where the automerge document boundary sits for very large trees.~~ **Resolved
   (2026-09-04):** one document per directory; see [`object-model.md`](object-model.md).
+# `liquid/deploy.hpp`
+
+`deploy::create`, `list`, `rollback`, and `status` are coroutine-native clients for the
+operator-owned deployment control plane. They use plain deployment records, digest-pinned OCI
+references, opaque secret references, and shared HTTP/1.1 bearer-envelope handling. The
+provisional wire definition is [`deploy.md`](deploy.md).

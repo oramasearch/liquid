@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <fstream>
@@ -21,6 +22,7 @@
 #include "build/policy.hpp"
 #include "build/repository_access.hpp"
 #include "crdt/document.hpp"
+#include "data/repository_access.hpp"
 #include "edit_codec.hpp"
 #include "encoding/cbor.hpp"
 #include "encryption/leaf.hpp"
@@ -105,10 +107,13 @@ struct repository_document {
     std::uint32_t verification_rate{20};
     agents_config agents;
     hot_update_config hot_update;
+    deployment_config deploy;
     policy_config policy;
     retention_config retention{};
     flow_config flow{};
     std::optional<remote_config> remote;
+    data_config data;
+    std::vector<repository_detail::stored_data_branch> data_branches;
     std::uint64_t pending_drips{};
     bool root_is_paged{};
     std::map<std::string, working_entry> nested_entries;
@@ -522,6 +527,26 @@ auto encode_repository_document(const repository_document& value)
                       {"batch_blob_limit", cbor::value{value.remote->batch_blob_limit}},
                       {"publish", cbor::value{value.remote->publish}}});
     }
+    auto data_databases = cbor::value::array{};
+    for (const auto& database : value.data.databases) {
+        data_databases.push_back(
+            map({{"name", cbor::value{database.name}},
+                 {"url_env", cbor::value{database.url_env}},
+                 {"base_url", cbor::value{database.base_url}},
+                 {"mechanism", cbor::value{std::string{to_string(database.mechanism)}}}}));
+    }
+    auto data_branches = cbor::value::array{};
+    for (const auto& branch : value.data_branches) {
+        data_branches.push_back(
+            map({{"id", cbor::value{branch.record.id}},
+                 {"session", bytes(branch.record.session.bytes)},
+                 {"database", cbor::value{branch.record.database}},
+                 {"url", cbor::value{branch.record.url}},
+                 {"mechanism", cbor::value{std::string{to_string(branch.record.mechanism)}}},
+                 {"created_at", cbor::value{branch.record.created_at.time_since_epoch().count()}},
+                 {"base_url", cbor::value{branch.base_url}},
+                 {"base_fingerprint", cbor::value{branch.base_fingerprint}}}));
+    }
     auto restart_hook = cbor::value::array{};
     for (const auto& argument : value.hot_update.restart_hook) {
         restart_hook.push_back(cbor::value{argument});
@@ -531,6 +556,29 @@ auto encode_repository_document(const repository_document& value)
         hot_update_targets.push_back(map({{"name", cbor::value{target.name}},
                                           {"endpoint", cbor::value{target.endpoint.string()}}}));
     }
+    auto deploy_environments = cbor::value::array{};
+    for (const auto& [name, environment] : value.deploy.environments) {
+        auto variables = cbor::value::array{};
+        for (const auto& [key, variable] : environment.env) {
+            variables.push_back(
+                map({{"name", cbor::value{key}}, {"value", cbor::value{variable}}}));
+        }
+        auto secrets = cbor::value::array{};
+        for (const auto& secret : environment.secrets) {
+            secrets.push_back(cbor::value{secret});
+        }
+        deploy_environments.push_back(map(
+            {{"name", cbor::value{name}},
+             {"domain",
+              environment.domain ? cbor::value{*environment.domain} : cbor::value{cbor::null{}}},
+             {"env", cbor::value{std::move(variables)}},
+             {"secrets", cbor::value{std::move(secrets)}}}));
+    }
+    auto deploy =
+        map({{"control_plane", cbor::value{value.deploy.control_plane}},
+             {"environments", cbor::value{std::move(deploy_environments)}},
+             {"on_push",
+              cbor::value{value.deploy.on_push == deploy_on_push::preview ? "preview" : "none"}}});
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
@@ -548,9 +596,13 @@ auto encode_repository_document(const repository_document& value)
               map({{"approved_builders", cbor::value{std::move(approved_builders)}},
                    {"rules", cbor::value{std::move(policy_rules)}}})},
              {"retention", map({{"rules", cbor::value{std::move(retention_rules)}}})},
+             {"data",
+              map({{"databases", cbor::value{std::move(data_databases)}},
+                   {"branches", cbor::value{std::move(data_branches)}}})},
              {"hot_update",
               map({{"restart_hook", cbor::value{std::move(restart_hook)}},
                    {"targets", cbor::value{std::move(hot_update_targets)}}})},
+             {"deploy", std::move(deploy)},
              {"flow", std::move(flow)},
              {"remote", std::move(remote)}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
@@ -997,6 +1049,101 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                 output.agents.actors.push_back(*actor);
             }
         }
+        if (const auto* data = find(*config, "data")) {
+            const auto* databases_value = find(*data, "databases");
+            const auto* branches_value = find(*data, "branches");
+            const auto* databases =
+                databases_value ? std::get_if<cbor::value::array>(&databases_value->data) : nullptr;
+            const auto* branches =
+                branches_value ? std::get_if<cbor::value::array>(&branches_value->data) : nullptr;
+            if (!databases || !branches) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid data config", "repository document"));
+            }
+            const auto mechanism = [](const cbor::value* value,
+                                      bool allow_automatic) -> result<data_branch_mechanism> {
+                const auto* text = value ? std::get_if<std::string>(&value->data) : nullptr;
+                if (text && *text == "template") {
+                    return data_branch_mechanism::template_copy;
+                }
+                if (text && *text == "reflink") {
+                    return data_branch_mechanism::reflink;
+                }
+                if (text && *text == "auto" && allow_automatic) {
+                    return data_branch_mechanism::automatic;
+                }
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid data branch mechanism", "repository document"));
+            };
+            for (const auto& item : *databases) {
+                const auto* name_value = find(item, "name");
+                const auto* env_value = find(item, "url_env");
+                const auto* url_value = find(item, "base_url");
+                const auto* mechanism_value = find(item, "mechanism");
+                const auto* name =
+                    name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+                const auto* env = env_value ? std::get_if<std::string>(&env_value->data) : nullptr;
+                const auto* url = url_value ? std::get_if<std::string>(&url_value->data) : nullptr;
+                auto decoded_mechanism = mechanism(mechanism_value, true);
+                if (!name || !env || !url || !decoded_mechanism) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid data database", "repository document"));
+                }
+                output.data.databases.push_back({*name, *env, *url, *decoded_mechanism});
+            }
+            for (const auto& item : *branches) {
+                const auto* id_value = find(item, "id");
+                const auto* session_value = find(item, "session");
+                const auto* database_value = find(item, "database");
+                const auto* url_value = find(item, "url");
+                const auto* mechanism_value = find(item, "mechanism");
+                const auto* created_value = find(item, "created_at");
+                const auto* base_url_value = find(item, "base_url");
+                const auto* fingerprint_value = find(item, "base_fingerprint");
+                const auto* id = id_value ? std::get_if<std::string>(&id_value->data) : nullptr;
+                const auto* session =
+                    session_value ? std::get_if<cbor::value::bytes>(&session_value->data) : nullptr;
+                const auto* database =
+                    database_value ? std::get_if<std::string>(&database_value->data) : nullptr;
+                const auto* url = url_value ? std::get_if<std::string>(&url_value->data) : nullptr;
+                const auto* base_url =
+                    base_url_value ? std::get_if<std::string>(&base_url_value->data) : nullptr;
+                const auto* fingerprint = fingerprint_value
+                                              ? std::get_if<std::string>(&fingerprint_value->data)
+                                              : nullptr;
+                auto decoded_mechanism = mechanism(mechanism_value, false);
+                auto created = std::optional<std::int64_t>{};
+                if (created_value) {
+                    if (const auto* signed_value =
+                            std::get_if<std::int64_t>(&created_value->data)) {
+                        created = *signed_value;
+                    } else if (const auto* unsigned_value =
+                                   std::get_if<std::uint64_t>(&created_value->data);
+                               unsigned_value &&
+                               *unsigned_value <= static_cast<std::uint64_t>(
+                                                      std::numeric_limits<std::int64_t>::max())) {
+                        created = static_cast<std::int64_t>(*unsigned_value);
+                    }
+                }
+                if (!id || id->empty() || !session ||
+                    session->size() != session_id{}.bytes.size() || !database ||
+                    database->empty() || !url || url->empty() || !decoded_mechanism || !created ||
+                    !base_url || base_url->empty() || !fingerprint || fingerprint->empty()) {
+                    return std::unexpected(
+                        failure(errc::corrupt, "invalid data branch", "repository document"));
+                }
+                auto stored = repository_detail::stored_data_branch{};
+                stored.record.id = *id;
+                std::ranges::copy(*session, stored.record.session.bytes.begin());
+                stored.record.database = *database;
+                stored.record.url = *url;
+                stored.record.mechanism = *decoded_mechanism;
+                stored.record.created_at = std::chrono::sys_seconds{std::chrono::seconds{*created}};
+                stored.base_url = *base_url;
+                stored.base_fingerprint = *fingerprint;
+                output.data_branches.push_back(std::move(stored));
+            }
+        }
         if (const auto* hot_update = find(*config, "hot_update")) {
             const auto* restart_hook_value = find(*hot_update, "restart_hook");
             const auto* targets_value = find(*hot_update, "targets");
@@ -1029,6 +1176,77 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                         failure(errc::corrupt, "invalid hot-update target", "repository document"));
                 }
                 output.hot_update.targets.push_back({*name, *endpoint});
+            }
+        }
+        if (const auto* deploy = find(*config, "deploy")) {
+            const auto* control_value = find(*deploy, "control_plane");
+            const auto* environments_value = find(*deploy, "environments");
+            const auto* on_push_value = find(*deploy, "on_push");
+            const auto* control =
+                control_value ? std::get_if<std::string>(&control_value->data) : nullptr;
+            const auto* environments =
+                environments_value ? std::get_if<cbor::value::array>(&environments_value->data)
+                                   : nullptr;
+            const auto* on_push =
+                on_push_value ? std::get_if<std::string>(&on_push_value->data) : nullptr;
+            if (!control || !environments || !on_push ||
+                (*on_push != "none" && *on_push != "preview")) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid deployment config", "repository document"));
+            }
+            output.deploy.control_plane = *control;
+            output.deploy.on_push =
+                *on_push == "preview" ? deploy_on_push::preview : deploy_on_push::none;
+            for (const auto& item : *environments) {
+                const auto* name_value = find(item, "name");
+                const auto* domain_value = find(item, "domain");
+                const auto* env_value = find(item, "env");
+                const auto* secrets_value = find(item, "secrets");
+                const auto* name =
+                    name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+                const auto* variables =
+                    env_value ? std::get_if<cbor::value::array>(&env_value->data) : nullptr;
+                const auto* secrets =
+                    secrets_value ? std::get_if<cbor::value::array>(&secrets_value->data) : nullptr;
+                if (!name || name->empty() || !domain_value || !variables || !secrets) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid deployment environment", "repository document"));
+                }
+                auto environment = deploy_environment_config{};
+                if (!std::holds_alternative<cbor::null>(domain_value->data)) {
+                    const auto* domain = std::get_if<std::string>(&domain_value->data);
+                    if (!domain || domain->empty()) {
+                        return std::unexpected(failure(
+                            errc::corrupt, "invalid deployment domain", "repository document"));
+                    }
+                    environment.domain = *domain;
+                }
+                for (const auto& variable : *variables) {
+                    const auto* key_value = find(variable, "name");
+                    const auto* value_value = find(variable, "value");
+                    const auto* key =
+                        key_value ? std::get_if<std::string>(&key_value->data) : nullptr;
+                    const auto* value =
+                        value_value ? std::get_if<std::string>(&value_value->data) : nullptr;
+                    if (!key || key->empty() || !value ||
+                        !environment.env.emplace(*key, *value).second) {
+                        return std::unexpected(failure(
+                            errc::corrupt, "invalid deployment variable", "repository document"));
+                    }
+                }
+                for (const auto& secret_value : *secrets) {
+                    const auto* secret = std::get_if<std::string>(&secret_value.data);
+                    if (!secret || secret->empty()) {
+                        return std::unexpected(failure(errc::corrupt,
+                                                       "invalid deployment secret reference",
+                                                       "repository document"));
+                    }
+                    environment.secrets.push_back(*secret);
+                }
+                if (!output.deploy.environments.emplace(*name, std::move(environment)).second) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "duplicate deployment environment", "repository document"));
+                }
             }
         }
         if (const auto* flow = find(*config, "flow")) {
@@ -2541,6 +2759,42 @@ auto validate_agents_config(const agents_config& config) -> result<void> {
         if (actor.empty() || !actors.insert(actor).second) {
             return std::unexpected(
                 failure(errc::invalid_argument, "invalid or duplicate agent actor", actor));
+        }
+    }
+    return {};
+}
+
+auto validate_data_config(const data_config& config) -> result<void> {
+    auto names = std::set<std::string>{};
+    auto environments = std::set<std::string>{};
+    for (const auto& database : config.databases) {
+        const auto valid_name = !database.name.empty() && database.name.size() <= 63 &&
+                                std::ranges::all_of(database.name, [](const auto character) {
+                                    return std::isalnum(static_cast<unsigned char>(character)) ||
+                                           character == '_' || character == '-';
+                                });
+        const auto valid_environment =
+            !database.url_env.empty() &&
+            std::ranges::all_of(database.url_env,
+                                [](const auto character) {
+                                    return std::isalnum(static_cast<unsigned char>(character)) ||
+                                           character == '_';
+                                }) &&
+            !std::isdigit(static_cast<unsigned char>(database.url_env.front()));
+        const auto valid_url = database.base_url.starts_with("postgresql://") ||
+                               database.base_url.starts_with("postgres://");
+        if (!valid_name || !names.insert(database.name).second) {
+            return std::unexpected(failure(
+                errc::invalid_argument, "invalid or duplicate data database name", database.name));
+        }
+        if (!valid_environment || !environments.insert(database.url_env).second) {
+            return std::unexpected(failure(errc::invalid_argument,
+                                           "invalid or duplicate data URL environment",
+                                           database.url_env));
+        }
+        if (!valid_url) {
+            return std::unexpected(failure(
+                errc::invalid_argument, "data database requires a PostgreSQL URL", database.name));
         }
     }
     return {};
@@ -4108,6 +4362,10 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!valid_agents) {
         co_return std::unexpected(valid_agents.error());
     }
+    auto valid_data = validate_data_config(options.data);
+    if (!valid_data) {
+        co_return std::unexpected(valid_data.error());
+    }
     auto valid_hot_update = validate_hot_update_config(options.hot_update);
     if (!valid_hot_update) {
         co_return std::unexpected(valid_hot_update.error());
@@ -4138,10 +4396,12 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.verification_rate = options.verify.rate;
     document.agents = std::move(options.agents);
     document.hot_update = std::move(options.hot_update);
+    document.deploy = std::move(options.deploy);
     document.policy = std::move(options.policy);
     document.retention = std::move(options.retention);
     document.flow = std::move(options.flow);
     document.remote = std::move(options.remote);
+    document.data = std::move(options.data);
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key)
         co_return std::unexpected(signing_key.error());
@@ -4223,6 +4483,10 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!valid_agents) {
         co_return std::unexpected(valid_agents.error());
     }
+    auto valid_data = validate_data_config(document->data);
+    if (!valid_data) {
+        co_return std::unexpected(valid_data.error());
+    }
     auto valid_hot_update = validate_hot_update_config(document->hot_update);
     if (!valid_hot_update) {
         co_return std::unexpected(valid_hot_update.error());
@@ -4264,6 +4528,10 @@ hot_update_config repository::hot_update_configuration() const {
     return impl_ ? impl_->current.hot_update : hot_update_config{};
 }
 
+deployment_config repository::deploy_configuration() const {
+    return impl_ ? impl_->current.deploy : deployment_config{};
+}
+
 flow_config repository::flow_configuration() const {
     return impl_ ? impl_->current.flow : flow_config{};
 }
@@ -4275,6 +4543,12 @@ runtime::task<::liquid::tree> repository::root() {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return co_await impl_->root_tree();
+}
+result<node_id> repository::id() const {
+    if (!impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return impl_->current.repository;
 }
 runtime::task<digest> repository::root_digest() {
     if (!impl_)
@@ -5393,6 +5667,9 @@ result<repository_status> repository::status() {
     output.conflicts = impl_->current.conflict_values;
     output.head = impl_->current.head;
     output.agents = impl_->current.agents;
+    for (const auto& branch : impl_->current.data_branches) {
+        output.data_branches.push_back(branch.record);
+    }
     auto visit = [&](auto&& self, const working_entry& entry, std::string path) -> result<void> {
         if (entry.kind == entry_kind::file) {
             auto remote =
@@ -7291,6 +7568,77 @@ void repository_detail::build_access::apply_cache_lookup(repository& source,
     }
     value.cache = found->second.first;
     value.why = found->second.second;
+}
+
+result<data_config> repository_detail::data_access::configuration(repository& source) {
+    if (!source.impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return source.impl_->current.data;
+}
+
+result<std::vector<repository_detail::stored_data_branch>>
+repository_detail::data_access::branches(repository& source) {
+    if (!source.impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return source.impl_->current.data_branches;
+}
+
+result<std::filesystem::path> repository_detail::data_access::root_path(repository& source) {
+    if (!source.impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return source.impl_->root_path;
+}
+
+runtime::task<void> repository_detail::data_access::add(repository& source,
+                                                        stored_data_branch branch) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto duplicate =
+        std::ranges::find_if(source.impl_->current.data_branches, [&](const auto& existing) {
+            return existing.record.id == branch.record.id ||
+                   (existing.record.session == branch.record.session &&
+                    existing.record.database == branch.record.database);
+        });
+    if (duplicate != source.impl_->current.data_branches.end()) {
+        co_return std::unexpected(failure(errc::already_exists,
+                                          "data branch already exists for the session",
+                                          branch.record.database));
+    }
+    source.impl_->current.data_branches.push_back(std::move(branch));
+    auto saved = co_await source.impl_->checkpoint();
+    if (!saved) {
+        source.impl_->current.data_branches.pop_back();
+        co_return std::unexpected(saved.error());
+    }
+    co_return result<void>{};
+}
+
+runtime::task<void> repository_detail::data_access::remove(repository& source, std::string id) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto found = std::ranges::find(source.impl_->current.data_branches,
+                                         id,
+                                         [](const auto& branch) { return branch.record.id; });
+    if (found == source.impl_->current.data_branches.end()) {
+        co_return std::unexpected(failure(errc::not_found, "data branch is not recorded", id));
+    }
+    auto removed = *found;
+    const auto offset =
+        static_cast<std::size_t>(std::distance(source.impl_->current.data_branches.begin(), found));
+    source.impl_->current.data_branches.erase(found);
+    auto saved = co_await source.impl_->checkpoint();
+    if (!saved) {
+        source.impl_->current.data_branches.insert(source.impl_->current.data_branches.begin() +
+                                                       static_cast<std::ptrdiff_t>(offset),
+                                                   std::move(removed));
+        co_return std::unexpected(saved.error());
+    }
+    co_return result<void>{};
 }
 
 auto repository_detail::testing::directory_loads(repository& value) -> std::uint64_t {

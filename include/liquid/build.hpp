@@ -11,6 +11,7 @@
 
 #include "liquid/abi.hpp"
 #include "liquid/attestation.hpp"
+#include "liquid/data.hpp"
 #include "liquid/export.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/graph.hpp"
@@ -335,6 +336,7 @@ struct LIQUID_EXPORT wrap_options {
     std::optional<std::filesystem::path> cache_directory;
     std::optional<std::filesystem::path> fact_directory;
     std::optional<remote_config> remote;
+    std::optional<session_id> session;
     std::vector<named_input> inputs;
     std::optional<std::filesystem::path> install_prefix;
     bool allow_embedded_prefix{};
