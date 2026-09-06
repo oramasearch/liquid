@@ -103,8 +103,8 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::search},
     {"log",
-     "log [--ops] [--json]",
-     "show change or signed drip history",
+     "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps",
+     "show or verify change, signed drip, or timestamp history",
      "available",
      liquid_cli::repo_log},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
@@ -341,7 +341,9 @@ int main(int argc, char** argv) {
             return usage_error("version accepts only --json");
         }
         if (argc == 3) {
-            std::println("{{\"version\":\"{}\"}}", liquid::version_string());
+            std::println("{{\"version\":\"{}\",\"grammar\":\"{}\"}}",
+                         liquid::version_string(),
+                         liquid::grammar_digest());
             return 0;
         }
         std::println("liquid {}", liquid::version_string());

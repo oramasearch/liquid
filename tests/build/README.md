@@ -45,6 +45,11 @@ while a changed quoted header executes both recorded readers and assembly.
 `frontend-one-function-measure` is a registered macOS/Linux
 CTest that performs the same count assertion against `src/store/faults.cpp` and prints its elapsed
 milliseconds.
+`test_grammars.cpp` parses the lock-driven sample for every configured grammar without an `ERROR`
+node, runs tag queries for Python, Go, Rust, JavaScript, TypeScript, Java, and Ruby, checks explicit
+unsupported behavior when no tag query exists, rejects a descriptor with a mismatched grammar ABI,
+and checks public registry metadata. `liquid-grammar-measure` reports mean nanoseconds over 100
+parses of each fixture.
 
 `test_distribution.cpp` measures tiny, short, long, and uncertain timing histories against the
 cost model and asserts local, remote, and race choices with exact estimates. Its second-store test
@@ -105,6 +110,7 @@ record decoding, stable cross-file reference identifier, repository-store round 
 explicitly labelled tree-sitter fallback. The Linux `symbols-cli` fixture records a CMake-fixture
 compile with `liquid wrap`, then verifies compiler symbols for its header; macOS excludes that
 fixture because wrapped action execution requires macFUSE.
+The portable `symbols-cli-python` case verifies extension selection and a syntactic Python result.
 
 The real identical-execution cache test verifies every result's provenance and asserts that a hit
 reuses the original attestation digest.

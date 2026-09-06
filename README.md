@@ -52,7 +52,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > explicit plaintext reads and key-only historical diff. Whole-file encryption remains the fallback,
 > and `find_package(liquid)` works from an install. `liquid import git` preserves reachable local Git
 > history and its identity mapping; `liquid export git` writes a standalone Git repository and reports
-> compatibility losses.
+> compatibility losses. Strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA
+> validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against explicitly pinned
+> TSA trust anchors at each token's historical generation time.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
@@ -63,7 +65,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > Direct build execution
 > and every wrapped tool action are `action_result` graph nodes. A versioned C frontend ABI loads
 > replaceable shared or static language modules outside libliquid. The bundled tree-sitter fallback
-> discovers C and C++ units, while the Clang C++ module emits definition actions and assembles their
+> fetches 49 exact-commit grammars under archive and per-file SHA-256 checks, registers their
+> extensions, and discovers units from pinned tag queries where upstream supplies them. The Clang
+> C++ module emits definition actions and assembles their
 > outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 > that definition's new action; recorded header reads invalidate the definitions that use them.
 > Liquid #66 adds content-addressed per-translation-unit symbol records from a query over recorded
@@ -74,6 +78,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven daemon target.
 > Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise returns the
 > tier-3 restart outcome.
+> `liquid symbols <path>`; syntactic records and `liquid version --json` carry the grammar-lock
+> digest. The distribution decision and inventory are in
+> [`docs/library/grammars.md`](docs/library/grammars.md).
 > Public build handles now stream queued, started, hit, done, failed, critical-path, and finished
 > events through the library and daemon. CMake test registrations become discoverable cached
 > actions, with `liquid build --events` providing JSON Lines and `liquid test` reporting results.
@@ -201,6 +208,7 @@ and Zetta's.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
+- [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.

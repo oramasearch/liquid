@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -149,13 +150,26 @@ auto recorded_compile_actions(liquid::repository& repository, std::string_view p
                                          std::string{path}});
 }
 
-auto syntactic_symbols(std::span<const std::byte> source, liquid::digest subject)
-    -> liquid::result<liquid::symbol_record> {
-    auto fallback = liquid::frontend_module::load(frontend_module_path(false));
-    if (!fallback) {
-        return std::unexpected(fallback.error());
+auto language_for_path(const liquid::frontend_module& module, std::string_view path)
+    -> liquid::result<std::string> {
+    const auto file = std::filesystem::path{path};
+    const auto filename = file.filename().string();
+    const auto extension = file.extension().string();
+    for (const auto& language : module.language_details()) {
+        if (std::ranges::find(language.extensions, extension) != language.extensions.end() ||
+            std::ranges::find(language.extensions, filename) != language.extensions.end()) {
+            return language.language;
+        }
     }
-    auto raw = fallback->symbols("c++", source);
+    return std::unexpected(liquid::error{
+        liquid::errc::not_found, "no grammar is registered for the path", std::string{path}});
+}
+
+auto syntactic_symbols(liquid::frontend_module& fallback,
+                       std::string_view language,
+                       std::span<const std::byte> source,
+                       liquid::digest subject) -> liquid::result<liquid::symbol_record> {
+    auto raw = fallback.symbols(language, source);
     if (!raw) {
         return std::unexpected(raw.error());
     }
@@ -182,9 +196,17 @@ auto symbols(int argc, char** argv) -> int {
     if (!repository) {
         return fail(repository.error());
     }
+    auto fallback = liquid::frontend_module::load(frontend_module_path(false));
+    if (!fallback) {
+        return fail(fallback.error());
+    }
+    auto language = language_for_path(*fallback, path);
+    if (!language) {
+        return fail(language.error());
+    }
     auto compiler = liquid::frontend_module::load(frontend_module_path(true));
     auto records = std::vector<liquid::symbol_record>{};
-    if (!compiler) {
+    if (!compiler || !compiler->supports(*language)) {
         auto source = liquid::runtime::block_on(repository->read(path));
         if (!source) {
             return fail(source.error());
@@ -193,7 +215,7 @@ auto symbols(int argc, char** argv) -> int {
         if (!subject) {
             return fail(subject.error());
         }
-        auto record = syntactic_symbols(*source, *subject);
+        auto record = syntactic_symbols(*fallback, *language, *source, *subject);
         if (!record) {
             return fail(record.error());
         }
