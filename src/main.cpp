@@ -144,6 +144,17 @@ constexpr auto flags_data = std::to_array<flag>({
      "new session"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
+constexpr auto flags_deploy = std::to_array<flag>({
+    {"--control",
+     "<url>",
+     "Select the deployment control-plane endpoint.",
+     "repository configuration"},
+    {"--env", "<name>", "Select the deployment environment.", "production"},
+    {"--image", "<ref@sha256:...>", "Deploy this image reference.", "none"},
+    {"--to", "<change|deployment>", "Roll back to this recorded change or deployment.", "none"},
+    {"--wait", {}, "Return failure when the created deployment is not ready.", "false"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
 constexpr auto flags_serve = std::to_array<flag>({
     {"--listen", "<address>", "Select the listener address.", "127.0.0.1"},
     {"--port", "<port>", "Select the sync listener port.", "8080"},
@@ -514,6 +525,11 @@ constexpr auto commands = std::to_array<command>({
      "[--wait] | deploy <status|list> [--control <url>] [--env <name>] [--json]",
      "create, inspect, or roll back an environment deployment",
      "available",
+     flags_deploy,
+     "Create, inspect, list, or roll back a deployment through the configured control plane.",
+     "liquid deploy --env staging --image registry.example/app@sha256:<digest>",
+     normal_exit,
+     argument_policy::ordinary,
      liquid_cli::deploy},
     {"serve",
      "serve sync <path> [sync options] | serve reapi --listen <address> [--instance <name>] | "

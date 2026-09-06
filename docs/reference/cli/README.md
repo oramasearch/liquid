@@ -23,6 +23,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`push`](push.md) | push repository changes and objects | available |
 | [`pull`](pull.md) | pull repository changes and objects | available |
 | [`review`](review.md) | review a lake change in place | available |
+| [`deploy`](deploy.md) | create, inspect, or roll back an environment deployment | available |
 | [`serve`](serve.md) | serve repository sync, REAPI, or image admission | available |
 | [`move`](move.md) | record a path move | available |
 | [`rm`](rm.md) | record a path removal | available |
