@@ -77,6 +77,7 @@ owning issue in `error::context`.
 | `liquid/frontend.hpp` | #65, #66, #193, #205 | implemented | checked shared/static frontend loading, language registry, source units, concrete syntax trees and navigation, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/edit.hpp` | #205 | implemented | canonical structural-edit requests, targets, previews, refusals, attribution, file/text changes, results, and codecs |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
+| `liquid/import.hpp` | #75 | implemented | Spack import loss and report values, stable report codecs, offline patch bytes, target toolchain binding, and the coroutine import operation |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/node_store.hpp` | #202 | implemented | per-node shared chunk store, metadata-only image receipt, reference-counted read-only image mounts, hydration/reuse counters, logical byte budget and remote-content eviction, local snapshotter API, and TCP control surfaces |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
@@ -1270,9 +1271,34 @@ files beneath the repository root. `check` returns every schema diagnostic witho
 produces the existing `package_record` plus canonical target/source values. Generator and build
 operations use `build::execute`; generated origins carry the verified result digest, and configured
 targets apply the relocation publication check to their action outputs. The
-`repository::fetch_source(const source&)` task is the only source download entry point and hashes
-the complete response before writing it to the store. See
+`repository::fetch_source(const source&)` task is the only source download entry point. It reuses
+content already present under the declared digest; otherwise it hashes the complete response before
+writing it to the store. See
 [configuration-language.md](configuration-language.md).
+
+### `liquid/import.hpp`
+
+```cpp
+enum class spack_loss_kind { dynamic_value, custom_phase, untranslatable_when,
+                             unknown_build_system, unsupported_value };
+struct spack_import_loss { spack_loss_kind kind; std::string field, reason; };
+struct spack_package_import { std::string name; std::vector<std::string> translated_fields;
+                              std::vector<spack_import_loss> losses; };
+struct spack_import_report { std::uint64_t v, packages, translated_fields, losses, pinned_patches;
+                             std::vector<std::string> roots;
+                             std::vector<spack_package_import> package_reports; };
+struct spack_import_options { std::map<std::string, std::vector<std::byte>> patch_contents;
+                              std::optional<digest> toolchain; };
+runtime::task<spack_import_report> import_spack(std::filesystem::path export_document,
+                                                std::filesystem::path packages_repository,
+                                                spack_import_options = {});
+result<std::string> spack_import_report_json(const spack_import_report&);
+std::string spack_import_report_text(const spack_import_report&);
+result<spack_import_report> decode_spack_import_report(std::string_view);
+```
+
+Parsing, mapping, and report codecs are synchronous. The task boundary covers digest-less HTTPS
+patch retrieval and output writes. See [import-spack.md](import-spack.md).
 
 ### `liquid/build.hpp`
 

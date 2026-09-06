@@ -26,6 +26,7 @@
 #include "liquid/hash.hpp"
 #include "liquid/hot_update.hpp"
 #include "liquid/identity.hpp"
+#include "liquid/import.hpp"
 #include "liquid/node_store.hpp"
 #include "liquid/object.hpp"
 #include "liquid/projection.hpp"

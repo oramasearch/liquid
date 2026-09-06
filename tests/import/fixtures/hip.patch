@@ -1,0 +1,25 @@
+From 50ee82f6bc4aad10908ce09198c9f7ebfb2a3561 Mon Sep 17 00:00:00 2001
+From: Mikael Simberg <mikael.simberg@iki.fi>
+Date: Tue, 18 Apr 2023 18:02:27 +0200
+Subject: [PATCH] Quote HIP_GPU_ARCH in HIT.cmake to avoid errors when
+ HIP_GPU_ARCH is empty
+
+CMake's string function fails if HIP_GPU_ARCH is empty, thinking that it
+only received three arguments for the REPLACE sub-command.
+---
+ tests/hit/HIT.cmake | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/hit/HIT.cmake b/tests/hit/HIT.cmake
+index e1c8fcbc4b1314c7449bc943b86ded1b48c69251..5a0f3682c9fa758043d5c8038ca051180c5bcdd6 100755
+--- a/tests/hit/HIT.cmake
++++ b/tests/hit/HIT.cmake
+@@ -46,7 +46,7 @@ if(NOT DEFINED OFFLOAD_ARCH_STR AND EXISTS "${ROCM_PATH}/bin/rocm_agent_enumerat
+         RESULT_VARIABLE ROCM_AGENT_ENUM_RESULT)
+     message(STATUS "ROCm Agent Enumurator Result: ${ROCM_AGENT_ENUM_RESULT}")
+     # Trim out gfx000
+-    string(REPLACE "gfx000\n" "" HIP_GPU_ARCH ${HIP_GPU_ARCH})
++    string(REPLACE "gfx000\n" "" HIP_GPU_ARCH "${HIP_GPU_ARCH}")
+     if (NOT HIP_GPU_ARCH STREQUAL "")
+         string(LENGTH ${HIP_GPU_ARCH} HIP_GPU_ARCH_LEN)
+         # If string has more gfx target except gfx000

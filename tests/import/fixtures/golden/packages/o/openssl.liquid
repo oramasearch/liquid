@@ -1,0 +1,18 @@
+source openssl-1.12.0 {
+    digest: sha256:2549debd610d3ebfb4100d6a78e510958ff4179c1d398fa6d086451bbb6feaf1
+    kind: archive
+    url: "https://example.invalid/openssl-1.12.0.tar.gz"
+}
+
+package openssl {
+    versions: [1.12.0]
+}
+
+build openssl {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/2549debd610d3ebfb4100d6a78e510958ff4179c1d398fa6d086451bbb6feaf1 -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["openssl-1.12.0"]
+    install {
+        layout: prefix
+    }
+}

@@ -1,0 +1,18 @@
+source xz-1.3.0 {
+    digest: sha256:dbcbc2c193e2cafed9f696148cf44ca4315274239604e1786ee16f287a3b1df9
+    kind: archive
+    url: "https://example.invalid/xz-1.3.0.tar.gz"
+}
+
+package xz {
+    versions: [1.3.0]
+}
+
+build xz {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/dbcbc2c193e2cafed9f696148cf44ca4315274239604e1786ee16f287a3b1df9 -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["xz-1.3.0"]
+    install {
+        layout: prefix
+    }
+}

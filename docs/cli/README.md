@@ -65,7 +65,7 @@ built binary under the build directory before CTest compares it with the committ
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
-| `import` | `import <path>` or `import git <path>` | Import a local tree or Git repository. | available |
+| `import` | `import <path>`, `import git <path>`, or `import spack <export.json> --into <repository> [--report] [--json]` | Import a local tree, Git repository, or Spack universe. | available |
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
@@ -551,6 +551,18 @@ Successful wrapping prints one `abi-break:` line for every incompatible rebuilt 
 the previous blob and at most the first three sorted changes. It normally preserves the build exit
 status. `--fail-on-abi-break` changes a successful wrap to status 1 when any such event occurs.
 
+## Spack package import
+
+`liquid import spack <export.json> --into <packages-repository>` imports `spack-export/1`, writes
+formatter-canonical package documents and solver records, and saves `import-report.json`. The
+default success line reports package, translated-field, loss, and newly pinned patch counts.
+`--report` prints the full human-readable report; `--json` selects its stable JSON projection.
+
+With no export path, `liquid import spack --report --into <packages-repository>` reads the saved
+report without importing again. Patch URLs without a digest are accepted only over HTTPS and are
+hashed before their digest enters a package document. See
+[`import-spack.md`](../library/import-spack.md) for the exporter and mapping contract.
+
 ## Examples
 
 ```sh
@@ -585,6 +597,8 @@ liquid materialise /tmp/liquid-checkout src
 liquid gc --dry-run .
 liquid import ../source-tree
 liquid import git ../source-repository
+liquid import spack spack-export.json --into ../packages --report
+liquid import spack --report --into ../packages --json
 liquid export git ../exported-repository main
 liquid retain explain blake3:<object-digest>
 liquid identity rotate

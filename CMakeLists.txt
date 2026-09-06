@@ -468,6 +468,7 @@ add_library(libliquid
   src/identity/custody/lake.cpp
   src/identity/custody/shamir.cpp
   src/identity/taap.cpp
+  src/import/spack.cpp
   src/node_store.cpp
   src/node_store/service.cpp
   src/crypto/crypto.cpp

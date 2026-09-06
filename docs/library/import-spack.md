@@ -126,3 +126,6 @@ ctest --test-dir build-linux -L realworld -R spack-import-build-subset --output-
 because digest-less patch retrieval and file writes may wait; it uses the shared runtime and never
 starts raw threads. `spack_import_options::patch_contents` lets offline callers supply exact patch
 bytes, while `toolchain` binds generated targets to a content-addressed toolchain.
+
+The command-line adapter is in `src/cli/git.cpp`; the importer implementation is isolated in
+`src/import/spack.cpp` and is part of `libliquid`.

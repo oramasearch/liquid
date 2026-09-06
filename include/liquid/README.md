@@ -40,6 +40,8 @@ engine and its clause encoding stay private.
 `configuration.hpp` defines the `.liquid` AST, exact diagnostics, synchronous check/lower/format
 operations, canonical target/source codecs, asynchronous source fetch, action-backed generators,
 and configured target execution.
+`import.hpp` defines Spack import reports and loss categories, stable text and JSON report codecs,
+offline patch-byte injection, optional target toolchain binding, and the coroutine import task.
 `deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
 status calls for an operator-owned control plane. Its interim image input is an OCI reference
 pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.
