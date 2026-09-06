@@ -17,6 +17,7 @@ notes so that each claim has a clear role.
 | [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, build-stream and structural-edit forwarding, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
 | [`library/frontends.md`](library/frontends.md) | The versioned frontend C ABI, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
 | [`library/edit.md`](library/edit.md) | Structural rename, extract, move, and concrete-tree edits; canonical records, preview/apply guarantees, attribution, grouped undo, CLI use, limits, and own-tree measurement. |
+| [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
 | [`library/search.md`](library/search.md) | Issues #22 and #67's BM25F, positional-trigram, and mapped-scan executors; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
 | [`library/symbols.md`](library/symbols.md) | Content-addressed per-translation-unit symbol records, query behavior, fallback labelling, public repository access, and CLI use. |
 | [`library/reapi-codec.md`](library/reapi-codec.md) | Dependency-free protobuf wire encoding, the REAPI v2.3 structs, native record conversion, hash selection, and pinned reference fixtures. |
@@ -30,6 +31,7 @@ notes so that each claim has a clear role.
 | [`library/hash-agility.md`](library/hash-agility.md) | Digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits. |
 | [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
 | [`library/http2.md`](library/http2.md) | Private Corosio HTTP/2 framing, HPACK, gRPC envelopes, and h2c/TLS ALPN interoperability proof. |
+| [`library/transparency.md`](library/transparency.md) | RFC 3161 timestamp and RFC 4998 evidence verification design, trust policy, and implementation notes. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |

@@ -49,6 +49,14 @@ chunk table once before any pack mutation. Memory puts retain their input across
 puts first scan in bounded windows, verify a read-only file mapping against that table, and retain
 the mapping across the await before copying one chunk at a time into packs.
 
+`mutation_mutex.hpp` owns the store's mutation lock: an asynchronous mutex that is safe from any
+thread, following Capy's IoAwaitable protocol so call sites read as with `async_mutex::scoped_lock`.
+Capy's `async_mutex` is single-executor, liquid runs every `io_context` on several threads, and
+Corosio resumes a coroutine after file I/O on the completing runner, so the lock protects its own
+state. Collection releases the mutation lock while marking and yields between packs with
+`runtime::yield` rather than a zero delay (liquid #208); its sweep reloads the committed manifest
+under the lock and keeps tombstones added by an intervening eviction or redaction.
+
 Remote-registered eviction removes the local object entry, adds tombstones for unshared cached
 chunks and its descriptor, and rebuilds the index while preserving `remotes.meta`. It does not
 rewrite packs; ordinary collection and compaction reclaim their dead frames. Registrations already

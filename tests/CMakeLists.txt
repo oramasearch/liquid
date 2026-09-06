@@ -6,6 +6,7 @@ set(LIQUID_HTTP2_TEST_SOURCES
 
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
+  test_asn1.cpp
   test_drip.cpp
   test_delta.cpp
   test_daemon.cpp
@@ -30,6 +31,8 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_store.cpp
   test_temporary_directory.cpp
+  test_transparency.cpp
+  ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp
@@ -70,11 +73,15 @@ target_link_libraries(liquid-tests PRIVATE
   liquid_monocypher
   orama::oramacore-cpp
   GTest::gtest_main
+  Boost::assert
+  Boost::config
+  Boost::throw_exception
   Boost::corosio
   Boost::corosio_openssl)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
+  ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
@@ -127,17 +134,39 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
-  target_sources(liquid-tests PRIVATE build/test_frontend.cpp test_edit.cpp)
+  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
     LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
     LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
     LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
+    LIQUID_GRAMMAR_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/grammars"
     LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
     LIQUID_NM="${CMAKE_NM}")
-  target_link_libraries(liquid-tests PRIVATE liquid-frontend-clang-static)
+  target_include_directories(liquid-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/modules/frontends
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
+  target_link_libraries(liquid-tests PRIVATE
+    liquid-frontend-clang-static
+    liquid_frontend_syntax)
+
+  add_test(NAME grammar-lock-digests
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_GRAMMAR_LOCK=${LIQUID_GRAMMAR_LOCK}
+      -DLIQUID_GRAMMAR_SOURCE_MAP=${LIQUID_GRAMMAR_SOURCE_MAP}
+      -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGrammars.cmake)
+
+  add_executable(liquid-grammar-measure build/measure_grammars.cpp)
+  target_include_directories(liquid-grammar-measure PRIVATE
+    ${PROJECT_SOURCE_DIR}/modules/frontends
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
+  target_compile_definitions(liquid-grammar-measure PRIVATE
+    LIQUID_GRAMMAR_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/grammars")
+  target_link_libraries(liquid-grammar-measure PRIVATE liquid_frontend_syntax)
 endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
@@ -180,6 +209,13 @@ if(LIQUID_BUILD_CLI)
     WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY}
     PASS_REGULAR_EXPRESSION "origin=compiler")
   endif()
+  if(LIQUID_BUILD_FRONTENDS)
+    add_test(NAME symbols-cli-python
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_SYMBOLS_PYTHON_ROOT=${CMAKE_CURRENT_BINARY_DIR}/symbols-python-repository
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/symbols-python.cmake)
+  endif()
   add_executable(liquid-gc-cli-fixture store/gc_cli_fixture.cpp)
   target_link_libraries(liquid-gc-cli-fixture PRIVATE liquid::liquid)
   set(LIQUID_GC_CLI_REPOSITORY ${CMAKE_CURRENT_BINARY_DIR}/gc-cli-repository)
@@ -215,6 +251,10 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-transparency-configuration
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/transparency.cmake)
   add_test(NAME cli-delta
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>

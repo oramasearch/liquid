@@ -122,7 +122,17 @@ struct LIQUID_EXPORT symbol_record {
     digest subject;
     std::string language;
     symbol_origin origin{symbol_origin::syntactic};
+    std::string grammar;
     std::vector<symbol_occurrence> occurrences;
+};
+
+enum class frontend_tier_mechanism : std::uint8_t { frontend = 1, grammar = 2 };
+
+struct LIQUID_EXPORT frontend_language {
+    std::string language;
+    std::vector<std::string> extensions;
+    frontend_tier_mechanism tier_mechanism{frontend_tier_mechanism::frontend};
+    std::string grammar_digest;
 };
 
 [[nodiscard]] LIQUID_EXPORT auto encode_symbols(const symbol_record& value)
@@ -147,6 +157,7 @@ public:
 
     [[nodiscard]] auto name() const -> std::string_view;
     [[nodiscard]] auto languages() const -> std::vector<std::string>;
+    [[nodiscard]] auto language_details() const -> std::vector<frontend_language>;
     [[nodiscard]] auto supports(std::string_view language) const -> bool;
     [[nodiscard]] auto units(std::string_view language,
                              std::span<const std::byte> blob,
@@ -194,6 +205,7 @@ public:
     auto add(frontend_module module) -> result<void>;
     auto load(std::filesystem::path shared_object) -> result<void>;
     [[nodiscard]] auto find(std::string_view language) const -> result<const frontend_module*>;
+    [[nodiscard]] auto languages() const -> std::vector<frontend_language>;
 
 private:
     struct impl;

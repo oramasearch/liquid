@@ -78,6 +78,10 @@ and `liquid test`.
 Liquid #200 adds public configured-build plans with complete action inputs, dependency edges and
 validated hit state, one-call repository and daemon builds, the current root-tree digest, and
 `liquid build --plan`.
+Liquid #72 replaces tag-selected tree-sitter inputs with one canonical lock for the runtime and 49
+public grammars. Configure-time archives and every compiled parser/scanner and tag query are pinned
+by SHA-256; the generated registry, public language metadata, syntax fallback, and grammar-set
+provenance all derive from that lock.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
@@ -107,6 +111,9 @@ Liquid #174 adds line-hunk-based text anchors that follow `node_id` moves and re
 approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
 line-hunk stale reports, and signed disjoint or forced re-validation records.
+Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
+3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
+anchors and historical certificate validation.
 
 ### Vocabulary — use these words exactly
 
@@ -367,6 +374,18 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
    same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
    `docs/library/distribution.md`.
+10. **TSA signature verification is liquid's own, verification only** (Steve, 2026-09-05;
+    bridge decision 32). RFC 3161 and RFC 4998 verification uses liquid's strict DER, CMS, X.509,
+    RSA, and NIST-curve ECDSA readers and verifiers. It does not generate keys or signatures and
+    does not link a general-purpose cryptography library for these operations. Design:
+    `docs/library/transparency.md`.
+10. **Tier 2 tree-sitter grammars are fetched at configure time and pinned by digest** (liquid #72,
+    2026-09-05). One canonical lock names an exact public-upstream commit, archive SHA-256,
+    generated parser SHA-256, every hand-written scanner SHA-256, tag-query SHA-256, language ABI,
+    licence, and extensions. Generated parsers do not live in-tree: the digest-checked bytes have
+    the same trust boundary as vendored bytes without adding hundreds of megabytes or an aggregate
+    mirror maintenance obligation. `LIQUID_GRAMMAR_MIRROR` remains the explicit URL-root change for
+    an organisation or air-gapped mirror. See [`docs/library/grammars.md`](docs/library/grammars.md).
 
 **Still open:**
 

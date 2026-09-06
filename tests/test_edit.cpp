@@ -113,7 +113,7 @@ void store_symbols(liquid::repository& repository,
     auto subject = liquid::hash(liquid::algorithm::blake3, bytes(source));
     ASSERT_TRUE(subject);
     auto stored = liquid::runtime::block_on(repository.store_symbols(
-        {*subject, path.ends_with(".c") ? "c" : "c++", origin, std::move(occurrences)}));
+        {*subject, path.ends_with(".c") ? "c" : "c++", origin, {}, std::move(occurrences)}));
     ASSERT_TRUE(stored) << stored.error().message;
 }
 

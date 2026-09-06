@@ -604,6 +604,8 @@ const liquid_frontend_module_v1 module = {
     symbols_from_output,
     nullptr,
     nullptr,
+    0,
+    nullptr,
 };
 
 } // namespace

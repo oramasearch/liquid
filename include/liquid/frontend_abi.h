@@ -62,6 +62,17 @@ typedef struct liquid_frontend_language_v1 {
     size_t extension_count;
 } liquid_frontend_language_v1;
 
+typedef enum liquid_frontend_tier_mechanism_v1 {
+    LIQUID_FRONTEND_TIER_FRONTEND = 1,
+    LIQUID_FRONTEND_TIER_GRAMMAR = 2
+} liquid_frontend_tier_mechanism_v1;
+
+typedef struct liquid_frontend_language_metadata_v1 {
+    const char* language;
+    uint32_t tier_mechanism;
+    const char* grammar_digest;
+} liquid_frontend_language_metadata_v1;
+
 typedef int (*liquid_frontend_units_v1)(void* module_context,
                                         const char* language,
                                         liquid_frontend_bytes_v1 blob,
@@ -123,6 +134,8 @@ typedef struct liquid_frontend_module_v1 {
     liquid_frontend_symbols_v1 symbols;
     liquid_frontend_symbols_from_output_v1 symbols_from_output;
     liquid_frontend_destroy_v1 destroy;
+    const liquid_frontend_language_metadata_v1* language_metadata;
+    size_t language_metadata_count;
     liquid_frontend_syntax_v1 syntax;
 } liquid_frontend_module_v1;
 

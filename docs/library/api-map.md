@@ -51,13 +51,17 @@ owning issue in `error::context`.
 | Header | Phase | Status | What it exposes |
 |---|---|---|---|
 | `liquid/liquid.hpp` | now | implemented | umbrella |
-| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()` |
+| `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()`, `grammar_digest()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97, #193 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `spawn_serial`, `offload`, `context` |
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
 | `liquid/abi.hpp` | #27 | implemented | synchronous ELF/Mach-O/PE ABI extraction, stable descriptors, compatibility verdicts and change reports, and JSON projection |
 | `liquid/hash.hpp` | #39, #7 | implemented | `algorithm`, `digest`, `hash(span) -> digest`, keyed-id text round trip |
+| `liquid/asn1.hpp` | #210 | implemented | strict DER element reader with exact encoded spans plus unsigned-integer and object-identifier decoding |
+| `liquid/x509.hpp` | #210 | implemented | certificate parsing, explicit TSA trust anchors, historical path validation, key usage, and critical timestamp-signing purpose |
+| `liquid/cms.hpp` | #210 | implemented | embedded CMS SignedData content, signed-attribute, signer, signature, and historical certificate-path verification |
+| `liquid/transparency.hpp` | #207, #210 | implemented (#210) | RFC 3161 timestamp-token and RFC 4998 evidence-chain verification over checkpoint signature values with explicit TSA trust anchors |
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
 | `liquid/frontend_abi.h` | #65, #66, #205 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
 | `liquid/frontend.hpp` | #65, #66, #193, #205 | implemented | checked shared/static frontend loading, language registry, source units, concrete syntax trees and navigation, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
@@ -106,6 +110,7 @@ template <class T> result<T> block_on(task<T>);                // run to complet
 void spawn(task<void>, std::function<void(result<void>)> on_done);   // fire-and-forget on the shared runtime context
 void spawn_serial(task<void>, std::function<void(result<void>)> on_done); // fire-and-forget on a single-runner I/O context
 template <class F> task<std::invoke_result_t<F>> offload(F blocking); // blocking CPU work on the compute pool; resumes on the caller's executor
+detail::yield_awaiter yield() noexcept;                            // reschedule through the caller's executor; no timer, no stop callback
 }
 ```
 
@@ -121,6 +126,7 @@ capturing lambdas (the frame outlives the call). A task is lazy and `[[nodiscard
 | `spawn` | long-lived I/O work | the process-wide shared runtime context |
 | `spawn_serial` | ordered long-lived I/O work | the process-wide single-runner event context |
 | `offload` | blocking CPU work | the compute pool; resumes on the caller executor |
+| `yield` | let other work run between steps of a long loop | posts the continuation to the caller executor |
 
 ### `liquid/hash.hpp`
 
@@ -304,6 +310,11 @@ struct frontend_callbacks {
   std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
   std::function<bool()> cancelled;
 };
+enum class frontend_tier_mechanism : std::uint8_t { frontend = 1, grammar = 2 };
+struct frontend_language {
+  std::string language; std::vector<std::string> extensions;
+  frontend_tier_mechanism tier_mechanism; std::string grammar_digest;
+};
 class frontend_module {
  public:
   frontend_module() noexcept; ~frontend_module();
@@ -312,6 +323,7 @@ class frontend_module {
   static result<frontend_module> load(std::filesystem::path shared_object);
   static result<frontend_module> linked(const liquid_frontend_module_v1* descriptor);
   std::string_view name() const; std::vector<std::string> languages() const;
+  std::vector<frontend_language> language_details() const;
   bool supports(std::string_view language) const;
   result<std::vector<frontend_unit>> units(std::string_view language,
       std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
@@ -334,6 +346,7 @@ class frontend_registry {
   frontend_registry& operator=(frontend_registry&&) noexcept;
   result<void> add(frontend_module); result<void> load(std::filesystem::path shared_object);
   result<const frontend_module*> find(std::string_view language) const;
+  std::vector<frontend_language> languages() const;
 };
 struct frontend_build_request {
   std::string language, source_path, compile_action; std::vector<std::byte> source, context_cbor;
@@ -361,13 +374,17 @@ class frontend_graph {
 ```
 
 `frontend_module` validates the descriptor, ownership contract, and canonical CBOR before values
-cross into C++. `frontend_registry` rejects duplicate language registrations. `frontend_graph`
+cross into C++. Optional ABI-v1 language metadata identifies compiler frontends and grammar-backed
+languages while preserving compatibility with the original descriptor size. `frontend_registry`
+rejects duplicate language registrations and projects names, extensions, mechanism, and grammar
+identity. `frontend_graph`
 registers the action and assembly query kinds, records action read paths through `query_context`,
 and runs the potentially blocking assembly operation through `runtime::offload`. The caller's
 `frontend_action_executor` owns compiler-action scheduling and returns object bytes. All three
 handles are move-only; their public copy operations are deleted.
 
-`symbol_record` is `{ subject, language, origin, occurrences }`; each occurrence carries its stable
+`symbol_record` is `{ subject, language, origin, grammar, occurrences }`; `grammar` is empty for
+compiler records and carries the canonical lock identity for syntactic records. Each occurrence carries its stable
 identifier, display name, kind, definition/reference role, source range, and optional container and
 documentation. `encode_symbols` and `decode_symbols` round-trip the canonical stored record.
 `decode_frontend_symbols(subject, bytes)` binds a frontend operation's per-unit output to its blob
