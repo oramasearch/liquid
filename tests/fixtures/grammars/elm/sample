@@ -1,0 +1,4 @@
+module Sample exposing (answer)
+
+answer : Int
+answer = 42

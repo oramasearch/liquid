@@ -113,7 +113,9 @@ pattern; `*` matches any sequence and `?` one character. Supplying the flag refu
 all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
 there is no built-in authentication policy, so the default is appropriate for local use; network
 services embed the public server with their own authorization callback.
-`version --json` is also available for scripts. Text output is line-oriented and stable. A library
+`version --json` is also available for scripts and returns
+`{"version":"0.0.1","grammar":"sha256:<canonical-lock-digest>"}`. Text output is line-oriented
+and stable. A library
 error always has this shape and exits with status 1:
 
 ```text
