@@ -48,7 +48,9 @@ input/output claim enumeration.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
 and retention explanations. Liquid #207 adds signed Lake transparency checkpoint, witness quorum,
 tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 evidence
-verification with repository-backed trusted checkpoint state. Liquid #61 adds signed `sbom/1` attestations with graph-derived
+verification with repository-backed trusted checkpoint state. Liquid #83 adds complete full and
+partial parent-tile walks, cache reauthentication through the selected checkpoint, and the same walk
+before consistency proofs. Liquid #61 adds signed `sbom/1` attestations with graph-derived
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
 remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
 materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
@@ -180,8 +182,8 @@ benchmarks live under `bench/` and are excluded unless their build option is ena
 Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and the fail-closed
 `liquid serve admission` Kubernetes webhook. Its TLS admission and independent control listeners
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
-metrics, REST, OpenAPI, and MCP are implemented. Log mode refuses until #83 supplies complete
-transparency inclusion verification.
+metrics, REST, OpenAPI, and MCP are implemented. The shared #83 transparency verifier is complete;
+the admission lake adapter remains fail-closed until it calls that verifier.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
