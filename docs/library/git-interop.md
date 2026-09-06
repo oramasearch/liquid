@@ -66,7 +66,7 @@ The real-world check is excluded from ordinary `ctest` runs. Configure with
 `-DLIQUID_REALWORLD_TESTS=ON -DLIQUID_REALWORLD_GIT_DIRECTORY=/path/to/checkout` and run
 `ctest -L realworld --output-on-failure`. It imports the supplied checkout, requires a reported
 physical footprint of at most 512 MiB and an import of at most 12 minutes, compares the
-`.liquid-store` store to no more than the `.git` size, exports its head ref, runs `git fsck`,
+`.liquid-store` store to no more than 1.5 times the `.git` size, exports its head ref, runs `git fsck`,
 and compares the multiset of every reachable commit tree hash before and after export.
 
 ### Real-world measurement
