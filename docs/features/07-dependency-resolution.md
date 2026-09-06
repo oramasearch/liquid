@@ -5,11 +5,12 @@
 > **Position:** Spack's resolution model is the best in existence and is the model
 > liquid follows. Nix's store model is the other half.
 >
-> **Status:** implemented by issue #25: the public spec parser, canonical package and
+> **Status:** implemented by issues #25 and #74: the public spec parser, canonical package and
 > concretised-spec records, package-universe loading, CDCL concretizer, lexicographic optimisation,
-> minimal attributed conflict cores, explanations, and `liquid resolve`. Issue #27 supplies the ABI
-> compatibility facts accepted by `resolve_options`. Issue #73 implements relocatable install trees
-> and their publication check.
+> minimal attributed conflict cores, explanations, `liquid resolve`, and the typed `.liquid`
+> language with static diagnostics, lowering, formatting, includes, verified sources, and
+> action-backed generators. Issue #27 supplies the ABI compatibility facts accepted by
+> `resolve_options`. Issue #73 implements relocatable install trees and their publication check.
 
 ## A dependency is a configured build, not a version
 
@@ -32,6 +33,22 @@ hdf5 @1.14.3 +mpi ~fortran %gcc@13.2 ^openmpi@5 target=zen4
 - `%` **compiler as a dependency**
 - `^` transitive dependency constraints
 - `target=` microarchitecture
+
+The equivalent package declaration keeps every dimension typed and lowerable to `package/1`:
+
+```liquid
+package hdf5 {
+    versions: [1.14.3]
+    compilers: ["gcc@13.2"]
+    targets: ["zen4"]
+    variant mpi { values: [true, false] default: false }
+    variant fortran { values: [true, false] default: false }
+    when "hdf5 +mpi" { depends_on openmpi { version: 5.0.0 type: link } }
+}
+```
+
+The configuration-language golden test pins this example's name, version, compiler, target,
+variants, conditional dependency, and dependency type after lowering.
 
 ## The solver
 
@@ -145,6 +162,8 @@ conventions, check, and waiver are in [relocation.md](../library/relocation.md).
 Not a new lazy functional DSL. The Nix language is the most-cited reason people
 bounce off Nix. liquid uses a small, typed, declarative format with real error
 messages, and the escape hatch is an ordinary program rather than a language feature.
+The grammar, types, canonical records, source trust boundary, generator provenance, and trace are
+implemented in [configuration-language.md](../library/configuration-language.md).
 
 ## Open questions
 

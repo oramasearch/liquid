@@ -110,10 +110,15 @@ review events, the `liquid review` command group, and an installable in-memory f
 the shared private HTTP/1.1 client.
 Liquid #25 defines canonical package and fully bound concretised-spec records, the public
 Spack-style parser, filesystem and repository universe loading, and a private CDCL concretizer.
+Liquid #74 adds the typed declarative `.liquid` configuration language, exact source-located
+diagnostics, canonical formatting and package/target/source lowering, repository-local includes,
+digest-verified source fetch, action-backed generators with provenance, and configured target CLI.
+Configured target results must pass the relocation publication check before they are returned.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
-locks, and nested pointers. Directory
+locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
+transient presence, compaction epochs, and delegation-attributed publication. Directory
 Liquid #59 configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
 `liquid wrap`, retains configured CMake inputs, requires a fully cached second run, and compares
 the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI transport and

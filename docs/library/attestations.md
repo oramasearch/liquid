@@ -23,7 +23,7 @@ the public encoder.
 | Profile | Subject kind | Required attributes | Optional attributes | Status policy |
 |---|---|---|---|---|
 | `org_membership/1` | actor | `organization:text`, `role:text` | `display_name:text` | revocable; fresh status evidence no older than 24 hours |
-| `delegation/1` | actor | `principal:text`, `scopes:text_list` | `not_after:unsigned_integer` | revocable; fresh status evidence no older than 1 hour |
+| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text` | `model:text` | revocable; fresh status evidence no older than 1 hour |
 | `authorship/1` | drip | `author:text` | none | none |
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
@@ -39,6 +39,20 @@ the public encoder.
 
 `*` marks a field that may be represented by a salted disclosure commitment rather than its
 plaintext value. A required field is satisfied by its committed value when the profile permits it.
+
+### Delegation chains
+
+`delegation/1` is the authority carried by an agent session. The issuer is the principal and the
+subject is the agent actor. `scopes` contains repository-relative path globs; `may_publish` and
+`may_lease` are independent capabilities; `depth_remaining` limits further delegation; `model`
+records the optional model label; and `dispatcher` names who launched the agent.
+
+`validate_delegation(child, parent)` enforces attenuation. Every child scope must be contained by
+a parent scope, a denied capability cannot become allowed, and remaining depth must decrease.
+Session creation also verifies the signature, current revocation evidence, and that the local
+principal issued the delegation. Private writes need no publish capability. Scope and capability
+checks happen before lease or base validation, and version-3 signed drips record the delegation
+digest and agent actor. Versions 1 and 2 remain readable.
 
 The `scan_result/1` names describe its established wire fields: detector ids, finding count, and
 allowance records. Its full encoding and privacy limits remain in

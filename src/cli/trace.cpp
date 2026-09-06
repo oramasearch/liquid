@@ -13,6 +13,7 @@
 namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
+auto configuration_build(std::string target_name, bool json) -> int;
 
 namespace {
 
@@ -173,6 +174,12 @@ auto print_build_plan(liquid::build_target target) -> liquid::runtime::task<int>
 auto wrap(int argc, char** argv) -> int;
 
 auto build(int argc, char** argv) -> int {
+    if (argc >= 1 && std::string_view{argv[0]} == "--target") {
+        if (argc < 2 || argc > 3 || (argc == 3 && std::string_view{argv[2]} != "--json")) {
+            return usage("build --target <name> [--json]");
+        }
+        return configuration_build(argv[1], argc == 3);
+    }
     if (argc >= 1 && std::string_view{argv[0]} == "--events") {
         if (argc == 1) {
             return usage("build --events <command> [args...]");

@@ -33,6 +33,11 @@ system reduces to.
 | This drip passed secret scanning | the scanner | **the drip** | `scan_result/1` |
 | A sampled re-execution produced identical bytes | the verifier | **the artifact** | `reproducibility/1` |
 
+`delegation/1` is implemented by liquid #30. Its required attributes are scoped path globs,
+independent publish and lease capabilities, remaining delegation depth, and dispatcher; `model`
+is optional. Validation permits only attenuation, and session drips carry the delegation digest
+and agent actor in their signed version-3 body while older records remain decodable.
+
 `scan_result/1` is implemented for local capture in Phase 1; its canonical record and verification
 rules are in [`../library/secret-scanning.md`](../library/secret-scanning.md#scan_result1).
 `reproducibility/1` is emitted by Phase 2 verification for agreement and disagreement; its subject

@@ -21,6 +21,8 @@ remote endpoint.
 and live local-byte accounting for long-running node stores.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
+`session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
+claims, transient presence, and epoch compaction reports.
 
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
@@ -35,6 +37,9 @@ admission server.
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
 engine and its clause encoding stay private.
+`configuration.hpp` defines the `.liquid` AST, exact diagnostics, synchronous check/lower/format
+operations, canonical target/source codecs, asynchronous source fetch, action-backed generators,
+and configured target execution.
 `deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
 status calls for an operator-owned control plane. Its interim image input is an OCI reference
 pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.

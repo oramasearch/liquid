@@ -1,5 +1,10 @@
 # Build engine
 
+> **Status:** the action engine and `.liquid` target projection are implemented. Issue #74 adds
+> typed target templates, digest-declared sources, dependency output names, action-backed
+> generators, and `liquid build --target`; see
+> [configuration-language.md](../library/configuration-language.md).
+
 > Research: [04-build-systems](../research/04-build-systems/) ·
 > [08-incremental-compilation](../research/08-incremental-compilation/) ·
 > [16-monorepo-scale](../research/16-monorepo-scale-and-authoring-loop/)
