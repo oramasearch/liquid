@@ -4,6 +4,10 @@ Installed C++ headers in this directory define libliquid's supported API. `liqui
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.
 
+`frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
+descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
+errors, progress, and cancellation types while registering queries, commands, and panels.
+
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.
 `sync.hpp` includes metadata-only tree receipt for node-store and other lazy-hydration clients.
@@ -29,3 +33,6 @@ transparency-log interfaces, the one-image review operation, and the long-runnin
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
 engine and its clause encoding stay private.
+`deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
+status calls for an operator-owned control plane. Its interim image input is an OCI reference
+pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.

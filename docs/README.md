@@ -22,7 +22,7 @@ notes so that each claim has a clear role.
 | [`api/README.md`](api/README.md) | Scheduler and worker network capability maps. |
 | [`library/node-store.md`](library/node-store.md) | Per-node shared chunk storage, metadata-only image mounts, listener boundaries, accounting, budgets, and eviction. |
 | [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, flow watermarks, in-process consumer lag, build-stream and structural-edit forwarding, hot-update and drive targets, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
-| [`library/frontends.md`](library/frontends.md) | The versioned frontend C ABI, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
+| [`library/frontends.md`](library/frontends.md) | The versioned frontend and liquify plugin C descriptors, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
 | [`library/edit.md`](library/edit.md) | Structural rename, extract, move, and concrete-tree edits; canonical records, preview/apply guarantees, attribution, grouped undo, CLI use, limits, and own-tree measurement. |
 | [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
 | [`library/search.md`](library/search.md) | Issues #22, #67, and #29's BM25F, positional-trigram, and mapped-scan executors; archive entries; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
@@ -44,6 +44,7 @@ notes so that each claim has a clear role.
 | [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
 | [`library/http2.md`](library/http2.md) | Private Corosio HTTP/2 framing, HPACK, gRPC envelopes, and h2c/TLS ALPN interoperability proof. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
+| [`library/deploy.md`](library/deploy.md) | Operator control-plane deployment client, digest-pinned interim images, rollback, status, and the provisional OpenAPI contract. |
 | [`library/transparency.md`](library/transparency.md) | RFC 3161 timestamp and RFC 4998 evidence verification design, trust policy, and implementation notes. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/forge-client.md`](library/forge-client.md) | Lake review records, coroutine calls, anchor advancement, polling events, error mapping, and the installable forge double. |

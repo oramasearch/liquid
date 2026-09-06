@@ -56,6 +56,7 @@ struct state {
     std::vector<json> reviews;
     std::vector<json> comments;
     std::vector<json> protections;
+    std::vector<json> deployments;
     std::optional<failure> next_failure;
     std::string bearer_token;
     std::string last_authorization;
@@ -275,6 +276,86 @@ auto create_comment(state& shared, boost::http::route_params& params) -> boost::
         const auto output = shared.comments.back();
         lock.unlock();
         co_return co_await success(params, output);
+    });
+}
+
+auto create_deployment(state& shared, boost::http::route_params& params)
+    -> boost::http::route_task {
+    co_return co_await with_authorization(shared, params, [&]() -> boost::http::route_task {
+        auto input = co_await request_body(params);
+        if (!input || !input->contains("repository") || !input->contains("environment") ||
+            !input->contains("change") || !input->contains("image")) {
+            co_return co_await error(params, "invalid_input", "deployment fields are required");
+        }
+        auto lock = std::unique_lock{shared.mutex};
+        auto value = json{{"id", "deployment-" + std::to_string(shared.next_id++)},
+                          {"repository", input->at("repository")},
+                          {"environment", input->at("environment")},
+                          {"change", input->at("change")},
+                          {"image", input->at("image")},
+                          {"result", input->value("result", json(nullptr))},
+                          {"rollback_of", nullptr}};
+        shared.deployments.push_back(value);
+        lock.unlock();
+        co_return co_await success(params, value);
+    });
+}
+
+auto list_deployments(state& shared, boost::http::route_params& params) -> boost::http::route_task {
+    co_return co_await with_authorization(shared, params, [&]() -> boost::http::route_task {
+        auto lock = std::unique_lock{shared.mutex};
+        auto items = json::array();
+        for (auto item = shared.deployments.rbegin(); item != shared.deployments.rend(); ++item) {
+            items.push_back(*item);
+        }
+        lock.unlock();
+        co_return co_await success(params, {{"items", std::move(items)}});
+    });
+}
+
+auto rollback_deployment(state& shared, boost::http::route_params& params)
+    -> boost::http::route_task {
+    co_return co_await with_authorization(shared, params, [&]() -> boost::http::route_task {
+        auto input = co_await request_body(params);
+        if (!input || !input->contains("repository") || !input->contains("environment") ||
+            !input->contains("to")) {
+            co_return co_await error(params, "invalid_input", "rollback fields are required");
+        }
+        auto lock = std::unique_lock{shared.mutex};
+        const auto prior = std::ranges::find_if(shared.deployments, [&](const json& item) {
+            return item.at("repository") == input->at("repository") &&
+                   item.at("environment") == input->at("environment") &&
+                   (item.at("id") == input->at("to") || item.at("change") == input->at("to"));
+        });
+        if (prior == shared.deployments.end()) {
+            lock.unlock();
+            co_return co_await error(params, "not_found", "rollback target was not deployed");
+        }
+        auto value = *prior;
+        value["id"] = "deployment-" + std::to_string(shared.next_id++);
+        value["rollback_of"] = prior->at("id");
+        shared.deployments.push_back(value);
+        lock.unlock();
+        co_return co_await success(params, value);
+    });
+}
+
+auto deployment_status(state& shared, boost::http::route_params& params)
+    -> boost::http::route_task {
+    co_return co_await with_authorization(shared, params, [&]() -> boost::http::route_task {
+        auto lock = std::unique_lock{shared.mutex};
+        if (shared.deployments.empty()) {
+            lock.unlock();
+            co_return co_await error(params, "not_found", "environment was not deployed");
+        }
+        const auto& deployment = shared.deployments.back();
+        const auto environment = deployment.at("environment").get<std::string>();
+        lock.unlock();
+        co_return co_await success(params,
+                                   {{"phase", "ready"},
+                                    {"url", "https://" + environment + ".example.test"},
+                                    {"ready", true},
+                                    {"message", "ready"}});
     });
 }
 
@@ -579,6 +660,26 @@ auto make_forge_router(std::shared_ptr<state> shared, liquid::sync_server& sync)
                "/v1/list_branch_protections",
                [shared](boost::http::route_params& params) -> boost::http::route_task {
                    co_return co_await list_records(*shared, params, &state::protections);
+               });
+    router.add(boost::http::method::post,
+               "/v1/create_deployment",
+               [shared](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await create_deployment(*shared, params);
+               });
+    router.add(boost::http::method::get,
+               "/v1/list_deployments",
+               [shared](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await list_deployments(*shared, params);
+               });
+    router.add(boost::http::method::post,
+               "/v1/rollback_deployment",
+               [shared](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await rollback_deployment(*shared, params);
+               });
+    router.add(boost::http::method::get,
+               "/v1/deployment_status",
+               [shared](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await deployment_status(*shared, params);
                });
     for (const auto operation : {"pull", "push", "find-missing", "chunks"}) {
         router.add(

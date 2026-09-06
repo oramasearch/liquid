@@ -411,6 +411,7 @@ add_library(libliquid
   src/drive/client.cpp
   src/drive/settings.cpp
   src/delta.cpp
+  src/deploy.cpp
   src/edit.cpp
   src/edit_codec.cpp
   src/encryption/leaf.cpp
@@ -601,6 +602,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/compose.cpp
     src/cli/data.cpp
     src/cli/delta.cpp
+    src/cli/deploy.cpp
     src/cli/diff.cpp
     src/cli/docs.cpp
     src/cli/edit.cpp

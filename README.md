@@ -273,6 +273,7 @@ and Zetta's.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/deploy.md`](docs/library/deploy.md) — operator control-plane deployment records, digest-pinned interim images, rollback, status, and contract boundary.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
@@ -294,6 +295,7 @@ and Zetta's.
 - [`docs/library/admission.md`](docs/library/admission.md) — image provenance, admission policy, evidence and log verification, TLS, decisions, and deployment boundaries.
 - [`docs/api/admission.md`](docs/api/admission.md) — webhook, control, metrics, REST, OpenAPI, and MCP routes.
 - [`docs/library/build-engine.md`](docs/library/build-engine.md) — action execution, public build streams and ordering, JSON projection, two-stage disk-cache lookup, signed results, index bytes, and collector coupling.
+- [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, graph value eviction, and shared liquify plugin descriptor.
 - [`docs/library/data-branching.md`](docs/library/data-branching.md) — the decided per-session PostgreSQL data-branch lifecycle, guarded promotion, template-copy baseline, and local reflink fast path.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.

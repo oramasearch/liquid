@@ -28,6 +28,23 @@ The format registry follows the same module pattern in the separately versioned
 values, owned bytes, and progress/cancellation callbacks. The two descriptors remain purpose-built
 because their operation sets differ.
 
+The same header defines `liquify_plugin_v1`, the native editor plugin descriptor from bridge
+decision 14. It reuses the frontend ABI's byte spans, owned results, errors, progress, cancellation,
+and destroy callback instead of creating another set of boundary types. Dynamic plugins export
+`liquify_plugin_get_v1`; static plugins pass the same descriptor to liquify's checked host.
+
+| Registration | Descriptor data | Operation |
+|---|---|---|
+| Query | stable graph-query name | canonical-CBOR arguments to canonical-CBOR result |
+| Command | palette name, default binding, canonical-CBOR argument schema | canonical-CBOR arguments to canonical-CBOR result |
+| Panel | panel name | canonical-CBOR context to a canonical-CBOR view model |
+
+`struct_size` permits compatible descriptor tails. A plugin may register any combination of the
+three kinds, but every advertised row has a non-empty name and operation. The host validates the
+ABI version, required descriptor prefix, names, schemas, inputs, and results. Plugins return panel
+failures through the ordinary ABI error value; liquify renders that failure in the affected panel
+and continues updating the others. Plugins produce data and never receive an ImGui type or context.
+
 | Operation | Input | Canonical-CBOR result |
 |---|---|---|
 | `units` | language, source blob, context | array of unit maps |

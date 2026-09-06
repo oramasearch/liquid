@@ -46,6 +46,7 @@ built binary under the build directory before CTest compares it with the committ
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
 | `review` | `review <list\|show\|open\|comment\|approve\|close\|protections\|watch> --lake <url> [--json] ...` | Review a lake change in place. | available |
+| `deploy` | `deploy [--control <url>] [--env <name>] [--image <ref@sha256:...>] [--to <change\|deployment>] [--wait]` or `deploy <status\|list> [--control <url>] [--env <name>] [--json]` | Create, inspect, or roll back an environment deployment. | available |
 | `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
 | `move` | `move <from> <to>` | Record a path move. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
@@ -156,6 +157,12 @@ liquid review close --lake https://lake.example/v1/repositories/example review-1
 liquid review protections --lake https://lake.example/v1/repositories/example
 liquid review watch --lake https://lake.example/v1/repositories/example review-1
 ```
+
+`deploy` uses `LIQUID_CONTROL_PLANE` when `--control` is absent and uses `LIQUID_TOKEN` as its
+optional bearer credential. `--image` must contain an OCI digest. `--to` creates a rollback
+deployment to a prior deployment ID or change. `deploy status --json` prints phase, URL, ready,
+and message; `deploy list --json` prints records in control-plane order. See
+[`deploy.md`](../library/deploy.md).
 
 `list --state` accepts `open`, `approved`, or `closed`. A requested-changes action is a comment plus
 the `open` state because lake has no requested-changes state. Text is one stable line per record or

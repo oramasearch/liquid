@@ -82,6 +82,20 @@ struct LIQUID_EXPORT hot_update_config {
     auto operator==(const hot_update_config&) const -> bool = default;
 };
 
+enum class deploy_on_push : std::uint8_t { none, preview };
+
+struct LIQUID_EXPORT deploy_environment_config {
+    std::optional<std::string> domain;
+    std::map<std::string, std::string> env;
+    std::vector<std::string> secrets;
+};
+
+struct LIQUID_EXPORT deployment_config {
+    std::string control_plane;
+    std::map<std::string, deploy_environment_config> environments;
+    deploy_on_push on_push{deploy_on_push::none};
+};
+
 struct LIQUID_EXPORT ref_retention_rule {
     std::string name;
     std::string glob;
@@ -130,6 +144,7 @@ struct LIQUID_EXPORT repository_options {
     verify_config verify{};
     agents_config agents{};
     hot_update_config hot_update{};
+    deployment_config deploy{};
     policy_config policy{};
     retention_config retention{};
     flow_config flow{};
@@ -444,6 +459,7 @@ public:
     [[nodiscard]] static runtime::task<repository> open_build(std::filesystem::path working_tree,
                                                               repository_options options = {});
     [[nodiscard]] runtime::task<tree> root();
+    [[nodiscard]] result<node_id> id() const;
     [[nodiscard]] runtime::task<digest> root_digest();
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
@@ -546,6 +562,7 @@ public:
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
     [[nodiscard]] hot_update_config hot_update_configuration() const;
+    [[nodiscard]] deployment_config deploy_configuration() const;
     [[nodiscard]] flow_config flow_configuration() const;
     [[nodiscard]] std::vector<flow_bucket_status> flow_buckets() const;
 

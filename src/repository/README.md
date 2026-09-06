@@ -83,6 +83,11 @@ vector and the build-target/local-endpoint pairs consumed by the daemon. Creatio
 empty hook arguments, duplicate target names, empty endpoints, or configured targets without a
 restart hook. The public accessor returns the effective stored configuration.
 
+The repository document persists `config.deploy`: one operator control-plane URL, named
+environment domain, variable, and opaque sealed-secret-reference settings, plus the optional
+preview-on-push policy. The public accessor returns this configuration without interpreting or
+resolving secret references.
+
 The private search adapter exposes only the repository checkout's `.liquid/index/` path to the
 search implementation. Public queries remain on `repository::search`; no index representation or
 oramacore type crosses the public boundary.

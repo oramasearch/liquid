@@ -141,6 +141,54 @@ typedef struct liquid_frontend_module_v1 {
 
 typedef const liquid_frontend_module_v1* (*liquid_frontend_entrypoint_v1)(void);
 
+#define LIQUIFY_PLUGIN_ABI_VERSION 1u
+#define LIQUIFY_PLUGIN_ENTRYPOINT_V1 "liquify_plugin_get_v1"
+
+#if defined(_WIN32)
+#define LIQUIFY_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define LIQUIFY_PLUGIN_EXPORT __attribute__((visibility("default")))
+#endif
+
+typedef int (*liquify_plugin_operation_v1)(void* plugin_context,
+                                           liquid_frontend_bytes_v1 arguments_cbor,
+                                           const liquid_frontend_callbacks_v1* callbacks,
+                                           liquid_frontend_owned_bytes_v1* result_cbor,
+                                           liquid_frontend_error_v1* error);
+
+typedef struct liquify_plugin_query_v1 {
+    const char* name;
+    liquify_plugin_operation_v1 invoke;
+} liquify_plugin_query_v1;
+
+typedef struct liquify_plugin_command_v1 {
+    const char* name;
+    const char* default_binding;
+    liquid_frontend_bytes_v1 argument_schema_cbor;
+    liquify_plugin_operation_v1 invoke;
+} liquify_plugin_command_v1;
+
+typedef struct liquify_plugin_panel_v1 {
+    const char* name;
+    liquify_plugin_operation_v1 view_model;
+} liquify_plugin_panel_v1;
+
+typedef struct liquify_plugin_v1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    const char* name;
+    const liquify_plugin_query_v1* queries;
+    size_t query_count;
+    const liquify_plugin_command_v1* commands;
+    size_t command_count;
+    const liquify_plugin_panel_v1* panels;
+    size_t panel_count;
+    void* plugin_context;
+    liquid_frontend_destroy_v1 destroy;
+} liquify_plugin_v1;
+
+typedef const liquify_plugin_v1* (*liquify_plugin_entrypoint_v1)(void);
+
 #ifdef __cplusplus
 }
 #endif
