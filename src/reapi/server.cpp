@@ -454,7 +454,8 @@ runtime::task<reapi::DecodedAction> import_standard_action(server_state& state,
         co_return std::unexpected(sandbox_id.error());
     }
     auto environment = std::map<std::string, std::string>{};
-    constexpr auto fixed = std::array{"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"};
+    constexpr auto fixed =
+        std::array{"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH", "ZERO_AR_DATE"};
     for (const auto& item : command.environment_variables) {
         if (!std::ranges::contains(fixed, item.name)) {
             environment.insert_or_assign(item.name, item.value);

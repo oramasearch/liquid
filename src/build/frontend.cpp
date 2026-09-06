@@ -14,8 +14,8 @@ namespace {
 
 namespace cbor = encoding::cbor;
 
-constexpr auto fixed_environment =
-    std::array<std::string_view, 6>{"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"};
+constexpr auto fixed_environment = std::array<std::string_view, 7>{
+    "PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH", "ZERO_AR_DATE"};
 
 auto action_error(errc code, std::string message) -> error {
     return {code, std::move(message), "symbol action"};

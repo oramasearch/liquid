@@ -433,6 +433,52 @@ auto quarantine_detail(const repository_result& entry) -> std::string {
     return detail;
 }
 
+auto unchanged_upstream(repository& source, digest input_tree)
+    -> runtime::task<std::optional<std::pair<std::string, digest>>> {
+    auto root_bytes = co_await repository_detail::build_access::get(source, input_tree);
+    auto root = root_bytes ? objects::decode_tree(*root_bytes)
+                           : result<tree>{std::unexpected(root_bytes.error())};
+    if (!root) {
+        co_return std::nullopt;
+    }
+    const auto dependencies = std::ranges::find(root->entries, "deps", &tree_entry::name);
+    if (dependencies == root->entries.end() || dependencies->kind != node_kind::tree) {
+        co_return std::nullopt;
+    }
+    auto dependency_bytes =
+        co_await repository_detail::build_access::get(source, dependencies->ref);
+    auto dependency_tree = dependency_bytes
+                               ? objects::decode_tree(*dependency_bytes)
+                               : result<tree>{std::unexpected(dependency_bytes.error())};
+    if (!dependency_tree) {
+        co_return std::nullopt;
+    }
+    auto claims = co_await build::known_outputs(source);
+    if (!claims) {
+        co_return std::unexpected(claims.error());
+    }
+    for (const auto& dependency : dependency_tree->entries) {
+        if (dependency.kind != node_kind::tree) {
+            continue;
+        }
+        auto inputs = std::vector<digest>{};
+        for (const auto& claim : *claims) {
+            if (!same_digest(claim.output_tree, dependency.ref)) {
+                continue;
+            }
+            if (std::ranges::none_of(inputs, [&](const digest& value) {
+                    return same_digest(value, claim.input_tree);
+                })) {
+                inputs.push_back(claim.input_tree);
+            }
+        }
+        if (inputs.size() > 1) {
+            co_return std::pair{"deps/" + dependency.name, dependency.ref};
+        }
+    }
+    co_return std::nullopt;
+}
+
 } // namespace
 
 auto wrap_cache_directory(const std::filesystem::path& working_tree,
@@ -834,7 +880,19 @@ runtime::task<why_report> why(std::filesystem::path working_tree,
         co_return report;
     }
     if (selected->status == cache_status::hit) {
-        report.cause = {.reason = cache_miss_reason::unknown, .detail = "cache hit"};
+        auto upstream = co_await build_detail::unchanged_upstream(*source, action->input.inputs);
+        if (!upstream) {
+            co_return std::unexpected(upstream.error());
+        }
+        if (*upstream) {
+            report.cause = {.reason = cache_miss_reason::unknown,
+                            .path = (*upstream)->first,
+                            .actual = (*upstream)->second,
+                            .detail = "input " + (*upstream)->first +
+                                      " unchanged: same normalised tree after upstream rebuild"};
+        } else {
+            report.cause = {.reason = cache_miss_reason::unknown, .detail = "cache hit"};
+        }
         co_return report;
     }
     if (quarantined) {
