@@ -190,6 +190,11 @@ if(LIQUID_HELM_EXECUTABLE)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_HELM_EXECUTABLE="${LIQUID_HELM_EXECUTABLE}")
 endif()
+find_program(LIQUID_UNSQUASHFS_EXECUTABLE unsquashfs)
+if(LIQUID_UNSQUASHFS_EXECUTABLE)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_UNSQUASHFS_EXECUTABLE="${LIQUID_UNSQUASHFS_EXECUTABLE}")
+endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"

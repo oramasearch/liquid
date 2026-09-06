@@ -85,8 +85,9 @@ Delta cases create and apply a zstd reference patch, verify its registered attes
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
 The `formats/` cases cover the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
-decoders, exact Tier 1 repack, deterministic tar writing, volatile fields, malformed boundaries,
-nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs used by
+decoders, exact Tier 1 repack, deterministic tar and SquashFS writing, volatile fields, malformed
+boundaries, nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs
+used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
 file writes, key diffs, v1/v2/v3 wrapped-key compatibility, age specification vectors, Shamir

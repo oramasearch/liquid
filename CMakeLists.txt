@@ -435,6 +435,7 @@ add_library(libliquid
   src/formats/package/codecs.cpp
   src/formats/registry.cpp
   src/formats/rpm/rpm.cpp
+  src/formats/squashfs/squashfs.cpp
   src/formats/sqlite/sqlite.cpp
   src/formats/tar/tar.cpp
   src/formats/zip/zip.cpp

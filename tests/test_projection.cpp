@@ -11,6 +11,7 @@
 
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "formats/squashfs/squashfs.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/format.hpp"
 #include "liquid/projection.hpp"
@@ -218,6 +219,60 @@ TEST(Projection, package_writers_round_trip_and_are_byte_identical) {
             std::ranges::contains(unpacked->entries, expected_path, &liquid::format_entry::path));
     }
 }
+
+TEST(Projection, squashfs_writer_is_deterministic_and_rejects_unsafe_paths) {
+    const auto files = std::vector<liquid::formats::package::file>{
+        {"bin/fixture", {std::byte{'o'}, std::byte{'k'}, std::byte{'\n'}}, 0755},
+        {"share/fixture/value.txt", {std::byte{'v'}}, 0644}};
+    auto first = liquid::formats::squashfs::write(files, 1'700'000'000);
+    auto second = liquid::formats::squashfs::write(files, 1'700'000'000);
+    ASSERT_TRUE(first) << first.error().message;
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(*first, *second);
+    auto digest = liquid::formats::package::sha256(*first);
+    ASSERT_TRUE(digest) << digest.error().message;
+    EXPECT_EQ(liquid::to_string(*digest),
+              "sha256:0c40e71e6af665d160632064c205f04aefd82ce18fe95fb2a16d2c1bb8f9aba0");
+    ASSERT_GE(first->size(), 96U);
+    EXPECT_EQ((*first)[0], std::byte{'h'});
+    EXPECT_EQ((*first)[1], std::byte{'s'});
+    EXPECT_EQ((*first)[2], std::byte{'q'});
+    EXPECT_EQ((*first)[3], std::byte{'s'});
+
+    const auto unsafe = std::vector<liquid::formats::package::file>{{"../escape", {}, 0644}};
+    auto rejected = liquid::formats::squashfs::write(unsafe, 1'700'000'000);
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error().code, liquid::errc::invalid_argument);
+}
+
+#if defined(LIQUID_UNSQUASHFS_EXECUTABLE)
+TEST(Projection, squashfs_writer_round_trips_through_unsquashfs) {
+    const auto root = liquid::test::fixture_path("liquid-squashfs-round-trip");
+    auto code = std::error_code{};
+    std::filesystem::remove_all(root, code);
+    std::filesystem::create_directories(root, code);
+    ASSERT_FALSE(code) << code.message();
+    const auto files = std::vector<liquid::formats::package::file>{
+        {"bin/fixture", {std::byte{'o'}, std::byte{'k'}, std::byte{'\n'}}, 0755},
+        {"share/fixture/value.txt", {std::byte{'v'}}, 0644}};
+    auto image = liquid::formats::squashfs::write(files, 1'700'000'000);
+    ASSERT_TRUE(image) << image.error().message;
+    const auto image_path = root / "fixture.squashfs";
+    auto stream = std::ofstream{image_path, std::ios::binary | std::ios::trunc};
+    stream.write(reinterpret_cast<const char*>(image->data()),
+                 static_cast<std::streamsize>(image->size()));
+    stream.close();
+    ASSERT_TRUE(stream);
+    const auto extracted = root / "extracted";
+    const auto command = std::string{"\"" LIQUID_UNSQUASHFS_EXECUTABLE "\" -f -d \""} +
+                         extracted.string() + "\" \"" + image_path.string() + "\"";
+    ASSERT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(read_text(extracted / "bin/fixture"), "ok\n");
+    EXPECT_EQ(read_text(extracted / "share/fixture/value.txt"), "v");
+    const auto permissions = std::filesystem::status(extracted / "bin/fixture").permissions();
+    EXPECT_NE(permissions & std::filesystem::perms::owner_exec, std::filesystem::perms::none);
+}
+#endif
 
 TEST(Projection, package_reader_limits_are_enforced) {
     auto fixture = projection_fixture{};
