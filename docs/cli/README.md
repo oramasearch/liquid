@@ -12,6 +12,13 @@ its configured idle exit or `liquid daemon --shutdown`. Windows repository comma
 available, but daemon attachment returns the documented unsupported result because the current
 Corosio revision has no named-pipe transport.
 
+`clone <url|drive-folder> [<dir>]` creates a plain checkout through the public drive client. A
+configured drive folder supplies its persisted remote URL; an endpoint URL is used directly. When
+`dir` is omitted, the last endpoint path component is used, with `repository` as the fallback.
+Clone pins the repository root, so every pulled file is materialized even when it exceeds the
+drive client's ordinary on-demand hydration threshold. The remote remains configured for later
+`drive status` and synchronization.
+
 Focused command contracts: [`build`](build-events.md) plans and events, and [`test`](test.md).
 
 ## Commands and options
@@ -32,6 +39,7 @@ built binary under the build directory before CTest compares it with the committ
 | `version` | `version [--json]` | Print the library version. | available |
 | `tiers` | `tiers [--json\|--markdown] [--language <name>\|--format <name>]` | Print declared language, format, and platform support. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
+| `clone` | `clone <url\|drive-folder> [<dir>] [--json]` | Clone, configure, and fully materialize a repository. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
@@ -285,6 +293,12 @@ sets `approximate`; and a removed line or file sets `deleted`.
 `history` follows the same stable node through moves. `--restore` appends an ordinary working-tree
 drip from the selected change and leaves prior changes and refs untouched. See
 [`history.md`](history.md).
+`clone` accepts `LIQUID_TOKEN` as a bearer credential and does not persist it. Text output names
+the remote and absolute landing path. `--json` writes one object with `path`, `remote`,
+`objects_received`, and `bytes_received`. An existing non-empty destination is refused before any
+network request. HTTP authentication and repository lookup errors retain the library error names
+`unauthorized` and `not_found`; a non-empty destination is `already_exists`. Failed transfers
+remove clone-created target state and preserve an existing empty target directory.
 `blame` resolves the current head and asks the checkout daemon for the public attribution query.
 Its line-oriented form prints one-based line, change, session, actor, agent marker, and text.
 `--json` emits a version-1 object with `path`, `change`, and the same values under `lines`; strings
@@ -600,6 +614,7 @@ status. `--fail-on-abi-break` changes a successful wrap to status 1 when any suc
 ```sh
 liquid version --json
 liquid init .
+LIQUID_TOKEN="$token" liquid clone https://lake.example/repositories/project ./project
 liquid status --json
 liquid daemon
 liquid daemon --shutdown

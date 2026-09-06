@@ -148,7 +148,8 @@ outcomes and opt-in atomic pushes. Liquid #195 adds persisted three-tree folder 
 named conflict values, resumed transfer, reference refusal reporting, path history and restore,
 `liquid drive`, and the daemon drive target. Liquid #235 adds persisted per-path device state,
 pinning, policy-driven hydration, offline read and write status, FUSE xattrs, and Linux desktop
-badges. Full materialisation works on
+badges. Liquid #247 adds `liquid clone` through the drive client, with persisted remote
+configuration and a fully materialised plain checkout. Full materialisation works on
 every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,

@@ -628,6 +628,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/attestation.cpp
     src/cli/blame.cpp
     src/cli/capture.cpp
+    src/cli/clone.cpp
     src/cli/daemon.cpp
     src/cli/compose.cpp
     src/cli/configuration.cpp

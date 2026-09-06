@@ -201,8 +201,13 @@ template <class T> auto wait_async(liquid::runtime::task<T> operation) -> liquid
 
 class sync_http_server {
 public:
-    explicit sync_http_server(liquid::sync_server& server, bool legacy_push_reply = false)
-        : server_(&server), legacy_push_reply_(legacy_push_reply) {
+    explicit sync_http_server(liquid::sync_server& server,
+                              bool legacy_push_reply = false,
+                              std::string required_bearer = {},
+                              bool repository_available = true)
+        : server_(&server), legacy_push_reply_(legacy_push_reply),
+          required_bearer_(std::move(required_bearer)),
+          repository_available_(repository_available) {
         listener_ = ::socket(AF_INET, SOCK_STREAM, 0);
         if (listener_ < 0) {
             throw std::runtime_error("server socket failed");
@@ -298,6 +303,22 @@ private:
         const auto body_text = std::string_view{request}.substr(header_end + 4);
         const auto* first = reinterpret_cast<const std::byte*>(body_text.data());
         const auto body = std::span<const std::byte>{first, body_text.size()};
+        if (!required_bearer_.empty()) {
+            const auto authorization = "\r\nAuthorization: Bearer " + required_bearer_ + "\r\n";
+            if (request.find(authorization) == std::string::npos) {
+                respond(connection,
+                        liquid::error{liquid::errc::unauthorized,
+                                      "repository authentication required",
+                                      "Authorization"});
+                return;
+            }
+        }
+        if (!repository_available_) {
+            respond(connection,
+                    liquid::error{
+                        liquid::errc::not_found, "repository does not exist", std::string{target}});
+            return;
+        }
         if (method == "POST" && target.ends_with("/sync/find-missing")) {
             find_missing(connection, body);
         } else if (method == "POST" && target.ends_with("/sync/chunks")) {
@@ -425,6 +446,8 @@ private:
     std::thread thread_;
     liquid::sync_server* server_{};
     bool legacy_push_reply_{};
+    std::string required_bearer_;
+    bool repository_available_{true};
 };
 
 auto export_all(liquid::repository& repository) -> liquid::result<std::vector<liquid::sync_item>> {
@@ -1499,6 +1522,114 @@ TEST(Sync, cli_push_and_pull_round_trip) {
     auto drive_content = liquid::runtime::block_on(opened->read("drive.txt"));
     ASSERT_TRUE(drive_content);
     EXPECT_EQ(text(*drive_content), "from drive");
+}
+
+TEST(Sync, cli_clone_materializes_and_builds_http_repository) {
+    temporary_directory source_path;
+    temporary_directory clone_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source);
+    const auto project = std::string_view{"cmake_minimum_required(VERSION 3.28)\n"
+                                          "project(clone_proof LANGUAGES CXX)\n"
+                                          "add_executable(clone-proof main.cpp)\n"};
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("CMakeLists.txt", bytes(project))));
+    ASSERT_TRUE(
+        liquid::runtime::block_on(source->write("main.cpp", bytes("int main() { return 0; }\n"))));
+    auto large = std::vector<std::byte>(9U * 1024U * 1024U, std::byte{'x'});
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("large.bin", std::move(large))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("clone fixture")));
+    auto server = liquid::sync_server{*source};
+    auto http = sync_http_server{server};
+    const auto output = source_path.path() / "clone.json";
+    const auto executable = shell_quote(LIQUID_CLI);
+    const auto clone = executable + " clone '" + http.url() + "' " +
+                       shell_quote(clone_path.path()) + " --json > " + shell_quote(output);
+    ASSERT_EQ(std::system(clone.c_str()), 0);
+
+    EXPECT_TRUE(std::filesystem::exists(clone_path.path() / "LIQUID_REPO"));
+    EXPECT_TRUE(std::filesystem::exists(clone_path.path() / "CMakeLists.txt"));
+    EXPECT_EQ(std::filesystem::file_size(clone_path.path() / "large.bin"), 9U * 1024U * 1024U);
+    auto report = std::ifstream{output};
+    const auto report_text = std::string{std::istreambuf_iterator<char>{report}, {}};
+    EXPECT_NE(report_text.find("\"path\":"), std::string::npos);
+    EXPECT_NE(report_text.find("\"remote\":\"" + http.url() + "\""), std::string::npos);
+
+    auto drive = liquid::runtime::block_on(liquid::drive_client::open(clone_path.path()));
+    ASSERT_TRUE(drive);
+    auto status = liquid::runtime::block_on(drive->status());
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->remote, http.url());
+
+    const auto build_path = clone_path.path() / "build";
+    const auto configure = "cmake -S " + shell_quote(clone_path.path()) + " -B " +
+                           shell_quote(build_path) + " -G Ninja";
+    const auto build = "cmake --build " + shell_quote(build_path) + " -j 2";
+    ASSERT_EQ(std::system(configure.c_str()), 0);
+    ASSERT_EQ(std::system(build.c_str()), 0);
+    EXPECT_TRUE(std::filesystem::exists(build_path / "clone-proof"));
+
+    const auto second_clone_path = source_path.path() / "drive-folder-clone";
+    const auto clone_from_drive = executable + " clone " + shell_quote(clone_path.path()) + " " +
+                                  shell_quote(second_clone_path);
+    ASSERT_EQ(std::system(clone_from_drive.c_str()), 0);
+    EXPECT_TRUE(std::filesystem::exists(second_clone_path / "CMakeLists.txt"));
+    auto second_drive = liquid::runtime::block_on(liquid::drive_client::open(second_clone_path));
+    ASSERT_TRUE(second_drive);
+    auto second_status = liquid::runtime::block_on(second_drive->status());
+    ASSERT_TRUE(second_status);
+    EXPECT_EQ(second_status->remote, http.url());
+}
+
+TEST(Sync, cli_clone_names_target_authentication_and_repository_refusals) {
+    temporary_directory source_path;
+    temporary_directory target_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("file.txt", bytes("content"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("clone fixture")));
+    auto server = liquid::sync_server{*source};
+    const auto executable = shell_quote(LIQUID_CLI);
+
+    std::filesystem::create_directories(target_path.path());
+    std::ofstream{target_path.path() / "keep.txt"} << "keep";
+    auto http = sync_http_server{server};
+    const auto nonempty_error = source_path.path() / "nonempty-error.txt";
+    const auto nonempty = executable + " clone '" + http.url() + "' " +
+                          shell_quote(target_path.path()) + " 2> " + shell_quote(nonempty_error);
+    EXPECT_NE(std::system(nonempty.c_str()), 0);
+    auto error_input = std::ifstream{nonempty_error};
+    auto error_text = std::string{std::istreambuf_iterator<char>{error_input}, {}};
+    EXPECT_NE(error_text.find("already_exists: clone target is not empty"), std::string::npos);
+    EXPECT_TRUE(std::filesystem::exists(target_path.path() / "keep.txt"));
+
+    auto authenticated = sync_http_server{server, false, "clone-token"};
+    const auto auth_work = source_path.path() / "auth-work";
+    const auto auth_target = auth_work / "repository";
+    const auto auth_error = source_path.path() / "auth-error.txt";
+    std::filesystem::create_directories(auth_work);
+    const auto auth = "cd " + shell_quote(auth_work) + " && " + executable + " clone '" +
+                      authenticated.url() + "' 2> " + shell_quote(auth_error);
+    EXPECT_NE(std::system(auth.c_str()), 0);
+    error_input = std::ifstream{auth_error};
+    error_text = std::string{std::istreambuf_iterator<char>{error_input}, {}};
+    EXPECT_NE(error_text.find("unauthorized: repository authentication required"),
+              std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(auth_target));
+    const auto authorized = "cd " + shell_quote(auth_work) + " && LIQUID_TOKEN=clone-token " +
+                            executable + " clone '" + authenticated.url() + "' --json";
+    EXPECT_EQ(std::system(authorized.c_str()), 0);
+    EXPECT_TRUE(std::filesystem::exists(auth_target / "file.txt"));
+
+    auto missing = sync_http_server{server, false, {}, false};
+    const auto missing_target = source_path.path() / "missing-target";
+    const auto missing_error = source_path.path() / "missing-error.txt";
+    const auto unknown = executable + " clone '" + missing.url() + "' " +
+                         shell_quote(missing_target) + " 2> " + shell_quote(missing_error);
+    EXPECT_NE(std::system(unknown.c_str()), 0);
+    error_input = std::ifstream{missing_error};
+    error_text = std::string{std::istreambuf_iterator<char>{error_input}, {}};
+    EXPECT_NE(error_text.find("not_found: repository does not exist"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(missing_target));
 }
 #endif
 
