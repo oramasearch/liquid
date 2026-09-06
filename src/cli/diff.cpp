@@ -2,17 +2,25 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <memory>
+#include <optional>
 #include <print>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "liquid/frontend.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid_cli {
+
+auto frontend_module_path(bool compiler) -> std::filesystem::path;
+
 namespace {
+
+auto json_string(std::string_view value) -> std::string;
 
 auto fail(const liquid::error& error) -> int {
     std::println(
@@ -21,8 +29,72 @@ auto fail(const liquid::error& error) -> int {
 }
 
 auto usage() -> int {
-    std::println(stderr, "error: usage: diff <a> <b> [path] [--text] [--formats] [--json]");
+    std::println(stderr,
+                 "error: usage: diff <a> <b> [path] [--text] [--formats] [--structural] [--json]");
     return 2;
+}
+
+auto tier_name(liquid::diff_tier tier) -> std::string_view {
+    switch (tier) {
+    case liquid::diff_tier::structural:
+        return "structural";
+    case liquid::diff_tier::text:
+        return "text";
+    case liquid::diff_tier::binary:
+        return "binary";
+    }
+    return "binary";
+}
+
+auto structural_kind_name(liquid::structural_edit_kind kind) -> std::string_view {
+    switch (kind) {
+    case liquid::structural_edit_kind::added:
+        return "added";
+    case liquid::structural_edit_kind::removed:
+        return "removed";
+    case liquid::structural_edit_kind::modified:
+        return "modified";
+    case liquid::structural_edit_kind::moved:
+        return "moved";
+    case liquid::structural_edit_kind::comment_changed:
+        return "comment_changed";
+    }
+    return "modified";
+}
+
+auto range_json(const std::optional<liquid::frontend_source_range>& range) -> std::string {
+    if (!range) {
+        return "null";
+    }
+    return std::format("{{\"start\":{{\"byte\":{},\"line\":{},\"column\":{}}},"
+                       "\"end\":{{\"byte\":{},\"line\":{},\"column\":{}}}}}",
+                       range->start.byte,
+                       range->start.line,
+                       range->start.column,
+                       range->end.byte,
+                       range->end.line,
+                       range->end.column);
+}
+
+auto structural_json(const liquid::structural_diff& value) -> std::string {
+    auto edits = std::string{"["};
+    for (auto index = std::size_t{}; index < value.edits.size(); ++index) {
+        const auto& edit = value.edits[index];
+        edits += index == 0 ? "" : ",";
+        edits += std::format("{{\"kind\":{},\"node_kind\":{},\"name\":{},\"old_range\":{},"
+                             "\"new_range\":{}}}",
+                             json_string(structural_kind_name(edit.kind)),
+                             json_string(edit.node_kind),
+                             edit.name ? json_string(*edit.name) : "null",
+                             range_json(edit.old_range),
+                             range_json(edit.new_range));
+    }
+    edits += ']';
+    return std::format("{{\"language\":{},\"grammar\":{},\"formatting_only\":{},\"edits\":{}}}",
+                       json_string(value.language),
+                       json_string(value.grammar),
+                       value.formatting_only ? "true" : "false",
+                       edits);
 }
 
 auto json_string(std::string_view value) -> std::string {
@@ -117,9 +189,13 @@ auto entry_json(const liquid::tree_diff_entry& entry) -> std::string {
         changes += json_string(change_name(entry.changes[index]));
     }
     changes += ']';
-    return std::format("{{\"path\":{},\"changes\":{},\"container\":{}}}",
+    return std::format("{{\"path\":{},\"changes\":{},\"tier\":{},\"tier_reason\":{},"
+                       "\"structural\":{},\"container\":{}}}",
                        json_string(entry.path),
                        changes,
+                       json_string(tier_name(entry.tier)),
+                       json_string(entry.tier_reason),
+                       entry.structural ? structural_json(*entry.structural) : "null",
                        entry.container ? container_json(*entry.container) : "null");
 }
 
@@ -141,12 +217,42 @@ auto print_container(const liquid::container_diff& value, std::size_t indent) ->
 }
 
 auto print_entry(const liquid::tree_diff_entry& entry) -> void {
+    if (entry.structural) {
+        if (entry.structural->formatting_only) {
+            std::println("reformat only {}", entry.path);
+            return;
+        }
+        for (const auto& edit : entry.structural->edits) {
+            auto node_kind = edit.node_kind;
+            if (node_kind.find("function") != std::string::npos) {
+                node_kind = "function";
+            }
+            const auto name = edit.name ? " " + *edit.name : std::string{};
+            if (edit.kind == liquid::structural_edit_kind::moved && edit.old_range &&
+                edit.new_range) {
+                std::println("moved {}{}: {}-{} -> {}-{}",
+                             node_kind,
+                             name,
+                             edit.old_range->start.line,
+                             edit.old_range->end.line,
+                             edit.new_range->start.line,
+                             edit.new_range->end.line);
+            } else {
+                std::println("{} {}{}", structural_kind_name(edit.kind), node_kind, name);
+            }
+        }
+        return;
+    }
     if (entry.container) {
         std::println("{} {} tier={}",
                      entry.path,
                      entry.container->codec,
                      static_cast<unsigned>(entry.container->tier));
         print_container(*entry.container, 2);
+        return;
+    }
+    if (!entry.tier_reason.empty()) {
+        std::println("{} ({}) {}", tier_name(entry.tier), entry.tier_reason, entry.path);
         return;
     }
     auto changes = std::string{};
@@ -191,6 +297,8 @@ auto diff(int argc, char** argv) -> int {
             options.text = true;
         } else if (argument == "--formats") {
             options.formats = true;
+        } else if (argument == "--structural") {
+            options.structural = true;
         } else if (argument == "--json") {
             json = true;
         } else if (argument.starts_with("--")) {
@@ -206,6 +314,28 @@ auto diff(int argc, char** argv) -> int {
         liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
     if (!repository) {
         return fail(repository.error());
+    }
+    auto frontend = std::optional<liquid::frontend_graph>{};
+    if (options.structural) {
+        auto loaded = liquid::frontend_module::load(frontend_module_path(false));
+        if (!loaded) {
+            return fail(loaded.error());
+        }
+        auto module = std::make_shared<liquid::frontend_module>(std::move(*loaded));
+        auto opened = liquid::runtime::block_on(liquid::frontend_graph::open(
+            std::filesystem::current_path() / ".liquid" / "structural-diff-graph",
+            std::filesystem::current_path(),
+            std::move(module),
+            [](std::vector<std::byte>) -> liquid::runtime::task<std::vector<std::byte>> {
+                co_return std::unexpected(liquid::error{liquid::errc::unsupported,
+                                                        "syntax frontend cannot execute actions",
+                                                        "structural diff"});
+            }));
+        if (!opened) {
+            return fail(opened.error());
+        }
+        frontend = std::move(*opened);
+        options.frontend = &*frontend;
     }
     auto refs = liquid::runtime::block_on(repository->refs());
     if (!refs) {

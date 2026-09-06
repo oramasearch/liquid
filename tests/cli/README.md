@@ -24,6 +24,9 @@ freshness input, and three-alternative shape for the small imported working set.
 
 `format-diff.cmake` creates two changes through the public repository API and proves that
 `diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and tier.
+`structural-diff.cmake` proves function-move and formatting-only output, the labelled text
+fallback, and the stable structural JSON fields. Its fixture can also record two liquid source
+trees for the documented own-source measurement.
 
 `symbols-python.cmake` creates a Python source file and proves `liquid symbols` selects the locked
 Python grammar and reports `origin=syntactic`.

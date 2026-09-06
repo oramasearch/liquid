@@ -75,6 +75,8 @@ owning issue in `error::context`.
 | `liquid/projection.hpp` | #28 | implemented | package/image targets, result or install-tree sources, package and service metadata, projection options, coroutine projection, artifact and attestation reports, and stable JSON output |
 | `liquid/frontend_abi.h` | #65, #66, #205 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
 | `liquid/frontend.hpp` | #65, #66, #193, #205 | implemented | checked shared/static frontend loading, language registry, source units, concrete syntax trees and navigation, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
+| `liquid/frontend_abi.h` | #65, #66, #68, #205, liquify #3 | implemented | versioned C frontend and liquify plugin descriptors, language/query/command/panel registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, optional concrete `syntax`, and optional canonical `parse` operations |
+| `liquid/frontend.hpp` | #65, #66, #68, #193, #205 | implemented | checked shared/static frontend loading, language registry, source units, canonical parse trees, concrete syntax navigation, symbol-record codec, the parse- and unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/edit.hpp` | #205 | implemented | canonical structural-edit requests, targets, previews, refusals, attribution, file/text changes, results, and codecs |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
@@ -82,7 +84,7 @@ owning issue in `error::context`.
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/data.hpp` | #87 | implemented for PostgreSQL template copies; reflink capability selection implemented | session identifiers, persisted application-database declarations, branch records, and coroutine-native create/list/discard/promote operations |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes and live data branches, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted data/REAPI/retention configuration, retention explanations, and bounded signed sync export/import |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #68, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff with source structural edits and labelled fallback tiers, text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes and live data branches, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted data/REAPI/retention configuration, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
 | `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
@@ -370,6 +372,14 @@ struct frontend_unit {
   frontend_unit_kind kind; std::string name; frontend_source_range range;
   digest fingerprint; std::vector<std::byte> canonical_value;
 };
+struct parse_node {
+  std::uint32_t kind; std::optional<std::string> field; frontend_source_range range;
+  bool error, missing; std::vector<parse_node> children;
+};
+struct parse_tree {
+  std::string language, grammar, node_types; std::vector<std::string> node_kinds;
+  parse_node root; std::vector<frontend_unit> units;
+};
 struct frontend_callbacks {
   std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
   std::function<bool()> cancelled;
@@ -402,6 +412,9 @@ class frontend_module {
   result<std::vector<std::byte>> symbols_from_output(std::string_view language,
       std::span<const std::byte> blob, std::span<const std::byte> action_output,
       frontend_callbacks = {}) const;
+  result<std::vector<std::byte>> parse(std::string_view language,
+      std::span<const std::byte> blob, std::span<const std::byte> context_cbor = {},
+      frontend_callbacks = {}) const;
 };
 class frontend_registry {
  public:
@@ -414,6 +427,9 @@ class frontend_registry {
 };
 struct frontend_build_request {
   std::string language, source_path, compile_action; std::vector<std::byte> source, context_cbor;
+};
+struct frontend_parse_request {
+  std::string language; digest blob; std::vector<std::byte> source;
 };
 struct frontend_unit_output {
   frontend_unit unit; std::vector<std::byte> action, output; bool action_ran;
@@ -432,6 +448,8 @@ class frontend_graph {
       frontend_action_executor);
   runtime::task<frontend_build_report> build(frontend_build_request);
   runtime::task<symbol_record> symbols(frontend_build_request);
+  runtime::task<parse_tree> parse(frontend_parse_request);
+  result<frontend_language> language_for_path(std::string_view) const;
   result<std::uint64_t> mark_changed(std::string path, durability = durability::low);
   graph_statistics statistics() const;
 };
@@ -441,9 +459,9 @@ class frontend_graph {
 cross into C++. Optional ABI-v1 language metadata identifies compiler frontends and grammar-backed
 languages while preserving compatibility with the original descriptor size. `frontend_registry`
 rejects duplicate language registrations and projects names, extensions, mechanism, and grammar
-identity. `frontend_graph`
-registers the action and assembly query kinds, records action read paths through `query_context`,
-and runs the potentially blocking assembly operation through `runtime::offload`. The caller's
+identity. `frontend_graph` registers the digest-keyed parse, action, assembly, and symbols query
+kinds, records action read paths through `query_context`, and runs CPU or blocking work through
+`runtime::offload`. The caller's
 `frontend_action_executor` owns compiler-action scheduling and returns object bytes. All three
 handles are move-only; their public copy operations are deleted.
 
@@ -898,7 +916,17 @@ struct revision_readability { change_id revision; std::vector<key_readability> k
 struct readability_report { std::vector<revision_readability> revisions;
                             std::vector<std::string> limits; };
 enum class tree_diff_kind { added, removed, modified, moved, mode_changed, conflicted };
-struct tree_diff_options { bool text; bool formats; };
+enum class structural_edit_kind { added, removed, modified, moved, comment_changed };
+struct structural_diff_edit {
+  structural_edit_kind kind; std::string node_kind; std::optional<std::string> name;
+  std::optional<frontend_source_range> old_range, new_range;
+};
+struct structural_diff {
+  std::string language, grammar; bool formatting_only;
+  std::vector<structural_diff_edit> edits;
+};
+enum class diff_tier { structural, text, binary };
+struct tree_diff_options { bool text; bool formats; bool structural; frontend_graph* frontend; };
 enum class container_diff_kind { added, removed, modified };
 struct container_diff_entry;
 struct container_diff { std::string codec; format_tier tier;
@@ -908,6 +936,7 @@ struct tree_diff_entry {
   std::vector<tree_diff_kind> changes; std::optional<std::uint32_t> old_mode, new_mode;
   std::optional<digest> old_blob, new_blob; std::optional<std::vector<line_change>> line_hunks;
   std::vector<digest> old_conflicts, new_conflicts; std::optional<container_diff> container;
+  std::optional<structural_diff> structural; diff_tier tier; std::string tier_reason;
 };
 struct text_anchor { change_id change; std::string path; std::uint64_t line, column; };
 struct mapped_anchor { change_id change; std::string path; std::uint64_t line, column;
@@ -1135,10 +1164,12 @@ return an empty actor, epoch timestamp, and zero session. Their legacy operation
 when no inverse effects were recorded.
 
 Tree diffs match paths by `node_id`, expose independent change kinds plus both blob and mode sides,
-and read UTF-8 blob contents only when `tree_diff_options::text` requests `line_change` hunks.
+and read UTF-8 blob contents when text, format, or structural inspection is requested.
 Change-level diffs add the exact conflict values from both records. The tree value and tree-digest
-forms omit conflicts because no change record is available. Phase 4 may append a structural diff
-field without replacing the existing byte/line fields.
+forms omit conflicts because no change record is available. Structural inspection supplies the
+language and grammar identity, formatting-only flag, and ordered added, removed, modified, moved,
+or comment-changed edits without replacing byte and line fields. Every entry labels its effective
+structural, text, or binary tier and a lower-tier reason.
 
 Text anchors use one-based lines and columns. Mapping follows `node_id` moves and applies one
 change-pair diff's line hunks: unchanged lines retain their columns, earlier insertions and removals

@@ -3,10 +3,10 @@
 > Research: [03-structural-diff-and-formats](../research/03-structural-diff-and-formats/) ·
 > [01-version-control](../research/01-version-control/)
 >
-> **Container status: implemented by liquid #29.** The registry, ZIP/tar/HDF5/Parquet/SQLite
+> **Container status: implemented by liquid #29. Source status: implemented by liquid #68.** The registry, ZIP/tar/HDF5/Parquet/SQLite
 > codecs, format-aware repository and CLI diff, archive search, derived-entry storage, and
-> deterministic tar writer are available. Source syntax diff and structured-binary merge remain
-> separate work.
+> deterministic tar writer, graph-owned source parse, structural edit script, and labelled text
+> fallback are available. Structured merge remains separate work.
 
 ## Structural diff for source
 
@@ -17,11 +17,10 @@ function is a move, not a delete plus an add.
 The same parse serves incremental compilation ([04](04-build-engine.md)) and symbol
 search ([12](12-search.md)). One parse, three consumers.
 
-**Status.** Liquid #72 implements the digest-pinned 49-language grammar registry and syntactic
-symbol/unit parsing that structural diff will consume. Structural tree comparison and merge remain
-liquid #68 work; this page still describes that target behavior rather than a completed command.
-The grammar identity is available for future structural records so two derived values cannot hide
-different parser inputs.
+**Status.** Liquid #72 implements the digest-pinned 49-language grammar registry. Liquid #68
+implements the graph-owned canonical parse, GumTree-style matching, public structural field,
+explicit structural/text/binary tiers, and `liquid diff --structural`. Structural merge remains
+liquid #69 work. Every structural result carries the grammar lock identity.
 
 Text diff remains the fallback for languages without a grammar, and the fallback is
 always available.

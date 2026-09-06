@@ -124,7 +124,7 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::search},
     {"diff",
-     "diff <a> <b> [path] [--text] [--formats] [--json]",
+     "diff <a> <b> [path] [--text] [--formats] [--structural] [--json]",
      "compare two repository changes",
      "available",
      liquid_cli::diff},

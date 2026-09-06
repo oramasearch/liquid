@@ -493,6 +493,7 @@ add_library(libliquid
   src/workers/worker.cpp
   src/x509.cpp
   src/repository/diff.cpp
+  src/repository/structural_diff.cpp
   src/repository/merge.cpp
   src/resolve/records.cpp
   src/resolve/concretizer.cpp

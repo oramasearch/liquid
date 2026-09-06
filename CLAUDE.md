@@ -105,6 +105,9 @@ Liquid #72 replaces tag-selected tree-sitter inputs with one canonical lock for 
 public grammars. Configure-time archives and every compiled parser/scanner and tag query are pinned
 by SHA-256; the generated registry, public language metadata, syntax fallback, and grammar-set
 provenance all derive from that lock.
+Liquid #68 adds the graph-owned canonical parse shared by build units, symbols, and source diff;
+GumTree-style matching and ordered structural edits; formatting-only and comment reporting;
+explicit structural, text, and binary tiers; and `liquid diff --structural` with labelled fallback.
 Liquid #201 adds the public lake forge review client, edit-surviving comment advancement, polling
 review events, the `liquid review` command group, and an installable in-memory forge double over
 the shared private HTTP/1.1 client.

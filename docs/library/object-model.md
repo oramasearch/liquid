@@ -18,7 +18,8 @@ checked, transactions roll back, commit metadata and incremental saves exist, re
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
 checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, #30, #41, #195's history/conflict persistence, and #205.**
+**Status: implemented for liquid #2, #3, #30, #41, #68, #195's history/conflict persistence, and
+#205.**
 The private automerge-cpp wrapper, canonical CBOR codec, versioned sync framing and drip journal
 are implemented. Repository creation and opening, working-tree reads and writes, recorded moves
 and removals, snapshots and changes, references, composition, persisted conflict values, path
@@ -316,8 +317,12 @@ envelope as one bounded-memory hunk.
 
 Container work is independently opt-in through `tree_diff_options::formats`. A recognised changed
 blob receives a `container_diff` naming the codec and observed tier, then added, removed, and
-modified logical paths with optional nested container diffs. The name `structural` remains reserved
-for source syntax work. Format details and limits are in [formats.md](formats.md).
+modified logical paths with optional nested container diffs. Source work is independently opt-in
+through `tree_diff_options::structural` and uses the supplied `frontend_graph`. The former reserved
+`structural` field now carries the language, grammar-lock digest, formatting-only flag, and ordered
+edits. Every entry labels its effective structural, text, or binary tier and explains a fallback.
+See [structural-diff.md](structural-diff.md). Format details and limits are in
+[formats.md](formats.md).
 
 ## Tree import
 

@@ -163,7 +163,10 @@ Frontend tests load the Clang implementation as a separate shared object, regist
 parses one committed sample per configured language without error nodes, checks required tag-query
 unit discovery and ABI rejection, and exercises the public grammar metadata registry. The CMake frontend fixture compiles two C++ definition objects, proves a
  body edit runs one action and one assembly, and proves a header edit reruns both recorded readers
- before assembly. The registered `frontend-one-function-measure` CTest performs the same
+ before assembly. Structural coverage adds handwritten move, formatting, and semantic-edit pairs
+for ten languages, mechanical reindentation for every other locked sample, comments, public tier
+labels, CLI text and JSON, ABI tail compatibility, and one parse per blob after a build. The
+registered `frontend-one-function-measure` CTest performs the same
  one-definition edit against liquid's own tree with the configured compiler, asserts the action and
  assembly counts, and prints the elapsed milliseconds. `liquid-frontend-measure` additionally
  reports compiler-AST symbol extraction against liquid's own tree with the configured compiler.

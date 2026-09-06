@@ -1,9 +1,11 @@
 #include "liquid/repository.hpp"
 
 #include "repository/diff.hpp"
+#include "repository/structural_diff.hpp"
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -490,6 +492,103 @@ auto attach_containers(repository& source, std::vector<tree_diff_entry>& entries
     co_return result<void>{};
 }
 
+auto fallback_reason(std::string_view path) -> std::string {
+    const auto file = std::filesystem::path{path};
+    auto suffix = file.extension().string();
+    if (suffix.empty()) {
+        suffix = file.filename().string();
+    }
+    return "no grammar for " + suffix;
+}
+
+auto attach_structural(repository& source,
+                       std::vector<tree_diff_entry>& entries,
+                       frontend_graph* frontend) -> runtime::task<void> {
+    for (auto& entry : entries) {
+        if (!entry.old_blob && !entry.new_blob) {
+            entry.tier = diff_tier::binary;
+            entry.tier_reason = "entry is not a blob";
+            continue;
+        }
+        auto old_bytes = std::vector<std::byte>{};
+        if (entry.old_blob) {
+            auto loaded = co_await source.blob(*entry.old_blob);
+            if (!loaded) {
+                co_return std::unexpected(loaded.error());
+            }
+            old_bytes = std::move(*loaded);
+        }
+        auto new_bytes = std::vector<std::byte>{};
+        if (entry.new_blob) {
+            auto loaded = co_await source.blob(*entry.new_blob);
+            if (!loaded) {
+                co_return std::unexpected(loaded.error());
+            }
+            new_bytes = std::move(*loaded);
+        }
+        auto language = frontend ? frontend->language_for_path(entry.path)
+                                 : result<frontend_language>{std::unexpected(diff_error(
+                                       errc::not_found, "frontend graph is not configured"))};
+        if (!language) {
+            entry.tier_reason =
+                frontend ? fallback_reason(entry.path) : "frontend graph is not configured";
+            entry.line_hunks = line_hunks(old_bytes, new_bytes);
+            entry.tier = entry.line_hunks ? diff_tier::text : diff_tier::binary;
+            continue;
+        }
+        auto old_digest = hash(algorithm::blake3, old_bytes);
+        auto new_digest = hash(algorithm::blake3, new_bytes);
+        if (!old_digest) {
+            co_return std::unexpected(old_digest.error());
+        }
+        if (!new_digest) {
+            co_return std::unexpected(new_digest.error());
+        }
+        auto old_tree = co_await frontend->parse(
+            {.language = language->language, .blob = *old_digest, .source = old_bytes});
+        if (!old_tree) {
+            co_return std::unexpected(old_tree.error());
+        }
+        auto new_tree = co_await frontend->parse(
+            {.language = language->language, .blob = *new_digest, .source = new_bytes});
+        if (!new_tree) {
+            co_return std::unexpected(new_tree.error());
+        }
+        auto compared = co_await runtime::offload([old_tree = std::move(*old_tree),
+                                                   new_tree = std::move(*new_tree),
+                                                   old_bytes,
+                                                   new_bytes]() mutable {
+            return repository_detail::compare_structural(old_tree, new_tree, old_bytes, new_bytes);
+        });
+        if (!compared) {
+            co_return std::unexpected(compared.error());
+        }
+        if (!*compared) {
+            co_return std::unexpected(compared->error());
+        }
+        entry.structural = std::move(**compared);
+        entry.tier = diff_tier::structural;
+        entry.tier_reason.clear();
+    }
+    co_return result<void>{};
+}
+
+void label_non_structural(std::vector<tree_diff_entry>& entries, tree_diff_options options) {
+    for (auto& entry : entries) {
+        if (entry.structural || !entry.tier_reason.empty()) {
+            continue;
+        }
+        if (options.text && entry.line_hunks) {
+            entry.tier = diff_tier::text;
+            entry.tier_reason = "text diff requested";
+        } else {
+            entry.tier = diff_tier::binary;
+            entry.tier_reason =
+                entry.kind == node_kind::blob ? "content not inspected" : "entry is not a blob";
+        }
+    }
+}
+
 auto compare(repository& source,
              liquid::tree old_tree,
              liquid::tree new_tree,
@@ -545,6 +644,12 @@ auto compare(repository& source,
         }
     }
     std::ranges::sort(output, {}, &tree_diff_entry::path);
+    if (options.structural) {
+        auto attached = co_await attach_structural(source, output, options.frontend);
+        if (!attached) {
+            co_return std::unexpected(attached.error());
+        }
+    }
     if (options.text) {
         auto attached = co_await attach_hunks(source, output);
         if (!attached) {
@@ -557,6 +662,7 @@ auto compare(repository& source,
             co_return std::unexpected(attached.error());
         }
     }
+    label_non_structural(output, options);
     co_return output;
 }
 

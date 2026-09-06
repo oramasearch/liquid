@@ -23,6 +23,7 @@
 #include "../temporary_directory.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/frontend.hpp"
+#include "liquid/repository.hpp"
 
 extern "C" const liquid_frontend_module_v1* liquid_frontend_get_module_v1(void);
 
@@ -134,6 +135,10 @@ public:
 
     auto action_state() const -> std::filesystem::path {
         return root_ / "actions";
+    }
+
+    auto repository_state() const -> std::filesystem::path {
+        return root_ / "repository";
     }
 
 private:
@@ -287,6 +292,16 @@ TEST(FrontendModule, older_v1_descriptor_without_syntax_remains_loadable) {
     EXPECT_EQ(syntax.error().code, liquid::errc::unsupported);
 }
 
+TEST(FrontendModule, older_v1_descriptor_without_parse_remains_loadable) {
+    auto descriptor = *liquid_frontend_get_module_v1();
+    descriptor.struct_size = offsetof(liquid_frontend_module_v1, parse);
+    auto linked = liquid::frontend_module::linked(&descriptor);
+    ASSERT_TRUE(linked) << linked.error().message;
+    auto parsed = linked->parse("c++", bytes("int value = 1;\n"));
+    ASSERT_FALSE(parsed);
+    EXPECT_EQ(parsed.error().code, liquid::errc::unsupported);
+}
+
 #if defined(__APPLE__) || defined(__linux__)
 TEST(FrontendModule, clang_shared_object_exports_only_the_v1_entrypoint) {
 #if defined(__APPLE__)
@@ -397,6 +412,39 @@ TEST(FrontendGraph, body_edit_runs_one_action_and_reassembles) {
         std::ranges::find(rebuilt->units, "right", [](const auto& unit) { return unit.unit.name; });
     ASSERT_NE(right, rebuilt->units.end());
     EXPECT_FALSE(right->action_ran);
+}
+
+TEST(FrontendGraph, structural_diff_after_build_parses_each_blob_once) {
+    auto fixture = frontend_directory{};
+    auto graph = open_graph(fixture);
+    ASSERT_TRUE(graph) << graph.error().message << ": " << graph.error().context;
+    auto context = compiler_context(fixture);
+    ASSERT_TRUE(context) << context.error().message;
+    const auto original = read_text(fixture.project() / "functions.cpp");
+    auto built = build(*graph, original, *context);
+    ASSERT_TRUE(built) << built.error().message << ": " << built.error().context;
+    ASSERT_EQ(graph->parse_count(), 1U);
+
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(fixture.repository_state()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("functions.cpp", bytes(original))));
+    auto before = liquid::runtime::block_on(repository.cut("before"));
+    ASSERT_TRUE(before) << before.error().message;
+    auto edited = original;
+    const auto position = edited.find("return VALUE + 1;");
+    ASSERT_NE(position, std::string::npos);
+    edited.replace(position, std::string_view{"return VALUE + 1;"}.size(), "return VALUE + 3;");
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("functions.cpp", bytes(edited))));
+    auto after = liquid::runtime::block_on(repository.cut("after"));
+    ASSERT_TRUE(after) << after.error().message;
+    auto difference = liquid::runtime::block_on(
+        repository.diff(*before, *after, {.structural = true, .frontend = &*graph}));
+    ASSERT_TRUE(difference) << difference.error().message << ": " << difference.error().context;
+    ASSERT_EQ(difference->size(), 1U);
+    EXPECT_EQ(difference->front().tier, liquid::diff_tier::structural);
+    EXPECT_EQ(graph->parse_count(), 2U);
 }
 
 TEST(FrontendGraph, header_edit_reruns_every_reader_and_reassembles) {
