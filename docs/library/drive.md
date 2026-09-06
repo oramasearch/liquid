@@ -1,11 +1,13 @@
 # Drive synchronization
 
+**What.** Issues #195, #235, and #258's folder synchronization client: persisted three-tree
 **What.** Issues #195, #235, and #247's folder synchronization client and clone entry point:
 persisted three-tree
 reconciliation, per-path device state, lazy and pinned hydration, offline write queues, content
 conflicts that retain both values, resumable transfer, path history and restore, daemon-hosted
 watching, and Linux file-manager badges.
 
+**Status: implemented by liquid #195, #235, and #258.** `liquid::drive_client` provides one-shot
 **Status: implemented by liquid #195, #235, and #247.** `liquid::drive_client` provides one-shot
 synchronization, path state, policy configuration, pinning, and status. `liquid drive sync`
 exposes synchronization directly; `pin`, `unpin`, and `status` use the same repository settings.
@@ -87,6 +89,11 @@ server's changes while the independent remote view remains the three-way input. 
 change names both local and remote heads when they differ. The client then reconciles staged local
 files with the pulled tree. This also handles an empty remote, which adopts the local identity on
 the subsequent push.
+
+Every imported directory document that can become active is bound to the destination repository's
+path-derived actor. The transport receiver identity is never retained for later local writes. Two
+fresh clients can therefore edit the same imported directory offline without reusing one actor's
+sequence numbers; their later sync retains both named values and records both paths in history.
 
 ## Reconciliation table
 
@@ -213,6 +220,10 @@ move, delete-versus-edit, interrupted chunk download and resume, and event-loss 
 full walk. It pushes a folder and pulls the result with an ordinary `sync_endpoint`, verifies
 conflicts after checkpoint reload, joins a pre-existing non-empty remote, preserves an
 authorization refusal reason with an unadvanced base, and rejects the bounded synthetic folder
+described above. A separate two-client regression syncs a common file, edits it differently while
+both clients are offline, and verifies both names, conflict references, and path histories after
+the clients reconnect in sequence. Repository and CLI tests prove
+history follows a move and restore appends a drip without changing the old log.
 described above. Repository and CLI tests prove
 history follows a move and restore appends a drip without changing the old log. The clone scenario
 pulls from an HTTP endpoint, fully hydrates a file above the default threshold, checks persisted

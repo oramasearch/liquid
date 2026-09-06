@@ -162,9 +162,11 @@ clones leave no partial target.
 
 Drive coverage persists policy and per-path state across reopen, checks folder inheritance and
 explicit overrides, retains lazy placeholders, records peer failure reasons, queues repository
-writes, reports hydration state, and validates every extended-attribute value. The desktop badge
-mapping tests run without GNOME or KDE. Linux FUSE coverage calls the mounted attribute setters,
-getters, and list operation directly.
+writes, reports hydration state, and validates every extended-attribute value. A two-client case
+edits one path differently while both clients are offline, then verifies that sequential sync keeps
+both named files, the conflict references, and history for each name. The desktop badge mapping
+tests run without GNOME or KDE. Linux FUSE coverage calls the mounted attribute setters, getters,
+and list operation directly.
 
 Build tests cover the disk action index's reopen and rebuild paths, public configured-plan schema,
 named configuration errors, and current root digests on every platform. In the
