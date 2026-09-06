@@ -429,6 +429,7 @@ auto environment(std::string_view name) -> std::string {
 auto serve_admission(int argc, char** argv) -> int {
     auto options = liquid::admission_options{};
     options.policy = environment("LIQUID_ADMISSION_POLICY");
+    options.policies = environment("LIQUID_ADMISSION_POLICIES");
     if (auto value = environment("LIQUID_ADMISSION_LISTEN"); !value.empty()) {
         options.listen = std::move(value);
     }
@@ -439,6 +440,13 @@ auto serve_admission(int argc, char** argv) -> int {
     options.tls_key = environment("LIQUID_ADMISSION_TLS_KEY");
     options.attestation_source = environment("LIQUID_ADMISSION_ATTESTATION_SOURCE");
     options.log_cache = environment("LIQUID_ADMISSION_LOG_CACHE");
+    if (auto value = environment("LIQUID_ADMISSION_DECISION_REPLAY"); !value.empty()) {
+        auto parsed = parse_number(value);
+        if (!parsed || *parsed == 0 || *parsed > std::numeric_limits<std::size_t>::max()) {
+            return usage("LIQUID_ADMISSION_DECISION_REPLAY must be a positive integer");
+        }
+        options.decision_replay_capacity = static_cast<std::size_t>(*parsed);
+    }
     auto source_flag = false;
     auto store_flag = false;
     for (auto index = 1; index < argc; ++index) {
@@ -452,6 +460,10 @@ auto serve_admission(int argc, char** argv) -> int {
         }
         if (argument == "--policy") {
             options.policy = argv[index];
+            options.policies.clear();
+        } else if (argument == "--policies") {
+            options.policies = argv[index];
+            options.policy.clear();
         } else if (argument == "--listen") {
             options.listen = argv[index];
         } else if (argument == "--control-listen") {
@@ -468,12 +480,19 @@ auto serve_admission(int argc, char** argv) -> int {
             store_flag = true;
         } else if (argument == "--log-cache") {
             options.log_cache = argv[index];
+        } else if (argument == "--decision-replay") {
+            auto parsed = parse_number(argv[index]);
+            if (!parsed || *parsed == 0 || *parsed > std::numeric_limits<std::size_t>::max()) {
+                return usage("serve admission --decision-replay requires a positive integer");
+            }
+            options.decision_replay_capacity = static_cast<std::size_t>(*parsed);
         } else {
             return usage("serve admission received an unknown option");
         }
     }
-    if (options.policy.empty()) {
-        return usage("serve admission requires --policy <file>");
+    if (options.policy.empty() == options.policies.empty()) {
+        return usage(
+            "serve admission requires exactly one of --policy <file> and --policies <dir>");
     }
     if (source_flag && store_flag) {
         return usage("serve admission accepts only one of --store and --attestation-source");

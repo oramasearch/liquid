@@ -57,6 +57,29 @@ auto policy_contains(std::span<const std::string> values, std::string_view value
     return std::ranges::find(values, value) != values.end();
 }
 
+auto add_reason(admission_decision& decision,
+                std::string rule_id,
+                std::string message,
+                bool summary = true) -> void {
+    if (summary) {
+        decision.reason = message;
+    }
+    decision.reasons.push_back(
+        admission_reason{.rule_id = std::move(rule_id), .message = std::move(message)});
+}
+
+auto refuse(admission_decision& decision, std::string rule_id, std::string message) -> void {
+    decision.allowed = false;
+    add_reason(decision, std::move(rule_id), std::move(message));
+}
+
+auto evidence_reason(admission_attestation_verdict& evidence,
+                     std::string rule_id,
+                     std::string reason) -> void {
+    evidence.rule_id = std::move(rule_id);
+    evidence.reason = std::move(reason);
+}
+
 } // namespace
 
 runtime::task<admission_decision> review_image(const admission_policy& policy,
@@ -64,22 +87,29 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
                                                attestation_source& source,
                                                log_verifier& log) {
     auto output = admission_decision{.image = std::move(image_reference)};
-    if (policy.mode == admission_mode::off ||
-        std::ranges::any_of(policy.exempt, [&](const auto& pattern) {
+    if (policy.mode == admission_mode::off) {
+        output.allowed = true;
+        output.reason = "exempt";
+        add_reason(output, "policy.audit_only", "audit-only policy admitted image", false);
+        co_return output;
+    }
+    if (std::ranges::any_of(policy.exempt, [&](const auto& pattern) {
             return glob_matches(pattern, output.image);
         })) {
         output.allowed = true;
         output.reason = "exempt";
+        add_reason(output, "policy.image_exempt", "image matched an exemption", false);
         co_return output;
     }
     auto subject = image_digest(output.image);
     if (!subject) {
-        output.reason = "image not pinned by digest";
+        refuse(output, "image.digest_required", "image not pinned by digest");
         co_return output;
     }
+    output.subject = *subject;
     auto attestations = co_await source.by_subject(*subject);
     if (!attestations) {
-        output.reason = "attestation source unavailable";
+        refuse(output, "attestation.source_unavailable", "attestation source unavailable");
         co_return output;
     }
     auto accepted_issuer = false;
@@ -96,26 +126,26 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
         auto considered = admission_attestation_verdict{
             .attestation = *id, .profile = statement.profile, .issuer = statement.issuer.taap_id};
         if (statement.subject.alg != subject->alg || statement.subject.bytes != subject->bytes) {
-            considered.reason = "signature invalid";
+            evidence_reason(considered, "attestation.subject_mismatch", "signature invalid");
             invalid_signature = true;
             output.considered.push_back(std::move(considered));
             continue;
         }
         if (!policy_contains(policy.issuers, statement.issuer.taap_id)) {
-            considered.reason = "issuer not accepted";
+            evidence_reason(considered, "attestation.issuer_rejected", "issuer not accepted");
             output.considered.push_back(std::move(considered));
             continue;
         }
         accepted_issuer = true;
         if (!policy_contains(policy.profiles, statement.profile)) {
-            considered.reason = "profile not accepted";
+            evidence_reason(considered, "attestation.profile_rejected", "profile not accepted");
             output.considered.push_back(std::move(considered));
             continue;
         }
         accepted_profile = true;
         auto verified = verify_attestation(statement);
         if (!verified || !verified->verified) {
-            considered.reason = "signature invalid";
+            evidence_reason(considered, "attestation.signature_invalid", "signature invalid");
             invalid_signature = true;
             output.considered.push_back(std::move(considered));
             continue;
@@ -123,36 +153,39 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
         if (policy.mode == admission_mode::attestation_and_log) {
             auto included = co_await log.verify_inclusion(*id);
             if (!included || *included == log_verdict::unavailable) {
-                considered.reason = "log verifier unavailable";
+                evidence_reason(
+                    considered, "transparency.verifier_unavailable", "log verifier unavailable");
                 inclusion_unavailable = true;
                 output.considered.push_back(std::move(considered));
                 continue;
             }
             if (*included == log_verdict::not_included) {
-                considered.reason = "not in log";
+                evidence_reason(considered, "transparency.not_included", "not in log");
                 not_included = true;
                 output.considered.push_back(std::move(considered));
                 continue;
             }
         }
         considered.verified = true;
+        evidence_reason(considered, "attestation.verified", "attestation accepted");
         output.considered.push_back(std::move(considered));
         output.allowed = true;
         output.attestation = *id;
+        add_reason(output, "attestation.verified", "attestation accepted", false);
         co_return output;
     }
     if (attestations->empty()) {
-        output.reason = "no attestation";
+        refuse(output, "attestation.missing", "no attestation");
     } else if (inclusion_unavailable) {
-        output.reason = "log verifier unavailable";
+        refuse(output, "transparency.verifier_unavailable", "log verifier unavailable");
     } else if (not_included) {
-        output.reason = "not in log";
+        refuse(output, "transparency.not_included", "not in log");
     } else if (invalid_signature && accepted_profile) {
-        output.reason = "signature invalid";
+        refuse(output, "attestation.signature_invalid", "signature invalid");
     } else if (accepted_issuer) {
-        output.reason = "profile not accepted";
+        refuse(output, "attestation.profile_rejected", "profile not accepted");
     } else {
-        output.reason = "issuer not accepted";
+        refuse(output, "attestation.issuer_rejected", "issuer not accepted");
     }
     co_return output;
 }
