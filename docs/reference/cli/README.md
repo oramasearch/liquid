@@ -21,6 +21,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`drive`](drive.md) | synchronize a drive folder | available |
 | [`push`](push.md) | push repository changes and objects | available |
 | [`pull`](pull.md) | pull repository changes and objects | available |
+| [`review`](review.md) | review a lake change in place | available |
 | [`serve`](serve.md) | serve repository sync, REAPI, or image admission | available |
 | [`move`](move.md) | record a path move | available |
 | [`rm`](rm.md) | record a path removal | available |
@@ -49,6 +50,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`sbom`](sbom.md) | print a derived or explicitly inferred SBOM | available |
 | [`abi`](abi.md) | show or compare library ABIs | available |
 | [`symbols`](symbols.md) | show compiler or syntactic symbols for a source path | available |
+| [`hot-update`](hot-update.md) | classify, apply, or inspect runtime updates | available on macOS arm64 and Linux x86_64 |
 | [`secret`](secret.md) | fetch, seal, or unseal a Lake environment secret | available |
 | [`edit`](edit.md) | preview or apply a structural edit | available on macOS and Linux |
 | [`wrap`](wrap.md) | run an existing build as cached actions | available on Linux with FUSE and on macOS with macFUSE |

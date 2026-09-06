@@ -246,6 +246,15 @@ constexpr auto flags_secret = std::to_array<flag>({
     {"--out", "<file>", "Write a sealed secret record to this file.", "standard output"},
     {"--private-key-file", "<path>", "Read the unsealing private key from this file.", "none"},
 });
+constexpr auto flags_review = std::to_array<flag>({
+    {"--lake", "<url>", "Select the Lake repository that owns the review.", "none"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--state", "<open|approved|closed>", "Limit list results to this review state.", "all"},
+});
+constexpr auto flags_hot_update = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--endpoint", "<path>", "Select the local update endpoint for apply.", "none"},
+});
 constexpr auto flags_node_store = std::to_array<flag>({
     {"--root", "<path>", "Store node chunks below this directory.", "LIQUID_NODE_STORE_ROOT"},
     {"--listen", "<unix://path>", "Select the node-store service listener.", "none"},
@@ -466,6 +475,11 @@ constexpr auto commands = std::to_array<command>({
      "review <list|show|open|comment|approve|close|protections|watch> --lake <url> [--json] ...",
      "review a lake change in place",
      "available",
+     flags_review,
+     "Open, inspect, comment on, approve, close, or watch a Lake review for a repository change.",
+     "liquid review list --lake https://lake.example.invalid --state open --json",
+     normal_exit,
+     argument_policy::ordinary,
      liquid_cli::review},
     {"serve",
      "serve sync <path> [sync options] | serve reapi --listen <address> [--instance <name>] | "
@@ -753,6 +767,11 @@ constexpr auto commands = std::to_array<command>({
      "hot-update <classify|apply|status> ...",
      "classify, apply, or inspect runtime updates",
      "available on macOS arm64 and Linux x86_64",
+     flags_hot_update,
+     "Classify a build update, deliver a signed patch, or inspect an artifact's update chain.",
+     "liquid hot-update status blake3:<result> --json",
+     normal_exit,
+     argument_policy::ordinary,
      liquid_cli::hot_update},
     {"secret",
      "secret <public-key|seal|unseal> ...",
