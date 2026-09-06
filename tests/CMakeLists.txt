@@ -20,6 +20,7 @@ add_executable(liquid-tests
   test_identity.cpp
   test_node_store.cpp
   test_object.cpp
+  test_projection.cpp
   test_remote.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
@@ -82,6 +83,7 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
     ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
   if(APPLE)
@@ -163,6 +165,7 @@ endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
   LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_PROJECTION_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/projection"
   LIQUID_ABI_FIXTURE_V1="$<TARGET_FILE:liquid-abi-fixture-v1>"
   LIQUID_ABI_FIXTURE_ADDED="$<TARGET_FILE:liquid-abi-fixture-added>"
   LIQUID_ABI_FIXTURE_BREAK="$<TARGET_FILE:liquid-abi-fixture-break>"
@@ -171,6 +174,11 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_WRAP_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/wrap"
   LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>
   LIQUID_REAPI_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/reapi/fixtures")
+find_program(LIQUID_HELM_EXECUTABLE helm)
+if(LIQUID_HELM_EXECUTABLE)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_HELM_EXECUTABLE="${LIQUID_HELM_EXECUTABLE}")
+endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"
@@ -516,6 +524,7 @@ add_executable(liquid-header-tests
   headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp
+  headers/projection.cpp
   headers/remote.cpp
   headers/repository.cpp
   headers/resolve.cpp

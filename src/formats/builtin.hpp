@@ -71,5 +71,8 @@ int repack_operation(void* module_context,
 [[nodiscard]] auto hdf5_module() -> const liquid_format_module_v1*;
 [[nodiscard]] auto parquet_module() -> const liquid_format_module_v1*;
 [[nodiscard]] auto sqlite_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto deb_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto rpm_module() -> const liquid_format_module_v1*;
+[[nodiscard]] auto apk_module() -> const liquid_format_module_v1*;
 
 } // namespace liquid::formats::detail
