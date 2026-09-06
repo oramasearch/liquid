@@ -10,6 +10,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`tiers`](tiers.md) | print declared language, format, and platform support | available |
 | [`init`](init.md) | create a repository and import its regular files | available |
 | [`clone`](clone.md) | clone and materialize a repository | available |
+| [`repack`](repack.md) | rebase stored chunk deltas | available |
 | [`status`](status.md) | show repository status | available |
 | [`conflict`](conflict.md) | inspect or resolve an unresolved conflict | available |
 | [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |

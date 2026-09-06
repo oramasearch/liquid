@@ -29,7 +29,8 @@ pending-upload status, and the pin, unpin, configuration, and status operations.
 `vfs.hpp` accepts an optional bearer token so a drive mount can hydrate through its persisted
 remote endpoint.
 `store.hpp` exposes runtime remote-source registration, hydration and remote-access observation,
-and live local-byte accounting for long-running node stores.
+live local-byte accounting for long-running node stores, plus collection repack selection and its
+delta-rebase count.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 #include "liquid/repository.hpp"
@@ -28,8 +29,8 @@ struct git_access {
     [[nodiscard]] static git_batch batch(repository& destination);
     static void abort_batch(repository& destination);
     [[nodiscard]] static runtime::task<void> commit_batch(repository& destination);
-    [[nodiscard]] static runtime::task<digest> put_blob(repository& destination,
-                                                        std::vector<std::byte> contents);
+    [[nodiscard]] static runtime::task<digest>
+    put_blob(repository& destination, std::string delta_scope, std::vector<std::byte> contents);
     [[nodiscard]] static runtime::task<digest> put_tree(repository& destination, tree value);
 };
 

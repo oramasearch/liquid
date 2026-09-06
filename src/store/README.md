@@ -12,6 +12,13 @@ frames byte-for-byte, with the collection manifest rename as the commit point. T
 provides `store::key_version` with the recorded trust-domain data-key version and verifies whether
 the attached keyring can currently unwrap it; key-id parsing stays in `src/identity/key_version.hpp`.
 
+`chunker.cpp` computes a rolling-shingle resemblance hash alongside FastCDC. `store_impl.cpp`
+persists those hashes in `LQOBJ5`, keeps a path-scoped 256-entry/16-MiB candidate cache, and caps
+delta chains at eight. Candidate selection uses retained raw bytes and never performs a base read
+or hash on the write path. `pack.cpp` stores dictionary-compressed targets with a digest-addressed
+base while retaining the fixed pack table. The collector marks transitive bases; repack mode
+rewrites old deltas against their oldest useful base through the ordinary compaction transaction.
+
 Targeted redaction removes selected object-map entries, commits tombstones for their unshared
 frames, rebuilds the index, and compacts only affected packs. It is separate from lease-driven
 reachability collection so unrelated repository objects remain available.

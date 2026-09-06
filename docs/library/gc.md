@@ -1,10 +1,11 @@
 # Store garbage collection
 
-**Status: implemented for single-process local stores (liquid #8, #46, #58).** Leased roots, epoch
+**Status: implemented for single-process local stores (liquid #8, #46, #58, #133).** Leased roots, epoch
 marking, chunk-list reference extraction, whole-pack deletion, sparse-pack compaction, dry runs,
-retained-chunk explanations, rule-driven retention, and cost-aware build-result eviction are
-available through `liquid/store.hpp`. Repositories retain their own checkpoint roots through
-`liquid/repository.hpp`, and `liquid gc` uses that repository API.
+delta-base retention and rebasing, retained-chunk explanations, rule-driven retention, and
+cost-aware build-result eviction are available through `liquid/store.hpp`. Repositories retain
+their own checkpoint roots through `liquid/repository.hpp`, and `liquid gc` and `liquid repack`
+use that repository API.
 
 ## What and why
 
@@ -44,6 +45,12 @@ retention root. This keeps every usable result graph coupled without allowing th
 defeat result expiry or eviction. Expiry or explicit release makes the complete cached result graph
 collectible together.
 
+After ordinary object reachability, the collector follows every live delta chunk to its base and
+repeats until the complete base chain is marked. It performs the same closure after reacquiring the
+mutation lock, so a target written beyond the epoch high-water point also keeps a pre-existing base
+live. Retention explanations append `(delta base)` to the reason inherited from the target. Delta
+bases are physical chunk references and do not add object-map roots.
+
 Each pack gets a bitmap indexed by physical frame position for the epoch. A set bit is live. This
 bitmap is working state only: it is never consulted by recovery or index reconstruction. Any frame
 at or after the high-water position is implicitly live, including a put that completes while
@@ -74,6 +81,12 @@ Partially live packs report their dead frame bytes and live fraction as
 `bytes_reclaimable_in_partially_dead_packs` and `partially_dead_packs`. After a normal sweep,
 liquid #46 may compact those below `collection_options::compact_below`; the exact copy, manifest,
 recovery, and reader rules are in [store.md](store.md#pack-compaction).
+
+Setting `collection_options::repack` on a compaction-only pass also selects every pack containing a
+delta. The rewrite shortens each chain to its oldest useful base or emits an ordinary frame. The
+existing replacement-pack marker and manifest ordering provide the crash behavior; collection does
+not mutate a live frame in place. `collection_report::deltas_rebased` counts the delta inputs
+processed by the pass.
 
 Repository redaction uses a narrower committed-manifest operation. It removes the selected blob
 and unshared content objects from the object map, tombstones their frames immediately, rebuilds
@@ -106,6 +119,7 @@ The CLI opens the supplied repository path, or the current directory when omitte
 
 ```sh
 liquid gc [--explain] [--compact] [--compact-below <fraction>] [repository-path]
+liquid repack [repository-path]
 ```
 
 `--explain` prints lines such as `blake3:… retained: lease … for root blake3:…` and identifies

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -25,9 +26,11 @@ struct stored_object {
     std::string key_id;
     digest descriptor{};
     bool has_descriptor{};
+    std::uint64_t descriptor_resemblance{};
     std::string kind{"unknown"};
     std::vector<digest> chunks;
     std::vector<std::uint64_t> chunk_sizes;
+    std::vector<std::uint64_t> chunk_resemblances;
 };
 
 class store_backend {
@@ -40,6 +43,8 @@ public:
     [[nodiscard]] runtime::task<void> get_to_file(digest id, std::filesystem::path destination);
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
+                                                  std::string delta_scope);
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
                                                   algorithm hash_algorithm);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,
@@ -86,9 +91,12 @@ private:
     [[nodiscard]] runtime::task<pack_entry>
     store_chunk(digest id,
                 std::vector<std::byte> raw,
-                std::optional<crypto_detail::domain_keys> encryption = std::nullopt);
+                std::optional<crypto_detail::domain_keys> encryption = std::nullopt,
+                std::string_view delta_scope = {});
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     load_chunk(digest id, std::optional<crypto_detail::domain_keys> encryption = std::nullopt);
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    load_chunk(digest id, std::optional<crypto_detail::domain_keys> encryption, std::size_t depth);
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     load_snapshot_object(const stored_object& object,
                          const std::map<std::string, chunk_location>& locations);
@@ -105,7 +113,8 @@ private:
               bool store_chunks);
     [[nodiscard]] runtime::task<digest> put_selected(std::vector<std::byte> input,
                                                      std::optional<std::string> key_id,
-                                                     algorithm hash_algorithm);
+                                                     algorithm hash_algorithm,
+                                                     std::string delta_scope = {});
 
     friend class collector;
     friend class compactor;
@@ -119,6 +128,23 @@ private:
     std::map<std::string, blob> remotes_;
     std::map<std::string, digest> remote_records_;
     std::map<std::string, std::string> chunk_keys_;
+    std::map<std::string, digest> chunk_bases_;
+    struct delta_candidate {
+        digest id{};
+        std::vector<std::byte> bytes;
+    };
+    struct delta_candidate_key {
+        std::string scope;
+        std::uint64_t resemblance{};
+        digest id{};
+    };
+    void remember_delta_candidate(std::string_view scope,
+                                  std::uint64_t resemblance,
+                                  digest id,
+                                  std::span<const std::byte> bytes);
+    std::map<std::string, std::map<std::uint64_t, delta_candidate>> delta_candidates_;
+    std::deque<delta_candidate_key> delta_candidate_order_;
+    std::size_t delta_candidate_bytes_{};
     subject_index subjects_;
     std::uint32_t current_pack_{};
     std::uint64_t object_batch_depth_{};

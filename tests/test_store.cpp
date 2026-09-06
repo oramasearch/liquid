@@ -13,6 +13,7 @@
 #include <random>
 #include <ranges>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +22,7 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "store/chunker.hpp"
+#include "store/faults.hpp"
 #include "temporary_directory.hpp"
 
 namespace {
@@ -107,6 +109,44 @@ auto pack_bytes(const std::filesystem::path& root) -> std::uint64_t {
     }
     return total;
 }
+
+auto has_delta_frame(const std::filesystem::path& root) -> bool {
+    constexpr auto magic = std::array<char, 8>{'L', 'Q', 'F', 'R', 'A', 'M', 1, 2};
+    for (const auto& entry : std::filesystem::directory_iterator(root / "packs")) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".pack") {
+            continue;
+        }
+        const auto bytes = read_bytes(entry.path());
+        if (std::search(bytes.begin(), bytes.end(), magic.begin(), magic.end()) != bytes.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class fail_after_pack_write final : public liquid::store_detail::fault_injector {
+public:
+    void visit(liquid::store_detail::fault_event event) override {
+        if (event.operation == liquid::store_detail::fault_operation::write &&
+            event.phase == liquid::store_detail::fault_phase::after &&
+            event.path.extension() == ".pack") {
+            throw std::runtime_error("injected pack write interruption");
+        }
+    }
+};
+
+class fault_guard {
+public:
+    explicit fault_guard(liquid::store_detail::fault_injector* injector)
+        : previous_(liquid::store_detail::set_fault_injector(injector)) {}
+
+    ~fault_guard() {
+        liquid::store_detail::set_fault_injector(previous_);
+    }
+
+private:
+    liquid::store_detail::fault_injector* previous_{};
+};
 
 struct write_observation {
     liquid::digest content{};
@@ -664,6 +704,55 @@ TEST(Store, PutGetReadDeduplicateAndReopen) {
     got = liquid::runtime::block_on(reopened.get(*first));
     ASSERT_TRUE(got.has_value()) << got.error().message;
     EXPECT_EQ(*got, source);
+}
+
+TEST(Store, SimilarChunksRoundTripThroughDeltaFramesAndReopen) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    const auto base = bytes(4096, 7001);
+    auto target = base;
+    for (auto index = std::size_t{1000}; index != 1040; ++index) {
+        target[index] ^= std::byte{0x5a};
+    }
+    const auto base_id = liquid::runtime::block_on(store.put(base));
+    const auto target_id = liquid::runtime::block_on(store.put(target));
+    ASSERT_TRUE(base_id.has_value()) << base_id.error().message;
+    ASSERT_TRUE(target_id.has_value()) << target_id.error().message;
+    EXPECT_NE(liquid::to_string(*base_id), liquid::to_string(*target_id));
+    EXPECT_TRUE(has_delta_frame(temporary.path()));
+
+    store = {};
+    auto reopened = open_store(temporary.path());
+    const auto restored = liquid::runtime::block_on(reopened.get(*target_id));
+    ASSERT_TRUE(restored.has_value()) << restored.error().message;
+    EXPECT_EQ(*restored, target);
+}
+
+TEST(Store, InterruptedDeltaAppendRecoversAsAValidatedOrphan) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    const auto base = bytes(4096, 7002);
+    auto target = base;
+    for (auto index = std::size_t{2000}; index != 2040; ++index) {
+        target[index] ^= std::byte{0xa5};
+    }
+    const auto base_id = liquid::runtime::block_on(store.put(base));
+    ASSERT_TRUE(base_id.has_value()) << base_id.error().message;
+    const auto target_id = liquid::hash(liquid::algorithm::blake3, target);
+    ASSERT_TRUE(target_id.has_value()) << target_id.error().message;
+    fail_after_pack_write injector;
+    {
+        fault_guard guard(&injector);
+        const auto interrupted = liquid::runtime::block_on(store.put(target));
+        EXPECT_FALSE(interrupted.has_value());
+    }
+    EXPECT_TRUE(has_delta_frame(temporary.path()));
+
+    store = {};
+    auto reopened = open_store(temporary.path());
+    const auto restored = liquid::runtime::block_on(reopened.get(*target_id));
+    ASSERT_TRUE(restored.has_value()) << restored.error().message;
+    EXPECT_EQ(*restored, target);
 }
 
 TEST(Store, SealedPackReopensFromItsFooter) {

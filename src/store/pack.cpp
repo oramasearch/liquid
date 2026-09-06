@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <system_error>
 
 #include <boost/capy/buffers.hpp>
@@ -52,8 +53,18 @@ constexpr std::array<std::byte, 8> encrypted_frame_magic{std::byte{'L'},
                                                          std::byte{'M'},
                                                          std::byte{1},
                                                          std::byte{1}};
+constexpr std::array<std::byte, 8> delta_frame_magic{std::byte{'L'},
+                                                     std::byte{'Q'},
+                                                     std::byte{'F'},
+                                                     std::byte{'R'},
+                                                     std::byte{'A'},
+                                                     std::byte{'M'},
+                                                     std::byte{1},
+                                                     std::byte{2}};
 constexpr std::size_t pack_header_size = 16;
 constexpr std::size_t physical_header_size = 49;
+constexpr std::size_t delta_base_size = 33;
+constexpr std::size_t minimum_delta_saving = 64;
 constexpr std::size_t table_entry_size = 53;
 constexpr std::size_t footer_size = 32;
 
@@ -196,7 +207,10 @@ bool valid_frame(std::span<const std::byte> bytes, std::size_t offset, pack_entr
     }
     const bool encrypted = std::equal(
         encrypted_frame_magic.begin(), encrypted_frame_magic.end(), bytes.begin() + offset);
-    if (!encrypted && !std::equal(frame_magic.begin(), frame_magic.end(), bytes.begin() + offset)) {
+    const bool delta =
+        std::equal(delta_frame_magic.begin(), delta_frame_magic.end(), bytes.begin() + offset);
+    if (!encrypted && !delta &&
+        !std::equal(frame_magic.begin(), frame_magic.end(), bytes.begin() + offset)) {
         return false;
     }
     const auto raw_length = get_u32(bytes, offset + 8);
@@ -209,6 +223,22 @@ bool valid_frame(std::span<const std::byte> bytes, std::size_t offset, pack_entr
     digest id{static_cast<algorithm>(algorithm_byte), {}};
     std::copy_n(bytes.begin() + offset + 17, id.bytes.size(), id.bytes.begin());
     entry = {id, {0, offset, compressed_length}, raw_length};
+    if (delta) {
+        if (compressed_length < delta_base_size) {
+            return false;
+        }
+        const auto base_algorithm =
+            std::to_integer<unsigned char>(bytes[offset + physical_header_size]);
+        if (!valid_algorithm(base_algorithm)) {
+            return false;
+        }
+        auto base = digest{static_cast<algorithm>(base_algorithm), {}};
+        std::copy_n(bytes.begin() + offset + physical_header_size + 1,
+                    base.bytes.size(),
+                    base.bytes.begin());
+        entry.base = base;
+        return true;
+    }
     // Encrypted frames are authenticated when an object loads them with its
     // trust-domain key. The pack scan has no object key context.
     if (encrypted) {
@@ -356,6 +386,21 @@ runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t
                     co_return std::unexpected(
                         corrupt_error("pack table location is outside data", path));
                 }
+                if (std::equal(delta_frame_magic.begin(),
+                               delta_frame_magic.end(),
+                               bytes.begin() + entry.location.offset)) {
+                    if (entry.location.length < delta_base_size) {
+                        co_return std::unexpected(corrupt_error("invalid delta frame", path));
+                    }
+                    const auto base_at = entry.location.offset + physical_header_size;
+                    const auto base_algorithm = std::to_integer<unsigned char>(bytes[base_at]);
+                    if (!valid_algorithm(base_algorithm)) {
+                        co_return std::unexpected(corrupt_error("invalid delta base", path));
+                    }
+                    auto base = digest{static_cast<algorithm>(base_algorithm), {}};
+                    std::copy_n(bytes.begin() + base_at + 1, base.bytes.size(), base.bytes.begin());
+                    entry.base = base;
+                }
                 result.entries.push_back(entry);
             }
             std::sort(result.entries.begin(),
@@ -386,7 +431,8 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
                                             digest id,
                                             std::vector<std::byte> raw,
                                             std::optional<crypto_detail::key> encryption_key,
-                                            bool durable) {
+                                            bool durable,
+                                            std::vector<delta_dictionary> candidates) {
     if (contents.data_end < pack_header_size) {
         co_return std::unexpected(
             error{errc::internal, "invalid pack write position", path.string()});
@@ -403,16 +449,66 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
         if (!created)
             co_return std::unexpected(created.error());
     }
-    const auto bound = ZSTD_compressBound(raw.size());
-    std::vector<std::byte> compressed(bound);
-    const auto compressed_size =
-        ZSTD_compress(compressed.data(), compressed.size(), raw.data(), raw.size(), 3);
-    if (ZSTD_isError(compressed_size) ||
-        compressed_size > std::numeric_limits<std::uint32_t>::max() ||
-        raw.size() > std::numeric_limits<std::uint32_t>::max()) {
+    const auto raw_size = raw.size();
+    struct encoded_payload {
+        std::vector<std::byte> bytes;
+        std::optional<digest> base;
+    };
+    auto encoded = co_await runtime::offload([raw = std::move(raw),
+                                              candidates = std::move(candidates),
+                                              encryption_key]() mutable {
+        const auto bound = ZSTD_compressBound(raw.size());
+        auto regular = std::vector<std::byte>(bound);
+        const auto regular_size =
+            ZSTD_compress(regular.data(), regular.size(), raw.data(), raw.size(), 3);
+        if (ZSTD_isError(regular_size)) {
+            throw std::runtime_error("zstd compression failed");
+        }
+        regular.resize(regular_size);
+        auto output = encoded_payload{std::move(regular), std::nullopt};
+        if (encryption_key) {
+            return output;
+        }
+        auto* context = ZSTD_createCCtx();
+        if (!context) {
+            throw std::runtime_error("zstd compression context allocation failed");
+        }
+        for (const auto& candidate : candidates) {
+            auto compressed = std::vector<std::byte>(bound);
+            const auto compressed_size = ZSTD_compress_usingDict(context,
+                                                                 compressed.data(),
+                                                                 compressed.size(),
+                                                                 raw.data(),
+                                                                 raw.size(),
+                                                                 candidate.bytes.data(),
+                                                                 candidate.bytes.size(),
+                                                                 3);
+            if (!ZSTD_isError(compressed_size) &&
+                delta_base_size + compressed_size + minimum_delta_saving < output.bytes.size()) {
+                compressed.resize(compressed_size);
+                output.bytes = std::move(compressed);
+                output.base = candidate.id;
+            }
+        }
+        ZSTD_freeCCtx(context);
+        if (output.base) {
+            auto framed = std::vector<std::byte>{};
+            framed.reserve(delta_base_size + output.bytes.size());
+            framed.push_back(std::byte{static_cast<unsigned char>(output.base->alg)});
+            framed.insert(framed.end(), output.base->bytes.begin(), output.base->bytes.end());
+            framed.insert(framed.end(), output.bytes.begin(), output.bytes.end());
+            output.bytes = std::move(framed);
+        }
+        return output;
+    });
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto compressed = std::move(encoded->bytes);
+    if (compressed.size() > std::numeric_limits<std::uint32_t>::max() ||
+        raw_size > std::numeric_limits<std::uint32_t>::max()) {
         co_return std::unexpected(error{errc::internal, "zstd compression failed", path.string()});
     }
-    compressed.resize(compressed_size);
     if (encryption_key) {
         const auto ad = chunk_ad(id);
         auto boxed = crypto_detail::seal(*encryption_key, ad, compressed);
@@ -427,10 +523,13 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
     pack_entry entry{
         id,
         {contents.id, contents.data_end, static_cast<std::uint32_t>(compressed.size())},
-        static_cast<std::uint32_t>(raw.size())};
+        static_cast<std::uint32_t>(raw_size),
+        encoded->base};
     std::vector<std::byte> physical;
     physical.reserve(physical_header_size + compressed.size());
-    const auto& magic = encryption_key ? encrypted_frame_magic : frame_magic;
+    const auto& magic = encryption_key ? encrypted_frame_magic
+                        : entry.base   ? delta_frame_magic
+                                       : frame_magic;
     physical.insert(physical.end(), magic.begin(), magic.end());
     put_u32(physical, entry.raw_length);
     put_u32(physical, entry.location.length);
@@ -473,7 +572,8 @@ runtime::task<pack_entry> append_pack_frame(std::filesystem::path destination,
         co_return std::unexpected(frame.error());
     }
     if (!std::equal(frame_magic.begin(), frame_magic.end(), frame->begin()) &&
-        !std::equal(encrypted_frame_magic.begin(), encrypted_frame_magic.end(), frame->begin())) {
+        !std::equal(encrypted_frame_magic.begin(), encrypted_frame_magic.end(), frame->begin()) &&
+        !std::equal(delta_frame_magic.begin(), delta_frame_magic.end(), frame->begin())) {
         co_return std::unexpected(corrupt_error("invalid source frame", source));
     }
     if (get_u32(*frame, 12) != entry.location.length ||
@@ -515,7 +615,8 @@ runtime::task<std::vector<std::byte>>
 read_pack_entry(std::filesystem::path path,
                 chunk_location location,
                 digest expected,
-                std::optional<crypto_detail::key> encryption_key) {
+                std::optional<crypto_detail::key> encryption_key,
+                std::optional<delta_dictionary> dictionary) {
     auto header = co_await read_file_range(path, location.offset, physical_header_size);
     if (!header)
         co_return std::unexpected(header.error());
@@ -523,7 +624,9 @@ read_pack_entry(std::filesystem::path path,
     const bool framed = std::equal(frame_magic.begin(), frame_magic.end(), bytes.begin());
     const bool encrypted_framed =
         std::equal(encrypted_frame_magic.begin(), encrypted_frame_magic.end(), bytes.begin());
-    const bool current_frame = framed || encrypted_framed;
+    const bool delta_framed =
+        std::equal(delta_frame_magic.begin(), delta_frame_magic.end(), bytes.begin());
+    const bool current_frame = framed || encrypted_framed || delta_framed;
     const auto algorithm_offset = current_frame ? 16U : 0U;
     const auto digest_offset = current_frame ? 17U : 1U;
     const auto raw_length_offset = current_frame ? 8U : 33U;
@@ -557,12 +660,52 @@ read_pack_entry(std::filesystem::path path,
         }
         compressed = std::move(*opened);
     }
-    std::vector<std::byte> raw(raw_size);
-    const auto produced =
-        ZSTD_decompress(raw.data(), raw.size(), compressed->data(), compressed->size());
-    if (ZSTD_isError(produced) || produced != raw.size())
+    if (delta_framed) {
+        if (compressed->size() < delta_base_size || !dictionary) {
+            co_return std::unexpected(corrupt_error("delta chunk base is unavailable", path));
+        }
+        auto stored_base = digest{};
+        const auto base_algorithm = std::to_integer<unsigned char>((*compressed)[0]);
+        if (!valid_algorithm(base_algorithm)) {
+            co_return std::unexpected(corrupt_error("delta chunk base is invalid", path));
+        }
+        stored_base.alg = static_cast<algorithm>(base_algorithm);
+        std::copy_n(compressed->begin() + 1, stored_base.bytes.size(), stored_base.bytes.begin());
+        if (stored_base.alg != dictionary->id.alg || stored_base.bytes != dictionary->id.bytes) {
+            co_return std::unexpected(corrupt_error("delta chunk base differs from index", path));
+        }
+        compressed->erase(compressed->begin(), compressed->begin() + delta_base_size);
+    }
+    auto raw = co_await runtime::offload(
+        [compressed = std::move(*compressed), raw_size, dictionary = std::move(dictionary)] {
+            auto output = std::vector<std::byte>(raw_size);
+            std::size_t produced{};
+            if (dictionary) {
+                auto* context = ZSTD_createDCtx();
+                if (!context) {
+                    throw std::runtime_error("zstd decompression context allocation failed");
+                }
+                produced = ZSTD_decompress_usingDict(context,
+                                                     output.data(),
+                                                     output.size(),
+                                                     compressed.data(),
+                                                     compressed.size(),
+                                                     dictionary->bytes.data(),
+                                                     dictionary->bytes.size());
+                ZSTD_freeDCtx(context);
+            } else {
+                produced = ZSTD_decompress(
+                    output.data(), output.size(), compressed.data(), compressed.size());
+            }
+            if (ZSTD_isError(produced) || produced != output.size()) {
+                throw std::runtime_error("zstd decompression failed");
+            }
+            return output;
+        });
+    if (!raw) {
         co_return std::unexpected(corrupt_error("chunk decompression failed", path));
-    co_return raw;
+    }
+    co_return std::move(*raw);
 }
 
 } // namespace liquid::store_detail

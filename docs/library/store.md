@@ -1,7 +1,8 @@
 # Content-defined chunk store
 
 **Status: implemented for single-process stores with local chunks, registered remote blobs,
-pre-pack write-through, and local eviction (liquid #1, #7, #8, #17, #46, #116, #199, #208).**
+pre-pack write-through, local eviction, and resemblance-selected chunk deltas (liquid #1, #7,
+#8, #17, #46, #116, #133, #199, #208).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -34,9 +35,12 @@ share chunks without a file-per-object bottleneck.
 `open` creates missing directories and refuses a marker other than format 1 with
 `errc::unsupported`. A pack begins with its id. Every following chunk is one append-only frame:
 an eight-byte frame magic, raw and compressed lengths (`u32` each), an algorithm byte, the 32-byte
-digest, and an individually zstd-compressed payload. A sealed pack ends with a sorted chunk table
-and a footer containing the table location and checksum. The table carries the algorithm tag, so it
-remains the source for rebuilding index run sets.
+digest, and an individually zstd-compressed payload. A delta frame uses its own magic and prefixes
+the payload with the base algorithm and 32-byte digest; the remaining bytes are zstd-compressed
+with the complete base chunk as a dictionary. A sealed pack ends with a sorted chunk table and a
+footer containing the table location and checksum. The table carries the algorithm tag, so it
+remains the source for rebuilding index run sets. The frame header carries enough information to
+recover a delta reference without changing the fixed-width table or public chunk interface.
 
 Ordinary writes use the store's configured hash algorithm. Verified sync receipt instead preserves
 the algorithm tag carried by each frame after recomputing that exact digest, so a BLAKE3 and a
@@ -72,14 +76,16 @@ Encrypted frames use the encrypted variant of the frame magic, and their compres
 replaced by `nonce[24] || tag[16] || ciphertext`. The nonce comes from the operating system random
 source for every new chunk. Recovery can structurally recognize a complete encrypted frame; its
 AEAD authentication and keyed digest are verified when the chunk is read with its trust-domain
-key. The object map format is now `LQOBJ4`: each record carries every chunk's raw size in addition
-to `LQOBJ3`'s descriptor digest and object kind and `LQOBJ2`'s encryption flag and optional
-length-prefixed key id. Those sizes let `read` jump to the first chunk overlapping a large offset
-without loading preceding chunks. A zero
+key. The object map format is now `LQOBJ5`: each record adds the descriptor and per-chunk 64-bit
+resemblance hashes to `LQOBJ4`'s raw chunk sizes, `LQOBJ3`'s descriptor digest and object kind,
+and `LQOBJ2`'s encryption flag and optional length-prefixed key id. The sizes let `read` jump to
+the first chunk overlapping a large offset without loading preceding chunks. The resemblance
+hashes preserve the similarity measurement with each object entry. A zero
 descriptor algorithm is the sentinel for legacy records that predate stored chunk-list objects.
 Its chunk-list descriptor contains the same key id and is encrypted too. `LQOBJ1` plaintext and `LQOBJ2`
-encrypted metadata remain readable, as does `LQOBJ3`; the next metadata write fills legacy chunk
-sizes from pack tables before publishing `LQOBJ4`.
+encrypted metadata remain readable, as do `LQOBJ3` and `LQOBJ4`; the next metadata write fills
+legacy chunk sizes from pack tables and writes zero resemblance hashes where an older catalog did
+not record them before publishing `LQOBJ5`.
 
 Every encrypted read first unwraps the domain data key, then authenticates and decompresses each
 requested chunk and verifies its keyed id. A missing or wrong key is `unauthorized` with the key
@@ -96,6 +102,43 @@ entry, so one store can resolve both forms. Every `get` and `read` rehashes raw 
 mismatch returns `errc::corrupt` with the digest in `error::context`. See
 [hash agility](hash-agility.md) for the supported algorithms, rehashing behavior, and signature
 scheme tags.
+
+### Near-duplicate chunk compression
+
+Plaintext chunks also receive a 64-bit resemblance hash: the minimum mixed value of their rolling
+32-byte buzhash windows. Importers that know a source path pass it as the candidate scope; ordinary
+store callers use one shared scope. The store retains at most 256 recent candidates and 16 MiB of
+candidate bytes across all scopes. Before writing a different chunk with the same value in that
+scope, it compares ordinary zstd against zstd using those retained bytes as a dictionary. It does
+not read, decode, or re-hash a base on the write path. It writes a delta only when the result,
+including the 33-byte base identity, is at least 64 bytes smaller. Encrypted chunks do not
+participate because cross-object plaintext comparison would cross the trust-domain boundary. Delta
+chains are bounded at eight links.
+
+The design choice was measured over all 950 unique versions of
+`single_include/nlohmann/json.hpp` in the vendored nlohmann/json history at commit
+`8167d2f31858884a07f4c0e700e5b1d937051ddb`. Each row includes the 49-byte frame header and the
+53-byte sealed-pack table entry; payloads use zstd level 3.
+
+| Candidate | Unique raw chunk bytes | Compressed bytes including frame/table overhead |
+|---|---:|---:|
+| Existing 64 KiB FastCDC | 244,535,197 | 45,146,899 |
+| 16 KiB FastCDC for the changed path | 97,336,663 | 20,524,744 |
+| Previous version, matching path and chunk ordinal | 244,535,197 | 4,417,423 |
+| Previous file prefix as one zstd dictionary | 244,535,197 | 38,487,049 |
+| Rolling-shingle resemblance selection | 244,535,197 | 9,191,259 |
+
+The path-and-ordinal result is a useful lower bound but requires the repository importer to expose
+versioned path identity to the content store, and it does not help tree, change, descriptor, build,
+or package objects. The smaller-chunk option more than doubles frame and index entries for this
+history and remains over twice the size of resemblance selection. The resemblance hash was chosen
+because it remains behind the existing chunk interface, finds candidates for every plaintext
+object kind, and approaches the path-aware lower bound without storing repository paths.
+
+Readers resolve a base digest recursively through the same pack index, decompress the target with
+that verified base, and verify the reconstructed target digest. The base is therefore an ordinary
+content-addressed object, not a physical pack offset. Sealed-pack tables, index runs, range reads,
+and callers retain their existing shapes.
 
 `read` loads only the chunk headers and compressed byte ranges that overlap the caller's range.
 Pack file reads and writes use Corosio `random_access_file`; synchronous directory creation and
@@ -332,6 +375,14 @@ Readers do not take the mutation lock. A reader that resolved an old location be
 can still read the old pack until its later removal. On POSIX, a reader that already opened the
 file keeps a valid mapping after unlink. On Windows, a removal blocked by an open mapping is left
 for the next store open through the pending marker.
+
+`liquid repack [repository]` runs a compaction-only pass over every pack containing a delta frame.
+Each delta is decoded and written against the oldest reachable base in its current chain; when that
+base no longer saves at least 64 bytes the target becomes an ordinary frame. Other frames are copied
+byte-for-byte. The collection report counts rewritten packs, bytes, and input deltas processed.
+Repack uses the same pending marker and manifest commit point as sparse-pack compaction, so a crash
+leaves either the old pack or the completely sealed replacement authoritative. It never changes a
+chunk digest or object descriptor.
 
 ## Index
 

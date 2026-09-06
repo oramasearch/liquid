@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -64,23 +65,31 @@ void compactor::describe(const collection_manifest& manifest, collection_report&
 runtime::task<void> compactor::run(collection_options options,
                                    collection_manifest manifest,
                                    collection_report& report) {
-    if (options.compact_below == 0.0) {
+    if (options.compact_below == 0.0 && !options.repack) {
         co_return result<void>{};
     }
     if (options.compact_only) {
         describe(manifest, report);
     }
-    std::vector<std::uint32_t> candidates;
+    std::set<std::uint32_t> candidates;
     for (const auto& partial : report.partially_dead_packs) {
         if (partial.live_fraction < options.compact_below) {
-            candidates.push_back(partial.id);
+            candidates.insert(partial.id);
+        }
+    }
+    if (options.repack) {
+        for (const auto& [pack_id, pack] : store_.packs_) {
+            if (std::ranges::any_of(
+                    pack.entries, [](const pack_entry& entry) { return entry.base.has_value(); })) {
+                candidates.insert(pack_id);
+            }
         }
     }
     if (options.dry_run) {
         co_return result<void>{};
     }
     for (const auto old_pack_id : candidates) {
-        auto compacted = co_await compact(old_pack_id, manifest, report);
+        auto compacted = co_await compact(old_pack_id, manifest, report, options.repack);
         if (!compacted) {
             co_return std::unexpected(compacted.error());
         }
@@ -90,7 +99,8 @@ runtime::task<void> compactor::run(collection_options options,
 
 runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
                                        collection_manifest& manifest,
-                                       collection_report& report) {
+                                       collection_report& report,
+                                       bool rebase_deltas) {
     const auto old_it = store_.packs_.find(old_pack_id);
     if (old_it == store_.packs_.end()) {
         co_return result<void>{};
@@ -136,11 +146,49 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
         if (manifest.dead(old_pack_id, frame)) {
             continue;
         }
-        auto copied = co_await append_pack_frame(pack_path(store_.root_, new_pack_id),
-                                                 replacement,
-                                                 pack_path(store_.root_, old_pack_id),
-                                                 old_pack.entries[frame],
-                                                 store_.options_.durable);
+        auto copied =
+            result<pack_entry>{std::unexpected(error{errc::internal,
+                                                     "pack rewrite was not selected",
+                                                     to_string(old_pack.entries[frame].id)})};
+        if (rebase_deltas && old_pack.entries[frame].base) {
+            auto raw = co_await store_.load_chunk(old_pack.entries[frame].id);
+            if (!raw) {
+                co_return std::unexpected(raw.error());
+            }
+            auto base = *old_pack.entries[frame].base;
+            auto visited = std::set<std::string>{};
+            while (true) {
+                const auto parent = store_.chunk_bases_.find(to_string(base));
+                if (parent == store_.chunk_bases_.end()) {
+                    break;
+                }
+                if (!visited.insert(to_string(base)).second) {
+                    co_return std::unexpected(
+                        compaction_error(errc::corrupt,
+                                         "delta chunk reference cycle",
+                                         pack_path(store_.root_, old_pack_id)));
+                }
+                base = parent->second;
+            }
+            auto dictionary = co_await store_.load_chunk(base);
+            if (!dictionary) {
+                co_return std::unexpected(dictionary.error());
+            }
+            copied = co_await append_pack_entry(pack_path(store_.root_, new_pack_id),
+                                                replacement,
+                                                old_pack.entries[frame].id,
+                                                std::move(*raw),
+                                                std::nullopt,
+                                                store_.options_.durable,
+                                                {{base, std::move(*dictionary)}});
+            ++report.deltas_rebased;
+        } else {
+            copied = co_await append_pack_frame(pack_path(store_.root_, new_pack_id),
+                                                replacement,
+                                                pack_path(store_.root_, old_pack_id),
+                                                old_pack.entries[frame],
+                                                store_.options_.durable);
+        }
         if (!copied) {
             co_return std::unexpected(copied.error());
         }
@@ -189,6 +237,13 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
     }
     store_.packs_.erase(old_pack_id);
     store_.packs_.emplace(new_pack_id, std::move(replacement));
+    for (const auto& entry : store_.packs_.at(new_pack_id).entries) {
+        if (entry.base) {
+            store_.chunk_bases_.insert_or_assign(to_string(entry.id), *entry.base);
+        } else {
+            store_.chunk_bases_.erase(to_string(entry.id));
+        }
+    }
     if (old_pack_id == store_.current_pack_) {
         store_.current_pack_ = new_pack_id + 1;
         store_.packs_.emplace(store_.current_pack_, pack_contents{store_.current_pack_, {}, 16});

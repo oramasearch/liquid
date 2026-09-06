@@ -13,8 +13,8 @@ if(NOT import_result EQUAL 0)
 endif()
 string(TIMESTAMP import_finished "%s" UTC)
 math(EXPR import_elapsed_seconds "${import_finished} - ${import_started}")
-if(import_elapsed_seconds GREATER 900)
-  message(FATAL_ERROR "Git import exceeded 15 minutes: ${import_elapsed_seconds} seconds")
+if(import_elapsed_seconds GREATER 720)
+  message(FATAL_ERROR "Git import exceeded the recorded 12-minute ceiling: ${import_elapsed_seconds} seconds")
 endif()
 
 string(REGEX MATCH "peak_anonymous_bytes=([0-9]+)" peak_match "${import_output}")
@@ -93,10 +93,24 @@ endif()
 string(REGEX MATCHALL "([0-9]+)" size_values "${size_output}")
 list(GET size_values 0 git_size_kib)
 list(GET size_values 1 liquid_size_kib)
-math(EXPR allowed_liquid_size_kib "${git_size_kib} * 7 / 2")
-if(liquid_size_kib GREATER allowed_liquid_size_kib)
-  message(FATAL_ERROR "Liquid storage exceeds 3.5x Git storage: ${size_output}")
+if(liquid_size_kib GREATER git_size_kib)
+  message(FATAL_ERROR "Liquid storage exceeds Git storage: ${size_output}")
+endif()
+math(EXPR storage_ratio_basis_points "${liquid_size_kib} * 10000 / ${git_size_kib}")
+math(EXPR storage_ratio_whole "${storage_ratio_basis_points} / 100")
+math(EXPR storage_ratio_fraction "${storage_ratio_basis_points} % 100")
+execute_process(
+  COMMAND du -sk
+    "${LIQUID_REALWORLD_GIT_DIRECTORY}/.liquid-store/packs"
+    "${LIQUID_REALWORLD_GIT_DIRECTORY}/.liquid-store/index"
+    "${LIQUID_REALWORLD_GIT_DIRECTORY}/.liquid-store/packs/objects.meta"
+  RESULT_VARIABLE component_size_result
+  OUTPUT_VARIABLE component_size_output
+  ERROR_VARIABLE component_size_error)
+if(NOT component_size_result EQUAL 0)
+  message(FATAL_ERROR "Cannot measure liquid storage components: ${component_size_error}")
 endif()
 message("Git import (${import_elapsed_seconds} seconds): ${import_output}")
 message("Git export: ${export_output}")
-message("Storage KiB: ${size_output}")
+message("Storage KiB (${storage_ratio_whole}.${storage_ratio_fraction}% of Git): ${size_output}")
+message("Liquid component KiB (packs, index, object catalog): ${component_size_output}")

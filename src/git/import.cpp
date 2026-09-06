@@ -76,7 +76,8 @@ auto import_tree(repository& destination,
                  const git_detail::sha1& id,
                  lru_map<digest>& blobs,
                  lru_map<digest>& trees,
-                 import_report& report) -> runtime::task<digest> {
+                 import_report& report,
+                 std::string parent = {}) -> runtime::task<digest> {
     const auto key = git_detail::sha1_hex(id);
     if (const auto cached = trees.get(key))
         co_return *cached;
@@ -86,13 +87,14 @@ auto import_tree(repository& destination,
     tree value{};
     value.entries.reserve(source->size());
     for (const auto& item : *source) {
+        const auto path = parent.empty() ? item.name : parent + "/" + item.name;
         tree_entry entry{};
         entry.name = item.name;
         entry.mode = item.mode;
         entry.node = node_for(item.id);
         if (item.mode == 040000) {
             const auto child =
-                co_await import_tree(destination, store, item.id, blobs, trees, report);
+                co_await import_tree(destination, store, item.id, blobs, trees, report, path);
             if (!child)
                 co_return std::unexpected(child.error());
             entry.kind = node_kind::tree;
@@ -117,7 +119,7 @@ auto import_tree(repository& destination,
                     co_return std::unexpected(
                         error{errc::corrupt, "Git tree entry is not a blob", item.name});
                 const auto written = co_await repository_detail::git_access::put_blob(
-                    destination, std::move(object->payload));
+                    destination, path, std::move(object->payload));
                 if (!written)
                     co_return std::unexpected(written.error());
                 blobs.put(blob_key, *written);

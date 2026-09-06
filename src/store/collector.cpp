@@ -163,6 +163,32 @@ std::optional<std::string> retention_rule(const lease_record& lease) {
     return lease.owner.substr(first + 1, second - first - 1);
 }
 
+void retain_delta_bases(const std::map<std::string, digest>& bases,
+                        std::set<std::string>& chunks,
+                        std::map<std::string, std::string>* reasons = nullptr) {
+    auto pending = std::deque<std::string>{chunks.begin(), chunks.end()};
+    while (!pending.empty()) {
+        auto target = std::move(pending.front());
+        pending.pop_front();
+        const auto found = bases.find(target);
+        if (found == bases.end()) {
+            continue;
+        }
+        const auto base = to_string(found->second);
+        if (!chunks.insert(base).second) {
+            continue;
+        }
+        if (reasons) {
+            const auto target_reason = reasons->find(target);
+            reasons->try_emplace(base,
+                                 target_reason == reasons->end()
+                                     ? "delta base"
+                                     : target_reason->second + " (delta base)");
+        }
+        pending.push_back(base);
+    }
+}
+
 } // namespace
 
 runtime::task<void> save_collection_manifest(const std::filesystem::path& root,
@@ -250,6 +276,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
 
     std::map<std::string, stored_object> snapshot_objects;
     std::map<std::uint32_t, pack_contents> snapshot_packs;
+    std::map<std::string, digest> snapshot_bases;
     {
         auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
         if (lock_error)
@@ -257,6 +284,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
                 error{errc::busy, lock_error.message(), "store::collect snapshot"});
         snapshot_objects = store_.objects_;
         snapshot_packs = store_.packs_;
+        snapshot_bases = store_.chunk_bases_;
         high_water_pack = store_.current_pack_;
         high_water_offset = store_.packs_.at(store_.current_pack_).data_end;
     }
@@ -342,6 +370,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
     }
     report.live_objects = live_objects.size();
     report.unknown_kinds.assign(unknown_kinds.begin(), unknown_kinds.end());
+    retain_delta_bases(snapshot_bases, live_chunks, &reasons);
 
     for (const auto& [pack_id, pack] : snapshot_packs) {
         auto& bitmap = epoch_marks[pack_id];
@@ -445,6 +474,16 @@ runtime::task<collection_report> collector::run(collection_options options) {
             }
         }
     }
+    for (const auto& [unused, pack] : store_.packs_) {
+        static_cast<void>(unused);
+        for (const auto& entry : pack.entries) {
+            if (after_high_water(high_water_pack, high_water_offset, entry)) {
+                live_chunks.insert(to_string(entry.id));
+                reasons.try_emplace(to_string(entry.id), "written after epoch high-water mark");
+            }
+        }
+    }
+    retain_delta_bases(store_.chunk_bases_, live_chunks, &reasons);
 
     std::vector<index_entry> retained_index;
     std::vector<std::uint32_t> delete_packs;
@@ -592,6 +631,7 @@ runtime::task<void> collector::remove_local(collection_manifest manifest,
             }
         }
     }
+    retain_delta_bases(store_.chunk_bases_, retained_chunks);
 
     auto report = collection_report{};
     auto retained_index = std::vector<index_entry>{};
