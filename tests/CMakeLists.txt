@@ -411,6 +411,7 @@ add_executable(liquid-header-tests
   headers/daemon.cpp
   headers/drip.cpp
   headers/delta.cpp
+  headers/drive.cpp
   headers/error.cpp
   headers/export.cpp
   headers/flow.cpp

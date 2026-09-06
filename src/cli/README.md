@@ -67,6 +67,11 @@ byte, cursor, and per-ref outcome lines, and returns failure when any ref is ref
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
 
+`drive.cpp` configures or reopens a public `drive_client`, prints the persisted three-tree and
+per-reference state, and attaches `--watch` to the checkout daemon after the first successful
+one-shot reconciliation. `history.cpp` lists node-following path versions and restores one as an
+ordinary repository drip through the public repository API.
+
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
 

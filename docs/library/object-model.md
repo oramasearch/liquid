@@ -16,14 +16,15 @@ https://github.com/oramasearch/automerge-cpp/issues/13. The dependency tip adopt
 closes that epic: change hashes and chunk encoding are upstream-compatible, public failures are
 checked, transactions roll back, commit metadata and incremental saves exist, remote changes
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
-checkpoints can be loaded shallowly.
+checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, and #41.** The private automerge-cpp wrapper, canonical CBOR
-codec, versioned sync framing and drip journal are implemented. Repository creation and opening,
-working-tree reads and writes, recorded moves and removals, snapshots and changes, references,
-composition, conflict values, session-scoped operation inversion, historical document reads,
-advisory locks, and the repository status are implemented over either a repository-local store or
-a caller-owned store shared by multiple repositories.
+**Status: implemented for liquid #2, #3, #41, and #195's history/conflict persistence.** The private automerge-cpp
+wrapper, canonical CBOR codec, versioned sync framing and drip journal are implemented. Repository
+creation and opening, working-tree reads and writes, recorded moves and removals, snapshots and
+changes, references, composition, persisted conflict values, path history and restore,
+session-scoped operation inversion, historical document reads, advisory locks, and repository status
+are implemented over either a repository-local store or a caller-owned store shared by multiple
+repositories.
 
 ## The two layers, precisely
 
@@ -192,11 +193,13 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
    drip message and millisecond timestamp through `CommitOptions`; the signed liquid drip and
    change records remain the authority for attribution.
 3. **Remote observation uses patches**: apply, merge, and sync receive use the
-   `*_with_patches` entry points. Every returned `std::expected` is checked before the candidate
-   document replaces the active document.
-4. **Persistence uses compact checkpoints**: `save_compact()` output is stored at every cut and
-   every 64 drips, the active directory is reopened with `load_shallow()`, and later journaled
-   drips are replayed on that checkpoint.
+   `*_with_patches` entry points. Sync batches are received into blank checked documents before
+   those documents merge into populated candidates. Every returned `std::expected` is checked
+   before the candidate document replaces the active document.
+4. **Persistence checks its checkpoints**: `save_compact()` output is preferred at every cut and
+   every 64 drips. It is immediately reopened as a sync-capable document; a compact form that fails
+   that check is replaced with complete upstream history bytes. Later journaled drips replay on
+   the checked checkpoint.
 5. **Errors remain values across the wrapper**: local operation failures become
    `errc::invalid_argument`; malformed saves, changes, merges, and sync input become
    `errc::corrupt`. A failed external application leaves the active document unchanged.
@@ -221,6 +224,8 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `operations()` / `undo(op_id)` | every mutation appends an `op` record to `ops` (`{ id, kind, from, to, at, by, session, inverse }`). `operations()` returns them newest first; `undo` applies the selected inverse as a new operation and returns applied and skipped paths. Undo never rewrites history. |
 | `undo_session(session, options)` | reverses the matching session newest first, optionally restricted to paths or drip IDs. Each touched directory is one wrapper transaction; candidates are published only after every transaction succeeds. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
+| `history(path)` | walk snapshots newest first, discover the path's `node_id`, and follow that identity through moves; return values, deletions, actors, timestamps and messages. |
+| `restore(path, change)` | read the historical blob and append an ordinary write drip at the requested path; no ref or earlier change is modified. |
 
 ### Operation records and inverses
 
@@ -317,7 +322,7 @@ The layout from here:
   the `node_id` of the root directory, and **`dirs`: a map from directory `node_id` to the digest of
   that directory document's latest saved bytes in the store**. That map is the mutable name→content
   indirection a content-addressed store lacks: to load a directory, look its `node_id` up in `dirs`,
-  `store.get` the digest, `document::load_shallow`. A directory document is saved (and `dirs` updated in one
+  `store.get` the digest, and open either checkpoint encoding as a full document. A directory document is saved (and `dirs` updated in one
   repository-document transaction) at every cut and at a configurable interval; between saves the
   journal's drips replay onto the loaded document. The repository document itself is saved to the
   store at the same moments and its digest is written to `LIQUID_REPO` at the repository root,
@@ -371,8 +376,9 @@ preparation process.
 
 The measured open became 16.7% faster. Peak RSS was effectively unchanged (+1.656 MiB, +0.6%).
 Directory documents remain lazy, so this measures repository-document recovery, the final journal
-interval, checkpoint publication, and store setup. Compact/shallow loading bounds the history of a
-directory when that directory is first accessed and after every later checkpoint.
+interval, checkpoint publication, and store setup. Those measurements record the shallow-loading
+implementation used by liquid #136; liquid #195 instead validates the bounded drive workload with
+sync-capable active directory documents.
 
 Reproduce the workload with:
 
@@ -388,11 +394,11 @@ build-measure/tests/liquid-repository-open-measure open build-measure/open-1
 
 `LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
 written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
-is a private CRDT document cached by its `node_id`; saving a checkpoint writes `save_compact()`
-bytes to the store, refreshes its `dirs` entry, and replaces the active instance with
-`load_shallow()` of those same bytes. A checkpoint occurs at `cut` and after the configured drip
+is a private CRDT document cached by its `node_id`; saving a checkpoint prefers `save_compact()`
+bytes, verifies that they reopen as a full document, and falls back to complete upstream history
+bytes when needed. The checked bytes refresh the `dirs` entry and replace the active instance. A checkpoint occurs at `cut` and after the configured drip
 interval (64 by default). The checkpoint digest and heads are published before journal entries
-covered by those heads are retired. On open, each directory document is loaded shallowly and
+covered by those heads are retired. On open, each directory document is loaded sync-capable and
 restored lazily against the journaled working tree before its next mutation. Matching entries are
 left intact, so recovery is idempotent across process restarts.
 
@@ -400,12 +406,10 @@ The actor derivation's device input is the repository checkout path. Two clones 
 repository therefore author under different automerge actors and may create valid concurrent
 sequences; reopening the same checkout keeps its actor stable.
 
-The compact checkpoint bytes are also the full-history archive: loading them with `load()` instead
-of `load_shallow()` reconstructs the pre-checkpoint graph when an old branch or historical query
-needs it. The active shallow document accepts changes whose dependency closure reaches the
-checkpoint heads. A change based only on older pruned heads must be routed to that archive or to a
-fresh snapshot; retiring the archive is valid only after no supported peer or historical query can
-name those heads.
+Compact checkpoint bytes can reconstruct a full document with `load()`; states that cannot do so
+are persisted directly as complete history bytes. Active documents therefore accept synchronization
+dependencies and historical queries through one checked load path. Retiring older stored archives
+is valid only after no supported peer or historical query can name those heads.
 
 Checkpoints written before this dependency bump do not load because the pre-#15 private change
 encoding and hashes are intentionally incompatible. No repository data exists in that format. If
@@ -442,7 +446,10 @@ change digest is the digest of its canonical bytes and is never an automerge has
 - Conflict: create a repository, write and cut `a.txt`, clone it twice, write different values in
   each clone, and exchange directory-document sync frames both ways. Each working copy keeps its
   CRDT-selected entry and reports one `a.txt` conflict value containing the base, left and right
-  references. The next cut carries that value; an ordinary resolution write clears it.
+  references. The next cut carries that value, repository reopen preserves it, and an ordinary
+  resolution write clears it.
+- Path history: write two versions, move and delete the path, then query by the moved name. Restore
+  the first change and assert that it adds one pending drip while the prior log head is unchanged.
 
 The Phase 1 merge helper preserves both differing object references in a `conflict` value. The
 entry remains readable from the local directory document while callers resolve that value.
