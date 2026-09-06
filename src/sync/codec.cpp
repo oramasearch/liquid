@@ -293,6 +293,15 @@ auto decode_item(std::uint8_t type, const cbor::value& payload) -> result<sync_i
         return sync_item{
             .kind = sync_item_kind::reference, .name = *name, .reference = change_id{*parsed}};
     }
+    if (type == static_cast<std::uint8_t>(sync_item_kind::presence)) {
+        const auto* body_field = find(payload, "body");
+        const auto* body =
+            body_field ? std::get_if<cbor::value::bytes>(&body_field->data) : nullptr;
+        if (!body) {
+            return std::unexpected(failure("invalid presence frame"));
+        }
+        return sync_item{.kind = sync_item_kind::presence, .body = *body};
+    }
     return std::unexpected(failure("unknown metadata frame type"));
 }
 
@@ -312,6 +321,9 @@ auto item_value(const sync_item& item) -> cbor::value {
                     {"node", bytes(item.directory)},
                     {"root", item.root},
                     {"message", bytes(item.body)}});
+    }
+    if (item.kind == sync_item_kind::presence) {
+        return map({{"body", bytes(item.body)}});
     }
     return map({{"name", item.name}, {"change", to_string(item.reference.value)}});
 }

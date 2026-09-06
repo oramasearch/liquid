@@ -75,9 +75,12 @@ auto abi(int argc, char** argv) -> int;
 auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
+auto config(int argc, char** argv) -> int;
 auto project(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
+auto session(int argc, char** argv) -> int;
+auto compact(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -243,6 +246,7 @@ constexpr auto flags_wrap = std::to_array<flag>({
      "Set driver parallelism and compilation-database width.",
      "runtime default"},
     {"--target", "<triple>", "Select configure facts for a target triple.", "host target"},
+    {"--session", "<id>", "Run the wrapped command in this private repository session.", "none"},
     {"--install-prefix",
      "<absolute-path>",
      "Rewrite install-tree paths for this destination prefix.",
@@ -319,7 +323,7 @@ constexpr auto flags_build = std::to_array<flag>({
      "<count>",
      "Set driver parallelism and compilation-database width.",
      "runtime default"},
-    {"--target", "<triple>", "Select configure facts for a target triple.", "host target"},
+    {"--target", "<name>", "Build this declared configuration target.", "none"},
     {"--remote", "<endpoint>", "Use a stock REAPI remote endpoint.", "none"},
     {"--scheduler", "<endpoint>", "Use a liquid scheduler endpoint.", "none"},
     {"--remote-instance", "<name>", "Select the remote instance.", "empty"},
@@ -357,6 +361,18 @@ constexpr auto flags_worker = std::to_array<flag>({
 constexpr auto flags_docs = std::to_array<flag>({
     {"--format", "<markdown|json|man>", "Select the output format.", "markdown"},
     {"--out", "<dir>", "Write generated files below this directory.", "standard output"},
+});
+constexpr auto flags_config = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--trace", {}, "Include source and generated-record origins.", "false"},
+});
+constexpr auto flags_session = std::to_array<flag>({
+    {"--from", "<file>", "Read session-write content from this file.", "required for write"},
+    {"--message", "<text>", "Record this message when publishing a session.", "empty"},
+});
+constexpr auto flags_compact = std::to_array<flag>({
+    {"--epoch", {}, "Checkpoint the repository's current epoch.", "required"},
+    {"--min-ack-peers", "<count>", "Require this many peer acknowledgements.", "0"},
 });
 
 constexpr auto normal_exit = "0 on success, 1 on an operation failure, and 2 for invalid usage.";
@@ -445,6 +461,17 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::resolve},
+    {"config",
+     "config check <file|dir> | config lower <file> [--json] [--trace] | config format <file>",
+     "check, lower, or format .liquid configuration",
+     "available",
+     flags_config,
+     "Check configuration documents, inspect their lowered form, or rewrite one in canonical "
+     "format.",
+     "liquid config lower liquid.liquid --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::config},
     {"project",
      "project <oci|deb|rpm|apk|helm> <result|install-tree> --name <name> --version <version> "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
@@ -671,6 +698,27 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::locks_unlock},
+    {"session",
+     "session <start <delegation>|write <id> <path> --from <file>|publish <id> [--message "
+     "<text>]|discard <id>>",
+     "manage a private speculative replica",
+     "available",
+     flags_session,
+     "Start, write, publish, or discard a delegated private repository session.",
+     "liquid session publish <session-id> --message \"ready for review\"",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::session},
+    {"compact",
+     "compact --epoch [--min-ack-peers <count>]",
+     "checkpoint a repository epoch",
+     "available",
+     flags_compact,
+     "Checkpoint current document heads and optionally wait for peer acknowledgements.",
+     "liquid compact --epoch --min-ack-peers 2",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::compact},
     {"mount",
      "mount <mountpoint> [--read-only]",
      "mount a lazy working tree",
@@ -888,7 +936,8 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::child_command,
      liquid_cli::wrap},
     {"build",
-     "build [target] | build --plan [target] | build --events <command> [args...] | "
+     "build --target <name> [--json] | build [target] | build --plan [target] | build --events "
+     "<command> [args...] | "
      "build --profile [remote options] <command> [args...] | build trace [--chrome]",
      "plan or start a configured repository build, profile a command, stream events, or export a "
      "trace",

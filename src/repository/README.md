@@ -114,6 +114,10 @@ shallow documents.
 `repository::store_symbols` stores one canonical symbol record and its source-blob association.
 `repository::symbols` resolves and decodes that content-addressed value.
 
+Session forks retain private directory documents and journal state on the caller-owned store until
+publish coalesces their net directory effects into base-checked shared drips. Repository metadata
+also records semantic leases, expiring presence, and acknowledged checkpoint epochs.
+
 Structural-edit preview reads those working-tree blobs and symbol records, producing exact
 range-local replacements and refusal records. Apply validates every before digest before the
 first write, replays only the previewed replacements through `repository::write`, checks after

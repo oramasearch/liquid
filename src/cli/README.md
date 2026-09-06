@@ -31,6 +31,9 @@ policy parsing through public repository APIs. Status projects persisted agent p
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
 
+`session.cpp` starts, publishes, and discards private replicas through the public session API.
+`attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
+
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new
 random identifier; callers can pass the same explicit session to `wrap --session`.
@@ -117,6 +120,10 @@ restores one as an ordinary repository drip through the public repository API.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).
+
+`configuration.cpp` implements `config check`, `config lower`, `config format`, and the
+configuration-backed `build --target` path entirely through the public configuration and repository
+APIs. Generator execution remains an ordinary library build action.
 
 `history.cpp` implements `ops` through the public operation-log API. Its JSON form includes the
 operation session. `repo.cpp` implements `log --ops` through the signed drip API. Undo accepts one

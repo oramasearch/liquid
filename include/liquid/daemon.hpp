@@ -17,6 +17,7 @@
 #include "liquid/flow.hpp"
 #include "liquid/graph.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/session.hpp"
 
 namespace liquid {
 
@@ -31,6 +32,10 @@ public:
 
     [[nodiscard]] virtual auto name() const -> std::string = 0;
     [[nodiscard]] virtual runtime::task<void> deliver(daemon_delivery delivery) = 0;
+    [[nodiscard]] virtual runtime::task<void> deliver_presence(liquid::presence value) {
+        static_cast<void>(value);
+        co_return result<void>{};
+    }
     [[nodiscard]] virtual auto detail() const -> std::optional<std::string> {
         return std::nullopt;
     }
@@ -96,6 +101,7 @@ public:
                                                            edit_attribution attribution);
     [[nodiscard]] runtime::task<edit_result> apply_edit(edit_preview preview);
     [[nodiscard]] runtime::task<void> report_consumer_lag(std::string name, std::uint64_t behind);
+    [[nodiscard]] runtime::task<void> report_presence(liquid::presence value);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();
 

@@ -14,6 +14,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
 | [`search`](search.md) | search paths and contents | available |
 | [`resolve`](resolve.md) | concretise package specifications | available |
+| [`config`](config.md) | check, lower, or format .liquid configuration | available |
 | [`project`](project.md) | project a build into an installable package, image, or chart | available |
 | [`log`](log.md) | show or verify change, signed drip, or timestamp history | available |
 | [`cut`](cut.md) | cut the working change | available |
@@ -36,6 +37,8 @@ Each command page is generated from the same metadata used to validate flags and
 | [`undo`](undo.md) | undo the newest, named, or session operations | available |
 | [`lock`](lock.md) | advisory-lock a path | available |
 | [`unlock`](unlock.md) | remove an advisory lock | available |
+| [`session`](session.md) | manage a private speculative replica | available |
+| [`compact`](compact.md) | checkpoint a repository epoch | available |
 | [`mount`](mount.md) | mount a lazy working tree | available where FUSE is available |
 | [`materialise`](materialise.md) | write a full working tree | available |
 | [`gc`](gc.md) | checkpoint and collect a repository | available |

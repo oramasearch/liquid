@@ -31,6 +31,7 @@ add_executable(liquid-tests
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  config/test_configuration.cpp
   resolve/test_resolution.cpp
   workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
@@ -40,6 +41,7 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
   test_repository.cpp
+  test_collaboration.cpp
   test_stale_reasoning.cpp
   test_runtime.cpp
   test_secret.cpp
@@ -361,6 +363,11 @@ if(LIQUID_BUILD_CLI)
         --work ${CMAKE_CURRENT_BINARY_DIR}/guides-run)
     set_tests_properties(guides-run PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   endif()
+  add_test(NAME cli-configuration
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONFIG_ROOT=${CMAKE_CURRENT_BINARY_DIR}/configuration-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/configuration.cmake)
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -542,6 +549,7 @@ add_executable(liquid-header-tests
   headers/admission.cpp
   headers/attestation.cpp
   headers/build.cpp
+  headers/configuration.cpp
   headers/daemon.cpp
   headers/drip.cpp
   headers/edit.cpp
@@ -566,6 +574,7 @@ add_executable(liquid-header-tests
   headers/repository.cpp
   headers/resolve.cpp
   headers/runtime.cpp
+  headers/session.cpp
   headers/store.cpp
   headers/sync.cpp
   headers/version.cpp
@@ -645,6 +654,12 @@ add_executable(liquid-crdt-measure EXCLUDE_FROM_ALL crdt/measure_document.cpp)
 target_sources(liquid-crdt-measure PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 target_include_directories(liquid-crdt-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-crdt-measure PRIVATE
+  liquid::liquid automerge-cpp::automerge-cpp)
+
+add_executable(liquid-epoch-measure EXCLUDE_FROM_ALL crdt/measure_epoch.cpp)
+target_sources(liquid-epoch-measure PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
+target_include_directories(liquid-epoch-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-epoch-measure PRIVATE
   liquid::liquid automerge-cpp::automerge-cpp)
 
 add_executable(liquid-repository-open-measure EXCLUDE_FROM_ALL repository/measure_open.cpp)

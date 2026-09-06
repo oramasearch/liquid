@@ -14,6 +14,9 @@ outside the public `liquid/` header tree or the CLI's own metadata header. The `
 cache.
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
+`configuration.cmake` checks a directory, lowers source origins in text and JSON, and formats the
+same document twice to pin idempotence.
+The help/documentation comparison also pins the `scheduler` and `worker` command names.
 The scenario also pins `remote_bytes` in the status JSON contract.
 It maps an anchor from the imported change through a later rename and checks the returned path and
 flags.

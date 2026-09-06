@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid build [target] | build --plan [target] | build --events <command> [args...] | build --profile [remote options] <command> [args...] | build trace [--chrome]
+liquid build --target <name> [--json] | build [target] | build --plan [target] | build --events <command> [args...] | build --profile [remote options] <command> [args...] | build trace [--chrome]
 ```
 
 ## Description
@@ -21,7 +21,7 @@ Plan or execute a configured graph, wrap a child command, stream events, or expo
 | `--profile` | — | Run a child command through the observed wrapper. | false |
 | `--chrome` | — | Write the latest trace as Chrome trace-event JSON. | false |
 | `--jobs` | `<count>` | Set driver parallelism and compilation-database width. | runtime default |
-| `--target` | `<triple>` | Select configure facts for a target triple. | host target |
+| `--target` | `<name>` | Build this declared configuration target. | none |
 | `--remote` | `<endpoint>` | Use a stock REAPI remote endpoint. | none |
 | `--scheduler` | `<endpoint>` | Use a liquid scheduler endpoint. | none |
 | `--remote-instance` | `<name>` | Select the remote instance. | empty |

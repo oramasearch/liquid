@@ -83,9 +83,20 @@ public:
         co_return {};
     }
 
+    liquid::runtime::task<void> deliver_presence(liquid::presence value) override {
+        std::lock_guard lock(mutex_);
+        presence_.push_back(std::move(value));
+        co_return {};
+    }
+
     [[nodiscard]] auto deliveries() const -> std::uint64_t {
         std::lock_guard lock(mutex_);
         return deliveries_;
+    }
+
+    [[nodiscard]] auto presence_count() const -> std::size_t {
+        std::lock_guard lock(mutex_);
+        return presence_.size();
     }
 
 private:
@@ -93,6 +104,7 @@ private:
     std::vector<std::string>& order_;
     mutable std::mutex mutex_;
     std::uint64_t deliveries_{};
+    std::vector<liquid::presence> presence_;
 };
 
 class stalled_target final : public liquid::daemon_target {
@@ -165,6 +177,22 @@ TEST(Daemon, public_shapes_are_plain_and_opaque) {
     static_assert(sizeof(liquid::daemon) == sizeof(void*));
     static_assert(std::is_aggregate_v<liquid::daemon_options>);
     static_assert(std::is_aggregate_v<liquid::daemon_status>);
+}
+
+TEST(DaemonFanout, presence_reaches_every_local_target_without_advancing_drip_state) {
+    temporary_repository fixture;
+    auto order = std::vector<std::string>{};
+    auto first = std::make_shared<recording_target>("first", order);
+    auto second = std::make_shared<recording_target>("second", order);
+    auto fanout =
+        liquid::daemon_detail::fanout{fixture.path() / "presence-fanout-state", {first, second}};
+    ASSERT_TRUE(fanout.load());
+    auto delivered = liquid::runtime::block_on(fanout.deliver_presence(
+        {.path = "src/value.cpp", .activity = liquid::presence_activity::editing}));
+    ASSERT_TRUE(delivered) << delivered.error().message;
+    EXPECT_EQ(first->presence_count(), 1U);
+    EXPECT_EQ(second->presence_count(), 1U);
+    EXPECT_TRUE(fanout.replay_cursor().token.empty());
 }
 
 #ifndef _WIN32

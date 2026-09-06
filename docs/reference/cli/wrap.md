@@ -18,6 +18,7 @@ Run an unchanged build in the observed mount and reuse valid tool actions before
 |---|---|---|---|
 | `--jobs` | `<count>` | Set driver parallelism and compilation-database width. | runtime default |
 | `--target` | `<triple>` | Select configure facts for a target triple. | host target |
+| `--session` | `<id>` | Run the wrapped command in this private repository session. | none |
 | `--install-prefix` | `<absolute-path>` | Rewrite install-tree paths for this destination prefix. | none |
 | `--allow-embedded-prefix` | — | Allow artifacts that retain the configured install prefix. | false |
 | `--input` | `<name>=<result\|tree>` | Bind a named result or tree input; repeatable. | none |
