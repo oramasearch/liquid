@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=liquid Drive Overlay Provider
+Comment=Publishes liquid drive state badges for Dolphin
+Exec=@LIBEXEC@/liquid-overlay-provider
+OnlyShowIn=KDE;
+X-KDE-autostart-after=panel
+NoDisplay=true
