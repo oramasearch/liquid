@@ -406,9 +406,12 @@ add_library(libliquid
   src/cms.cpp
   src/daemon.cpp
   src/daemon/fanout.cpp
+  src/data.cpp
   src/drip.cpp
   src/drive/client.cpp
+  src/drive/settings.cpp
   src/delta.cpp
+  src/deploy.cpp
   src/edit.cpp
   src/edit_codec.cpp
   src/encryption/leaf.cpp
@@ -511,6 +514,7 @@ add_library(libliquid
   src/vfs/materialise.cpp
   src/vfs/observation.cpp
   src/vfs/request_queue.cpp
+  src/vfs/xattrs.cpp
 )
 if(APPLE)
   target_sources(libliquid PRIVATE src/capture/macos_watcher.cpp src/sandbox/macos.cpp)
@@ -595,7 +599,9 @@ if(LIQUID_BUILD_CLI)
     src/cli/capture.cpp
     src/cli/daemon.cpp
     src/cli/compose.cpp
+    src/cli/data.cpp
     src/cli/delta.cpp
+    src/cli/deploy.cpp
     src/cli/diff.cpp
     src/cli/edit.cpp
     src/cli/drive.cpp

@@ -22,6 +22,7 @@ struct vfs_entry {
     std::vector<std::uint64_t> chunk_sizes;
     digest content{};
     std::optional<remote_blob_location> remote;
+    bool remotely_available{};
 };
 
 struct LIQUID_EXPORT vfs_access {
@@ -41,6 +42,10 @@ struct LIQUID_EXPORT vfs_access {
     [[nodiscard]] static auto set_mode(repository& source, std::string path, std::uint32_t mode)
         -> runtime::task<void>;
     [[nodiscard]] static auto root_path(repository& source) -> result<std::filesystem::path>;
+    [[nodiscard]] static auto register_remote_source(repository& source,
+                                                     std::string id,
+                                                     std::shared_ptr<remote_blob_source> remote)
+        -> runtime::task<void>;
 };
 
 } // namespace liquid::repository_detail

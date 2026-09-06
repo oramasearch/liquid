@@ -10,8 +10,9 @@ and explicit embedded-prefix waiver; enforcement remains in the library publicat
 through the public observability API. Text and Chrome trace projections include the recorded
 execution decision and every cost-model input. `why.cpp` implements `liquid why` and `liquid cache
 stats` through the public build API, including scheduling fields, policy-refusal causes, and their
-JSON forms. `wrap.cpp` also
-parses `--target`, prints the probe-start count, and exposes foreign-target errors from the library.
+JSON forms. `wrap.cpp` also parses `--target` and `--session`, prints the probe-start count, and
+exposes foreign-target errors from the library. A session wrap resolves configured
+application-database branch URLs before the library computes action identity.
 `facts.cpp` implements list, show, and bundle export entirely through public build APIs. The commands
 never read the private action cache directly.
 
@@ -28,6 +29,10 @@ through the public repository API, runs an optional test filter, and prints each
 policy parsing through public repository APIs. Status projects persisted agent policy, and
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
+
+`data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
+prints live branch URLs but never prints configured base URLs. An omitted branch session is a new
+random identifier; callers can pass the same explicit session to `wrap --session`.
 
 `anchor.cpp` parses `<path>:<line>@<change> --to <change>`, calls the public text-anchor mapper,
 and prints the target coordinate plus moved, approximate, and deleted state. It does not inspect
@@ -75,6 +80,9 @@ by dependency; conflict and package-choice explanations use the stable library f
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`deploy.cpp` implements deployment creation, listing, rollback, and status through the public
+deployment API. It resolves the operator control-plane URL from `--control`, `LIQUID_CONTROL_PLANE`,
+or persisted repository configuration, and passes `LIQUID_TOKEN` only as a bearer credential.
 `review.cpp` implements lake review listing, display, creation, anchored comments, state updates,
 branch protections, and the polling watch entirely through `forge_client`. It reads `LIQUID_TOKEN`
 for the bearer and pins both line-oriented text and JSON output without exposing the token.
@@ -91,8 +99,11 @@ options. The library owns policy loading, TLS, review decisions, control routes,
 CLI only prints listener state and the explicit insecure-HTTP warning.
 `drive.cpp` configures or reopens a public `drive_client`, prints the persisted three-tree and
 per-reference state, and attaches `--watch` to the checkout daemon after the first successful
-one-shot reconciliation. `history.cpp` lists node-following path versions and restores one as an
-ordinary repository drip through the public repository API.
+one-shot reconciliation. It also prints pending uploads, hydration debt, path availability, and
+offline reasons; `pin` and `unpin` resolve the containing drive and call the public state API.
+`vfs.cpp` passes `LIQUID_TOKEN` to mounts that hydrate through a persisted drive endpoint. Both
+long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
+restores one as an ordinary repository drip through the public repository API.
 
 The public command table, replay output contract, and user-facing examples live in
 [`docs/cli/README.md`](../../docs/cli/README.md).

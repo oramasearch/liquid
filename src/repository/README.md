@@ -74,10 +74,19 @@ scheduler backend, TLS trust and client-key paths, request headers, deadline, ba
 read-only-by-default publication. The public
 accessor lets later wrap runs reuse the configuration without exposing document internals.
 
+The document also persists `config.data.databases` and private live branch state. Public status
+projects only branch IDs, sessions, declared names, branch URLs, mechanisms, and creation times;
+the configured base URL and branch-point fingerprint remain private. The data adapter checkpoints
+record addition or removal only after the corresponding PostgreSQL lifecycle step succeeds.
 The repository document also persists `config.hot_update`: the sandboxed restart-hook argument
 vector and the build-target/local-endpoint pairs consumed by the daemon. Creation and open reject
 empty hook arguments, duplicate target names, empty endpoints, or configured targets without a
 restart hook. The public accessor returns the effective stored configuration.
+
+The repository document persists `config.deploy`: one operator control-plane URL, named
+environment domain, variable, and opaque sealed-secret-reference settings, plus the optional
+preview-on-push policy. The public accessor returns this configuration without interpreting or
+resolving secret references.
 
 The private search adapter exposes only the repository checkout's `.liquid/index/` path to the
 search implementation. Public queries remain on `repository::search`; no index representation or
@@ -86,6 +95,8 @@ oramacore type crosses the public boundary.
 Remote file entries use the same working tree and canonical blob reference as local files.
 `store_remote_blob` registers metadata without reading content, `write_remote` records the entry,
 and repository status recursively sums chunk bytes that are not yet local.
+The private VFS adapter can register a runtime remote source on the repository's store, allowing a
+drive mount to resolve metadata-only sync records without exposing store internals publicly.
 
 Sync export pages signed drips, changes, per-directory upstream messages, refs, and content roots.
 Import works on repository and directory candidates, verifies TAAP signatures and checked CRDT

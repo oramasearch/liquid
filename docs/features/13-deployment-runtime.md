@@ -81,6 +81,11 @@ No Kubernetes knowledge required for the common path. What that provides:
 - Logs, metrics and traces.
 - Rollback to any prior state.
 
+**Implemented in liquid #84:** `liquid deploy` uses the operator-owned REST control plane through
+libliquid's HTTP client. It accepts only digest-pinned interim images, creates named environments,
+reports status, and records rollback targets. The control-plane contract is local until #124
+publishes its operator-owned OpenAPI document; liquid does not link Zetta or lake code.
+
 **No buildpacks.** Railway, Render and Heroku use heuristics (Nixpacks, Railpack,
 CNB) to guess how to build a repository. liquid does not guess — it *knows*, because
 it built it ([04](04-build-engine.md)). Every deployment carries exact provenance for

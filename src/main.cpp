@@ -59,6 +59,7 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto data(int argc, char** argv) -> int;
 auto drive(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
@@ -72,6 +73,7 @@ auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
+auto deploy(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -95,6 +97,11 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"data",
+     "data <branch|list|discard|promote> ...",
+     "manage session database branches",
+     "available with PostgreSQL client tools",
+     liquid_cli::data},
     {"write",
      "write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... "
      "[--on-stale refuse|disjoint|force]",
@@ -133,7 +140,7 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::path_history},
     {"drive",
-     "drive <sync <folder> <remote> [--watch]|status [folder]>",
+     "drive <sync <folder> <remote> [--watch]|status [folder]|pin <path>|unpin <path>>",
      "synchronize a drive folder",
      "available",
      liquid_cli::drive},
@@ -154,6 +161,13 @@ constexpr auto commands = std::to_array<command>({
      "review a lake change in place",
      "available",
      liquid_cli::review},
+    {"deploy",
+     "deploy [--control <url>] [--env <name>] [--image <ref@sha256:...>] [--to "
+     "<change|deployment>] "
+     "[--wait] | deploy <status|list> [--control <url>] [--env <name>] [--json]",
+     "create, inspect, or roll back an environment deployment",
+     "available",
+     liquid_cli::deploy},
     {"serve",
      "serve sync <path> [...] | serve admission --policy <file> [...]",
      "serve repository sync or image admission",

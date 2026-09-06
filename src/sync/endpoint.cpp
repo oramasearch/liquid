@@ -183,6 +183,7 @@ auto reference_outcomes(std::span<const sync_item> sent, std::span<const sync_re
 
 struct sync_endpoint::impl {
     net_detail::parsed_url url;
+    std::string source;
     sync_endpoint_options options;
 };
 
@@ -191,7 +192,8 @@ sync_endpoint::sync_endpoint(std::string repository_url, sync_endpoint_options o
     if (!parsed) {
         throw std::invalid_argument(parsed.error().message);
     }
-    impl_ = std::make_unique<impl>(impl{std::move(*parsed), std::move(options)});
+    impl_ = std::make_unique<impl>(
+        impl{std::move(*parsed), std::move(repository_url), std::move(options)});
 }
 
 sync_endpoint::~sync_endpoint() = default;
@@ -382,6 +384,45 @@ runtime::task<sync_report> sync_endpoint::pull(repository& destination) {
     co_return sync_report{.cursor = incoming->cursor,
                           .metadata_items = incoming->items.size(),
                           .received = *received};
+}
+
+runtime::task<sync_report> sync_endpoint::pull_metadata(repository& destination) {
+    auto request_document = sync_detail::metadata_document{};
+    request_document.cursor = impl_->options.cursor;
+    auto request = sync_detail::encode_metadata(request_document);
+    if (!request) {
+        co_return std::unexpected(request.error());
+    }
+    auto response = co_await endpoint_request(impl_->url,
+                                              impl_->options.bearer_token,
+                                              boost::http::method::post,
+                                              endpoint_target(impl_->url, "/sync/pull"),
+                                              content_type,
+                                              *request);
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    if (response->status < 200 || response->status >= 300) {
+        co_return std::unexpected(status_error(response->status, "pull", response->body));
+    }
+    auto incoming = sync_detail::decode_metadata(response->body);
+    if (!incoming) {
+        co_return std::unexpected(incoming.error());
+    }
+    auto session = sync_session{
+        repository_detail::sync_access::objects(destination), *this, impl_->source, {}};
+    auto received = co_await session.receive_metadata(incoming->objects);
+    if (!received) {
+        co_return std::unexpected(received.error());
+    }
+    auto imported = co_await destination.import_drips(incoming->items);
+    if (!imported) {
+        co_return std::unexpected(imported.error());
+    }
+    co_return sync_report{.cursor = incoming->cursor,
+                          .metadata_items = incoming->items.size(),
+                          .received = {.objects = received->trees + received->blobs},
+                          .bytes_remote = received->bytes_remote};
 }
 
 } // namespace liquid

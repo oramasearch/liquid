@@ -1,11 +1,11 @@
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <print>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 
 #include "liquid/repository.hpp"
@@ -36,6 +36,17 @@ auto open_repository() -> liquid::result<liquid::repository> {
     return liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
 }
 
+auto wait_for_interrupt() -> liquid::runtime::task<void> {
+    while (!interrupted) {
+        auto [delay_error] = co_await liquid::runtime::delay(std::chrono::milliseconds{100});
+        if (delay_error) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::io, delay_error.message(), "VFS mount"});
+        }
+    }
+    co_return liquid::result<void>{};
+}
+
 } // namespace
 
 auto vfs_mount(int argc, char** argv) -> int {
@@ -43,6 +54,9 @@ auto vfs_mount(int argc, char** argv) -> int {
         return usage("mount requires a mountpoint and optional --read-only");
     }
     auto options = liquid::mount_options{};
+    if (const auto* token = std::getenv("LIQUID_TOKEN")) {
+        options.bearer_token = token;
+    }
     if (argc == 2) {
         if (std::string_view{argv[1]} != "--read-only") {
             return usage("mount accepts only --read-only");
@@ -60,10 +74,11 @@ auto vfs_mount(int argc, char** argv) -> int {
     std::println("mounted {}", argv[0]);
     interrupted = 0;
     auto previous = std::signal(SIGINT, on_interrupt);
-    while (!interrupted) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{100});
-    }
+    auto waited = liquid::runtime::block_on(wait_for_interrupt());
     std::signal(SIGINT, previous);
+    if (!waited) {
+        return fail(waited.error());
+    }
     auto unmounted = liquid::runtime::block_on(mounted->unmount());
     if (!unmounted) {
         return fail(unmounted.error());

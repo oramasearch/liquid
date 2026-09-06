@@ -10,6 +10,10 @@ notes so that each claim has a clear role.
 | [`standards/`](standards/) | External standards liquid depends on. |
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, structural-edit operations, edit-surviving text anchors, compact/shallow CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, #174, and #205. |
+| [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, edit-surviving text anchors, checked compact-or-full CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, and #174. |
+| [`library/build-engine.md`](library/build-engine.md) | Phase 2's design plus #18's remote scheduling record, #166's paged public record enumeration, #193's public build streams, and #200's configured repository plans and one-call builds: action and result records, observation by the mount with per-platform enforcement, cache lookup, event ordering and JSON projection, retained timing and scheduling traces, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
+| [`library/data-branching.md`](library/data-branching.md) | Per-session PostgreSQL application-data branches, lifecycle and promotion guard, template-copy baseline, local reflink fast path, and sandboxed client-tool execution. |
+| [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, edit-surviving text anchors, compact/shallow CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, and #174. |
 | [`library/build-engine.md`](library/build-engine.md) | Phase 2's design plus #18's remote scheduling record, #26's content-addressed output trees and normalisation, #166's paged public record enumeration, #193's public build streams, and #200's configured repository plans and one-call builds: action and result records, named dependency inputs, observation by the mount with per-platform enforcement, cache lookup, event ordering and JSON projection, retained timing and scheduling traces, content-keyed configure facts, and how `liquid wrap` splits an existing build into actions. |
 | [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, #18 scheduling, #16 REAPI interoperability, and #63's scheduler and workers. |
 | [`library/workers.md`](library/workers.md) | Scheduler and worker protocol, bounded requeue, TAAP result identity, configuration, control endpoints, and deployment shape. |
@@ -38,10 +42,13 @@ notes so that each claim has a clear role.
 | [`library/runtime.md`](library/runtime.md) | The Capy task API, Corosio context, executor model, blocking-work adapter, and coroutine safety rules. |
 | [`library/http2.md`](library/http2.md) | Private Corosio HTTP/2 framing, HPACK, gRPC envelopes, and h2c/TLS ALPN interoperability proof. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
+| [`library/deploy.md`](library/deploy.md) | Operator control-plane deployment client, digest-pinned interim images, rollback, status, and the provisional OpenAPI contract. |
 | [`library/transparency.md`](library/transparency.md) | RFC 3161 timestamp and RFC 4998 evidence verification design, trust policy, and implementation notes. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/forge-client.md`](library/forge-client.md) | Lake review records, coroutine calls, anchor advancement, polling events, error mapping, and the installable forge double. |
 | [`library/drive.md`](library/drive.md) | Issue #195's persisted three-tree folder reconciliation, named conflict values, resumable sync transfer, path history and restore, daemon watcher, and bounded scan state. |
+| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
+| [`library/drive.md`](library/drive.md) | Issues #195 and #235's persisted three-tree reconciliation, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
 | [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
@@ -52,13 +59,17 @@ notes so that each claim has a clear role.
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
 | [`library/identity.md`](library/identity.md) | TAAP/1 identity documents, public canonical-CBOR codecs, rotation, signatures, and verification. |
-| [`library/vfs.md`](library/vfs.md) | Lazy chunk hydration, FUSE mounts, the request queue, full materialisation, and platform coverage. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
 | [`library/admission.md`](library/admission.md) | Image provenance statements, fail-closed admission policy, evidence sources, transparency behavior, TLS serving, and stable decisions. |
 | [`api/admission.md`](api/admission.md) | Kubernetes webhook, control, metrics, REST, OpenAPI, and MCP routes. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync, path history, flow status and retry output, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, drive sync and pin state, path history, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, named build inputs, retention explanations, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, flow status and retry output, retention explanations, capture, examples, and verification. |
 | [`cli/build-events.md`](cli/build-events.md) | The `liquid build --plan` and `--events` JSON-lines schemas, daemon operations, ordering, exit status, and edit behavior. |
 | [`cli/test.md`](cli/test.md) | CMake/native test discovery, filtering, cached action behavior, output, and exit status. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |

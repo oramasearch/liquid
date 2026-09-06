@@ -528,9 +528,16 @@ TEST(StructuralEdit, daemon_round_trip_and_cli_json_use_the_public_records) {
                        static_cast<std::streamsize>(encoded->size()));
     request_file.close();
     const auto output_path = cli_fixture.path() / "preview.json";
-    const auto command = std::string{"cd \""} + cli_fixture.path().string() + "\" && \"" +
-                         LIQUID_CLI + "\" edit apply \"" + request_path.string() +
-                         "\" --json > \"" + output_path.string() + "\"";
+    auto child_environment = std::string{};
+    const auto temporary_root = std::filesystem::temp_directory_path();
+    if (temporary_root.is_relative()) {
+        const auto absolute_root = std::filesystem::absolute(temporary_root);
+        const auto relative_root = std::filesystem::relative(absolute_root, cli_fixture.path());
+        child_environment = "TMPDIR=\"" + relative_root.string() + "\" ";
+    }
+    const auto command = std::string{"cd \""} + cli_fixture.path().string() + "\" && " +
+                         child_environment + "\"" + LIQUID_CLI + "\" edit apply \"" +
+                         request_path.string() + "\" --json > \"" + output_path.string() + "\"";
     ASSERT_EQ(std::system(command.c_str()), 0);
     auto output = std::ifstream{output_path};
     const auto json = std::string{std::istreambuf_iterator<char>{output}, {}};
