@@ -19,9 +19,16 @@ namespace liquid::identity_detail {
 [[nodiscard]] auto identifier(std::span<const std::byte> public_key,
                               std::string_view created_at,
                               std::string_view key_label) -> result<actor>;
+[[nodiscard]] auto identifier(std::span<const std::byte> public_key,
+                              std::string_view created_at,
+                              std::string_view key_label,
+                              std::string_view algorithm,
+                              std::string_view custody) -> result<actor>;
 [[nodiscard]] auto key_fingerprint(std::span<const std::byte> public_key,
                                    std::string_view created_at,
-                                   std::string_view key_label) -> result<std::string>;
+                                   std::string_view key_label,
+                                   std::string_view algorithm = "ed25519",
+                                   std::string_view custody = {}) -> result<std::string>;
 [[nodiscard]] auto canonical_signature(const signature& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto parse_signature(std::span<const std::byte> input) -> result<signature>;
 [[nodiscard]] auto canonical_document(const identity_document& document, bool include_signatures)

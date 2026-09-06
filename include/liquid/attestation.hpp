@@ -25,6 +25,7 @@ enum class attestation_subject_kind : std::uint8_t {
     artifact,
     model,
     library,
+    repository,
 };
 
 enum class attestation_field_type : std::uint8_t {

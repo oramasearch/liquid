@@ -17,7 +17,8 @@ same library as a pinned submodule, lake will. The mapped public headers compile
 error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
 store, liquid #199's pre-pack write-through callback and remote-registered local eviction,
 liquid #4's TAAP/1 actor identities,
-liquid #111's identity-key rotation and chain verification, and signed drips and changes, liquid #7's
+liquid #111's identity-key rotation and chain verification, liquid #81's software, FIDO2, and PIV
+identity backends, TPM-sealed KEK custody, and threshold release approval, signed drips and changes, liquid #7's
 trust-domain encrypted objects, liquid #51's pluggable local, recipient, cloud KMS, lake transit,
 and threshold-share KEK custody, liquid #53's versioned data-key rotation, revocation, and repository
 readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
@@ -479,6 +480,13 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
     binary lookup paths, and absolute package metadata. Liquid never rewrites existing binaries
     and does not require a fixed content-addressed install path. See
     [`docs/library/relocation.md`](docs/library/relocation.md).
+13. **Hardware command layers are owned by liquid over operating-system transports** (Steve,
+    2026-09-05; liquid-bridge decision 21). CTAP2 uses liquid's canonical CBOR over USB HID, PIV
+    sends APDUs through PC/SC, and the TPM 2.0 sealing subset uses `/dev/tpmrm0` or Windows TBS.
+    Tests inject protocol-level software doubles through those transport interfaces. Do not add
+    libfido2, OpenSC, or tpm2-tss. Design: [`docs/library/identity.md`](docs/library/identity.md),
+    [`docs/library/encryption.md`](docs/library/encryption.md), and
+    [`docs/library/release-approval.md`](docs/library/release-approval.md).
 
 **Still open:**
 

@@ -131,11 +131,15 @@ auto decode_change_id(const cbor::value& value) -> result<change_id> {
 }
 
 auto encode_actor(const actor& value) -> cbor::value {
-    return map({{"taap_id", cbor::value{value.taap_id}},
-                {"algorithm", cbor::value{value.algorithm}},
-                {"fingerprint", cbor::value{value.fingerprint}},
-                {"public_key", byte_string(value.public_key)},
-                {"key_fingerprint", cbor::value{value.key_fingerprint}}});
+    auto fields = cbor::value::map{{"taap_id", cbor::value{value.taap_id}},
+                                   {"algorithm", cbor::value{value.algorithm}},
+                                   {"fingerprint", cbor::value{value.fingerprint}},
+                                   {"public_key", byte_string(value.public_key)},
+                                   {"key_fingerprint", cbor::value{value.key_fingerprint}}};
+    if (!value.custody.empty() && value.custody != "software") {
+        fields.emplace_back("custody", value.custody);
+    }
+    return cbor::value{std::move(fields)};
 }
 
 auto decode_actor(const cbor::value& value) -> result<actor> {
@@ -144,6 +148,7 @@ auto decode_actor(const cbor::value& value) -> result<actor> {
     const auto* fingerprint = find(value, "fingerprint");
     const auto* public_key = find(value, "public_key");
     const auto* key_fingerprint = find(value, "key_fingerprint");
+    const auto* custody = find(value, "custody");
     const auto* identifier = taap_id ? std::get_if<std::string>(&taap_id->data) : nullptr;
     const auto* algorithm_text = algorithm ? std::get_if<std::string>(&algorithm->data) : nullptr;
     const auto* fingerprint_text =
@@ -154,7 +159,16 @@ auto decode_actor(const cbor::value& value) -> result<actor> {
     if (!identifier || !algorithm_text || !fingerprint_text || !key || !key_fingerprint_text) {
         return std::unexpected(corrupt("invalid attestation issuer"));
     }
-    return actor{*identifier, *algorithm_text, *fingerprint_text, *key, *key_fingerprint_text};
+    const auto* custody_text = custody ? std::get_if<std::string>(&custody->data) : nullptr;
+    if (custody && !custody_text) {
+        return std::unexpected(corrupt("invalid attestation issuer"));
+    }
+    return actor{*identifier,
+                 *algorithm_text,
+                 *fingerprint_text,
+                 *key,
+                 *key_fingerprint_text,
+                 custody_text ? *custody_text : std::string{"software"}};
 }
 
 auto encode_attribute_value(const attestation_value& value) -> cbor::value {
@@ -394,6 +408,9 @@ auto parse_subject_kind(std::string_view value) -> result<attestation_subject_ki
     }
     if (value == "library") {
         return attestation_subject_kind::library;
+    }
+    if (value == "repository") {
+        return attestation_subject_kind::repository;
     }
     return std::unexpected(corrupt("invalid attestation subject kind"));
 }

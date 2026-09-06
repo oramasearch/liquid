@@ -24,6 +24,7 @@ add_executable(liquid-tests
   test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_hardware_keys.cpp
   test_node_store.cpp
   test_object.cpp
   test_projection.cpp
@@ -122,6 +123,15 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_program(LIQUID_SWTPM_EXECUTABLE swtpm)
+  if(LIQUID_SWTPM_EXECUTABLE)
+    add_test(NAME tpm-swtpm
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tpm/run_swtpm.sh
+        $<TARGET_FILE:liquid-tests>
+        ${LIQUID_SWTPM_EXECUTABLE})
+  endif()
+endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME desktop-nautilus-badge-mapping
@@ -423,6 +433,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_test(NAME cli-release
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_RELEASE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/release-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/release.cmake)
   add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
   target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
   add_test(NAME cli-keys

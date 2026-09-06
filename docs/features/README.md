@@ -81,8 +81,8 @@ is wrong.
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
-| [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
-| [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |
+| [10](10-supply-chain.md) | Supply chain and signing | Signed builds, hardware-held identity keys, threshold release approval, reproducibility verification, and input policy. |
+| [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, TPM sealing, and dedup-preserving encryption. |
 | [12](12-search.md) | Search | Local BM25F and positional-trigram search over the working tree and named refs is implemented; published-artifact search follows the format registry. |
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
 | [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |

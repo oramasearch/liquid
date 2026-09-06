@@ -33,6 +33,9 @@ storage directly.
 
 `session.cpp` starts, publishes, and discards private replicas through the public session API.
 `attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
+`identity.cpp` selects software, FIDO2, or PIV rotation custody. `sign.cpp` signs a canonical digest
+with the active backend. `release.cpp` persists signed release policies and approvals and renders
+the distinct-signer threshold result.
 
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new

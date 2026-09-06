@@ -467,7 +467,11 @@ add_library(libliquid
   src/identity/custody/http.cpp
   src/identity/custody/lake.cpp
   src/identity/custody/shamir.cpp
+  src/identity/custody/tpm.cpp
+  src/identity/keys/keys.cpp
+  src/identity/keys/hid.cpp
   src/identity/taap.cpp
+  src/identity/threshold.cpp
   src/node_store.cpp
   src/node_store/service.cpp
   src/crypto/crypto.cpp
@@ -587,7 +591,17 @@ else()
                             $<TARGET_OBJECTS:liquid_monocypher_objects>)
 endif()
 if(WIN32)
-  target_link_libraries(libliquid PRIVATE bcrypt)
+  target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
+  target_link_libraries(libliquid PRIVATE bcrypt hid setupapi tbs winscard)
+elseif(APPLE)
+  target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
+  target_link_libraries(libliquid PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework PCSC")
+elseif(UNIX)
+  find_library(LIQUID_PCSC_LIBRARY pcsclite)
+  if(LIQUID_PCSC_LIBRARY)
+    target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
+    target_link_libraries(libliquid PRIVATE ${LIQUID_PCSC_LIBRARY})
+  endif()
 endif()
 include(GenerateExportHeader)
 generate_export_header(libliquid
@@ -647,12 +661,14 @@ if(LIQUID_BUILD_CLI)
     src/cli/test.cpp
     src/cli/repo.cpp
     src/cli/review.cpp
+    src/cli/release.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
     src/cli/resolve.cpp
     src/cli/search.cpp
     src/cli/secret.cpp
     src/cli/session.cpp
+    src/cli/sign.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp

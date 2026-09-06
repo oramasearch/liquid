@@ -19,6 +19,8 @@ namespace liquid::custody_detail {
     -> result<std::shared_ptr<key_provider>>;
 [[nodiscard]] auto make_shamir_provider(std::string parameters)
     -> result<std::shared_ptr<key_provider>>;
+[[nodiscard]] auto make_tpm_provider(std::string parameters)
+    -> result<std::shared_ptr<key_provider>>;
 [[nodiscard]] auto make_shamir_split(std::uint8_t threshold, std::uint8_t shares)
     -> result<custody_split>;
 

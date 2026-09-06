@@ -68,7 +68,9 @@ built binary under the build directory before CTest compares it with the committ
 | `import` | `import <path>` or `import git <path>` | Import a local tree or Git repository. | available |
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
-| `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `identity` | `identity [show\|rotate [--to software\|fido2\|piv:9c]] [--json]` | Show or rotate the device identity and select its key custody. | available |
+| `sign` | `sign <drip\|change\|artifact> <digest>` | Sign a canonical digest value with the current identity backend. | available |
+| `release` | `release policy set --threshold <k> --signer <id>...` or `release <approve\|verify> <artifact>` | Manage signed threshold release approval. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
 | `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
@@ -321,9 +323,25 @@ under a random Shamir KEK and prints the `n` shares once.
 
 Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
 `aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
-`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+`lake:<base-url>/<key>`, `shamir:<threshold>/<share-count>`, and `tpm:pcrs=<list>`. Secret credentials and Shamir
 shares are supplied through the environment described in
 [the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
+
+## Hardware identity and release approval
+
+`identity rotate --to software|fido2|piv:9c` creates a linked successor identity document while
+preserving the TAAP identity. `identity show` includes the active algorithm and custody. FIDO2
+prompts through the selected HID authenticator; PIV uses digital-signature slot `9c` through the OS
+PC/SC service. `sign <drip|change|artifact> <digest>` prints the canonical signature object as hex
+and the signer identity.
+
+`release policy set --threshold <k> --signer <id>...` signs the repository's release role and
+writes `.liquid/release/policy.cbor`. `--role` defaults to `targets`; `--not-after` accepts an RFC
+3339 UTC expiry. `release approve <artifact>` writes the current identity's approval, and `release
+verify <artifact>` counts distinct valid allowed identities, prints missing identities, and exits 1
+when the policy threshold is not met. See
+[`../library/release-approval.md`](../library/release-approval.md) for the signed profiles and trust
+models.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
 Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
 is itself the package directory. Specs containing spaces must be passed as one quoted argument.
@@ -587,7 +605,11 @@ liquid import ../source-tree
 liquid import git ../source-repository
 liquid export git ../exported-repository main
 liquid retain explain blake3:<object-digest>
-liquid identity rotate
+liquid identity rotate --to fido2
+liquid sign artifact blake3:<artifact-digest>
+liquid release policy set --threshold 2 --signer <taap-id-a> --signer <taap-id-b>
+liquid release approve blake3:<artifact-digest>
+liquid release verify blake3:<artifact-digest>
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
 liquid attest image registry.example/app@sha256:<image-digest> --tree blake3:<tree-digest> --result blake3:<result-digest>

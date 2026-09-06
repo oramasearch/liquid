@@ -39,6 +39,8 @@ auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
 auto keys(int argc, char** argv) -> int;
+auto release(int argc, char** argv) -> int;
+auto sign(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
@@ -194,6 +196,16 @@ constexpr auto flags_keys = std::to_array<flag>({
     {"--to", "<custody-uri>", "Rewrap a data key for this custody URI.", "none"},
     {"--threshold", "<count>", "Set the number of shares required to recover a key.", "none"},
     {"--shares", "<count>", "Set the number of custody shares to create.", "none"},
+});
+constexpr auto flags_identity = std::to_array<flag>({
+    {"--to", "<software|fido2|piv:9c>", "Select the new identity-key custody.", "software"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_release = std::to_array<flag>({
+    {"--threshold", "<count>", "Require this many distinct release signers.", "required"},
+    {"--signer", "<TAAP-id>", "Allow this TAAP identity; repeatable.", "required"},
+    {"--role", "<name>", "Name the TUF-style release role.", "targets"},
+    {"--not-after", "<UTC>", "Set the signed policy expiry.", "90 days from creation"},
 });
 constexpr auto flags_attest = std::to_array<flag>({
     {"--tree", "<digest>", "Bind an image attestation to this repository tree.", "none"},
@@ -784,15 +796,35 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::retain},
     {"identity",
-     "identity [show|rotate] [--json]",
+     "identity [show|rotate [--to software|fido2|piv:9c]] [--json]",
      "show or rotate the device identity",
      "available",
-     flag_json,
+     flags_identity,
      "Show the device TAAP identity or rotate its signing key with a linked successor document.",
      "liquid identity rotate --json",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::identity},
+    {"sign",
+     "sign <drip|change|artifact> <digest>",
+     "sign a digest with the current identity key",
+     "available",
+     {},
+     "Sign the canonical digest value with the current software, FIDO2, or PIV identity key.",
+     "liquid sign artifact blake3:<artifact-digest>",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::sign},
+    {"release",
+     "release policy set --threshold <k> --signer <id>... | release <approve|verify> <artifact>",
+     "manage threshold release approval",
+     "available",
+     flags_release,
+     "Create a signed release policy, add an independent approval, or evaluate its threshold.",
+     "liquid release policy set --threshold 2 --signer taap:alice --signer taap:bob",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::release},
     {"keys",
      "keys <show|rewrap|rotate|revoke|split> ...",
      "inspect and manage data-key custody",
