@@ -77,7 +77,9 @@ interrupted-transfer resume, per-reference refusal reporting, stable-node path h
 `liquid drive`, and the daemon drive target. Issue #235 adds persisted online-only,
 available-offline, and excluded path state; pin and unpin commands; xattrs; policy-driven and
 offline-aware hydration; queued-write and hydration-debt status; and GNOME Files and Dolphin badge
-providers ([`drive.md`](drive.md)).
+providers. Issue #247 adds `liquid clone` over the same client, including first-pull identity
+adoption, persisted remote configuration, full plain-checkout materialization, and stable JSON
+output ([`drive.md`](drive.md), [`../cli/README.md`](../cli/README.md)).
 
 **VFS.** VFS full materialisation works on every platform; lazy mounts use libfuse3 on Linux and
 optional macFUSE on macOS ([`vfs.md`](vfs.md)).
