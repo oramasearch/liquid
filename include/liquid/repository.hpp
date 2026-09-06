@@ -18,6 +18,7 @@
 #include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/format.hpp"
 #include "liquid/flow.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
@@ -194,8 +195,32 @@ enum class tree_diff_kind : std::uint8_t {
     conflicted,
 };
 
+enum class container_diff_kind : std::uint8_t {
+    added,
+    removed,
+    modified,
+};
+
+struct container_diff;
+
+struct LIQUID_EXPORT container_diff_entry {
+    std::string path;
+    container_diff_kind kind{container_diff_kind::modified};
+    std::optional<digest> old_digest;
+    std::optional<digest> new_digest;
+    std::shared_ptr<container_diff> nested;
+};
+
+struct LIQUID_EXPORT container_diff {
+    std::string codec;
+    format_tier tier{format_tier::chunk_only};
+    std::vector<container_diff_entry> entries;
+    bool truncated{};
+};
+
 struct LIQUID_EXPORT tree_diff_options {
     bool text{};
+    bool formats{};
 };
 
 struct LIQUID_EXPORT tree_diff_entry {
@@ -209,6 +234,7 @@ struct LIQUID_EXPORT tree_diff_entry {
     std::optional<digest> old_blob;
     std::optional<digest> new_blob;
     std::optional<std::vector<line_change>> line_hunks;
+    std::optional<container_diff> container;
     std::vector<digest> old_conflicts;
     std::vector<digest> new_conflicts;
 };

@@ -49,7 +49,8 @@ stable JSON and fails when any generated file differs.
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
 | `split` | `split <path> <into>` | Split a subtree into a repository. | available |
 | `combine` | `combine <repository> [--at <path>]` | Combine another repository. | available |
-| `ops` | `ops [--json]` | List recorded operations. | available |
+| `diff` | `diff <a> <b> [path] [--text] [--formats] [--json]` | Compare refs or change digests, optionally decoding changed containers. | available |
+| `ops` | `ops [--json]` | Alias for `log --ops`. | available |
 | `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
 | `lock` | `lock <path>` | Advisory-lock a path. | available |
 | `unlock` | `unlock <path>` | Remove an advisory lock. | available |
@@ -174,6 +175,11 @@ error: <code>: <message> (<context>)
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
 
+`diff` accepts each side as a ref name or change digest. Without opt-ins it prints one line per
+changed tree entry. `--text` computes line hunks, and `--formats` prints the container path with its
+codec and observed tier followed by indented added, removed, or modified logical entries. Nested
+containers are indented again. An optional path selects that entry or subtree. `--json` returns an
+array whose entries carry `path`, `changes`, and an optional recursive `container` value.
 `edit rename <path>:<line>:<column> <new-name>`, `edit extract
 <path>:<start-line>-<end-line> <name> [--value]`, and `edit move
 <path>:<line>:<column> <to-path> [--at <line>]` construct their public libliquid requests. `edit

@@ -21,7 +21,7 @@ auto repo_write(int argc, char** argv) -> int;
 auto repo_log(int argc, char** argv) -> int;
 auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
-auto repo_diff(int argc, char** argv) -> int;
+auto diff(int argc, char** argv) -> int;
 auto tree_move(int argc, char** argv) -> int;
 auto tree_remove(int argc, char** argv) -> int;
 auto anchor(int argc, char** argv) -> int;
@@ -67,6 +67,7 @@ auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto node_store(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
+auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
@@ -81,6 +82,11 @@ using liquid_cli::command;
 using liquid_cli::flag;
 
 constexpr auto flag_json = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_diff = std::to_array<flag>({
+    {"--text", {}, "Include textual line-difference details.", "false"},
+    {"--formats", {}, "Inspect supported structured container formats.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
 constexpr auto flags_write = std::to_array<flag>({
@@ -348,6 +354,11 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::search},
+    {"diff",
+     "diff <a> <b> [path] [--text] [--formats] [--json]",
+     "compare two repository changes",
+     "available",
+     liquid_cli::diff},
     {"resolve",
      "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
      "<package> <spec>... [--universe <path>] [--reuse] [--json]",
@@ -390,16 +401,15 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::repo_refs},
     {"diff",
-     "diff <old-change> <new-change>",
-     "compare two changes",
+     "diff <a> <b> [path] [--text] [--formats] [--json]",
+     "compare changes and supported container formats",
      "available",
-     {},
-     "Compare two repository changes and report added, removed, modified, moved, mode, and "
-     "conflict state.",
-     "liquid diff blake3:<old-change> blake3:<new-change>",
+     flags_diff,
+     "Compare two changes, optionally limit the result to a path, and inspect supported formats.",
+     "liquid diff main feature --text --json",
      normal_exit,
      argument_policy::ordinary,
-     liquid_cli::repo_diff},
+     liquid_cli::diff},
     {"history",
      "history <path> [--restore <change>]",
      "show or restore path history",

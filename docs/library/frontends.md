@@ -23,6 +23,11 @@ third-party type. A dynamic module exports exactly `liquid_frontend_get_module_v
 linked module passes the same descriptor to `frontend_module::linked`. The descriptor registers a
 module name and one or more language names, then supplies these operations:
 
+The format registry follows the same module pattern in the separately versioned
+[`format_abi.h`](../../include/liquid/format_abi.h): one C descriptor, canonical-CBOR operation
+values, owned bytes, and progress/cancellation callbacks. The two descriptors remain purpose-built
+because their operation sets differ.
+
 | Operation | Input | Canonical-CBOR result |
 |---|---|---|
 | `units` | language, source blob, context | array of unit maps |

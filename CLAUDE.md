@@ -78,6 +78,9 @@ publication, per-drip search fan-out target, public working/ref query API, and `
 Liquid #67 adds measured selection among BM25F, verified trigrams, and parallel mapped scans,
 cursor-based stale-index exclusion, common located hit records, the public executed-plan API, and
 `liquid search --explain`.
+Liquid #29 adds the versioned format-codec C ABI and registry; dependency-free ZIP, tar, HDF5,
+Parquet, and SQLite readers; deterministic tar output; opt-in container diff; archive search; and
+content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.

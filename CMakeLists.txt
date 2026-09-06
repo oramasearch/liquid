@@ -390,10 +390,16 @@ add_library(libliquid
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
+  src/formats/hdf5/hdf5.cpp
   src/formats/binary/elf.cpp
   src/formats/binary/macho.cpp
   src/formats/binary/pe.cpp
   src/formats/json.cpp
+  src/formats/parquet/parquet.cpp
+  src/formats/registry.cpp
+  src/formats/sqlite/sqlite.cpp
+  src/formats/tar/tar.cpp
+  src/formats/zip/zip.cpp
   src/frontend/graph.cpp
   src/frontend/module.cpp
   src/frontend/symbols.cpp

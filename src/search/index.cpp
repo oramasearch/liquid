@@ -27,6 +27,7 @@
 #include <oramacore/tokenize.hpp>
 
 #include "encoding/cbor.hpp"
+#include "liquid/format.hpp"
 #include "store/mapped_file.hpp"
 
 namespace liquid::search_detail {
@@ -1046,6 +1047,37 @@ auto read_document(const std::filesystem::path& checkout,
     return document{relative.generic_string(), *id, std::move(*contents), path};
 }
 
+void append_format_documents(const format_tree& tree,
+                             const std::string& container_path,
+                             std::vector<document>& output) {
+    if (tree.tier == format_tier::chunk_only) {
+        return;
+    }
+    for (const auto& entry : tree.entries) {
+        const auto path = container_path + "!/" + entry.path;
+        if (!entry.bytes.empty()) {
+            output.push_back({path, entry.content, entry.bytes});
+        }
+        if (entry.nested) {
+            append_format_documents(*entry.nested, path, output);
+        }
+    }
+}
+
+auto append_container(std::span<const std::byte> bytes,
+                      const std::string& path,
+                      std::vector<document>& output) -> result<void> {
+    auto tree = format_registry::global().unpack(bytes, path);
+    if (!tree) {
+        if (tree.error().code == errc::not_found) {
+            return {};
+        }
+        return std::unexpected(tree.error());
+    }
+    append_format_documents(*tree, path, output);
+    return {};
+}
+
 auto scan_checkout(const std::filesystem::path& checkout, bool retain_contents = true)
     -> result<std::vector<document>> {
     auto output = std::vector<document>{};
@@ -1065,9 +1097,16 @@ auto scan_checkout(const std::filesystem::path& checkout, bool retain_contents =
         if (!iterator->is_regular_file(code)) {
             continue;
         }
-        auto value = read_document(checkout, relative, retain_contents);
+        auto value = read_document(checkout, relative, true);
         if (!value) {
             return std::unexpected(value.error());
+        }
+        auto expanded = append_container(value->contents, value->path, output);
+        if (!expanded) {
+            return std::unexpected(expanded.error());
+        }
+        if (!retain_contents) {
+            value->contents.clear();
         }
         output.push_back(std::move(*value));
     }
@@ -1076,6 +1115,55 @@ auto scan_checkout(const std::filesystem::path& checkout, bool retain_contents =
     }
     std::ranges::sort(output, {}, &document::path);
     return output;
+}
+
+auto requires_full_publish(const std::filesystem::path& checkout,
+                           const std::filesystem::path& directory,
+                           const drip& value) -> result<bool> {
+    auto indexed = active_paths(directory, std::string{working_slot});
+    if (!indexed) {
+        return std::unexpected(indexed.error());
+    }
+    for (const auto& operation : value.ops) {
+        const auto relative = std::filesystem::path{operation.path}.lexically_normal();
+        if (relative.is_absolute() || relative.empty() || *relative.begin() == ".." ||
+            ignored_path(relative)) {
+            continue;
+        }
+        const auto path_text = relative.generic_string();
+        const auto nested_prefix = path_text + "!/";
+        if (std::ranges::any_of(*indexed, [&](const auto& item) {
+                return item.first.starts_with(nested_prefix);
+            })) {
+            return true;
+        }
+        if (!format_registry::global().find_by_extension(path_text).empty()) {
+            return true;
+        }
+        auto code = std::error_code{};
+        const auto path = checkout / relative;
+        if (!std::filesystem::exists(path, code)) {
+            if (code) {
+                return std::unexpected(failure(errc::io, code.message(), path));
+            }
+            continue;
+        }
+        if (!std::filesystem::is_regular_file(path, code)) {
+            if (code) {
+                return std::unexpected(failure(errc::io, code.message(), path));
+            }
+            continue;
+        }
+        auto contents = read_file(path);
+        if (!contents) {
+            return std::unexpected(contents.error());
+        }
+        auto recognised = format_registry::global().recognise(*contents, path_text);
+        if (recognised || recognised.error().code != errc::not_found) {
+            return true;
+        }
+    }
+    return false;
 }
 
 auto checkout_updates(const std::filesystem::path& checkout, const drip& value)
@@ -1127,6 +1215,13 @@ public:
                 return result<void>{std::unexpected(present.error())};
             }
             if (!*present) {
+                return publish_checkout(checkout, directory, cursor);
+            }
+            auto replace = requires_full_publish(checkout, directory, value);
+            if (!replace) {
+                return result<void>{std::unexpected(replace.error())};
+            }
+            if (*replace) {
                 return publish_checkout(checkout, directory, cursor);
             }
             auto updates = checkout_updates(checkout, value);
