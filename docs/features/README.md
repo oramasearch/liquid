@@ -132,6 +132,8 @@ specifies it.
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage, Flatpak, and Snap, with ABI and relocation gates. |
+| [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented; a pinned Spack export seeds the package universe with explicit losses. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
 | [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, dedup-preserving encryption. |

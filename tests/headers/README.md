@@ -6,7 +6,8 @@ public values. `abi.cpp` covers the linked-binary descriptor and compatibility r
 `admission.cpp` keeps the public policy, evidence interfaces, options, and server entry point
 independently compilable. `configuration.cpp` keeps the configuration AST, lowered records, and
 task entry points independently compilable.
-independently compilable.
+`import.cpp` keeps the Spack report values, options, report codecs, and import task independently
+compilable.
 `frontend_abi.c` compiles the frontend and liquify plugin descriptors as C11 and checks both
 independent ABI version constants. It also instantiates the optional plugin event table so its C11
 layout and version remain covered.

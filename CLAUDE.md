@@ -128,6 +128,10 @@ Liquid #74 adds the typed declarative `.liquid` configuration language, exact so
 diagnostics, canonical formatting and package/target/source lowering, repository-local includes,
 digest-verified source fetch, action-backed generators with provenance, and configured target CLI.
 Configured target results must pass the relocation publication check before they are returned.
+Liquid #75 adds the provenance-linked Spack exporter, public `import_spack` task, formatter-backed
+package documents and canonical universe records, digest pinning for patches, explicit loss reports,
+the 500-package resolution fixture, and the opt-in Linux build subset. Spack is the first importer;
+nixpkgs and conda-forge remain later options.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
 journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,

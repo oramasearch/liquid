@@ -1,0 +1,22 @@
+source libpng-1.7.0 {
+    digest: sha256:beb755076731b90b0681b1695ffd888bafe54069eb72c3bc796effb98ff5bbfc
+    kind: archive
+    url: "https://example.invalid/libpng-1.7.0.tar.gz"
+}
+
+package libpng {
+    versions: [1.7.0]
+    depends_on zlib {
+        type: link
+        version: "1:"
+    }
+}
+
+build libpng {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/beb755076731b90b0681b1695ffd888bafe54069eb72c3bc796effb98ff5bbfc -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["libpng-1.7.0"]
+    install {
+        layout: prefix
+    }
+}

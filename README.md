@@ -223,6 +223,12 @@ it.
 > generators executed with signed provenance. `liquid config` checks, lowers, traces, and formats;
 > `liquid build --target` executes a lowered target through the existing action path and refuses
 > outputs that fail relocation publication.
+> **Phase 5 package-universe import is implemented for Spack.** A pinned Spack checkout exports
+> package metadata through Spack's API into one provenance-linked JSON document. `liquid import
+> spack` writes formatter-canonical `.liquid` documents and `package/1` records, pins digest-less
+> patches, and records translated fields and explicit losses in `import-report/1`. The committed
+> 500-package universe resolves the documented roots and explains an introduced HDF5 conflict;
+> ten imported targets exercise source-digest, configured-build, and relocation paths on Linux.
 
 ## Where this sits
 
@@ -298,6 +304,7 @@ and Zetta's.
 - [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 - [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, lowering, source verification, generators, and trace origins.
+- [`docs/library/import-spack.md`](docs/library/import-spack.md) — pinned Spack export, field mapping, explicit translation losses, the imported universe, and build subset.
 
 | | |
 |---|---|

@@ -34,6 +34,7 @@ add_executable(liquid-tests
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
   config/test_configuration.cpp
+  import/test_spack.cpp
   resolve/test_resolution.cpp
   workers/test_scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
@@ -611,6 +612,7 @@ add_executable(liquid-header-tests
   headers/hash.cpp
   headers/hot_update.cpp
   headers/identity.cpp
+  headers/import.cpp
   headers/liquid.cpp
   headers/node_store.cpp
   headers/main.cpp
@@ -778,6 +780,23 @@ if(LIQUID_FLATPAK_EXECUTABLE AND LIQUID_FLATPAK_BUILDER_EXECUTABLE AND UNIX)
     SKIP_RETURN_CODE 77
     TIMEOUT 1200)
 endif()
+
+option(LIQUID_SPACK_REALWORLD_TESTS "Register the opt-in imported-package build subset" OFF)
+if(LIQUID_SPACK_REALWORLD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(liquid-spack-realworld import/realworld.cpp)
+  target_include_directories(liquid-spack-realworld PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(liquid-spack-realworld PRIVATE
+    LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
+    LIQUID_SOURCE_ROOT="${PROJECT_SOURCE_DIR}")
+  target_link_libraries(liquid-spack-realworld PRIVATE liquid::liquid)
+  add_dependencies(liquid-spack-realworld liquid-build-fixture)
+  add_test(NAME spack-import-build-subset
+    COMMAND liquid-spack-realworld ${CMAKE_CURRENT_BINARY_DIR}/spack-import-build-subset)
+  set_tests_properties(spack-import-build-subset PROPERTIES LABELS realworld TIMEOUT 600)
+endif()
+
+add_executable(liquid-spack-write-goldens EXCLUDE_FROM_ALL import/write_goldens.cpp)
+target_link_libraries(liquid-spack-write-goldens PRIVATE liquid::liquid)
 
 add_executable(liquid-repository-scenario repository/scenario.cpp)
 target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)

@@ -57,6 +57,9 @@ explanations, optimisation, CLI output, and the generated scale workload live in
 Configuration-language coverage lives in `config/`: twenty exact diagnostics, typed lowering,
 conditional dependencies, canonical target/source records, generator provenance, digest-verified
 source fetch, and formatter idempotence.
+Spack export/import coverage lives in `import/`: twenty formatter goldens, the exact 500-package
+resolution and conflict workload, a pinned 560-package Spack export, digest-less patch pinning, and
+the opt-in Linux build subset.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
