@@ -85,6 +85,10 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.attributes = {{"verified_by", "taap:1:ed25519:verifier"},
                             {"sandbox", "blake3:sandbox"},
                             {"agreement", true}};
+    } else if (profile == "image_provenance/1") {
+        value.attributes = {{"image", "registry.example/liquid@sha256:image"},
+                            {"tree", "blake3:tree"},
+                            {"result", "blake3:result"}};
     }
     return value;
 }

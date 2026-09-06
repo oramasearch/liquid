@@ -46,13 +46,18 @@ portable suite.
 
 Secret detector, inline capture, `scan_result/1`, and redaction cases live in `scan/`.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
+Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
+Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
 The `formats/` cases cover
 the strict JSON and `.env` codecs used by structured configuration encryption; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
-file writes, and key diffs.
+file writes, key diffs, v1/v2/v3 wrapped-key compatibility, age specification vectors, Shamir
+quorums, local and remote provider round trips, request authentication, and every ordered
+cross-provider rewrap with unchanged pack bytes. The remote provider doubles bind only to loopback
+and make no external requests.
 
 Repository tests cover persisted operation records and their public newest-first view, operation
 undo for writes, imported batches, records, and locks, skipped newer state, two-replica local

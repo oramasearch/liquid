@@ -65,6 +65,7 @@ public:
         -> result<std::vector<operation>>;
     [[nodiscard]] auto diff(const head_set& before_heads) const -> result<std::vector<operation>>;
     [[nodiscard]] auto inspect(std::string_view path) const -> result<std::optional<entry>>;
+    [[nodiscard]] auto entry_names() const -> result<std::vector<std::string>>;
     [[nodiscard]] auto entries() const -> result<std::vector<entry>>;
     [[nodiscard]] auto operations() const -> result<std::vector<operation>>;
 
@@ -115,6 +116,7 @@ public:
     [[nodiscard]] auto transact(std::vector<operation> operations, commit_options options = {})
         -> result<void>;
     [[nodiscard]] auto save() const -> result<std::vector<std::byte>>;
+    [[nodiscard]] auto save_full() const -> result<std::vector<std::byte>>;
     [[nodiscard]] auto save_sync() const -> result<std::vector<std::byte>>;
     [[nodiscard]] auto fork() const -> result<directory_document>;
     [[nodiscard]] auto validate_heads(const head_set& heads) const -> result<void>;

@@ -69,6 +69,7 @@ struct LIQUID_EXPORT daemon_options {
     query_registry graph_queries{};
     capture_options capture{};
     std::vector<std::shared_ptr<daemon_target>> targets;
+    std::string drive_bearer_token;
 };
 
 class LIQUID_EXPORT daemon {

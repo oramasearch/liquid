@@ -30,9 +30,11 @@ auto capture_resume(int argc, char** argv) -> int;
 auto capture_watch(int argc, char** argv) -> int;
 auto history_undo(int argc, char** argv) -> int;
 auto history_operations(int argc, char** argv) -> int;
+auto path_history(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
+auto keys(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
@@ -57,6 +59,7 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto drive(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto node_store(int argc, char** argv) -> int;
@@ -115,6 +118,16 @@ constexpr auto commands = std::to_array<command>({
      "show or verify change, signed drip, or timestamp history",
      "available",
      liquid_cli::repo_log},
+    {"history",
+     "history <path> [--restore <change>]",
+     "show or restore path history",
+     "available",
+     liquid_cli::path_history},
+    {"drive",
+     "drive <sync <folder> <remote> [--watch]|status [folder]>",
+     "synchronize a drive folder",
+     "available",
+     liquid_cli::drive},
     {"cut", "cut <message>", "cut the working change", "available", liquid_cli::repo_cut},
     {"refs", "refs [--json]", "list repository references", "available", liquid_cli::repo_refs},
     {"push",
@@ -128,8 +141,8 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::sync_pull},
     {"serve",
-     "serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...",
-     "serve a repository over the sync protocol",
+     "serve sync <path> [...] | serve admission --policy <file> [...]",
+     "serve repository sync or image admission",
      "available",
      liquid_cli::serve},
     {"move", "move <from> <to>", "record a path move", "available", liquid_cli::tree_move},
@@ -201,9 +214,14 @@ constexpr auto commands = std::to_array<command>({
      "show or rotate the device identity",
      "available",
      liquid_cli::identity},
+    {"keys",
+     "keys <show|rewrap|rotate|revoke|split> ...",
+     "inspect and manage data-key custody",
+     "available",
+     liquid_cli::keys},
     {"attest",
-     "attest <show|verify> <digest>",
-     "show or verify an attestation",
+     "attest <show|verify> <digest> | attest image <ref@sha256:...> --tree <digest> [...]",
+     "show, verify, or mint an image attestation",
      "available",
      liquid_cli::attestation},
     {"delta",

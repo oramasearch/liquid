@@ -3,11 +3,13 @@
 **What.** The HTTP/1.1 protocol used by libliquid clients and lake to exchange repository
 metadata and content. lake's `docs/api/sync.md` mirrors this page.
 
-**Status: implemented by liquid #160, #165, #177, and #189.** Metadata export and import are
+**Status: implemented by liquid #160, #165, #177, #189, and used by #195.** Metadata export and import are
 bounded by caller-provided spans. Imports verify the selected metadata before changing repository
 state, while reference authorization and application are reported per ref. Content negotiation and
 transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
 owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
+The endpoint shares one private Corosio HTTP client with admission evidence and transparency
+lookups, so URL, TLS, request, and response handling have a single implementation inside libliquid.
 
 ## Repository URL and requests
 
@@ -43,6 +45,21 @@ per-ref reasons.
 An optional `Authorization: Bearer <token>` header carries lake authentication. The CLI reads the
 token from `LIQUID_TOKEN`; credentials never appear in the URL or output.
 
+## Drive client layering
+
+Issue #195's [`drive_client`](drive.md) composes two ordinary endpoints around deterministic
+three-tree reconciliation. Pull imports into a remote-view repository that has an independent
+checkpoint namespace in the synchronized repository's own store. Reconciliation then records and
+publishes local changes before push. The client persists the pull cursor and an interrupted marker
+as repository metadata before network transfer. Retrying starts at the last acknowledged cursor
+and missing-object negotiation skips chunks already received.
+
+The client's `drive_sync_report` retains pull and push transfer counts and the push's ordered
+per-reference outcomes. A refusal reason is surfaced unchanged, the transfer marker clears because
+the server replied, and the base tree remains unadvanced so a later run offers the local change
+again. Credentials remain an option on the in-memory client and are not part of persisted drive
+metadata.
+
 ## Metadata stream
 
 Every metadata frame has a one-byte type, a four-byte unsigned big-endian payload length, and that
@@ -59,19 +76,31 @@ after the end frame, or a stream without an end frame.
 | 255 | end | empty |
 
 Drips retain journal order. A change follows the drips it cuts. Directory messages use the
-existing checked CRDT receive path and are associated with their directory by `node`. Ref frames
-are applied last. An empty repository adopts the incoming repository and root IDs; a non-empty
+existing checked CRDT receive path, are emitted only for directories reachable from the current
+working root, are received into blank documents, and merge into the receiver's reachable candidate
+directory documents. They are associated with their directory by `node`. Ref frames are applied
+last. An empty repository
+adopts the incoming repository and root IDs; a non-empty
 repository with a different identity rejects the batch. Duplicate signed records and
 already-observed CRDT messages are valid, making a retry idempotent.
 
-Repository checkpoints keep compact bytes that can be opened either as the shallow active
-document or as its full-history archive. Import opens a candidate from the full archive before
-receiving peer messages. A retry can therefore name a dependency older than the active checkpoint
-heads without contradicting the shallow document's retained actor sequence.
+Before a checkpoint or export, each reachable directory document is reconciled with the working
+tree. This includes parent documents for intermediate directories created by a nested-path write,
+so a receiver never observes a child document without its reachable parent entry. Directory CRDT
+writes preserve the entry kind (`blob`, `tree`, or `repo`) along with the node, mode, and object
+reference. Enumeration reads the current CRDT tree keys instead of reconstructing the current
+directory from compacted operation history. Wire synchronization loads the compact current state
+as a full document before producing Automerge messages.
+
+Repository checkpoints prefer compact bytes and immediately check that they reopen as a full
+sync-capable document. Conflict-heavy states that fail that check use complete upstream history
+bytes instead. Import opens a full candidate before receiving peer messages, so a retry can name a
+dependency older than a compact checkpoint head.
 
 Before import changes state, the receiver parses every frame, verifies each actor identifier and
 TAAP signature, checks each change digest and referenced object, applies every selected directory
-message to candidate documents through the checked patch-returning path, and validates the
+message to a blank checked receiver, merges each received document into the corresponding
+candidate through the checked patch-returning path, and validates the
 accepted refs. A validation failure rejects the selected import. The error `item` is the zero-based
 metadata-frame index that failed.
 
