@@ -36,7 +36,9 @@ untouched directory documents lazy.
 Each checkout path contributes the device component of its automerge actor ID, preventing cloned
 repositories from authoring contradictory concurrent sequences under one actor.
 Sync import reconstructs a full-history candidate before receiving peer messages, so retries remain
-valid across either checkpoint encoding.
+valid across either checkpoint encoding. A receiver that becomes an active directory document uses
+the destination repository's actor rather than the transport's shared receiver identity, including
+when an empty repository adopts a remote identity.
 
 The build adapter uses the repository's device signer for result records and reproducibility
 attestations. It reads persisted cache, verification, and retention policy, synchronizes named ref

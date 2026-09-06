@@ -74,7 +74,9 @@ forge review client with its polling event stream and installable double are imp
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,
-`liquid drive`, and the daemon drive target. Issue #235 adds persisted online-only,
+`liquid drive`, and the daemon drive target. Issue #258 binds imported active directory documents
+to each destination repository's actor, so two clients retain both named histories after concurrent
+offline edits. Issue #235 adds persisted online-only,
 available-offline, and excluded path state; pin and unpin commands; xattrs; policy-driven and
 offline-aware hydration; queued-write and hydration-debt status; and GNOME Files and Dolphin badge
 providers ([`drive.md`](drive.md)).

@@ -2813,14 +2813,14 @@ import_synced_change(store& objects, algorithm hash_algorithm, const sync_item& 
 auto import_synced_directory(const node_id& repository,
                              std::map<node_id, crdt::directory_document>& candidate_documents,
                              std::map<node_id, std::unique_ptr<crdt::sync_state>>& directory_states,
+                             std::string_view device_id,
                              const sync_item& item) -> result<void> {
     if (item.repository != repository) {
         return std::unexpected(failure(errc::conflict, "directory repository identity differs"));
     }
     auto found = candidate_documents.find(item.directory);
     if (found == candidate_documents.end()) {
-        auto created =
-            crdt::directory_document::create_sync_receiver("sync-peer", "repository-sync-receiver");
+        auto created = crdt::directory_document::create_sync_receiver("local", device_id);
         if (!created) {
             return std::unexpected(created.error());
         }
@@ -2850,6 +2850,7 @@ struct sync_import_state {
     std::map<node_id, std::unique_ptr<crdt::sync_state>>& directory_states;
     std::vector<persisted_drip>& imported_drips;
     std::vector<std::pair<std::string, change_id>>& imported_refs;
+    std::string device_id;
 };
 
 runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& item) {
@@ -2859,8 +2860,11 @@ runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& 
     case sync_item_kind::change:
         co_return co_await import_synced_change(state.objects, state.hash_algorithm, item);
     case sync_item_kind::directory:
-        co_return import_synced_directory(
-            state.candidate.repository, state.candidate_documents, state.directory_states, item);
+        co_return import_synced_directory(state.candidate.repository,
+                                          state.candidate_documents,
+                                          state.directory_states,
+                                          state.device_id,
+                                          item);
     case sync_item_kind::reference:
         if (item.name.empty()) {
             co_return std::unexpected(failure(errc::invalid_argument, "reference name is empty"));
@@ -8089,7 +8093,8 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
                                           received_documents,
                                           directory_states,
                                           imported_drips,
-                                          imported_refs};
+                                          imported_refs,
+                                          impl_->root_path.generic_string()};
     for (std::size_t index = 0; index < input.size(); ++index) {
         auto imported = co_await import_sync_item(import_state, input[index]);
         if (!imported) {

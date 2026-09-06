@@ -50,7 +50,7 @@ for what is implemented today.
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
-| [`library/drive.md`](library/drive.md) | Issues #195 and #235's persisted three-tree reconciliation, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
+| [`library/drive.md`](library/drive.md) | Issues #195, #235, and #258's persisted three-tree reconciliation, per-repository CRDT actors, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/forge-client.md`](library/forge-client.md) | Lake review records, coroutine calls, anchor advancement, polling events, error mapping, and the installable forge double. |
 | [`library/transparency.md`](library/transparency.md) | Lake checkpoint, tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 evidence verification; trust bootstrap and policy, CLI, failures, implementation notes, and fixture regeneration. |
