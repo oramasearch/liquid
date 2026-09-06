@@ -39,6 +39,7 @@
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
 #include "liquid/transparency.hpp"
+#include "liquid/tuf.hpp"
 #include "liquid/version.hpp"
 #include "liquid/vfs.hpp"
 #include "liquid/workers.hpp"

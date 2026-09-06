@@ -23,6 +23,8 @@ and live local-byte accounting for long-running node stores.
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
 claims, transient presence, and epoch compaction reports.
+`tuf.hpp` defines the repository-backed trusted-root bootstrap, ordered metadata update verifier,
+and complete target-byte verification gate used by registry and drive clients.
 
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of

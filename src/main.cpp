@@ -84,6 +84,7 @@ auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
+auto registry(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -553,6 +554,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::drive},
+    {"registry",
+     "registry trust <pin <root.json>|show>",
+     "manage artifact-registry trust",
+     "available",
+     {},
+     "Pin a trusted TUF root or inspect the root currently trusted by this repository.",
+     "liquid registry trust show",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::registry},
     {"push",
      "push [--atomic] <url>",
      "push repository changes and objects",
