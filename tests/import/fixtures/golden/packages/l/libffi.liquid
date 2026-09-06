@@ -1,0 +1,18 @@
+source libffi-1.5.0 {
+    digest: sha256:98aefe98c29a03b13f3e4ad351df70b7f61d251698d944882003bb170cf28ca6
+    kind: archive
+    url: "https://example.invalid/libffi-1.5.0.tar.gz"
+}
+
+package libffi {
+    versions: [1.5.0]
+}
+
+build libffi {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/98aefe98c29a03b13f3e4ad351df70b7f61d251698d944882003bb170cf28ca6 -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["libffi-1.5.0"]
+    install {
+        layout: prefix
+    }
+}

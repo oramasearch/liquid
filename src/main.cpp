@@ -818,8 +818,9 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::garbage_collect},
     {"import",
-     "import <path> | import git <path>",
-     "import a local tree or Git repository",
+     "import <path> | import git <path> | import spack <export.json> --into <repository> "
+     "[--report] [--json] | import spack --report [--into <repository>] [--json]",
+     "import a local tree, Git repository, or Spack package universe",
      "available",
      {},
      "Import reachable local Git history with its identity mapping.",

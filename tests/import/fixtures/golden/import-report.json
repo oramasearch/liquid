@@ -1,0 +1,232 @@
+{
+  "v": 1,
+  "kind": "import-report",
+  "source": "spack",
+  "packages": 20,
+  "translated_fields": 69,
+  "losses": 4,
+  "pinned_patches": 1,
+  "roots": [
+    "hdf5+mpi",
+    "netcdf-c",
+    "openblas",
+    "fftw",
+    "python",
+    "cmake",
+    "boost",
+    "openssl"
+  ],
+  "package_reports": [
+    {
+      "name": "boost",
+      "translated": [
+        "build",
+        "dependencies",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "bzip2",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "cmake",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "expat",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "fftw",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "hdf5",
+      "translated": [
+        "build",
+        "conflicts",
+        "dependencies",
+        "sources",
+        "variants",
+        "versions"
+      ],
+      "losses": [
+        {
+          "kind": "dynamic_value",
+          "field": "build.arguments",
+          "reason": "Fortran arguments depend on the selected compiler"
+        },
+        {
+          "kind": "custom_phase",
+          "field": "build.phases",
+          "reason": "cache_test_examples"
+        },
+        {
+          "kind": "unsupported_value",
+          "field": "dependencies.types",
+          "reason": "package/1 records one dependency type; link, run, then build precedence applied"
+        }
+      ]
+    },
+    {
+      "name": "libffi",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "libpng",
+      "translated": [
+        "build",
+        "dependencies",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "ncurses",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "netcdf-c",
+      "translated": [
+        "build",
+        "dependencies",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "openblas",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "openmpi",
+      "translated": [
+        "build",
+        "provides",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "openssl",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "pcre2",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "pkgconf",
+      "translated": [
+        "sources",
+        "versions"
+      ],
+      "losses": [
+        {
+          "kind": "unknown_build_system",
+          "field": "build.system",
+          "reason": "python"
+        }
+      ]
+    },
+    {
+      "name": "python",
+      "translated": [
+        "build",
+        "dependencies",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "readline",
+      "translated": [
+        "build",
+        "dependencies",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "sqlite",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "xz",
+      "translated": [
+        "build",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    },
+    {
+      "name": "zlib",
+      "translated": [
+        "build",
+        "patches",
+        "sources",
+        "versions"
+      ],
+      "losses": []
+    }
+  ]
+}
