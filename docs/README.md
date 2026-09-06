@@ -43,6 +43,8 @@ notes so that each claim has a clear role.
 | [`library/capture.md`](library/capture.md) | Change capture, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
+| [`library/admission.md`](library/admission.md) | Image provenance statements, fail-closed admission policy, evidence sources, transparency behavior, TLS serving, and stable decisions. |
+| [`api/admission.md`](api/admission.md) | Kubernetes webhook, control, metrics, REST, OpenAPI, and MCP routes. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
 | [`cli/build-events.md`](cli/build-events.md) | The `liquid build --plan` and `--events` JSON-lines schemas, daemon operations, ordering, exit status, and edit behavior. |
 | [`cli/test.md`](cli/test.md) | CMake/native test discovery, filtering, cached action behavior, output, and exit status. |

@@ -8,6 +8,8 @@ bounded by caller-provided spans. Imports verify the selected metadata before ch
 state, while reference authorization and application are reported per ref. Content negotiation and
 transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
 owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
+The endpoint shares one private Corosio HTTP client with admission evidence and transparency
+lookups, so URL, TLS, request, and response handling have a single implementation inside libliquid.
 
 ## Repository URL and requests
 

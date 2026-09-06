@@ -1,41 +1,17 @@
 #include "workers/control.hpp"
 
-#include <algorithm>
-#include <array>
-#include <charconv>
-#include <cstddef>
 #include <format>
 #include <memory>
-#include <print>
 #include <string>
 #include <string_view>
 #include <utility>
 
-#include <boost/capy/buffers.hpp>
-#include <boost/capy/write.hpp>
-#include <boost/corosio/endpoint.hpp>
-#include <boost/corosio/tcp_acceptor.hpp>
-#include <boost/corosio/tcp_socket.hpp>
+#include <boost/http.hpp>
+
+#include "http1/server.hpp"
 
 namespace liquid::workers {
 namespace {
-
-auto control_error(errc code, std::string message, std::string context = {}) -> error {
-    return {code, std::move(message), std::move(context)};
-}
-
-auto response(int status, std::string_view type, std::string body) -> std::string {
-    const auto reason = status == 200 ? "OK" : status == 404 ? "Not Found" : "Unavailable";
-    return std::format("HTTP/1.1 {} {}\r\n"
-                       "Content-Type: {}\r\n"
-                       "Content-Length: {}\r\n"
-                       "Connection: close\r\n\r\n{}",
-                       status,
-                       reason,
-                       type,
-                       body.size(),
-                       body);
-}
 
 auto openapi(std::string_view component) -> std::string {
     return std::format(
@@ -49,7 +25,7 @@ auto json_id(std::string_view body) -> std::string_view {
     if (colon == std::string_view::npos) {
         return "null";
     }
-    auto begin = body.find_first_not_of(" \t\r\n", colon + 1);
+    const auto begin = body.find_first_not_of(" \t\r\n", colon + 1);
     if (begin == std::string_view::npos) {
         return "null";
     }
@@ -78,125 +54,72 @@ auto mcp_response(std::string_view body, std::string_view component) -> std::str
         id);
 }
 
-auto route(std::string_view method,
-           std::string_view target,
-           std::string_view body,
-           const control_status& status) -> std::string {
-    if (method == "GET" && target == "/healthz") {
-        return response(200, "text/plain", "ok\n");
-    }
-    if (method == "GET" && target == "/readyz") {
-        const auto ready = status.ready();
-        return response(ready ? 200 : 503, "text/plain", ready ? "ready\n" : "not ready\n");
-    }
-    if (method == "GET" && target == "/metrics") {
-        return response(200, "text/plain; version=0.0.4", status.metrics());
-    }
-    if (method == "GET" && target == "/v1") {
-        return response(200,
-                        "application/json",
-                        std::format(R"({{"component":"{}","version":"v1"}})", status.component));
-    }
-    if (method == "GET" && target == "/v1/openapi.json") {
-        return response(200, "application/json", openapi(status.component));
-    }
-    if (method == "POST" && target == "/mcp") {
-        return response(200, "application/json", mcp_response(body, status.component));
-    }
-    return response(404, "text/plain", "not found\n");
-}
-
-auto session(std::shared_ptr<boost::corosio::tcp_socket> socket,
-             std::shared_ptr<const control_status> status) -> runtime::task<void> {
-    auto request = std::string{};
-    auto buffer = std::array<char, 4096>{};
-    while (request.find("\r\n\r\n") == std::string::npos) {
-        const auto [read_error, count] =
-            co_await socket->read_some(boost::capy::mutable_buffer(buffer.data(), buffer.size()));
-        if (read_error) {
-            co_return std::unexpected(
-                control_error(errc::io, read_error.message(), "control HTTP request"));
-        }
-        if (count == 0 || request.size() + count > 16U * 1024U) {
-            co_return std::unexpected(
-                control_error(errc::invalid_argument, "control HTTP request is invalid"));
-        }
-        request.append(buffer.data(), count);
-    }
-    const auto header_end = request.find("\r\n\r\n");
-    auto content_length = std::size_t{};
-    if (const auto header = request.find("\r\nContent-Length:"); header != std::string::npos) {
-        const auto begin = request.find_first_not_of(" \t", header + 17);
-        const auto end = request.find("\r\n", begin);
-        auto parsed = std::from_chars(request.data() + begin, request.data() + end, content_length);
-        if (parsed.ec != std::errc{} || parsed.ptr != request.data() + end) {
-            co_return std::unexpected(
-                control_error(errc::invalid_argument, "control Content-Length is invalid"));
-        }
-    }
-    const auto complete_size = header_end + 4 + content_length;
-    while (request.size() < complete_size) {
-        const auto remaining = std::min(buffer.size(), complete_size - request.size());
-        const auto [read_error, count] =
-            co_await socket->read_some(boost::capy::mutable_buffer(buffer.data(), remaining));
-        if (read_error || count == 0) {
-            co_return std::unexpected(control_error(
-                errc::io, read_error ? read_error.message() : "short control HTTP request"));
-        }
-        request.append(buffer.data(), count);
-    }
-    const auto first_space = request.find(' ');
-    const auto second_space =
-        first_space == std::string::npos ? std::string::npos : request.find(' ', first_space + 1);
-    if (first_space == std::string::npos || second_space == std::string::npos) {
-        co_return std::unexpected(
-            control_error(errc::invalid_argument, "control HTTP request line is invalid"));
-    }
-    const auto output =
-        route(std::string_view{request}.substr(0, first_space),
-              std::string_view{request}.substr(first_space + 1, second_space - first_space - 1),
-              std::string_view{request}.substr(header_end + 4, content_length),
-              *status);
-    const auto [write_error, written] = co_await boost::capy::write(
-        *socket, boost::capy::const_buffer(output.data(), output.size()));
-    if (write_error || written != output.size()) {
-        co_return std::unexpected(control_error(
-            errc::io, write_error ? write_error.message() : "short control HTTP response"));
-    }
-    socket->shutdown(boost::corosio::shutdown_both);
-    co_return result<void>{};
+auto make_router(std::shared_ptr<const control_status> status) -> http1::router {
+    auto routes = http1::router{};
+    routes.add(boost::http::method::get,
+               "/healthz",
+               [](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await http1::send(
+                       params, boost::http::status::ok, "text/plain", "ok\n");
+               });
+    routes.add(boost::http::method::get,
+               "/readyz",
+               [status](boost::http::route_params& params) -> boost::http::route_task {
+                   const auto ready = status->ready();
+                   co_return co_await http1::send(params,
+                                                  ready ? boost::http::status::ok
+                                                        : boost::http::status::service_unavailable,
+                                                  "text/plain",
+                                                  ready ? "ready\n" : "not ready\n");
+               });
+    routes.add(boost::http::method::get,
+               "/metrics",
+               [status](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await http1::send(params,
+                                                  boost::http::status::ok,
+                                                  "text/plain; version=0.0.4",
+                                                  status->metrics());
+               });
+    routes.add(boost::http::method::get,
+               "/v1",
+               [status](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await http1::send(
+                       params,
+                       boost::http::status::ok,
+                       "application/json",
+                       std::format(R"({{"component":"{}","version":"v1"}})", status->component));
+               });
+    routes.add(boost::http::method::get,
+               "/v1/openapi.json",
+               [status](boost::http::route_params& params) -> boost::http::route_task {
+                   co_return co_await http1::send(params,
+                                                  boost::http::status::ok,
+                                                  "application/json",
+                                                  openapi(status->component));
+               });
+    routes.add(boost::http::method::post,
+               "/mcp",
+               [status](boost::http::route_params& params) -> boost::http::route_task {
+                   auto body = co_await http1::read_body(params);
+                   if (!body) {
+                       co_return boost::http::route_error(body.error());
+                   }
+                   const auto text =
+                       std::string{reinterpret_cast<const char*>(body->data()), body->size()};
+                   co_return co_await http1::send(params,
+                                                  boost::http::status::ok,
+                                                  "application/json",
+                                                  mcp_response(text, status->component));
+               });
+    return routes;
 }
 
 } // namespace
 
-auto serve_control(std::string listen, control_status status) -> runtime::task<void> {
-    auto endpoint = boost::corosio::endpoint{};
-    if (const auto code = boost::corosio::parse_endpoint(listen, endpoint)) {
-        co_return std::unexpected(control_error(errc::invalid_argument, code.message(), listen));
-    }
-    if (endpoint.port() == 0) {
-        co_return std::unexpected(
-            control_error(errc::invalid_argument, "control listen port must be non-zero"));
-    }
-    const auto executor = co_await boost::capy::this_coro::executor;
-    auto acceptor = boost::corosio::tcp_acceptor{executor.context(), endpoint};
+runtime::task<void> serve_control(std::string listen, control_status status) {
     auto shared_status = std::make_shared<const control_status>(std::move(status));
-    for (;;) {
-        auto socket = std::make_shared<boost::corosio::tcp_socket>(executor.context());
-        const auto [accept_error] = co_await acceptor.accept(*socket);
-        if (accept_error) {
-            co_return std::unexpected(
-                control_error(errc::io, accept_error.message(), std::move(listen)));
-        }
-        runtime::spawn(session(std::move(socket), shared_status), [](result<void> outcome) {
-            if (!outcome) {
-                std::println(stderr,
-                             "control connection error: {} ({})",
-                             outcome.error().message,
-                             outcome.error().context);
-            }
-        });
-    }
+    co_return co_await http1::serve(http1::server_options{.listen = std::move(listen)},
+                                    make_router(std::move(shared_status)));
 }
 
 } // namespace liquid::workers

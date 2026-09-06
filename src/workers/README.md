@@ -8,7 +8,8 @@ the dependency-free protobuf messages used between matching liquid schedulers an
 Phase 2 executor, uploads output graphs, and completes with the worker's TAAP-signed result,
 provenance, SBOMs, ABI descriptors, and ABI compatibility attestations. `control.cpp` contains the
 isolated fixed route registry for health, readiness, Prometheus metrics, REST discovery, OpenAPI,
-and MCP discovery.
+and MCP discovery. It runs through the shared private HTTP/1.1 server adapter used by other liquid
+control surfaces.
 
 The worker detects an existing repository through its `LIQUID_REPO` marker. Reusing a worker root
 therefore reopens the co-located CAS and preserves the TAAP identity used to sign results.
