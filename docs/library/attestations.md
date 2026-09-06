@@ -36,6 +36,7 @@ the public encoder.
 | `reproducibility/1` | artifact | `verified_by:text`, `sandbox:text`, `agreement:boolean` | `differing_outputs:text_list` | none |
 | `image_provenance/1` | artifact | `image:text`, `tree:text` | `result:text` | none |
 | `projection/1` | artifact | `target:text`, `source_result:text_list`, `normalisation:text`, `tool:text` | none | none |
+| `platform_signature/1` | artifact | `platform:text`, `unsigned_digest:text`, `signed_digest:text`, `signing_identity:text`, `verification:text` | `notarization_ticket:text`, `timestamp_response:text` | none |
 | `release_policy/1` | repository | `role:text`, `threshold:unsigned_integer`, `signers:text_list`, `not_after:text` | none | none |
 | `release_approval/1` | artifact | `policy:text`, `release:text` | none | none |
 
@@ -92,6 +93,15 @@ subject. `source_result` preserves every result or install-tree identity in requ
 `normalisation` records the fixed epoch, ownership, modes, and sorting rule; and `tool` binds the
 liquid version. OCI and Helm outputs carry the statement beside source provenance and SBOM
 statements through subject-bound OCI artifact manifests. See [projection.md](projection.md).
+`platform_signature/1` uses the shipped, signed installer digest as its subject.
+`unsigned_digest` names the artifact already covered by `projection/1`; `signed_digest` repeats the
+subject for explicit consumer checks; `platform` selects the native verifier; and
+`signing_identity` records the certificate fingerprint rather than a display name. macOS records
+the accepted notary ticket after stapling, while Windows records the RFC 3161 timestamp service
+response. The sidecar is signed by the local TAAP identity and `liquid sign verify` checks its
+signature, both digest bindings, and `pkgutil`, `codesign`, or `signtool` before returning success;
+an attested notary ticket also requires a fresh `spctl` assessment.
+See [projection.md](projection.md#unsigned-projection-and-platform-signing).
 `release_policy/1` and `release_approval/1` implement independent-signature release authorization.
 The policy binds a repository role, threshold, allowed TAAP identities, and expiry; each approval
 binds one artifact to the complete signed policy. Distinct counting, compromise-time rejection,

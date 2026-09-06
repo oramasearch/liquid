@@ -14,6 +14,10 @@
 > below is a TAAP attestation, and every signer a TAAP identity. See
 > [25](25-identity-attestation-and-transparency.md) for the model; this document is what
 > liquid asserts with it.
+>
+> **Status:** build provenance, SBOMs, reproducibility, image admission, unsigned projection, and
+> the signed-installer `platform_signature/1` chain are implemented. The first credentialed Apple
+> notarisation run remains pending.
 
 ## What a chain of custody actually is
 
@@ -75,11 +79,19 @@ on 2026-09-05. The same transport interfaces accept protocol-level software doub
 Signed: changes, artifacts, cache entries, images, attestations and deployments —
 by one signing layer, not five.
 
+Platform installers preserve that one evidence model without pretending an operating-system
+signature is reproducibility evidence. Projection signs `projection/1` over deterministic unsigned
+bytes. `liquid sign`, outside the sandbox, applies Developer ID or Authenticode and signs
+`platform_signature/1` over the shipped bytes, naming the unsigned digest, certificate
+fingerprint, and notary ticket or timestamp response. The platform verifier and TAAP verifier must
+both accept. Keychain, HSM, PFX, CSP, API-key, and timestamp-service custody boundaries are defined
+in [projection.md](../library/projection.md#signing-key-custody-per-platform).
+
 Image admission is implemented by `liquid serve admission`. Every Pod image is checked by digest
 against the same TAAP registry and verifier, accepted issuer/profile policy, and optional
 transparency verdict. The exact fail-closed flow and the `image_provenance/1` record are documented
 in [`../library/admission.md`](../library/admission.md). Image projection and automatic emission
-remain #28; complete transparency inclusion verification remains #83.
+are implemented by #28; complete transparency inclusion verification remains #83.
 
 ## Repository-level defence
 

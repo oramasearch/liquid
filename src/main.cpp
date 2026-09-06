@@ -84,6 +84,7 @@ auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
 auto config(int argc, char** argv) -> int;
 auto project(int argc, char** argv) -> int;
+auto sign(int argc, char** argv) -> int;
 auto install(int argc, char** argv) -> int;
 auto rollback(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
@@ -177,6 +178,12 @@ constexpr auto flags_project = std::to_array<flag>({
      "Permit owned paths by deriving replacement relationships.",
      "none"},
     {"--service", "<value>", "Add a Helm service declaration; repeatable.", "none"},
+    {"--identifier", "<id>", "Set the platform package identifier.", "derived from name"},
+    {"--publisher", "<subject>", "Set the MSIX certificate subject.", "development subject"},
+    {"--display-name", "<name>", "Set the platform display name.", "package name"},
+    {"--executable", "<path>", "Set the packaged application executable.", "derived from name"},
+    {"--entitlements", "<path>", "Record macOS signing entitlements.", "none"},
+    {"--installer-url", "<url>", "Set the winget installer URL.", "required for winget"},
     {"--ref", "<name>", "Set the OSTree ref.", "required for OS targets"},
     {"--overlay",
      "[path=]<tree>",
@@ -186,6 +193,12 @@ constexpr auto flags_project = std::to_array<flag>({
     {"--compat-gzip", {}, "Use gzip-compatible package compression.", "false"},
     {"--allow-abi-break", {}, "Permit an incompatible ABI projection.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
+});
+constexpr auto flags_sign = std::to_array<flag>({
+    {"--identity", "<custody-uri>", "Select the platform signing identity.", "required"},
+    {"--timestamp-server", "<url>", "Select the Authenticode RFC 3161 server.", "none"},
+    {"--out", "<path>", "Write the signed artifact to this path.", "-signed artifact"},
+    {"--no-notarize", {}, "Do not submit a macOS artifact for notarisation.", "false"},
 });
 constexpr auto flags_install = std::to_array<flag>({
     {"--root", "<dir>", "Select the generation root.", "required"},
@@ -554,10 +567,12 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::config},
     {"project",
      "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
-     "<result|tree> [--overlay [path=]<tree>] "
+     "<result|tree|installer> [--overlay [path=]<tree>] "
      "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] "
-     "[--replaces <package>] [--service <value>] "
+     "[--replaces <package>] [--service <value>] [--identifier <id>] "
+     "[--publisher <subject>] [--display-name <name>] [--executable <path>] "
+     "[--entitlements <path>] [--installer-url <url>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
      "project a build into an installable package, commit, image, or chart",
      "available",
@@ -918,12 +933,16 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::identity},
     {"sign",
-     "sign <drip|change|artifact> <digest>",
-     "sign a digest with the current identity key",
+     "sign <drip|change|artifact> <digest> | sign <macos|windows> <artifact> --identity "
+     "<custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize] | sign verify "
+     "<artifact>",
+     "sign a digest or projected platform installer",
      "available",
-     {},
-     "Sign the canonical digest value with the current software, FIDO2, or PIV identity key.",
-     "liquid sign artifact blake3:<artifact-digest>",
+     flags_sign,
+     "Sign a canonical digest with the identity key, or sign and verify a platform installer "
+     "outside "
+     "the projection sandbox with a platform_signature/1 sidecar.",
+     "liquid sign macos projection/example.pkg --identity keychain:Developer-ID",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::sign},
