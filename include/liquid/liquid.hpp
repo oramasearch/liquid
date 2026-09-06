@@ -13,6 +13,8 @@
 #include "liquid/drive.hpp"
 #include "liquid/error.hpp"
 #include "liquid/forge.hpp"
+#include "liquid/format.hpp"
+#include "liquid/format_abi.h"
 #include "liquid/flow.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/frontend_abi.h"

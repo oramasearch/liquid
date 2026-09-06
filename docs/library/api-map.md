@@ -66,6 +66,10 @@ owning issue in `error::context`.
 | `liquid/cms.hpp` | #210 | implemented | embedded CMS SignedData content, signed-attribute, signer, signature, and historical certificate-path verification |
 | `liquid/transparency.hpp` | #207, #210 | implemented (#210) | RFC 3161 timestamp-token and RFC 4998 evidence-chain verification over checkpoint signature values with explicit TSA trust anchors |
 | `liquid/graph.hpp` | #20, #21, #23 | implemented | registered coroutine query kinds, canonical keys, recorded input access, persisted red-green demand, durability invalidation, cancellation, bounded resident values, statistics, clean validation, audit records, and stale-value eviction |
+| `liquid/frontend_abi.h` | #65, #66 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, and `symbols` operations |
+| `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
+| `liquid/format_abi.h` | #29 | implemented | versioned C codec descriptor, canonical-CBOR operations, owned bytes, progress/cancellation callbacks, and optional merge/repack operations |
+| `liquid/format.hpp` | #29 | implemented | fidelity tiers, descriptors, entries, trees and diffs; checked shared/static codec loading; the built-in global registry and resource limits |
 | `liquid/frontend_abi.h` | #65, #66, #205 | implemented | versioned C module descriptor, language registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
 | `liquid/frontend.hpp` | #65, #66, #193, #205 | implemented | checked shared/static frontend loading, language registry, source units, concrete syntax trees and navigation, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/edit.hpp` | #205 | implemented | canonical structural-edit requests, targets, previews, refusals, attribution, file/text changes, results, and codecs |
@@ -432,6 +436,18 @@ injected action executor only when the symbol query is demanded.
 `repository::store_symbols(record)` stores and associates a record, while
 `repository::symbols(subject)` returns the associated public value.
 
+### `liquid/format_abi.h` and `liquid/format.hpp`
+
+`liquid_format_module_v1` is the C11 descriptor for format codecs. It carries a name, best fidelity
+tier, extensions, magic prefixes, volatile fields, resource limits, canonical-CBOR operations,
+owned output bytes, and progress/cancellation callbacks. Recognition may lower an individual input
+to a less strict tier with a reason. `format_codec` checks linked and dynamically loaded
+descriptors; `format_registry::global()` exposes the five built-ins and bounded recursive unpack.
+Format trees, logical diffs, codec subsets, nested paths, and repository integration are documented
+in [formats.md](formats.md).
+
+`format_diff_options` supplies finite nonnegative absolute and relative numeric tolerances. HDF5
+applies them element-by-element to decoded floating-point datasets; zero is the exact default.
 ### `liquid/node_store.hpp`
 
 ```cpp
@@ -828,12 +844,16 @@ struct revision_readability { change_id revision; std::vector<key_readability> k
 struct readability_report { std::vector<revision_readability> revisions;
                             std::vector<std::string> limits; };
 enum class tree_diff_kind { added, removed, modified, moved, mode_changed, conflicted };
-struct tree_diff_options { bool text; };
+struct tree_diff_options { bool text; bool formats; };
+enum class container_diff_kind { added, removed, modified };
+struct container_diff_entry;
+struct container_diff { std::string codec; format_tier tier;
+                        std::vector<container_diff_entry> entries; bool truncated; };
 struct tree_diff_entry {
   std::string path; std::optional<std::string> old_path; node_id node; node_kind kind;
   std::vector<tree_diff_kind> changes; std::optional<std::uint32_t> old_mode, new_mode;
   std::optional<digest> old_blob, new_blob; std::optional<std::vector<line_change>> line_hunks;
-  std::vector<digest> old_conflicts, new_conflicts;
+  std::vector<digest> old_conflicts, new_conflicts; std::optional<container_diff> container;
 };
 struct text_anchor { change_id change; std::string path; std::uint64_t line, column; };
 struct mapped_anchor { change_id change; std::string path; std::uint64_t line, column;
@@ -1536,8 +1556,9 @@ records and receive content-addressed concretisations without depending on the e
 - **Shared builds are for packaging, not for stability.** Rules 2 and 3 above are what make a
   future stable ABI possible; until 1.0 they are discipline, not a promise.
 - **Frontend C ABI v1 exists before 1.0.** `liquid/frontend_abi.h` is separately versioned and does
-  not expose the C++ ABI. Language modules use it now; format codecs and package backends may adopt
-  dedicated C descriptors later without being loaded into libliquid's core.
+  not expose the C++ ABI. Language modules use it now. `liquid/format_abi.h` applies the same owned
+  bytes, canonical-CBOR, callback, and checked-loader rules to its dedicated format-codec
+  descriptor. Both built-in and external codecs enter the registry through that descriptor.
 - **At 1.0:** semantic versioning of the C++ API, `SOVERSION` bumped on breaks, still no symbol
   versioning. The C++ surface remains distinct from separately versioned module descriptors.
 

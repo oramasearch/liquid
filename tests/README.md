@@ -55,8 +55,10 @@ Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP und
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
-The `formats/` cases cover
-the strict JSON and `.env` codecs used by structured configuration encryption; `encryption/`
+The `formats/` cases cover the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
+decoders, exact Tier 1 repack, deterministic tar writing, volatile fields, malformed boundaries,
+nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs used by
+structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
 file writes, key diffs, v1/v2/v3 wrapped-key compatibility, age specification vectors, Shamir
 quorums, local and remote provider round trips, request authentication, and every ordered
@@ -86,7 +88,8 @@ and a synchronized replica whose signed write arrives before refusal. The CLI sc
 also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
-exclusion, and parse the CLI explanation contract. The opt-in measurement target records scan and
+exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI
+explanation contract. The opt-in measurement target records scan and
 index costs across working-set sizes.
 `liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and
 measures a fresh-process repository open for the automerge-cpp adoption comparison.
