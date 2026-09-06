@@ -51,6 +51,8 @@ that the table and `liquid --help` name the same commands.
 | `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
 | `lock` | `lock <path>` | Advisory-lock a path. | available |
 | `unlock` | `unlock <path>` | Remove an advisory lock. | available |
+| `session` | `session start <delegation>`, `session write <id> <path> --from <file>`, `session publish <id> [--message <text>]`, or `session discard <id>` | Manage a persisted private speculative replica. | available |
+| `compact` | `compact --epoch [--min-ack-peers <count>]` | Write and record a compact repository epoch. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
 | `materialise` | `materialise <target> [path]` | Write a full working tree. | available |
 | `gc` | `gc [--dry-run] [--json] [--explain] [--compact] [--compact-below <fraction>] [repository]` | Checkpoint and collect a repository. | available |
@@ -109,6 +111,14 @@ and re-validation result. `ops --json` includes the stable operation-kind vocabu
 `skipped <op-id> <path> <reason>` line when newer state prevented a path from changing. A session
 may be narrowed by repeating `--path` or `--drip`; those selectors require `--session` and cannot
 be combined with a positional operation ID.
+
+`session start` verifies and stores a `delegation/1` attestation from the current repository store
+and prints a 32-digit session ID. `session write` demonstrates cross-process private writes;
+library callers normally write through the returned `session` handle. `session publish` validates
+the original base and delegation scopes before any shared mutation, and `session discard` removes
+the private state and owned leases. `compact --epoch` prints the epoch number and compact document
+bytes. `log --ops --json` includes a `delegation` digest for version-3 agent drips, while `attest
+show` prints every typed attribute.
 
 `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
 but not present in the local store, plus `agents.require_base`, the configured actor list, and one

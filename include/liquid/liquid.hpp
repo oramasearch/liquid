@@ -33,6 +33,7 @@
 #include "liquid/resolve.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/secret.hpp"
+#include "liquid/session.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
 #include "liquid/transparency.hpp"

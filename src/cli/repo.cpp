@@ -531,8 +531,11 @@ auto repo_log(int argc, char** argv) -> int {
                         : json_string(*drip.revalidated == liquid::stale_revalidation::disjoint
                                           ? "disjoint"
                                           : "forced");
+                const auto delegation =
+                    drip.delegation ? json_string(liquid::to_string(*drip.delegation)) : "null";
                 std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},\"at\":{},"
-                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{}}}",
+                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{},"
+                           "\"delegation\":{}}}",
                            index == 0 ? "" : ",",
                            json_string(liquid::to_string(drip.id.value)),
                            json_string(liquid::to_string(drip.base.value)),
@@ -541,7 +544,8 @@ auto repo_log(int argc, char** argv) -> int {
                            drip.at.time_since_epoch().count(),
                            reasoned_from,
                            cursor,
-                           revalidated);
+                           revalidated,
+                           delegation);
             }
             std::println("]");
         } else {

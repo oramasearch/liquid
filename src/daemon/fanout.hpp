@@ -21,6 +21,7 @@ public:
     [[nodiscard]] auto load() -> result<void>;
     [[nodiscard]] auto observe(const journal_cursor& cursor) -> result<void>;
     [[nodiscard]] runtime::task<void> deliver(daemon_delivery delivery);
+    [[nodiscard]] runtime::task<void> deliver_presence(liquid::presence value);
     [[nodiscard]] auto target_status() const -> std::vector<daemon_target_status>;
     [[nodiscard]] auto replay_cursor() const -> journal_cursor;
     [[nodiscard]] auto last_drip() const -> std::optional<drip_id>;

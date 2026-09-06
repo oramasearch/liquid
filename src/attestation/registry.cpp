@@ -136,9 +136,12 @@ attestation_profile_registry::attestation_profile_registry()
                         attestation_status_kind::revocable,
                         std::chrono::hours{24}),
                 profile("delegation/1",
-                        {field("principal", attestation_field_type::text, true),
-                         field("scopes", attestation_field_type::text_list, true),
-                         field("not_after", attestation_field_type::unsigned_integer, false)},
+                        {field("scopes", attestation_field_type::text_list, true),
+                         field("may_publish", attestation_field_type::boolean, true),
+                         field("may_lease", attestation_field_type::boolean, true),
+                         field("depth_remaining", attestation_field_type::unsigned_integer, true),
+                         field("model", attestation_field_type::text, false),
+                         field("dispatcher", attestation_field_type::text, true)},
                         {attestation_subject_kind::actor},
                         attestation_status_kind::revocable,
                         std::chrono::hours{1}),
@@ -433,6 +436,67 @@ result<bool> verify(const attestation& value) {
         return std::unexpected(verified.error());
     }
     return verified->verified;
+}
+
+result<void> validate_delegation(const attestation& value, const attestation* parent) {
+    if (value.profile != "delegation/1") {
+        return std::unexpected(invalid("attestation is not delegation/1"));
+    }
+    auto valid = attestation_profile_registry::global().validate(value);
+    if (!valid) {
+        return std::unexpected(valid.error());
+    }
+    if (!parent) {
+        return {};
+    }
+    if (parent->profile != "delegation/1") {
+        return std::unexpected(invalid("delegation parent is not delegation/1"));
+    }
+    valid = attestation_profile_registry::global().validate(*parent);
+    if (!valid) {
+        return std::unexpected(valid.error());
+    }
+    const auto attribute = [](const attestation& source,
+                              std::string_view name) -> const attestation_value* {
+        const auto found = std::ranges::find(source.attributes, name, &attestation_attribute::name);
+        return found == source.attributes.end() ? nullptr : &found->value;
+    };
+    const auto* child_scopes = std::get_if<std::vector<std::string>>(attribute(value, "scopes"));
+    const auto* parent_scopes = std::get_if<std::vector<std::string>>(attribute(*parent, "scopes"));
+    const auto* child_publish = std::get_if<bool>(attribute(value, "may_publish"));
+    const auto* parent_publish = std::get_if<bool>(attribute(*parent, "may_publish"));
+    const auto* child_lease = std::get_if<bool>(attribute(value, "may_lease"));
+    const auto* parent_lease = std::get_if<bool>(attribute(*parent, "may_lease"));
+    const auto* child_depth = std::get_if<std::uint64_t>(attribute(value, "depth_remaining"));
+    const auto* parent_depth = std::get_if<std::uint64_t>(attribute(*parent, "depth_remaining"));
+    if (!child_scopes || !parent_scopes || !child_publish || !parent_publish || !child_lease ||
+        !parent_lease || !child_depth || !parent_depth) {
+        return std::unexpected(invalid("delegation attributes are incomplete"));
+    }
+    const auto within = [](std::string_view child, std::string_view ancestor) {
+        if (child == ancestor || ancestor == "**") {
+            return true;
+        }
+        const auto wildcard = ancestor.find_first_of("*?");
+        if (wildcard == std::string_view::npos) {
+            return false;
+        }
+        const auto prefix = ancestor.substr(0, wildcard);
+        return child.starts_with(prefix);
+    };
+    for (const auto& child : *child_scopes) {
+        if (std::ranges::none_of(*parent_scopes,
+                                 [&](const auto& ancestor) { return within(child, ancestor); })) {
+            return std::unexpected(invalid("sub-delegation broadens path scopes"));
+        }
+    }
+    if ((*child_publish && !*parent_publish) || (*child_lease && !*parent_lease)) {
+        return std::unexpected(invalid("sub-delegation broadens authority"));
+    }
+    if (*parent_depth == 0 || *child_depth >= *parent_depth) {
+        return std::unexpected(invalid("sub-delegation does not reduce depth_remaining"));
+    }
+    return {};
 }
 
 } // namespace liquid

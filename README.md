@@ -55,7 +55,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, historical document state, composition,
 > conflict values, operation- and session-scoped local-intent undo, advisory
-> locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
+> locks, private speculative agent sessions, semantic file/symbol/range leases, transient presence,
+> compaction epochs, scoped delegation attribution, status, public tree/change diff,
+> edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
 > one-drip streaming file writes and tree imports, and caller-stated write bases with
 > stale-reasoning refusal, disjoint re-validation, and forced re-planning records are implemented.
 > TAAP/1 identities with rotation and signed drips and changes, the internal
