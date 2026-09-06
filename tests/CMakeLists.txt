@@ -12,6 +12,7 @@ add_executable(liquid-tests
   test_daemon.cpp
   test_error.cpp
   test_hash.cpp
+  test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
   test_node_store.cpp
@@ -201,6 +202,28 @@ if(UNIX)
   add_dependencies(liquid-tests liquid-wrap-sleep-tool)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_WRAP_SLEEP_TOOL="$<TARGET_FILE:liquid-wrap-sleep-tool>")
+endif()
+
+if(UNIX)
+  add_executable(liquid-hot-demo-tests
+    hot_update/test_demo.cpp
+    ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+    ${PROJECT_SOURCE_DIR}/src/objects/records.cpp)
+  target_include_directories(liquid-hot-demo-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(liquid-hot-demo-tests PRIVATE
+    liquid::liquid
+    liquid::hot
+    GTest::gtest_main)
+  target_compile_definitions(liquid-hot-demo-tests PRIVATE
+    LIQUID_HOT_DEMO="$<TARGET_FILE:liquid-hot-demo>"
+    LIQUID_HOT_DEMO_PATCH="$<TARGET_FILE:liquid-hot-demo-patch>"
+    LIQUID_HOT_DEMO_RESTART_HOOK="$<TARGET_FILE:liquid-hot-demo-restart-hook>"
+    LIQUID_BUILD_HAS_FUSE=$<BOOL:${LIQUID_FUSE_TARGET}>)
+  add_dependencies(liquid-hot-demo-tests
+    liquid-hot-demo
+    liquid-hot-demo-patch
+    liquid-hot-demo-restart-hook)
+  gtest_discover_tests(liquid-hot-demo-tests)
 endif()
 
 if(LIQUID_BUILD_CLI)
@@ -466,6 +489,7 @@ add_executable(liquid-header-tests
   headers/git.cpp
   headers/graph.cpp
   headers/hash.cpp
+  headers/hot_update.cpp
   headers/identity.cpp
   headers/liquid.cpp
   headers/node_store.cpp
@@ -487,6 +511,9 @@ add_executable(liquid-frontend-c-header headers/frontend_abi.c)
 target_include_directories(liquid-frontend-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME public-frontend-c-header COMMAND liquid-frontend-c-header)
 
+add_executable(liquid-hot-c-header headers/hot_abi.c)
+target_include_directories(liquid-hot-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME public-hot-c-header COMMAND liquid-hot-c-header)
 add_executable(liquid-format-c-header headers/format_abi.c)
 target_include_directories(liquid-format-c-header PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME public-format-c-header COMMAND liquid-format-c-header)

@@ -304,7 +304,8 @@ auto fanout::target_status() const -> std::vector<daemon_target_status> {
                                         ? observed_deliveries_ - value.deliveries
                                         : 0,
                           .deliveries = value.deliveries,
-                          .last_error = value.last_error});
+                          .last_error = value.last_error,
+                          .detail = target->detail()});
     }
     return output;
 }

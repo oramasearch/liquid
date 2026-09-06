@@ -6,6 +6,11 @@
 > full restart. **This is the most speculative part of liquid, and it is scoped
 > accordingly.**
 
+**Implementation status:** liquid #32 implements the classifier for every tier, automatic tier 0,
+the tier-1 `liquid-hot` runtime on macOS arm64 and Linux x86_64, signed records, restart hooks, and
+daemon delivery. Tier 2 consumes #27's stored ABI descriptors and requires a compatible comparison;
+without it an additive change is tier 3. See [the library design](../library/hot-update.md).
+
 ## The honest problem
 
 Loading new code is comparatively easy. The obstacle is **state**: what happens to
@@ -54,6 +59,11 @@ Tier 1 is the first target, because function-body changes with unchanged layout 
 a large fraction of real edits — and **almost all security fixes**, which is where
 restart-free patching is most valuable.
 
+The selected mechanism is an in-process C library. Programs declare quiescence points and register
+stable entry slots; liquid loads verified relocatable definition objects and redirects those slots
+only at the next declared point. This is cooperative and portable across the supported targets.
+External attachment and a Wasm component target remain rejected alternatives for this phase.
+
 ## Restart is a first-class outcome
 
 Not a failure. Because deployment is integrated ([13](13-deployment-runtime.md)), the
@@ -76,6 +86,10 @@ Even though the feature is deferred, the artifact model must be able to express
 **"this build supersedes that one at these specific symbols, with this ABI delta."**
 If artifacts are opaque blobs, hot update becomes impossible later. Symbol-level
 identity is retained from the start.
+
+That model is now concrete: a running composition is a base result plus an ordered chain of signed,
+content-addressed `patch` records. Restart decisions are also content-addressed and attested rather
+than represented as errors.
 
 ## Open questions
 

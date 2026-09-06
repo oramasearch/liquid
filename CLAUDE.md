@@ -129,6 +129,11 @@ enumeration used by CLI record views.
 Liquid #66 adds content-addressed compiler and syntactic-fallback symbol records derived from
 recorded compile actions, graph retrieval,
 repository access, and the `liquid symbols` command.
+Liquid #32 adds deterministic hot-update classification for tiers 0–4, signed patch and restart
+records, a separately versioned cooperative C runtime on macOS arm64 and Linux x86_64, sandboxed
+restart hooks, reconstructible process composition, and a drip-driven daemon target. Tier 2 remains
+conditional on a compatible #27 ABI descriptor referenced by the signed build result; absent that
+proof, an additive interface is tier 3.
 Liquid #205 adds optional concrete syntax to frontend ABI v1 and implemented C/C++ structural
 rename, extract, move, and tree-edit previews and applies through libliquid, the local daemon, and
 `liquid edit`, with attributed grouped undo.

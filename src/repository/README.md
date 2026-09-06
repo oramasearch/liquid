@@ -74,6 +74,11 @@ scheduler backend, TLS trust and client-key paths, request headers, deadline, ba
 read-only-by-default publication. The public
 accessor lets later wrap runs reuse the configuration without exposing document internals.
 
+The repository document also persists `config.hot_update`: the sandboxed restart-hook argument
+vector and the build-target/local-endpoint pairs consumed by the daemon. Creation and open reject
+empty hook arguments, duplicate target names, empty endpoints, or configured targets without a
+restart hook. The public accessor returns the effective stored configuration.
+
 The private search adapter exposes only the repository checkout's `.liquid/index/` path to the
 search implementation. Public queries remain on `repository::search`; no index representation or
 oramacore type crosses the public boundary.
