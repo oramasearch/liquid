@@ -1,13 +1,55 @@
 # Drive synchronization
 
-**What.** Issue #195's folder synchronization client: persisted three-tree reconciliation,
-content conflicts that retain both values, resumable transfer through the repository sync
-protocol, path history and restore, and daemon-hosted watching.
+**What.** Issues #195 and #235's folder synchronization client: persisted three-tree
+reconciliation, per-path device state, lazy and pinned hydration, offline write queues, content
+conflicts that retain both values, resumable transfer, path history and restore, daemon-hosted
+watching, and Linux file-manager badges.
 
-**Status: implemented by liquid #195.** `liquid::drive_client` provides one-shot synchronization
-and status. `liquid drive sync` exposes it directly; `--watch` attaches to the checkout daemon,
-whose drive target runs the same client after captured filesystem drips. Desktop placeholder
-shells and lake's web drive are separate consumer work.
+**Status: implemented by liquid #195 and #235.** `liquid::drive_client` provides one-shot
+synchronization, path state, policy configuration, pinning, and status. `liquid drive sync`
+exposes synchronization directly; `pin`, `unpin`, and `status` use the same repository settings.
+`--watch` attaches to the checkout daemon, whose drive target runs the same client after captured
+filesystem drips. Lake's web drive is separate consumer work.
+
+## Device states and settings
+
+Every path resolves to exactly one device state. Rules are stored under the local repository's
+`drive.settings.v1` metadata key and therefore survive process and machine restarts without a
+side database.
+
+| State | Stored value | Behavior |
+|---|---|---|
+| Online-only | `online-only` | Visible in the FUSE namespace; the first read hydrates verified chunks from the configured sync peer. |
+| Available offline | `available-offline` | Pinned content is fully hydrated and remains local across mounts. |
+| Not synced here | `not-synced-here` | Explicitly excluded from directory listings, filesystem scans, and local publication. The remote namespace is unchanged. |
+
+The deepest explicit rule wins. With `pin_folders=true`, an available-offline directory rule pins
+all descendants; an explicit child rule can return one path to online-only. Exclusions always
+apply recursively so disabling folder pins cannot expose an excluded child. The persisted
+`hydration_size_threshold` defaults to 8 MiB. An online-only file at or below it hydrates in full
+on first read; a larger file hydrates only the chunks covering the read. Pinning always hydrates
+the complete file a chunk at a time and does not allocate the complete file in memory.
+
+`drive_status::paths` reports the effective state, size, hydration record, byte debt, and reason
+for each file and each explicit rule, including excluded or empty directories. `pending_uploads`
+counts paths whose current tree differs from the last accepted base tree. `hydration_debt` sums
+non-local bytes in every visible path, including online-only content that has not yet been read.
+`offline_reason` retains the latest peer failure until a later hydration succeeds.
+
+## Extended attributes
+
+The Linux FUSE mount provides two virtual user attributes on files and directories:
+
+| Attribute | Read | Write |
+|---|---|---|
+| `user.liquid.state` | One of the three stored values above. | Sets an explicit per-path rule. |
+| `user.liquid.pin` | `1` only for available-offline; otherwise `0`. | `1` pins and hydrates; `0` writes an online-only override. |
+
+`listxattr` returns both names. Removing either attribute writes the online-only state. Unknown
+attributes return `ENODATA`, invalid values return `EINVAL`, and an excluded entry returns
+`ENOENT` after the kernel's cached entry expires. The Nautilus and Dolphin providers under
+[`tools/desktop/linux/`](../../tools/desktop/linux/) read only `user.liquid.state`; they cannot
+mutate repository content.
 
 ## Repository and three trees
 
@@ -93,14 +135,20 @@ remain in the tree; rebuilding status does not itself count as resolution.
 
 ## Transfer and publication
 
-Pull imports signed metadata and missing objects into the remote view, then reconciliation applies
-repository operations and publishes filesystem changes. A file is streamed a chunk at a time to a
-temporary file beside its destination, permissions are applied, and the file is renamed into
-place. Durable mode flushes the file and parent directory on POSIX systems. Filesystem calls that
-may block run through `runtime::offload`.
+Pull imports signed repository and tree metadata into the remote view and registers content chunks
+against a retained `sync_endpoint`; payload bytes remain remote until policy or a read needs them.
+Reconciliation then applies repository operations. Pinned files and online-only files at or below
+the threshold are published to the synchronized folder. Larger online-only paths remain virtual
+placeholders in the FUSE namespace, and later full walks retain their repository entries while
+chunks remain remote. A published file is streamed a chunk at a time to a temporary file beside
+its destination, permissions are applied, and the file is renamed into place. Durable mode flushes
+the file and parent directory on POSIX systems. Filesystem calls that may block run through
+`runtime::offload`.
 
-Push uses the existing sync endpoint after local reconciliation. Missing-object negotiation makes
-chunk retries idempotent. The report combines received object and byte counts from pull and push
+Push uses the existing sync endpoint after local reconciliation. It enumerates payload identities
+without reading them and hydrates only payloads the peer reports missing, so unchanged online-only
+files stay remote. Missing-object negotiation makes chunk retries idempotent. The report combines
+received object and byte counts from pull and push
 and exposes every pushed reference as applied or refused with the server's reason unchanged. A
 refusal is a completed transfer, but the base tree does not advance, so the local change remains
 pending for a later retry. The CLI prints every outcome and exits with status 1 when any ref is
@@ -123,8 +171,10 @@ restored working value before cutting it. `liquid history <path>` lists the entr
 
 All library waiting operations are Capy tasks. The CLI uses `runtime::block_on` only at its command
 entry points; the daemon awaits drive tasks on its existing runtime and receives the inherited
-bearer token as an in-memory option. There is no drive-owned thread. Filesystem walks, directory
-creation, temporary output, rename, removal, and durability flushes use `runtime::offload`.
+bearer token as an in-memory option. FUSE requests, pin hydration, sync reads, and
+desktop-independent state changes stay on Capy tasks. CLI waits use Capy timers. Filesystem walks,
+directory creation, temporary output, rename, removal, durability flushes, and the FUSE loop use
+`runtime::offload`. No drive or VFS component creates a raw thread.
 
 The default resident walk-state ceiling is 256 MiB. The walker accounts each retained path and
 record before staging content and returns `errc::busy` when the configured ceiling would be
@@ -144,8 +194,15 @@ authorization refusal reason with an unadvanced base, and rejects the bounded sy
 described above. Repository and CLI tests prove
 history follows a move and restore appends a drip without changing the old log.
 
+Portable VFS tests cover the three-state resolver, recursive folder pins, explicit child
+overrides, xattr names and values, and invalid pin values. Drive tests persist settings, retain a
+large online-only placeholder across repeated sync, surface an offline pin reason, pin a folder,
+record hydration, override one child, reopen the client, queue a repository write, reconcile it
+later, and verify status counters. Linux FUSE coverage reads and writes the real attributes.
+Python string tests pin the Nautilus and Dolphin badge mappings.
+
 ## Deferred consumers
 
-Windows CFAPI, macOS File Provider, Linux desktop shell integration, placeholders and pinning are
-not part of this client. Lake's browser, preview, sharing, and web-drive surfaces are also outside
-this repository change. They consume the public drive and repository APIs described here.
+Windows CFAPI, macOS File Provider, distro packaging, and lake's browser, preview, sharing, and
+web-drive surfaces remain outside this repository change. They consume the public drive and
+repository APIs described here.

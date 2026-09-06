@@ -83,7 +83,8 @@ owning issue in `error::context`.
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #85, #86, #116, #160, #165, #166, #174, #193, #200, #205 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; flow-controlled memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural-edit preview/apply with grouped undo; cost-planned working/ref search with common located hits and executed-plan explanations; stale-base validation; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote, agent, and flow configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, asynchronous key wrapping, keyring inspection, URI-selected custody providers, and Shamir splitting |
-| `liquid/vfs.hpp` | #6 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS; `vfs::materialise`: full checkout on every platform |
+| `liquid/drive.hpp` | #195, #235 | implemented | three-tree sync, persisted path states and policy, pin/unpin hydration, pending-upload and hydration-debt status |
+| `liquid/vfs.hpp` | #6, #235 | implemented | `vfs::mount`: FUSE on Linux and optional macFUSE on macOS, including drive xattrs and policy hydration; `vfs::materialise`: full checkout on every platform |
 | `liquid/build.hpp` | #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #23, #26, #27, #57, #60, #56, #58, #61, #193, #200 | implemented local and REAPI execution, wrapper, disk and remote cache, verification, replay, provenance, diagnostics, observability, event streams, content-addressed outputs, public plans, input policy, configure facts, retention, tests, SBOMs, and ABI publication | action execution and results, named upstream result/tree inputs, canonical output-tree claims, signature-valid `known_outputs` enumeration, complete configured plan entries that preserve named input trees, stable JSON event projection, move-only build handles and subscriptions, test target/result values, remote eligibility and read refusal, recorded cost decisions, batching and racing, typed cache and retention explanations, critical alerts, retained build traces, critical paths, Chrome export, policy checking, configure fact inspection/export, foreign-target wrapping, action and graph verification, explicit replay through registered remote sources, provenance verification, JSON/DSSE projection, tier and byte reports, graph-derived SPDX/CycloneDX SBOMs, marked binary inference, and wrapper ABI-break reports; no sandbox or index implementation types are public |
 | `liquid/daemon.hpp` | #21, #23, #32, #85, #193, #195, #200, #205 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured hot-update and drive sync, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, structural-edit preview/apply, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
@@ -611,7 +612,7 @@ enum class sync_ref_outcome_kind : std::uint8_t { applied = 1, refused = 2 };
 struct sync_ref_outcome { std::string name; sync_ref_outcome_kind outcome; std::string reason; };
 struct sync_report {
   journal_cursor cursor; std::uint64_t metadata_items; sync_transfer_report sent, received;
-  std::vector<sync_ref_outcome> references; std::uint64_t retry_after_ms;
+  std::uint64_t bytes_remote; std::vector<sync_ref_outcome> references; std::uint64_t retry_after_ms;
   std::string exhausted_scope;
 };
 struct sync_metadata_report { std::uint64_t trees, blobs, bytes_remote; };
@@ -646,6 +647,7 @@ class sync_endpoint final : public remote_blob_source {
   explicit sync_endpoint(std::string repository_url, sync_endpoint_options = {});
   runtime::task<sync_report> push(repository&);
   runtime::task<sync_report> pull(repository&);
+  runtime::task<sync_report> pull_metadata(repository&);
 };
 ```
 
@@ -1061,10 +1063,46 @@ sync data map to `errc::corrupt`. Apply, merge, and sync-receive expected values
 candidate state is installed, and remote observation uses the patch-returning entry points. The
 wrapper exposes no automerge type in this public header.
 
+### `liquid/drive.hpp`
+
+```cpp
+enum class drive_path_state : std::uint8_t {
+  online_only = 1, available_offline = 2, not_synced_here = 3
+};
+struct drive_settings { std::uint64_t hydration_size_threshold; bool pin_folders; };
+struct drive_path_status {
+  std::string path; drive_path_state state; std::uint64_t size, hydration_debt;
+  bool hydrated; std::string reason;
+};
+struct drive_status {
+  /* folder, remote and three-tree state */ drive_settings settings;
+  std::uint64_t pending_uploads, hydration_debt; std::string offline_reason;
+  std::vector<drive_path_status> paths;
+};
+class drive_client {
+ public:
+  static runtime::task<drive_client> open(std::filesystem::path, drive_options = {});
+  runtime::task<drive_sync_report> sync();
+  runtime::task<drive_status> status();
+  runtime::task<drive_path_status> path_status(std::string);
+  runtime::task<drive_settings> settings();
+  runtime::task<void> configure(drive_settings);
+  runtime::task<void> set_state(std::string, drive_path_state);
+  runtime::task<void> pin(std::string);
+  runtime::task<void> unpin(std::string);
+};
+```
+
+Path rules and policy are repository-local metadata. Pinning hydrates through the configured sync
+source, while exclusions remain explicit state rather than absent metadata. The complete behavior
+is in [`drive.md`](drive.md).
+
 ### `liquid/vfs.hpp`
 
 ```cpp
-struct mount_options { bool read_only{false}; std::chrono::seconds attr_timeout{1}; };
+struct mount_options {
+  bool read_only{false}; std::chrono::seconds attr_timeout{1}; std::string bearer_token;
+};
 struct mount_status { std::uint64_t hydrated_bytes, hydrated_files, misses_served,
                       writes_captured; std::chrono::nanoseconds request_queue_latency; };
 class mount {

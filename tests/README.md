@@ -109,6 +109,12 @@ process, checks ordinary and atomic per-ref output, and invokes the real push an
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
 
+Drive coverage persists policy and per-path state across reopen, checks folder inheritance and
+explicit overrides, retains lazy placeholders, records peer failure reasons, queues repository
+writes, reports hydration state, and validates every extended-attribute value. The desktop badge
+mapping tests run without GNOME or KDE. Linux FUSE coverage calls the mounted attribute setters,
+getters, and list operation directly.
+
 Build tests cover the disk action index's reopen and rebuild paths, public configured-plan schema,
 named configuration errors, and current root digests on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,

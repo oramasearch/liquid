@@ -23,13 +23,15 @@ of this implementation. A macOS build without macFUSE succeeds; attempting to mo
 directs callers to `materialise`.
 
 Remote hydration through `remote_blob_source` is implemented independently of any hosted service.
-Phase 6 may provide a source implementation, but the VFS and record format do not depend on it.
+Configured drive mounts retain a `sync_endpoint` as that source; the VFS and record format do not
+depend on lake.
 
 ## Public API
 
 `mount_options::read_only` rejects modifying operations with `EROFS`.
-`mount_options::attr_timeout` controls FUSE attribute and entry caching. The opaque `mount` handle
-exposes asynchronous `unmount()` and synchronous `status()`:
+`mount_options::attr_timeout` controls FUSE attribute and entry caching.
+`mount_options::bearer_token` is used only while registering a configured drive peer and is never
+persisted. The opaque `mount` handle exposes asynchronous `unmount()` and synchronous `status()`:
 
 - `hydrated_bytes`: bytes in logical chunks used by files during this mount;
 - `hydrated_files`: files with at least one hydrated chunk;
@@ -62,9 +64,17 @@ Plain BLAKE3 and SHA-256 cache entries are rehashed before use. Keyed-digest chu
 and authenticated by the store for each read but are not persisted in the plaintext cache, because
 the VFS layer does not receive the trust-domain MAC key needed to reauthenticate a cached copy.
 
-The cache never manufactures data. A missing, corrupt, unavailable, or undecryptable chunk maps to
-`EIO` on a read and writes its liquid error to standard error. The caller never receives zeroes,
-an empty substitute, or ciphertext.
+The cache never manufactures data. Corrupt or undecryptable content maps to `EIO`. When an
+unhydrated drive path needs a peer that is unavailable, the read returns `EAGAIN`, records
+`peer unreachable while hydrating <path>` in drive settings, and leaves a retryable status reason.
+The caller never receives zeroes, an empty substitute, or ciphertext.
+
+Drive reads consult the persisted policy before entering the cache. Pinned files and online-only
+files no larger than the configured threshold hydrate completely; larger online-only files hydrate
+only the requested chunks. A successful full hydration adds a persisted path record; partial reads
+remain visible through byte debt and the mount's hydrated-byte counters. FUSE `getxattr`,
+`listxattr`, `setxattr`, and `removexattr` expose the state contract in
+[`drive.md`](drive.md#extended-attributes) through the same serialized request queue.
 
 ## Request queue and writes
 
@@ -111,12 +121,15 @@ cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON
 cmake --build build-shared && ctest --test-dir build-shared --output-on-failure
 ```
 
-`VfsMaterialise` compares full and prefix checkouts. `RemoteOutputs` proves exact remote chunk
+`VfsMaterialise` compares full and prefix checkouts. `VfsDriveState` and `VfsDriveXattr` cover
+policy inheritance and the portable attribute mapping. `RemoteOutputs` proves exact remote chunk
 reads, persistent cache reuse, and on-demand full materialisation. `VfsHydration` checks a range read against the
 source and asserts that less than the file was hydrated. `VfsMount` uses a 64 MiB file, reads 4 KiB
 at 40 MiB, reads the full file, captures a write and stable node identity, records one move, checks
-locked-path `EACCES`, and verifies reuse after unmount and remount. It reports a skip with the FUSE
-diagnosis when the backend or device is unavailable. Run `liquid-vfs-queue-tests` directly to print
+locked-path `EACCES`, and verifies reuse after unmount and remount. On Linux it also exercises the
+real drive xattrs and checks `EAGAIN` plus the persisted reason from an unavailable peer. It reports
+a skip with the FUSE diagnosis when the backend or device is unavailable. Run
+`liquid-vfs-queue-tests` directly to print
 the request-queue measurement. On Linux, the command in [`docs/build/ci.md`](../build/ci.md#local-linux-verification)
 runs the mount scenario alone and must report one passed test rather than a skip.
 

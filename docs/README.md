@@ -39,6 +39,8 @@ notes so that each claim has a clear role.
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/transparency.md`](library/transparency.md) | RFC 3161 timestamp and RFC 4998 evidence verification design, trust policy, and implementation notes. |
 | [`library/drive.md`](library/drive.md) | Issue #195's persisted three-tree folder reconciliation, named conflict values, resumable sync transfer, path history and restore, daemon watcher, and bounded scan state. |
+| [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including change authorization, per-ref outcomes, and atomic pushes. |
+| [`library/drive.md`](library/drive.md) | Issues #195 and #235's persisted three-tree reconciliation, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
 | [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
@@ -49,13 +51,17 @@ notes so that each claim has a clear role.
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
 | [`library/identity.md`](library/identity.md) | TAAP/1 identity documents, public canonical-CBOR codecs, rotation, signatures, and verification. |
-| [`library/vfs.md`](library/vfs.md) | Lazy chunk hydration, FUSE mounts, the request queue, full materialisation, and platform coverage. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
 | [`library/admission.md`](library/admission.md) | Image provenance statements, fail-closed admission policy, evidence sources, transparency behavior, TLS serving, and stable decisions. |
 | [`api/admission.md`](api/admission.md) | Kubernetes webhook, control, metrics, REST, OpenAPI, and MCP routes. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync, path history, flow status and retry output, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, drive sync and pin state, path history, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, named build inputs, retention explanations, output, capture, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, flow status and retry output, retention explanations, capture, examples, and verification. |
 | [`cli/build-events.md`](cli/build-events.md) | The `liquid build --plan` and `--events` JSON-lines schemas, daemon operations, ordering, exit status, and edit behavior. |
 | [`cli/test.md`](cli/test.md) | CMake/native test discovery, filtering, cached action behavior, output, and exit status. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, and toolchains. |

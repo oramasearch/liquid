@@ -132,7 +132,7 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::path_history},
     {"drive",
-     "drive <sync <folder> <remote> [--watch]|status [folder]>",
+     "drive <sync <folder> <remote> [--watch]|status [folder]|pin <path>|unpin <path>>",
      "synchronize a drive folder",
      "available",
      liquid_cli::drive},

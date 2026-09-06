@@ -5,9 +5,10 @@ outcome fields, and the store-compatible `LQFRAME1` object frame. Decoders bound
 trailing or missing end frames, decompress zstd data, and verify object digests before returning
 bytes.
 
-`session.cpp` walks references from caller-provided roots. Send asks the peer for its missing set
-before uploading; receive range-reads absent objects, verifies each full digest, stores it, and then
-continues through its references while preserving each transmitted digest algorithm.
+`session.cpp` walks references from caller-provided roots. Send enumerates blob payload identities
+without reading them, asks the peer for its missing set, and loads only payloads that need upload;
+receive range-reads absent objects, verifies each full digest, stores it, and then continues through
+its references while preserving each transmitted digest algorithm.
 `receive_metadata` follows only tree and blob records, registers each blob's whole-content digest
 against the session's source and instance, and counts bytes whose chunks remain remote without
 requesting any content chunk.
@@ -24,3 +25,10 @@ metadata import, and encodes canonical error bodies including retry scope and de
 framing, and bearer authentication. The sync adapter owns its media type, CBOR errors, endpoint
 paths, legacy push outcomes, and object-session composition. HTTP 429 responses become explicit
 retry fields in the public sync report. The public types contain no transport implementation types.
+`endpoint.cpp` is the private Corosio and `oramasearch/http` adapter. It parses HTTP/HTTPS repository
+URLs, resolves and connects on the caller's Capy executor, supports content-length and chunked
+responses, supplies bearer authentication, validates or synthesizes legacy push outcomes, and
+composes metadata with the object session for push and pull. HTTP 429 responses become explicit
+retry fields in the public sync report. Its metadata-only pull registers remote blob locations and
+reports bytes left remote so the drive can hydrate content later. The public types contain no
+transport implementation types.

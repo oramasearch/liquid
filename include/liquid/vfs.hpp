@@ -17,6 +17,7 @@ namespace liquid {
 struct LIQUID_EXPORT mount_options {
     bool read_only{false};
     std::chrono::seconds attr_timeout{1};
+    std::string bearer_token;
 };
 
 struct LIQUID_EXPORT mount_status {

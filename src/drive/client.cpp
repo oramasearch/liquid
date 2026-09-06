@@ -15,6 +15,7 @@
 #include <unistd.h>
 #endif
 
+#include "drive/settings.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/repository.hpp"
 #include "repository/drive_access.hpp"
@@ -196,6 +197,15 @@ auto excluded_path(std::string_view path) -> bool {
            path.starts_with(".liquid-store/") || path.ends_with(".liquid-drive-tmp");
 }
 
+auto within_path(std::string_view path, std::string_view parent) -> bool {
+    return parent.empty() || path == parent || path.starts_with(std::string{parent} + "/");
+}
+
+auto selected_for_device(const drive_detail::stored_settings& settings, std::string_view path)
+    -> bool {
+    return drive_detail::effective_state(settings, path) != drive_path_state::not_synced_here;
+}
+
 auto file_mode(const std::filesystem::directory_entry& entry, std::error_code& code)
     -> std::uint32_t {
     const auto permissions = entry.status(code).permissions();
@@ -205,7 +215,9 @@ auto file_mode(const std::filesystem::directory_entry& entry, std::error_code& c
     return 0100000U | static_cast<std::uint32_t>(permissions) & 0777U;
 }
 
-auto walk_files(const std::filesystem::path& folder, std::uint64_t ceiling) -> result<walk_result> {
+auto walk_files(const std::filesystem::path& folder,
+                std::uint64_t ceiling,
+                drive_detail::stored_settings settings) -> result<walk_result> {
     auto output = walk_result{};
     auto code = std::error_code{};
     for (std::filesystem::recursive_directory_iterator
@@ -214,7 +226,7 @@ auto walk_files(const std::filesystem::path& folder, std::uint64_t ceiling) -> r
          !code && iterator != end;
          iterator.increment(code)) {
         const auto relative = iterator->path().lexically_relative(folder).generic_string();
-        if (excluded_path(relative)) {
+        if (excluded_path(relative) || !selected_for_device(settings, relative)) {
             if (iterator->is_directory(code)) {
                 iterator.disable_recursion_pending();
             }
@@ -559,6 +571,84 @@ auto file_maps_equal(const file_map& left, const file_map& right) -> bool {
     return true;
 }
 
+auto pending_upload_count(const file_map& base, const file_map& current) -> std::uint64_t {
+    auto paths = std::set<std::string>{};
+    for (const auto& [path, value] : base) {
+        static_cast<void>(value);
+        paths.insert(path);
+    }
+    for (const auto& [path, value] : current) {
+        static_cast<void>(value);
+        paths.insert(path);
+    }
+    auto count = std::uint64_t{};
+    for (const auto& path : paths) {
+        const auto left = base.find(path);
+        const auto right = current.find(path);
+        if (left == base.end() || right == current.end() ||
+            !same_state(left->second, right->second)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+runtime::task<void> hydrate_file(repository& source, const file_value& value) {
+    auto blob = co_await repository_detail::drive_access::load_blob(source, value.entry);
+    if (!blob) {
+        co_return std::unexpected(blob.error());
+    }
+    for (const auto& chunk : blob->chunks) {
+        auto bytes = co_await repository_detail::drive_access::objects(source).get(chunk);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+    }
+    co_return result<void>{};
+}
+
+runtime::task<drive_path_status> inspect_path(repository& source,
+                                              const drive_detail::stored_settings& settings,
+                                              std::string path,
+                                              const file_value* value) {
+    auto output = drive_path_status{.path = std::move(path)};
+    output.state = drive_detail::effective_state(settings, output.path);
+    output.hydrated = settings.hydrated.contains(output.path);
+    if (value) {
+        auto blob = co_await repository_detail::drive_access::load_blob(source, value->entry);
+        if (!blob) {
+            co_return std::unexpected(blob.error());
+        }
+        output.size = blob->size;
+        auto all_local = true;
+        for (auto index = std::size_t{}; index < blob->chunks.size(); ++index) {
+            auto available =
+                co_await repository_detail::drive_access::objects(source).has(blob->chunks[index]);
+            if (!available) {
+                co_return std::unexpected(available.error());
+            }
+            if (*available != blob_availability::local &&
+                output.state != drive_path_state::not_synced_here) {
+                all_local = false;
+                output.hydration_debt += blob->chunk_sizes[index];
+            }
+        }
+        output.hydrated = output.hydrated || all_local;
+    }
+    if (output.state == drive_path_state::not_synced_here) {
+        output.reason = "excluded on this device";
+    } else if (output.state == drive_path_state::available_offline && output.hydration_debt != 0) {
+        output.reason = "waiting for the peer to hydrate pinned content";
+    } else if (output.state == drive_path_state::available_offline) {
+        output.reason = "pinned and available offline";
+    } else if (output.hydrated) {
+        output.reason = "hydrated by an earlier read";
+    } else {
+        output.reason = "online-only; hydrates on first read";
+    }
+    co_return output;
+}
+
 auto path_depth(std::string_view path) -> std::size_t {
     return static_cast<std::size_t>(std::ranges::count(path, '/'));
 }
@@ -803,10 +893,36 @@ runtime::task<void> publish_files(repository& source,
                                   const file_map& before,
                                   const file_map& desired,
                                   const std::filesystem::path& folder,
+                                  const drive_detail::stored_settings& settings,
                                   bool durable) {
     for (const auto& [path, value] : desired) {
+        if (!selected_for_device(settings, path)) {
+            auto removed = co_await runtime::offload([target = folder / path] {
+                auto code = std::error_code{};
+                std::filesystem::remove(target, code);
+                if (code) {
+                    return result<void>{
+                        std::unexpected(drive_error(errc::io, code.message(), target.string()))};
+                }
+                return result<void>{};
+            });
+            if (!removed) {
+                co_return std::unexpected(removed.error());
+            }
+            if (!*removed) {
+                co_return std::unexpected(removed->error());
+            }
+            continue;
+        }
         const auto found = before.find(path);
         if (found != before.end() && same_file(found->second, value)) {
+            continue;
+        }
+        auto blob = co_await repository_detail::drive_access::load_blob(source, value.entry);
+        if (!blob) {
+            co_return std::unexpected(blob.error());
+        }
+        if (!drive_detail::should_hydrate_fully(settings, path, blob->size)) {
             continue;
         }
         auto published = co_await materialise(source, value, folder, durable);
@@ -855,7 +971,12 @@ struct drive_client::impl {
     drive_options options;
     repository local;
     repository remote;
+    std::shared_ptr<sync_endpoint> remote_source;
     persisted_state state;
+
+    runtime::task<drive_detail::stored_settings> settings() {
+        co_return co_await drive_detail::load_settings(local);
+    }
 
     runtime::task<void> persist() {
         auto encoded = encode_state(state);
@@ -866,10 +987,15 @@ struct drive_client::impl {
     }
 
     runtime::task<file_map> scan() {
-        auto walked =
-            co_await runtime::offload([folder = folder, ceiling = options.state_memory_ceiling] {
-                return walk_files(folder, ceiling);
-            });
+        auto configured = co_await settings();
+        if (!configured) {
+            co_return std::unexpected(configured.error());
+        }
+        auto walked = co_await runtime::offload([folder = folder,
+                                                 ceiling = options.state_memory_ceiling,
+                                                 configured = std::move(*configured)] {
+            return walk_files(folder, ceiling, std::move(configured));
+        });
         if (!walked) {
             co_return std::unexpected(walked.error());
         }
@@ -904,9 +1030,66 @@ struct drive_client::impl {
         if (!current) {
             co_return std::unexpected(current.error());
         }
+        auto base = co_await flatten(local, state.trees.base);
+        if (!base) {
+            co_return std::unexpected(base.error());
+        }
         auto filesystem = co_await scan();
         if (!filesystem) {
             co_return std::unexpected(filesystem.error());
+        }
+        auto configured = co_await settings();
+        if (!configured) {
+            co_return std::unexpected(configured.error());
+        }
+        const auto base_nodes = by_node(*base);
+        const auto current_nodes = by_node(*current);
+        for (const auto& [path, value] : *base) {
+            if (!current_nodes.contains(node_key(value.entry.node))) {
+                filesystem->erase(path);
+            }
+        }
+        for (const auto& [path, value] : *current) {
+            const auto previous = base_nodes.find(node_key(value.entry.node));
+            if (previous == base_nodes.end() || !same_state(value, *previous->second)) {
+                if (previous != base_nodes.end()) {
+                    filesystem->erase(previous->second->path);
+                }
+                filesystem->insert_or_assign(path, value);
+                continue;
+            }
+            if (!selected_for_device(*configured, path)) {
+                filesystem->insert_or_assign(path, value);
+                continue;
+            }
+            if (filesystem->contains(path)) {
+                continue;
+            }
+            const auto state = drive_detail::effective_state(*configured, path);
+            if (state == drive_path_state::available_offline ||
+                configured->hydrated.contains(path)) {
+                filesystem->insert_or_assign(path, value);
+                continue;
+            }
+            auto blob = co_await repository_detail::drive_access::load_blob(local, value.entry);
+            if (!blob) {
+                co_return std::unexpected(blob.error());
+            }
+            if (drive_detail::should_hydrate_fully(*configured, path, blob->size)) {
+                continue;
+            }
+            auto remote_chunks = false;
+            for (const auto& chunk : blob->chunks) {
+                auto available =
+                    co_await repository_detail::drive_access::objects(local).has(chunk);
+                if (!available) {
+                    co_return std::unexpected(available.error());
+                }
+                remote_chunks = remote_chunks || *available == blob_availability::remote;
+            }
+            if (remote_chunks) {
+                filesystem->insert_or_assign(path, value);
+            }
         }
         auto removed_by_content = std::map<std::string, std::vector<const file_value*>>{};
         for (const auto& [path, value] : *current) {
@@ -1047,6 +1230,17 @@ runtime::task<drive_client> drive_client::open_impl(std::filesystem::path folder
     implementation->local = std::move(*local);
     implementation->remote = std::move(*remote);
     implementation->state = std::move(state);
+    auto source_options =
+        sync_endpoint_options{.bearer_token = implementation->options.bearer_token,
+                              .batch_items = implementation->options.batch_items};
+    implementation->remote_source =
+        std::make_shared<sync_endpoint>(implementation->remote_url, std::move(source_options));
+    auto registered =
+        co_await repository_detail::drive_access::objects(implementation->local)
+            .register_remote_source(implementation->remote_url, implementation->remote_source);
+    if (!registered) {
+        co_return std::unexpected(registered.error());
+    }
     co_return drive_client{std::move(implementation)};
 }
 
@@ -1068,6 +1262,41 @@ runtime::task<drive_status> drive_client::status() {
     if (!conflicts) {
         co_return std::unexpected(conflicts.error());
     }
+    auto configured = co_await impl_->settings();
+    if (!configured) {
+        co_return std::unexpected(configured.error());
+    }
+    auto current_root = co_await repository_detail::drive_access::snapshot(impl_->local);
+    if (!current_root) {
+        co_return std::unexpected(current_root.error());
+    }
+    auto current = co_await flatten(impl_->local, *current_root);
+    auto base = co_await flatten(impl_->local, impl_->state.trees.base);
+    if (!current || !base) {
+        co_return std::unexpected(!current ? current.error() : base.error());
+    }
+    auto paths = std::vector<drive_path_status>{};
+    auto hydration_debt = std::uint64_t{};
+    for (const auto& [path, value] : *current) {
+        auto inspected = co_await inspect_path(impl_->local, *configured, path, &value);
+        if (!inspected) {
+            co_return std::unexpected(inspected.error());
+        }
+        hydration_debt += inspected->hydration_debt;
+        paths.push_back(std::move(*inspected));
+    }
+    for (const auto& [path, state] : configured->states) {
+        static_cast<void>(state);
+        if (current->contains(path)) {
+            continue;
+        }
+        auto inspected = co_await inspect_path(impl_->local, *configured, path, nullptr);
+        if (!inspected) {
+            co_return std::unexpected(inspected.error());
+        }
+        paths.push_back(std::move(*inspected));
+    }
+    std::ranges::sort(paths, {}, &drive_path_status::path);
     co_return drive_status{.folder = impl_->folder,
                            .remote = impl_->remote_url,
                            .trees = impl_->state.trees,
@@ -1075,8 +1304,133 @@ runtime::task<drive_status> drive_client::status() {
                            .state_bytes = impl_->state.state_bytes,
                            .state_memory_ceiling = impl_->options.state_memory_ceiling,
                            .full_walks = impl_->state.full_walks,
+                           .settings = configured->policy,
+                           .pending_uploads = pending_upload_count(*base, *current),
+                           .hydration_debt = hydration_debt,
+                           .offline_reason = configured->offline_reason,
+                           .paths = std::move(paths),
                            .conflicts = std::move(*conflicts),
                            .references = impl_->state.references};
+}
+
+runtime::task<drive_path_status> drive_client::path_status(std::string path) {
+    if (!impl_) {
+        co_return std::unexpected(drive_error(errc::invalid_argument, "drive client is empty"));
+    }
+    auto normalized = drive_detail::normalize_path(std::move(path));
+    if (!normalized) {
+        co_return std::unexpected(normalized.error());
+    }
+    auto configured = co_await impl_->settings();
+    if (!configured) {
+        co_return std::unexpected(configured.error());
+    }
+    auto root = co_await repository_detail::drive_access::snapshot(impl_->local);
+    if (!root) {
+        co_return std::unexpected(root.error());
+    }
+    auto files = co_await flatten(impl_->local, *root);
+    if (!files) {
+        co_return std::unexpected(files.error());
+    }
+    const auto found = files->find(*normalized);
+    if (found != files->end()) {
+        co_return co_await inspect_path(impl_->local, *configured, *normalized, &found->second);
+    }
+    const auto directory = std::ranges::any_of(*files, [&](const auto& item) {
+        return within_path(item.first, *normalized) && item.first != *normalized;
+    });
+    if (!directory && !normalized->empty()) {
+        co_return std::unexpected(
+            drive_error(errc::not_found, "drive path does not exist", *normalized));
+    }
+    co_return co_await inspect_path(impl_->local, *configured, *normalized, nullptr);
+}
+
+runtime::task<drive_settings> drive_client::settings() {
+    if (!impl_) {
+        co_return std::unexpected(drive_error(errc::invalid_argument, "drive client is empty"));
+    }
+    auto configured = co_await impl_->settings();
+    if (!configured) {
+        co_return std::unexpected(configured.error());
+    }
+    co_return configured->policy;
+}
+
+runtime::task<void> drive_client::configure(drive_settings settings) {
+    if (!impl_) {
+        co_return std::unexpected(drive_error(errc::invalid_argument, "drive client is empty"));
+    }
+    if (settings.hydration_size_threshold == 0) {
+        co_return std::unexpected(
+            drive_error(errc::invalid_argument, "hydration size threshold must be positive"));
+    }
+    auto configured = co_await impl_->settings();
+    if (!configured) {
+        co_return std::unexpected(configured.error());
+    }
+    configured->policy = settings;
+    co_return co_await drive_detail::save_settings(impl_->local, *configured);
+}
+
+runtime::task<void> drive_client::set_state(std::string path, drive_path_state state) {
+    if (!impl_) {
+        co_return std::unexpected(drive_error(errc::invalid_argument, "drive client is empty"));
+    }
+    auto normalized = drive_detail::normalize_path(std::move(path));
+    if (!normalized) {
+        co_return std::unexpected(normalized.error());
+    }
+    auto saved = co_await drive_detail::set_path_state(impl_->local, *normalized, state);
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    if (state != drive_path_state::available_offline) {
+        co_return result<void>{};
+    }
+    auto root = co_await repository_detail::drive_access::snapshot(impl_->local);
+    if (!root) {
+        co_return std::unexpected(root.error());
+    }
+    auto files = co_await flatten(impl_->local, *root);
+    if (!files) {
+        co_return std::unexpected(files.error());
+    }
+    auto matched = false;
+    for (const auto& [candidate, value] : *files) {
+        if (candidate != *normalized &&
+            (!saved->policy.pin_folders || !within_path(candidate, *normalized))) {
+            continue;
+        }
+        matched = true;
+        auto hydrated = co_await hydrate_file(impl_->local, value);
+        if (!hydrated) {
+            const auto reason = "pinned content is unavailable: " + hydrated.error().message;
+            auto recorded = co_await drive_detail::record_offline_reason(impl_->local, reason);
+            if (!recorded) {
+                co_return std::unexpected(recorded.error());
+            }
+            co_return std::unexpected(hydrated.error());
+        }
+        auto recorded = co_await drive_detail::record_hydrated(impl_->local, candidate);
+        if (!recorded) {
+            co_return std::unexpected(recorded.error());
+        }
+    }
+    if (!matched && !normalized->empty()) {
+        co_return std::unexpected(
+            drive_error(errc::not_found, "drive path does not exist", *normalized));
+    }
+    co_return result<void>{};
+}
+
+runtime::task<void> drive_client::pin(std::string path) {
+    co_return co_await set_state(std::move(path), drive_path_state::available_offline);
+}
+
+runtime::task<void> drive_client::unpin(std::string path) {
+    co_return co_await set_state(std::move(path), drive_path_state::online_only);
 }
 
 runtime::task<drive_sync_report> drive_client::sync() {
@@ -1102,7 +1456,7 @@ runtime::task<drive_sync_report> drive_client::sync() {
         auto bootstrap_options = sync_endpoint_options{.bearer_token = impl_->options.bearer_token,
                                                        .batch_items = impl_->options.batch_items};
         auto bootstrap_endpoint = sync_endpoint{impl_->remote_url, std::move(bootstrap_options)};
-        auto adopted = co_await bootstrap_endpoint.pull(impl_->local);
+        auto adopted = co_await bootstrap_endpoint.pull_metadata(impl_->local);
         if (!adopted) {
             co_return std::unexpected(adopted.error());
         }
@@ -1113,7 +1467,7 @@ runtime::task<drive_sync_report> drive_client::sync() {
                                               .cursor = impl_->state.trees.remote_cursor,
                                               .batch_items = impl_->options.batch_items};
     auto pull_endpoint = sync_endpoint{impl_->remote_url, std::move(pull_options)};
-    auto pulled = co_await pull_endpoint.pull(impl_->remote);
+    auto pulled = co_await pull_endpoint.pull_metadata(impl_->remote);
     if (!pulled) {
         co_return std::unexpected(pulled.error());
     }
@@ -1160,8 +1514,16 @@ runtime::task<drive_sync_report> drive_client::sync() {
     if (!applied) {
         co_return std::unexpected(applied.error());
     }
-    auto published = co_await publish_files(
-        impl_->local, *local_files, reconciliation.desired, impl_->folder, impl_->options.durable);
+    auto configured = co_await impl_->settings();
+    if (!configured) {
+        co_return std::unexpected(configured.error());
+    }
+    auto published = co_await publish_files(impl_->local,
+                                            *local_files,
+                                            reconciliation.desired,
+                                            impl_->folder,
+                                            *configured,
+                                            impl_->options.durable);
     if (!published) {
         co_return std::unexpected(published.error());
     }
@@ -1198,6 +1560,7 @@ runtime::task<drive_sync_report> drive_client::sync() {
         co_return std::unexpected(final_root.error());
     }
     impl_->state.trees.local = *final_root;
+    impl_->state.files = reconciliation.desired.size();
     if (!refused) {
         impl_->state.trees.base = *final_root;
         impl_->state.trees.remote = *final_root;

@@ -353,4 +353,39 @@ runtime::task<sync_report> sync_endpoint::pull(repository& destination) {
                           .received = *received};
 }
 
+runtime::task<sync_report> sync_endpoint::pull_metadata(repository& destination) {
+    auto request_document = sync_detail::metadata_document{};
+    request_document.cursor = impl_->options.cursor;
+    auto request = sync_detail::encode_metadata(request_document);
+    if (!request) {
+        co_return std::unexpected(request.error());
+    }
+    auto response = co_await perform_request(
+        impl_->url, impl_->options.bearer_token, "POST", "/sync/pull", *request);
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    if (response->status < 200 || response->status >= 300) {
+        co_return std::unexpected(status_error(response->status, "pull", response->body));
+    }
+    auto incoming = sync_detail::decode_metadata(response->body);
+    if (!incoming) {
+        co_return std::unexpected(incoming.error());
+    }
+    auto session =
+        sync_session{repository_detail::sync_access::objects(destination), *this, impl_->url, {}};
+    auto received = co_await session.receive_metadata(incoming->objects);
+    if (!received) {
+        co_return std::unexpected(received.error());
+    }
+    auto imported = co_await destination.import_drips(incoming->items);
+    if (!imported) {
+        co_return std::unexpected(imported.error());
+    }
+    co_return sync_report{.cursor = incoming->cursor,
+                          .metadata_items = incoming->items.size(),
+                          .received = {.objects = received->trees + received->blobs},
+                          .bytes_remote = received->bytes_remote};
+}
+
 } // namespace liquid

@@ -6495,6 +6495,26 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
     co_return sync_import_report{input.size()};
 }
 
+namespace {
+
+runtime::task<bool> remotely_available(store& objects, const blob& record) {
+    if (record.remote) {
+        co_return true;
+    }
+    for (const auto& chunk : record.chunks) {
+        auto availability = co_await objects.has(chunk);
+        if (!availability) {
+            co_return std::unexpected(availability.error());
+        }
+        if (*availability == blob_availability::remote) {
+            co_return true;
+        }
+    }
+    co_return false;
+}
+
+} // namespace
+
 runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry(repository& source,
                                                                                  std::string path) {
     if (!source.impl_)
@@ -6524,11 +6544,15 @@ runtime::task<repository_detail::vfs_entry> repository_detail::vfs_access::entry
         auto record = objects::decode_blob(*encoded);
         if (!record)
             co_return std::unexpected(record.error());
+        auto remote = co_await remotely_available(source.impl_->objects, *record);
+        if (!remote)
+            co_return std::unexpected(remote.error());
         output.size = record->size;
         output.chunks = std::move(record->chunks);
         output.chunk_sizes = std::move(record->chunk_sizes);
         output.content = record->content;
         output.remote = std::move(record->remote);
+        output.remotely_available = *remote;
     }
     co_return output;
 }
@@ -6584,11 +6608,16 @@ runtime::task<repository_detail::vfs_entry> snapshot_vfs_entry(store& objects,
     if (!record) {
         co_return std::unexpected(record.error());
     }
+    auto remote = co_await remotely_available(objects, *record);
+    if (!remote) {
+        co_return std::unexpected(remote.error());
+    }
     output.size = record->size;
     output.chunks = std::move(record->chunks);
     output.chunk_sizes = std::move(record->chunk_sizes);
     output.content = record->content;
     output.remote = std::move(record->remote);
+    output.remotely_available = *remote;
     co_return output;
 }
 
@@ -6809,11 +6838,15 @@ repository_detail::vfs_access::children(repository& source, std::string path) {
             auto record = objects::decode_blob(*encoded);
             if (!record)
                 co_return std::unexpected(record.error());
+            auto remote = co_await remotely_available(source.impl_->objects, *record);
+            if (!remote)
+                co_return std::unexpected(remote.error());
             value.size = record->size;
             value.chunks = std::move(record->chunks);
             value.chunk_sizes = std::move(record->chunk_sizes);
             value.content = record->content;
             value.remote = std::move(record->remote);
+            value.remotely_available = *remote;
         }
         output.push_back(std::move(value));
     }
@@ -6945,6 +6978,15 @@ result<std::filesystem::path> repository_detail::vfs_access::root_path(repositor
     if (!source.impl_)
         return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     return source.impl_->root_path;
+}
+
+runtime::task<void> repository_detail::vfs_access::register_remote_source(
+    repository& source, std::string id, std::shared_ptr<remote_blob_source> remote) {
+    if (!source.impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    co_return co_await source.impl_->objects.register_remote_source(std::move(id),
+                                                                    std::move(remote));
 }
 
 runtime::task<std::vector<std::byte>> repository_detail::build_access::get(repository& source,
