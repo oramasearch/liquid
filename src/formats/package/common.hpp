@@ -31,5 +31,7 @@ struct file {
     -> result<std::vector<std::byte>>;
 [[nodiscard]] auto join(std::span<const std::string> values, std::string_view separator)
     -> std::string;
+[[nodiscard]] auto attribute(std::span<const std::byte> attributes, std::string_view name)
+    -> result<std::string>;
 
 } // namespace liquid::formats::package

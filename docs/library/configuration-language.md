@@ -10,9 +10,9 @@ program covers cases the declarative form cannot express while retaining action 
 provenance, caching, and traceability.
 
 **Implementation status.** The public parser, checker, lowerer, formatter, `package/1`, `target/1`,
-and `source/1` projection, lock-rule lowering, repository-local includes, digest-verifying source
-fetch, generators, relocation-checked target execution, and CLI commands are implemented. The install record is
-syntax-checked and its layout is retained on the target; issue #80 adds install-intent semantics.
+`source/1`, and `install_intent/1` projection, lock-rule lowering, repository-local includes,
+digest-verifying source fetch, generators, relocation-checked target execution, and CLI commands
+are implemented. Install layout and validated declarative intent are retained on the target.
 Recipe import remains issue #75.
 
 ## Files and grammar
@@ -35,7 +35,15 @@ depends-on     = "depends_on", name, "{", field*, "}" ;
 provides       = "provides", name, "{", field*, "}" ;
 conflicts      = "conflicts", [ name ], "{", field*, "}" ;
 patch          = "patch", [ name ], "{", field*, "}" ;
-install        = "install", [ name ], "{", field*, "}" ;
+install        = "install", "{", ( field | install-item )*, "}" ;
+install-item   = service | user | group | directory | symlink | cache | alternatives ;
+service        = "service", "{", field*, "}" ;
+user           = "user", "{", field*, "}" ;
+group          = "group", "{", field*, "}" ;
+directory      = "directory", "{", field*, "}" ;
+symlink        = "symlink", "{", field*, "}" ;
+cache          = "cache", name, "{", "}" ;
+alternatives   = "alternatives", "{", field*, "}" ;
 when           = "when", ( string | spec-text ), "{", package-item* | depends-on*, "}" ;
 generator      = "generate", "=", "build", "{", field*, "}" ;
 include        = "include", string ;
@@ -71,7 +79,14 @@ cycle. URLs and absolute or parent-directory includes are rejected.
 | `source <name>` | `url: string`, `digest: digest`, `kind: archive|file` | none |
 | `lock <name>` | `paths: [path, ...]` | none |
 | `build <name>` | `command: [string, ...]` | `cwd`, `environment`, `sources`, `dependencies`, `outputs`, `inputs`, `toolchain`; `depends_on`, `when`, `install` |
-| `install` | none | `layout: identifier`, `prefix: path` |
+| `install` | none | `layout: prefix`, `prefix: path`; `service`, `user`, `group`, `directory`, `symlink`, `cache`, `alternatives` |
+| `service` | `name`, `exec`, `user`, `after`, `restart` | none |
+| `user` | `name`, `system`, `home` | none |
+| `group` | `name`, `system` | none |
+| `directory` | `path`, `mode`, `owner` | none |
+| `symlink` | `path`, `target` | none |
+| `cache <name>` | one of `ldconfig`, `desktop-database`, `mime-database`, `man-db`, `icon-cache`, `systemd-daemon-reload`, `fonts` | none |
+| `alternatives` | `name`, `path`, `priority` | none |
 | `generate = build` | `command`, `output`, `inputs`, `toolchain` | `cwd`, `environment`, `outputs`, `format: liquid|cbor` |
 
 Versions are deliberately unquoted, exact digests carry their algorithm, specs and paths use
@@ -89,6 +104,13 @@ Unknown fields name the closest valid field. Duplicate fields and record names a
 portable test suite pins twenty complete diagnostics, including file, line, column, expectation,
 actual value, and hint.
 
+Install names are unquoted identifiers matching `[a-z_][a-z0-9_-]*`. Install paths use `path`
+literals and must be canonical absolute paths containing only alphanumeric characters, `/`, `.`,
+`_`, `+`, and `-`. Modes use octal digits from `0000` through `0777`. Restart is `no`,
+`on-failure`, or `always`, and alternatives priorities must fit a signed 32-bit integer. These
+checks run before lowering, so no arbitrary command text can enter an install intent or generated
+maintainer script.
+
 ## Lowering and canonical records
 
 `lower` maps `package` directly to the canonical `package/1` record from
@@ -100,7 +122,7 @@ target/1 {
   name, command, cwd, environment,
   sources: [declared digest ...],
   dependencies: [{name, when?} ...],
-  outputs, install_layout, inputs?, toolchain?, origin
+  outputs, install_layout, install_intent/1?, inputs?, toolchain?, origin
 }
 ```
 
@@ -179,6 +201,4 @@ Conditional target edges remain solver input and are not guessed by the direct c
 
 ## Open questions
 
-- Issue #80 owns the install-intent meaning beyond the retained layout; `prefix` is checked but not
-  lowered until that meaning is defined.
 - Issue #75 owns recipe import and how imported files choose their top-level root document.

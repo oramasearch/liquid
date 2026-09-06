@@ -50,14 +50,18 @@ project_package(repository& source, projection_target target, prepared_projectio
                                    metadata = prepared.metadata,
                                    options = prepared.options,
                                    dependencies = package_dependencies,
-                                   files = prepared.files]() -> result<std::vector<std::byte>> {
+                                   files = prepared.files,
+                                   scripts = prepared.scripts]() -> result<std::vector<std::byte>> {
             if (target == projection_target::deb) {
-                return formats::deb::write(metadata, options, dependencies, files);
+                return formats::deb::write(
+                    metadata, options, dependencies, files, scripts ? &*scripts : nullptr);
             }
             if (target == projection_target::rpm) {
-                return formats::rpm::write(metadata, options, dependencies, files);
+                return formats::rpm::write(
+                    metadata, options, dependencies, files, scripts ? &*scripts : nullptr);
             }
-            return formats::apk::write(metadata, options, dependencies, files);
+            return formats::apk::write(
+                metadata, options, dependencies, files, scripts ? &*scripts : nullptr);
         });
     if (!written) {
         co_return std::unexpected(written.error());
@@ -96,8 +100,16 @@ project_package(repository& source, projection_target target, prepared_projectio
                                                           : "application/vnd.alpine.apk"}},
         .attestations = prepared.source_attestations,
         .pinned = {{prepared.metadata.name, *digest}},
+        .replacements = prepared.replacements,
         .abi_break_allowed = prepared.abi_break_allowed};
     report.attestations.push_back(*attestation);
+    if (prepared.scripts) {
+        auto sbom = co_await store_script_sbom(source, prepared, target, *digest, filename);
+        if (!sbom) {
+            co_return std::unexpected(sbom.error());
+        }
+        report.attestations.push_back(*sbom);
+    }
     for (const auto& value : package_dependencies) {
         report.dependencies.push_back(
             {value, std::ranges::contains(prepared.metadata.declared_dependencies, value)});

@@ -247,6 +247,13 @@ result<std::vector<std::byte>> encode_target(const target& value) {
                                    {"outputs", encode_strings(value.outputs)},
                                    {"install_layout", value.install_layout},
                                    {"origin", encode_origin(value.origin)}};
+    if (value.install) {
+        auto encoded_install = encode_install_intent(*value.install);
+        if (!encoded_install) {
+            return std::unexpected(encoded_install.error());
+        }
+        fields.emplace_back("install", bytes(*encoded_install));
+    }
     if (value.inputs) {
         fields.emplace_back("inputs", encode_digest(*value.inputs));
     }
@@ -306,6 +313,17 @@ result<target> decode_target(std::span<const std::byte> bytes_value) {
                          .outputs = std::move(*outputs),
                          .install_layout = std::move(*install_layout),
                          .origin = std::move(*origin)};
+    if (const auto* install_value = find(*decoded, "install")) {
+        const auto* install_bytes = std::get_if<cbor::value::bytes>(&install_value->data);
+        if (!install_bytes) {
+            return std::unexpected(failure("target install intent is not bytes"));
+        }
+        auto install = decode_install_intent(*install_bytes);
+        if (!install) {
+            return std::unexpected(install.error());
+        }
+        output.install = std::move(*install);
+    }
     for (const auto& [key, selected] : *environment) {
         auto environment_name = text(&key, "environment name");
         auto environment_value_text = text(&selected, "environment value");

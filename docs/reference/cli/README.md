@@ -19,6 +19,8 @@ Each command page is generated from the same metadata used to validate flags and
 | [`resolve`](resolve.md) | concretise package specifications | available |
 | [`config`](config.md) | check, lower, or format .liquid configuration | available |
 | [`project`](project.md) | project a build into an installable package, commit, image, or chart | available |
+| [`install`](install.md) | install or list atomic generations | available |
+| [`rollback`](rollback.md) | select the previous installed generation | available |
 | [`log`](log.md) | show or verify change, signed drip, timestamp, or transparency-log history | available |
 | [`cut`](cut.md) | cut the working change | available |
 | [`refs`](refs.md) | list repository references | available |
@@ -51,6 +53,8 @@ Each command page is generated from the same metadata used to validate flags and
 | [`export`](export.md) | export as a Git repository | available |
 | [`retain`](retain.md) | explain retention for an object | available |
 | [`identity`](identity.md) | show or rotate the device identity | available |
+| [`sign`](sign.md) | sign a digest with the current identity key | available |
+| [`release`](release.md) | manage threshold release approval | available |
 | [`keys`](keys.md) | inspect and manage data-key custody | available |
 | [`attest`](attest.md) | show, verify, or mint an image attestation | available |
 | [`delta`](delta.md) | create, apply, or fetch an artifact delta | available |

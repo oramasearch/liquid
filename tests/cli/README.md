@@ -21,6 +21,8 @@ remote cache; any unclassified network use then fails inside the sandbox. The ou
 the `liquid-offline` label for local and hosted selection.
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
+`install.cmake` installs two trees into isolated generations, lists them, rolls back, and verifies
+that `current` exposes the first tree again.
 `configuration.cmake` checks a directory, lowers source origins in text and JSON, and formats the
 same document twice to pin idempotence.
 `locks.cmake` lowers a repository lock rule during initialization, then acquires with an explicit
@@ -68,6 +70,10 @@ and proves that the plaintext is absent from stderr.
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
 identity encode, decode, and verification APIs.
+The command table and generated-reference tests also cover the hardware `identity --to` option,
+direct `sign`, and the release policy, approval, and verification commands.
+`cli-release` creates two isolated identities, signs a two-of-two repository policy, persists both
+approvals, verifies the distinct signer count, and exercises direct artifact signing.
 
 The admission process test invokes `attest image` and verifies its printed digest through
 `attest verify`, then starts the built `serve admission` command over TLS and explicit insecure

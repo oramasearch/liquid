@@ -1,11 +1,10 @@
 # Package and image projection
 
-Issues #28, #77, and #78 implement projection from a result's checked install tree, or from an
-explicit install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, Helm charts, Homebrew
-bottles, Arch recipes, AppImages, Flatpak build directories, Snaps, OSTree commits, and bootc
-images. Projection does not convert one ecosystem package into another: every writer consumes the
-same content-addressed file tree and explicit metadata
-request.
+Issues #28, #77, #78, and #80 implement projection from a result's checked install tree, or from
+an explicit install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, Helm charts,
+Homebrew bottles, Arch recipes, AppImages, Flatpak build directories, Snaps, OSTree commits, and
+bootc images. Projection does not convert one ecosystem package into another: every writer
+consumes the same canonical file tree and explicit metadata request.
 
 ## Public contract
 
@@ -23,8 +22,9 @@ OSTree requests also select a ref and `archive-z2` or `bare-user` repository mod
 the commit checksum separately from the projected artifact digest.
 
 The report returns artifact paths and SHA-256 digests, all source and projection attestation
-digests, immutable image pins, derived and declared dependency labels, and whether an incompatible
-ABI was explicitly allowed. Projection artifacts are ordinary files or OCI-layout directories;
+digests, immutable image pins, derived and declared dependency labels, derived replacement
+relationships and their paths, and whether an incompatible ABI was explicitly allowed. Projection
+artifacts are ordinary files or OCI-layout directories;
 publication to a registry is outside this library operation.
 Package identity fields must be safe single path components; relationship fields, target options,
 and Helm values reject control characters before any archive, JSON, or YAML is written.
@@ -43,7 +43,54 @@ the built-in format registry:
 - Alpine output is a deterministic pair of gzip members. Its `.PKGINFO` carries the SHA-256
   `datahash`, relationship fields, and `so:` dependencies.
 
-Maintainer scripts and file-conflict transactions remain issue #80.
+## Install intent and generated scripts
+
+`install_intent/1` is canonical CBOR containing services, users, groups, directories, symlinks,
+cache updates, and alternatives. It has no command or shell field. Names match
+`[a-z_][a-z0-9_-]*`; executable, home, directory, symlink, and alternatives paths are canonical
+absolute paths containing no shell metacharacters. The public validator applies the same rules to
+programmatic requests that the `.liquid` checker applies during lowering.
+
+One intent generates four lifecycle scripts from fixed POSIX `sh` templates. Debian receives
+`preinst`, `postinst`, `prerm`, and `postrm`; RPM receives the four `%pre`, `%post`, `%preun`, and
+`%postun` header tags with `/bin/sh` interpreters; Alpine receives `.pre-install`,
+`.post-install`, `.pre-deinstall`, and `.post-deinstall`. A single quoting function handles every
+inserted value. User and group creation is guarded by `getent`, service operations are guarded by
+`[ -d /run/systemd/system ]`, and cache tools are guarded by `command -v`. Repeating a script is
+safe and converges on the same state.
+
+Projection also adds the canonical intent below `usr/share/liquid/intents/` and generated systemd
+units below `usr/lib/systemd/system/`. The SHA-256 digest of every generated script is recorded in
+the package's signed `projection/1` statement and a package-subject `sbom/1` SPDX document.
+
+## Ownership conflicts and replacement
+
+The batch `project(repository&, vector<projection_request>)` prepares every request, indexes every
+claimed package path, and refuses the batch with `errc::conflict` before writing artifacts. The
+diagnostic groups every conflicting path by the two package names. A single request can set
+`options.against` to a directory of `.deb`, `.rpm`, or `.apk` files, a dpkg status file with its
+sibling `info/*.list` files, or a two-column RPM package/path dump.
+
+Naming the existing owner in `package_metadata::replaces` permits those paths. Projection derives
+the format relationship: Debian and RPM receive both conflict and replacement metadata, while
+Alpine receives its replacement relationship. `projection_report::replacements` records the
+package and exact paths that caused each derivation.
+
+## Transactional projected-tree installation
+
+`liquid install <package|install-tree> --root <dir>` extracts or links the input into
+`<dir>/.liquid/generations/<n>.staging`, applies its embedded intent within that generation, renames
+the completed directory to `<n>`, and atomically replaces `<dir>/current` with a relative symlink.
+Regular files from a tree use same-filesystem hard links when available and copy otherwise;
+package payloads are written with their recorded modes. Users and groups become generation-local
+passwd/group entries, directories and symlinks stay below the generation, alternatives become
+generation-local links, and services become generation-local systemd enablement links.
+
+A process interruption before the final rename cannot expose staged bytes through `current`.
+Stale `.staging` directories are discarded by the next install, while a fully staged generation
+left before the switch remains complete and unselected. `liquid install --list --root <dir>` lists
+complete generations and the selected one. `liquid rollback --root <dir>` atomically selects the
+complete generation immediately preceding the current selection.
 
 ## Homebrew
 
@@ -244,6 +291,12 @@ readers, format-registry recognition, deterministic gzip, repeated projection, O
 signed `projection/1`, both OSTree repository modes, symbolic links, overlay paths, the independent
 GVariant checksum, the bootc image digest, digest-only Helm values, and native `helm lint` where
 Helm is installed.
+Committed script goldens cover all twelve lifecycle names. Property coverage refuses
+metacharacters and preserves template structure for accepted values; package readers verify script
+round trips and signed SBOM/projection binding. Ownership tests cover batches, package directories,
+dpkg status, RPM dumps, and replacement derivation. Installer tests send `SIGKILL` after every
+staged file and at the current-generation switch, prove the previous generation remains selected,
+and complete the retry.
 
 `tools/projection-peers/run-homebrew-interop.sh` creates a temporary tap, serves the bottle over
 HTTP through `HOMEBREW_BOTTLE_DOMAIN`, pours it, and runs `brew test`. The broader peer runner adds

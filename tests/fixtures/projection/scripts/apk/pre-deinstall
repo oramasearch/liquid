@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+if true; then
+    if [ -d /run/systemd/system ]; then
+        systemctl disable --now 'liquid_agent.service' >/dev/null 2>&1 || true
+    fi
+    if command -v 'update-alternatives' >/dev/null 2>&1; then
+        update-alternatives --remove 'liquid-tool' '/usr/lib/liquid/tool' >/dev/null 2>&1 || true
+    fi
+    if [ "$(readlink '/usr/bin/liquid-agent-current' 2>/dev/null || true)" = '/usr/lib/liquid/agent' ]; then
+        rm -f '/usr/bin/liquid-agent-current'
+    fi
+fi
+exit 0

@@ -92,7 +92,9 @@ built binary under the build directory before CTest compares it with the committ
 | `import` | `import <path>`, `import git <path>`, or `import spack <export.json> --into <repository> [--report] [--json]` | Import a local tree, Git repository, or Spack universe. | available |
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
-| `identity` | `identity [show\|rotate] [--json]` | Show or rotate the device identity. | available |
+| `identity` | `identity [show\|rotate [--to software\|fido2\|piv:9c]] [--json]` | Show or rotate the device identity and select its key custody. | available |
+| `sign` | `sign <drip\|change\|artifact> <digest>` | Sign a canonical digest value with the current identity backend. | available |
+| `release` | `release policy set --threshold <k> --signer <id>...` or `release <approve\|verify> <artifact>` | Manage signed threshold release approval. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
 | `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
@@ -109,6 +111,9 @@ built binary under the build directory before CTest compares it with the committ
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart, with optional ownership checking. | available |
+| `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
+| `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
 | `project` | `project <oci\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into a native package, image, ecosystem recipe, or bundled-runtime format. | available |
 | `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm> <result\|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2\|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked tree into packages, OCI or bootc images, an OSTree commit, or a Helm chart. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
@@ -386,9 +391,25 @@ under a random Shamir KEK and prints the `n` shares once.
 
 Custody URIs are `passphrase:`, `file:<path>`, `age:<recipient>[,<recipient>...]`,
 `aws-kms:<arn>`, `gcp-kms:<resource>`, `azure-kv:<key-version-url>`,
-`lake:<base-url>/<key>`, and `shamir:<threshold>/<share-count>`. Secret credentials and Shamir
+`lake:<base-url>/<key>`, `shamir:<threshold>/<share-count>`, and `tpm:pcrs=<list>`. Secret credentials and Shamir
 shares are supplied through the environment described in
 [the encryption guide](../library/encryption.md); the CLI does not accept or print credentials.
+
+## Hardware identity and release approval
+
+`identity rotate --to software|fido2|piv:9c` creates a linked successor identity document while
+preserving the TAAP identity. `identity show` includes the active algorithm and custody. FIDO2
+prompts through the selected HID authenticator; PIV uses digital-signature slot `9c` through the OS
+PC/SC service. `sign <drip|change|artifact> <digest>` prints the canonical signature object as hex
+and the signer identity.
+
+`release policy set --threshold <k> --signer <id>...` signs the repository's release role and
+writes `.liquid/release/policy.cbor`. `--role` defaults to `targets`; `--not-after` accepts an RFC
+3339 UTC expiry. `release approve <artifact>` writes the current identity's approval, and `release
+verify <artifact>` counts distinct valid allowed identities, prints missing identities, and exits 1
+when the policy threshold is not met. See
+[`../library/release-approval.md`](../library/release-approval.md) for the signed profiles and trust
+models.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
 Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
 is itself the package directory. Specs containing spaces must be passed as one quoted argument.
@@ -497,6 +518,12 @@ Recorded remote inputs and expected outputs hydrate through the repository's con
 a produced path opens that project's persistent cache. It verifies the result and attestation before
 writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible envelope, projected
 from the same canonical TAAP record.
+`project` accepts a result ID or install-tree digest. A bare tree also requires `--arch`; a result
+uses its action platform and refuses a conflicting override. Repeatable `--depends` values are
+additive to reader-derived dependencies. `--against` accepts a package directory, dpkg status
+inventory, or RPM package/path dump and refuses every overlapping owned path. `--replaces` names an
+allowed owner, derives the format's conflict/replacement metadata, and includes the package and
+paths in JSON `replacements`. Helm services use
 `project` accepts a result ID or tree digest. Package, OCI, and bootc projections from a bare tree
 also require `--arch`; a result uses its action platform and refuses a conflicting override.
 Repeatable `--depends` values are additive to reader-derived dependencies. Helm services use
@@ -508,6 +535,12 @@ their payload archives; AppImage, Flatpak, and Snap emit bundled-runtime layouts
 an attachment mechanism place DSSE evidence in `<artifact>.attestations.json`. See
 [projection.md](../library/projection.md).
 
+`install` accepts a liquid-projected `.deb`, `.rpm`, `.apk`, or an install-tree directory. It
+stages the next generation below `<root>/.liquid/generations`, applies embedded declarative intent,
+and replaces `<root>/current` only after the generation is complete. `install --list` prints one
+line per complete generation with its number, current flag, and path. `rollback` selects the
+complete generation immediately preceding the selected one. Both switch operations are atomic;
+an interrupted install leaves the previous `current` tree visible.
 The OS forms use the first digest as the base root and accept repeatable overlays. A bare overlay
 replaces matching paths at the root; `--overlay <path>=<tree-digest>` mounts it below a declared
 relative path. `SOURCE_DATE_EPOCH` supplies the commit time.
@@ -684,7 +717,11 @@ liquid import spack spack-export.json --into ../packages --report
 liquid import spack --report --into ../packages --json
 liquid export git ../exported-repository main
 liquid retain explain blake3:<object-digest>
-liquid identity rotate
+liquid identity rotate --to fido2
+liquid sign artifact blake3:<artifact-digest>
+liquid release policy set --threshold 2 --signer <taap-id-a> --signer <taap-id-b>
+liquid release approve blake3:<artifact-digest>
+liquid release verify blake3:<artifact-digest>
 liquid attest show blake3:<attestation-digest>
 liquid attest verify blake3:<attestation-digest>
 liquid attest image registry.example/app@sha256:<image-digest> --tree blake3:<tree-digest> --result blake3:<result-digest>

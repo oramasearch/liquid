@@ -40,6 +40,9 @@ platforms without daemon transport use the public repository operations directly
 
 `session.cpp` starts, publishes, and discards private replicas through the public session API.
 `attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
+`identity.cpp` selects software, FIDO2, or PIV rotation custody. `sign.cpp` signs a canonical digest
+with the active backend. `release.cpp` persists signed release policies and approvals and renders
+the distinct-signer threshold result.
 
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new
@@ -74,6 +77,11 @@ The same command group implements `replay`: it parses an action or result plus `
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
 `sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
 API, and uses the public foreign-binary path only when no producing result exists.
+`project.cpp` parses package, OCI, and Helm requests, installed-inventory and replacement options,
+distinguishes stored results from bare tree digests, calls the public projection task, and prints
+text or stable JSON reports. It does not read package writers or repository internals.
+`install.cpp` maps package or tree installation, generation listing, and rollback directly to the
+public atomic-generation tasks.
 `project.cpp` parses native-package, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap
 requests, distinguishes stored results from bare tree digests, calls the public projection task,
 and prints text or stable JSON reports. It does not read package writers or repository internals.

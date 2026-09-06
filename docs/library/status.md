@@ -19,18 +19,20 @@ repository, capture, VFS, store, and identity APIs plus the Phase 2 build wrappe
 **The Phase 1 store exit criterion is met.** The chunk store, bounded-memory file streaming,
 garbage collection with pack compaction, deterministic crash simulator, first working repository,
 local Git import/export, pluggable KEK custody with trust-domain data-key rotation and revision
-readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture,
+readability, TAAP/1 software, FIDO2, and PIV identities with cross-backend rotation plus signed
+drips and changes, TPM PCR-bound sealing, signed threshold release approval, local change capture,
 agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env`
 encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.
 
-**Public API.** The public error, digest, identity document codec, and signature decoder APIs are
-implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers ([`api-map.md`](api-map.md),
-[`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md)).
+**Public API.** The public error, digest, identity document codec, signature decoder, and release
+approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
+([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),
+[`release-approval.md`](release-approval.md)).
 
 **Store.** The local store implements open, put, bounded-memory `put_file` and `get_to_file`, get,
 range read, contains, trust-domain encrypted objects with passphrase, raw-key-file, age/X25519,
-cloud KMS, lake transit, or Shamir custody, versioned data-key rotation and revocation, repository
-readability reports, leased roots, epoch garbage collection, and pack compaction
+cloud KMS, lake transit, Shamir, or TPM PCR-bound custody, versioned data-key rotation and
+revocation, repository readability reports, leased roots, epoch garbage collection, and pack compaction
 ([`store.md`](store.md), [`encryption.md`](encryption.md), [`gc.md`](gc.md),
 [`simulation.md`](simulation.md)). Store owners can await a whole-content write-through callback
 before the first local pack write and evict remote-registered local copies without losing their
@@ -55,9 +57,10 @@ observed through patches, and every automerge apply, merge, and sync-receive fai
 
 **Capture, scanning, and attestations.** Capture subscriptions, default-blocking secret scanning,
 the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`, structured
-`slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository
-redaction are implemented ([`capture.md`](capture.md), [`secret-scanning.md`](secret-scanning.md),
-[`attestations.md`](attestations.md)).
+`slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, `release_policy/1`,
+and `release_approval/1`, and repository redaction are implemented
+([`capture.md`](capture.md), [`secret-scanning.md`](secret-scanning.md),
+[`attestations.md`](attestations.md), [`release-approval.md`](release-approval.md)).
 
 **Encryption of structured values.** Repository path rules encrypt selected JSON and `.env` leaf
 values while leaving their structure visible, with explicit plaintext reads and key-only
@@ -90,7 +93,10 @@ optional macFUSE on macOS ([`vfs.md`](vfs.md)).
 
 **Transparency and trust.** Repository metadata retains verified Lake transparency checkpoints:
 the public client verifies signed witness-quorum checkpoints, all entry and parent hash tiles,
-exact TAAP inclusion, consistency, and identity scans before callers trust a log response.
+exact TAAP inclusion, consistency, and identity scans before callers trust a log response. Each
+full or partial tile is reauthenticated through its parents to the selected checkpoint; cached
+tile bytes receive the same complete walk, and consistency verification completes that walk before
+it requests a proof.
 Complete transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and
 proofs before log mode accepts a record. Strict DER, CMS, and X.509 parsing plus verification-only
 RSA and ECDSA validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against
@@ -330,8 +336,9 @@ and target constraints, conflicts, and patches. The public Spack-style parser re
 columns, while directory and repository universes use the documented `packages/` tree. Liquid's
 own CDCL engine chooses virtual providers, binds compilers as dependencies, applies target-family
 fallback, optimises reuse before freshness and defaults, and returns minimal attributed conflict
-cores. `liquid resolve` prints the graph, stable JSON, or package-selection explanations
-([`resolution.md`](resolution.md)).
+cores. Selected graphs are constructed iteratively, so dependency-chain length never consumes
+worker-thread stack. `liquid resolve` prints the graph, stable JSON, or package-selection
+explanations ([`resolution.md`](resolution.md)).
 
 **Configuration.** `.liquid` is a typed declarative language for package, source, and target
 records with repository-local includes, exact source-located diagnostics, canonical formatting and

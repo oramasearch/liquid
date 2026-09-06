@@ -24,6 +24,8 @@ add_executable(liquid-tests
   test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_install.cpp
+  test_hardware_keys.cpp
   test_node_store.cpp
   test_object.cpp
   test_projection.cpp
@@ -134,6 +136,15 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_program(LIQUID_SWTPM_EXECUTABLE swtpm)
+  if(LIQUID_SWTPM_EXECUTABLE)
+    add_test(NAME tpm-swtpm
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tpm/run_swtpm.sh
+        $<TARGET_FILE:liquid-tests>
+        ${LIQUID_SWTPM_EXECUTABLE})
+  endif()
+endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME desktop-nautilus-badge-mapping
@@ -183,6 +194,14 @@ if(UNIX)
   add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
   target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
   add_dependencies(liquid-tests liquid-graph-crash-fixture)
+endif()
+if(UNIX)
+  add_executable(liquid-install-crash-fixture install_crash_fixture.cpp)
+  target_include_directories(liquid-install-crash-fixture PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_link_libraries(liquid-install-crash-fixture PRIVATE liquid::liquid)
+  add_dependencies(liquid-tests liquid-install-crash-fixture)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_INSTALL_CRASH_FIXTURE="$<TARGET_FILE:liquid-install-crash-fixture>")
 endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_BUILD_FIXTURE="$<TARGET_FILE:liquid-build-fixture>"
@@ -378,6 +397,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_REFERENCE_SOURCE=${PROJECT_SOURCE_DIR}/docs/reference/cli
       -DLIQUID_REFERENCE_OUTPUT=${PROJECT_BINARY_DIR}/reference/cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/reference-docs.cmake)
+  add_test(NAME cli-install-generations
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_INSTALL_ROOT=${CMAKE_CURRENT_BINARY_DIR}/install-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/install.cmake)
   add_test(NAME cli-docs-json
     COMMAND $<TARGET_FILE:liquid-cli> docs --format json)
   set_tests_properties(cli-docs-json PROPERTIES
@@ -481,6 +505,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_IDENTITY_CODEC=$<TARGET_FILE:liquid-identity-codec-fixture>
       -DLIQUID_IDENTITY_HOME=${CMAKE_CURRENT_BINARY_DIR}/identity-codec
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/identity-codec.cmake)
+  add_test(NAME cli-release
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_RELEASE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/release-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/release.cmake)
   add_executable(liquid-keys-cli-fixture cli/keys_fixture.cpp)
   target_link_libraries(liquid-keys-cli-fixture PRIVATE liquid::liquid)
   add_test(NAME cli-keys
@@ -592,6 +621,9 @@ target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
 add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
+add_executable(liquid-transparency-measure EXCLUDE_FROM_ALL transparency_measure.cpp)
+target_link_libraries(liquid-transparency-measure PRIVATE liquid::liquid)
+
 if(LIQUID_BUILD_FRONTENDS)
   add_executable(liquid-edit-measure edit_measure.cpp)
   target_link_libraries(liquid-edit-measure PRIVATE liquid::liquid)
@@ -694,6 +726,7 @@ add_executable(liquid-header-tests
   headers/hash.cpp
   headers/hot_update.cpp
   headers/identity.cpp
+  headers/install.cpp
   headers/import.cpp
   headers/liquid.cpp
   headers/node_store.cpp
