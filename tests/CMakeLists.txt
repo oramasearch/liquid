@@ -726,6 +726,19 @@ if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
   set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
 endif()
 
+find_program(LIQUID_FLATPAK_EXECUTABLE flatpak)
+find_program(LIQUID_FLATPAK_BUILDER_EXECUTABLE flatpak-builder)
+if(LIQUID_FLATPAK_EXECUTABLE AND LIQUID_FLATPAK_BUILDER_EXECUTABLE AND UNIX)
+  add_test(NAME projection-flatpak-realworld
+    COMMAND ${PROJECT_SOURCE_DIR}/tools/projection-peers/run-flatpak-interop.sh
+      $<TARGET_FILE:liquid-tests>
+      ${CMAKE_CURRENT_BINARY_DIR}/projection-flatpak-realworld)
+  set_tests_properties(projection-flatpak-realworld PROPERTIES
+    LABELS realworld
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1200)
+endif()
+
 add_executable(liquid-repository-scenario repository/scenario.cpp)
 target_include_directories(liquid-repository-scenario PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-repository-scenario PRIVATE liquid::liquid)
