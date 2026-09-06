@@ -66,6 +66,7 @@ auto node_store(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
+auto secret(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
@@ -270,6 +271,11 @@ constexpr auto commands = std::to_array<command>({
      "show compiler or syntactic symbols for a source path",
      "available",
      liquid_cli::symbols},
+    {"secret",
+     "secret <public-key|seal|unseal> ...",
+     "fetch, seal, or unseal a Lake environment secret",
+     "available",
+     liquid_cli::secret},
     {"edit",
      "edit <rename|extract|move|apply> ... [--json] [--apply] [--agent <name>]",
      "preview or apply a structural edit",

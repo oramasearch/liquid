@@ -436,6 +436,7 @@ add_library(libliquid
   src/node_store.cpp
   src/node_store/service.cpp
   src/crypto/crypto.cpp
+  src/net/http_client.cpp
   src/crypto/signature.cpp
   src/object.cpp
   src/objects/records.cpp
@@ -464,6 +465,7 @@ add_library(libliquid
   src/scan/detectors.cpp
   src/search/index.cpp
   src/search/repository.cpp
+  src/secret/sealed_secret.cpp
   src/store.cpp
   src/store/chunker.cpp
   src/store/collector.cpp
@@ -589,6 +591,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/retain.cpp
     src/cli/resolve.cpp
     src/cli/search.cpp
+    src/cli/secret.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp

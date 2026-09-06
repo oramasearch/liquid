@@ -10,7 +10,7 @@ the bridge remains authoritative.
 **liquid** — a version control system, build system, package manager, artifact service
 and runtime in one program. See [`README.md`](README.md).
 
-**Status: Phase 1 store exit criterion met — the store is inside libliquid.** Phase 0 is decided and Phase 0.5 met (see *Decisions* below).
+**Status: Phase 1 store exit criterion met — the store is inside libliquid, including the #204 Lake sealed-secret envelope and CLI.** Phase 0 is decided and Phase 0.5 met (see *Decisions* below).
 Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
