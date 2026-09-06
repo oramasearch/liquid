@@ -96,6 +96,30 @@ auto symbols(void*,
         output);
 }
 
+auto syntax(void*,
+            const char* language,
+            liquid_frontend_bytes_v1 blob,
+            liquid_frontend_bytes_v1,
+            const liquid_frontend_callbacks_v1* callbacks,
+            liquid_frontend_owned_bytes_v1* output,
+            liquid_frontend_error_v1* error) -> int {
+    if (!language || !output || (!blob.data && blob.size != 0)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT, "invalid syntax request");
+    }
+    if (liquid_frontend::cancelled(callbacks)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_CANCELLED, "syntax discovery was cancelled");
+    }
+    liquid_frontend::progress(callbacks, "syntax", 0, 1);
+    auto encoded = liquid_frontend::encode_syntax_tree(language, {blob.data, blob.size});
+    if (!encoded) {
+        return fail_syntax(encoded.error(), error);
+    }
+    liquid_frontend::progress(callbacks, "syntax", 1, 1);
+    return liquid_frontend::return_bytes(std::move(*encoded), output);
+}
+
 struct module_state {
     std::vector<std::vector<const char*>> extension_pointers;
     std::vector<liquid_frontend_language_v1> languages;
@@ -139,6 +163,7 @@ const liquid_frontend_module_v1 module = {
     nullptr,
     state.metadata.data(),
     state.metadata.size(),
+    syntax,
 };
 
 } // namespace

@@ -18,6 +18,23 @@ namespace {
 
 constexpr auto working_slot = std::string_view{"working"};
 
+void append_format_documents(const format_tree& tree,
+                             const std::string& container_path,
+                             std::vector<search_detail::document>& output) {
+    if (tree.tier == format_tier::chunk_only) {
+        return;
+    }
+    for (const auto& entry : tree.entries) {
+        const auto path = container_path + "!/" + entry.path;
+        if (!entry.bytes.empty()) {
+            output.push_back({path, entry.content, entry.bytes});
+        }
+        if (entry.nested) {
+            append_format_documents(*entry.nested, path, output);
+        }
+    }
+}
+
 runtime::task<void> collect_tree(repository& source,
                                  liquid::tree root,
                                  std::string prefix,
@@ -47,7 +64,19 @@ runtime::task<void> collect_tree(repository& source,
         if (!id) {
             co_return std::unexpected(id.error());
         }
-        output->push_back({std::move(path), *id, std::move(*contents)});
+        auto storage = std::make_shared<std::vector<std::byte>>(std::move(*contents));
+        auto unpacked = co_await runtime::offload(
+            [storage, path] { return format_registry::global().unpack(*storage, path); });
+        if (!unpacked) {
+            co_return std::unexpected(unpacked.error());
+        }
+        if (!*unpacked && unpacked->error().code != errc::not_found) {
+            co_return std::unexpected(unpacked->error());
+        }
+        output->push_back({path, *id, std::move(*storage)});
+        if (*unpacked) {
+            append_format_documents(**unpacked, path, *output);
+        }
     }
     co_return result<void>{};
 }

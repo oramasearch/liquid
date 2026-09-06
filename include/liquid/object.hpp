@@ -34,9 +34,14 @@ struct LIQUID_EXPORT blob {
     std::vector<std::uint64_t> chunk_sizes;
     digest content{};
     std::optional<remote_blob_location> remote;
+    std::vector<digest> format_entries;
 };
 
 struct LIQUID_EXPORT change_id {
+    digest value;
+};
+
+struct LIQUID_EXPORT op_id {
     digest value;
 };
 

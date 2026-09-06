@@ -20,6 +20,9 @@ restoration without changing an earlier change.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 
+`format-diff.cmake` creates two changes through the public repository API and proves that
+`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and tier.
+
 `symbols-python.cmake` creates a Python source file and proves `liquid symbols` selects the locked
 Python grammar and reports `origin=syntactic`.
 

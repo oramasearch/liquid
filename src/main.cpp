@@ -64,9 +64,11 @@ auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
 auto node_store(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
+auto diff(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto secret(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
@@ -107,6 +109,11 @@ constexpr auto commands = std::to_array<command>({
      "search paths and contents",
      "available",
      liquid_cli::search},
+    {"diff",
+     "diff <a> <b> [path] [--text] [--formats] [--json]",
+     "compare two repository changes",
+     "available",
+     liquid_cli::diff},
     {"resolve",
      "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
      "<package> <spec>... [--universe <path>] [--reuse] [--json]",
@@ -269,6 +276,11 @@ constexpr auto commands = std::to_array<command>({
      "fetch, seal, or unseal a Lake environment secret",
      "available",
      liquid_cli::secret},
+    {"edit",
+     "edit <rename|extract|move|apply> ... [--json] [--apply] [--agent <name>]",
+     "preview or apply a structural edit",
+     "available on macOS and Linux",
+     liquid_cli::edit},
     {"wrap",
      "wrap [--jobs <count>] [--target <triple>] [--input <name>=<result|tree>] "
      "[--remote <endpoint>|--scheduler <endpoint>] "
