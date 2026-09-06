@@ -393,6 +393,7 @@ add_library(libliquid
   src/build/normalise.cpp
   src/build/plan.cpp
   src/build/provenance.cpp
+  src/build/relocation.cpp
   src/build/trace.cpp
   src/build/why.cpp
   src/build/policy.cpp

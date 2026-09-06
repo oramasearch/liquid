@@ -72,6 +72,7 @@ add_executable(liquid-tests
   build/test_content.cpp
   build/test_normalise.cpp
   build/test_provenance.cpp
+  build/test_relocation.cpp
   build/test_why.cpp
   build/test_sbom.cpp
   build/test_abi.cpp

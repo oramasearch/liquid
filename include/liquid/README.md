@@ -14,6 +14,8 @@ values.
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
+`build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
+install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
 
 `admission.hpp` defines the versioned image-admission policy, injected attestation-source and
 transparency-log interfaces, the one-image review operation, and the long-running admission server.

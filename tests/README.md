@@ -146,7 +146,9 @@ fixtures exercise exported functions and objects, additions, removals, GNU symbo
 signatures, canonical records, signed compatibility attestations, and stable CLI JSON. The
 privileged wrapper case checks the incompatible build event and opt-in failing exit status.
 The wrap fixtures additionally exercise unmodified CMake, Autotools, recursive Make, and
-`compile_commands.json` projects and cache reuse from a different checkout path. Reproducibility
+`compile_commands.json` projects, a relocatable CMake install tree, and cache reuse from a different
+checkout path. Portable relocation cases scan clean and embedded prefixes, absolute package
+metadata, and a digest-pinned Mach-O with an absolute install name. Reproducibility
 cases cover signed agreement and disagreement, random-byte detection, permanent cache quarantine,
 rate-one sampling, and CLI verification of every wrapped action. The same wrap fixture performs a
 complete graph pass and requires zero query divergences.

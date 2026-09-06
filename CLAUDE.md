@@ -436,6 +436,12 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
     serve` receives only tree and blob records, exposes a reference-counted read-only VFS mount,
     and owns the shared node chunk budget. The k0s #14 Go proxy snapshotter bind-mounts that path
     and owns writable layers; liquid ships neither the proxy nor layers.
+12. **Install trees are position-independent by construction** (liquid #73). The fixed virtual
+    build root is not an install location, and installed artifacts contain only tree-relative
+    references. Result publication rejects embedded build or declared install prefixes, absolute
+    binary lookup paths, and absolute package metadata. Liquid never rewrites existing binaries
+    and does not require a fixed content-addressed install path. See
+    [`docs/library/relocation.md`](docs/library/relocation.md).
 
 **Still open:**
 

@@ -8,6 +8,11 @@ fixed virtual `/liquid` layout; records input reads from the VFS request stream;
 outputs, stdout, stderr, and the read manifest; and returns the decoded result through
 `liquid::build`.
 
+Install-mode wrapper actions keep the same fixed root. `DESTDIR` names its `out/prefix` staging
+directory, while `CMAKE_INSTALL_PREFIX` remains the caller's logical absolute prefix. Publication
+strips both staging components and checks the resulting install tree as described in
+[relocation.md](../library/relocation.md); the sandbox path never becomes an install address.
+
 Linux launches through unprivileged user, mount, pid, and network namespaces. The process group
 is killed on timeout. The namespace contains only the mounted input tree, the materialised
 toolchain, private home and temporary directories, declared output bind mounts, and `/proc`; a

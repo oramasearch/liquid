@@ -59,6 +59,21 @@ struct LIQUID_EXPORT action_output {
     digest blob;
 };
 
+struct LIQUID_EXPORT relocation_finding {
+    std::string file;
+    std::uint64_t offset{};
+    std::string context;
+};
+
+struct LIQUID_EXPORT relocation_report {
+    bool relocatable{true};
+    std::vector<relocation_finding> findings;
+};
+
+struct LIQUID_EXPORT relocation_check_options {
+    std::optional<std::filesystem::path> install_prefix;
+};
+
 struct LIQUID_EXPORT observed_input {
     std::string path;
     digest content;
@@ -321,6 +336,8 @@ struct LIQUID_EXPORT wrap_options {
     std::optional<std::filesystem::path> fact_directory;
     std::optional<remote_config> remote;
     std::vector<named_input> inputs;
+    std::optional<std::filesystem::path> install_prefix;
+    bool allow_embedded_prefix{};
 };
 
 struct LIQUID_EXPORT critical_action {
@@ -584,6 +601,9 @@ struct LIQUID_EXPORT why_report {
 };
 
 namespace build {
+
+[[nodiscard]] LIQUID_EXPORT runtime::task<relocation_report>
+relocation_check(std::filesystem::path output_tree, relocation_check_options options = {});
 
 [[nodiscard]] LIQUID_EXPORT result<build_handle> start(repository& source, action_input input);
 [[nodiscard]] LIQUID_EXPORT result<build_handle>
