@@ -12,6 +12,9 @@ The hook also records monotonic entry and exit values used for each wrapped acti
 phase and Chrome trace offset. A validated hit records its exit value before terminating early.
 Verification launches the recorded working directory in a newly materialised input snapshot and
 captures stdout and stderr separately for digest comparison.
+The fixed action environment includes the recorded source epoch as `SOURCE_DATE_EPOCH` and
+`ZERO_AR_DATE=1`; wrap uses epoch zero. Sandbox record version 2 also carries the output-normaliser
+rules, so changing a collection rule changes the sandbox digest used by cache identity.
 Local action launch also carries the coroutine stop token. A cancelled local/remote race kills the
 Linux sandbox process group, waits for it, unmounts its input view, and removes the run directory;
 only the scheduler's winner can reach result publication.

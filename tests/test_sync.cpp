@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -22,6 +23,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <random>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -30,6 +32,7 @@
 #include <vector>
 
 #include "encoding/cbor.hpp"
+#include "liquid/drive.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
@@ -244,6 +247,10 @@ public:
         return "http://127.0.0.1:" + std::to_string(port_) + "/repository";
     }
 
+    void fail_next_chunk_read() {
+        fail_chunk_read_.store(true);
+    }
+
 private:
     void serve() {
         while (!stopping_.load()) {
@@ -333,6 +340,9 @@ private:
     }
 
     void read_range(int connection, std::string_view target) {
+        if (fail_chunk_read_.exchange(false)) {
+            return;
+        }
         const auto marker = target.find("/sync/chunks/") + std::string_view{"/sync/chunks/"}.size();
         const auto query = target.find('?', marker);
         auto id = liquid::parse_digest(target.substr(marker, query - marker));
@@ -411,6 +421,7 @@ private:
     int listener_{-1};
     std::uint16_t port_{};
     std::atomic_bool stopping_{};
+    std::atomic_bool fail_chunk_read_{};
     std::thread thread_;
     liquid::sync_server* server_{};
     bool legacy_push_reply_{};
@@ -943,6 +954,246 @@ TEST(Sync, bad_signature_rejects_the_complete_batch) {
     EXPECT_EQ(head.error().code, liquid::errc::not_found);
 }
 
+auto write_drive_file(const std::filesystem::path& path, std::string_view value) -> void {
+    std::filesystem::create_directories(path.parent_path());
+    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+    output.write(value.data(), static_cast<std::streamsize>(value.size()));
+    output.close();
+    ASSERT_TRUE(output);
+}
+
+auto read_drive_file(const std::filesystem::path& path) -> std::string {
+    auto input = std::ifstream{path, std::ios::binary};
+    return {std::istreambuf_iterator<char>{input}, {}};
+}
+
+auto has_drive_outcome(const liquid::drive_sync_report& report,
+                       liquid::drive_reconciliation_kind kind,
+                       std::string_view path = {}) -> bool {
+    return std::ranges::any_of(report.paths, [&](const liquid::drive_reconciliation& entry) {
+        return entry.kind == kind && (path.empty() || entry.path == path);
+    });
+}
+
+auto peak_rss_bytes() -> std::uint64_t {
+    auto usage = rusage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) {
+        return 0;
+    }
+#if defined(__APPLE__)
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024U;
+#endif
+}
+
+TEST(Drive, seeded_reconciliation_covers_every_case_and_converges_through_sync_server) {
+    constexpr auto seed = std::uint64_t{195};
+    auto random = std::mt19937_64{seed};
+    temporary_directory folder;
+    temporary_directory server_path;
+    temporary_directory ordinary_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    auto server = liquid::sync_server{*server_repository};
+    sync_http_server http{server};
+
+    const auto local_value = "local-" + std::to_string(random());
+    write_drive_file(folder.path() / "local.txt", local_value);
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client) << client.error().message << ": " << client.error().context;
+    auto first = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
+    EXPECT_TRUE(
+        has_drive_outcome(*first, liquid::drive_reconciliation_kind::local_only, "local.txt"));
+    ASSERT_TRUE(first->status.trees.base);
+    ASSERT_TRUE(first->status.trees.local);
+    ASSERT_TRUE(first->status.trees.remote);
+    EXPECT_EQ(liquid::to_string(*first->status.trees.base),
+              liquid::to_string(*first->status.trees.local));
+
+    auto ordinary = liquid::runtime::block_on(liquid::repository::create(ordinary_path.path()));
+    ASSERT_TRUE(ordinary);
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto ordinary_pull = liquid::runtime::block_on(endpoint.pull(*ordinary));
+    ASSERT_TRUE(ordinary_pull) << ordinary_pull.error().message;
+    auto ordinary_local = liquid::runtime::block_on(ordinary->read("local.txt"));
+    ASSERT_TRUE(ordinary_local);
+    EXPECT_EQ(text(*ordinary_local), local_value);
+
+    const auto remote_value = "remote-" + std::to_string(random());
+    ASSERT_TRUE(liquid::runtime::block_on(
+        server_repository->write("nested/remote.txt", bytes(remote_value))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("remote only")));
+    auto remote_only = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(remote_only) << remote_only.error().message << ": " << remote_only.error().context;
+    EXPECT_TRUE(has_drive_outcome(
+        *remote_only, liquid::drive_reconciliation_kind::remote_only, "nested/remote.txt"));
+    EXPECT_EQ(read_drive_file(folder.path() / "nested/remote.txt"), remote_value);
+
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->write("shared.txt", bytes("base"))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("conflict base")));
+    ASSERT_TRUE(liquid::runtime::block_on(client->sync()));
+    const auto left = "left-" + std::to_string(random());
+    const auto right = "right-" + std::to_string(random());
+    write_drive_file(folder.path() / "shared.txt", left);
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->write("shared.txt", bytes(right))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("remote concurrent edit")));
+    auto conflicted = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(conflicted) << conflicted.error().message << ": " << conflicted.error().context;
+    EXPECT_TRUE(has_drive_outcome(
+        *conflicted, liquid::drive_reconciliation_kind::content_conflict, "shared.txt"));
+    EXPECT_EQ(read_drive_file(folder.path() / "shared.txt"), left);
+    EXPECT_EQ(read_drive_file(folder.path() / "shared (remote conflict).txt"), right);
+    ASSERT_EQ(conflicted->status.conflicts.size(), 1U);
+    EXPECT_EQ(conflicted->status.conflicts.front().path, "shared.txt");
+    EXPECT_EQ(conflicted->status.conflicts.front().refs.size(), 3U);
+
+    std::filesystem::rename(folder.path() / "nested/remote.txt", folder.path() / "moved.txt");
+    auto moved = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(moved) << moved.error().message << ": " << moved.error().context;
+    EXPECT_TRUE(has_drive_outcome(*moved, liquid::drive_reconciliation_kind::moved, "moved.txt"));
+    EXPECT_FALSE(std::filesystem::exists(folder.path() / "nested/remote.txt"));
+    EXPECT_EQ(read_drive_file(folder.path() / "moved.txt"), remote_value);
+    ASSERT_EQ(moved->status.conflicts.size(), 1U);
+    EXPECT_EQ(moved->status.conflicts.front().path, "shared.txt");
+
+    write_drive_file(folder.path() / "shared.txt", "resolved");
+    std::filesystem::remove(folder.path() / "shared (remote conflict).txt");
+    auto resolved = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(resolved) << resolved.error().message << ": " << resolved.error().context;
+    EXPECT_TRUE(resolved->status.conflicts.empty());
+
+    write_drive_file(folder.path() / "delete-edit.txt", "base");
+    ASSERT_TRUE(liquid::runtime::block_on(client->sync()));
+    std::filesystem::remove(folder.path() / "delete-edit.txt");
+    ASSERT_TRUE(liquid::runtime::block_on(
+        server_repository->write("delete-edit.txt", bytes("edited remotely"))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("edit against delete")));
+    auto delete_edit = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(delete_edit) << delete_edit.error().message << ": " << delete_edit.error().context;
+    EXPECT_TRUE(has_drive_outcome(
+        *delete_edit, liquid::drive_reconciliation_kind::delete_edit, "delete-edit.txt"));
+    EXPECT_EQ(read_drive_file(folder.path() / "delete-edit.txt"), "edited remotely");
+
+    auto large = std::string(256U * 1024U, 'x');
+    large.front() = static_cast<char>('a' + random() % 26U);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(server_repository->write("interrupted.bin", bytes(large))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("interrupted transfer")));
+    http.fail_next_chunk_read();
+    auto interrupted = liquid::runtime::block_on(client->sync());
+    ASSERT_FALSE(interrupted);
+    auto interrupted_status = liquid::runtime::block_on(client->status());
+    ASSERT_TRUE(interrupted_status);
+    EXPECT_TRUE(interrupted_status->trees.interrupted);
+    auto resumed = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(resumed) << resumed.error().message << ": " << resumed.error().context;
+    EXPECT_TRUE(
+        has_drive_outcome(*resumed, liquid::drive_reconciliation_kind::interrupted_transfer));
+    EXPECT_EQ(read_drive_file(folder.path() / "interrupted.bin"), large);
+    EXPECT_FALSE(resumed->status.trees.interrupted);
+
+    const auto walks_before = resumed->status.full_walks;
+    write_drive_file(folder.path() / "lost-event.txt", "found by full walk");
+    auto overflow_recovery = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(overflow_recovery) << overflow_recovery.error().message;
+    EXPECT_GT(overflow_recovery->status.full_walks, walks_before);
+    auto server_lost_event = liquid::runtime::block_on(server_repository->read("lost-event.txt"));
+    ASSERT_TRUE(server_lost_event);
+    EXPECT_EQ(text(*server_lost_event), "found by full walk");
+    EXPECT_LT(overflow_recovery->status.state_bytes, 256ULL * 1024ULL * 1024ULL);
+}
+
+TEST(Drive, state_memory_ceiling_refuses_an_unbounded_walk) {
+    constexpr auto file_count = 4096;
+    constexpr auto state_ceiling = std::uint64_t{256} * 1024U;
+    constexpr auto rss_ceiling = std::uint64_t{1} * 1024U * 1024U * 1024U;
+    temporary_directory folder;
+    for (auto index = 0; index < file_count; ++index) {
+        write_drive_file(folder.path() / ("file-" + std::to_string(index)), "value");
+    }
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(),
+                                   "http://127.0.0.1:1",
+                                   {.state_memory_ceiling = state_ceiling, .durable = false}));
+    ASSERT_TRUE(client);
+    auto synchronized = liquid::runtime::block_on(client->sync());
+    ASSERT_FALSE(synchronized);
+    EXPECT_EQ(synchronized.error().code, liquid::errc::busy);
+    EXPECT_EQ(synchronized.error().message, "drive state memory ceiling exceeded");
+    EXPECT_EQ(synchronized.error().context, std::to_string(state_ceiling));
+    ASSERT_GT(peak_rss_bytes(), 0U);
+    EXPECT_LT(peak_rss_bytes(), rss_ceiling);
+}
+
+TEST(Drive, refused_reference_preserves_reason_and_unadvanced_base) {
+    temporary_directory folder;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    auto authorize = [](const liquid::sync_item& item,
+                        std::span<const liquid::sync_ref_update> updates)
+        -> liquid::runtime::task<std::vector<liquid::sync_ref_verdict>> {
+        if (item.kind == liquid::sync_item_kind::change) {
+            co_return refused_verdicts(updates, "main", "drive write policy refused the change");
+        }
+        co_return accepted_verdicts(updates);
+    };
+    auto server = liquid::sync_server{*server_repository,
+                                      liquid::sync_server_options{.authorize = authorize}};
+    sync_http_server http{server};
+    write_drive_file(folder.path() / "local.txt", "local");
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client);
+    auto synchronized = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(synchronized) << synchronized.error().message;
+    ASSERT_EQ(synchronized->status.references.size(), 1U);
+    EXPECT_EQ(synchronized->status.references.front().name, "main");
+    EXPECT_EQ(synchronized->status.references.front().outcome,
+              liquid::sync_ref_outcome_kind::refused);
+    EXPECT_EQ(synchronized->status.references.front().reason,
+              "drive write policy refused the change");
+    EXPECT_FALSE(synchronized->status.trees.base);
+    EXPECT_FALSE(synchronized->status.trees.interrupted);
+
+    auto reopened = liquid::runtime::block_on(liquid::drive_client::open(folder.path()));
+    ASSERT_TRUE(reopened);
+    auto status = liquid::runtime::block_on(reopened->status());
+    ASSERT_TRUE(status);
+    ASSERT_EQ(status->references.size(), 1U);
+    EXPECT_EQ(status->references.front().reason, "drive write policy refused the change");
+    EXPECT_FALSE(status->trees.base);
+}
+
+TEST(Drive, fresh_folder_joins_an_existing_remote_repository) {
+    temporary_directory folder;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(server_repository->write("remote.txt", bytes("already remote"))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("existing remote")));
+    auto server = liquid::sync_server{*server_repository};
+    sync_http_server http{server};
+    write_drive_file(folder.path() / "local.txt", "new local");
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client);
+    auto synchronized = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+    EXPECT_EQ(read_drive_file(folder.path() / "remote.txt"), "already remote");
+    auto server_local = liquid::runtime::block_on(server_repository->read("local.txt"));
+    ASSERT_TRUE(server_local);
+    EXPECT_EQ(text(*server_local), "new local");
+}
+
 #if defined(LIQUID_CLI)
 auto shell_quote(const std::filesystem::path& value) -> std::string {
     auto output = std::string{"'"};
@@ -1052,6 +1303,7 @@ private:
 TEST(Sync, cli_push_and_pull_round_trip) {
     temporary_directory source_path;
     temporary_directory destination_path;
+    temporary_directory drive_path;
     temporary_directory server_path;
     auto server_repository =
         liquid::runtime::block_on(liquid::repository::create(server_path.path()));
@@ -1074,12 +1326,18 @@ TEST(Sync, cli_push_and_pull_round_trip) {
     const auto executable = shell_quote(LIQUID_CLI);
     const auto push_output = source_path.path() / "push-output.txt";
     const auto atomic_output = source_path.path() / "atomic-output.txt";
+    const auto drive_output = source_path.path() / "drive-output.txt";
+    const auto drive_status_output = source_path.path() / "drive-status-output.txt";
     const auto push = "cd " + shell_quote(source_path.path()) + " && " + executable + " push '" +
                       url + "' > " + shell_quote(push_output);
     const auto atomic_push = "cd " + shell_quote(source_path.path()) + " && " + executable +
                              " push --atomic '" + url + "' > " + shell_quote(atomic_output);
     const auto pull =
         "cd " + shell_quote(destination_path.path()) + " && " + executable + " pull '" + url + "'";
+    const auto drive_sync = executable + " drive sync " + shell_quote(drive_path.path()) + " '" +
+                            url + "' > " + shell_quote(drive_output);
+    const auto drive_status = executable + " drive status " + shell_quote(drive_path.path()) +
+                              " > " + shell_quote(drive_status_output);
     ASSERT_EQ(std::system(push.c_str()), 0);
     auto reopened_source = liquid::runtime::block_on(liquid::repository::open(source_path.path()));
     ASSERT_TRUE(reopened_source);
@@ -1099,12 +1357,28 @@ TEST(Sync, cli_push_and_pull_round_trip) {
     EXPECT_NE(atomic_text.find("reference=main outcome=refused"), std::string::npos);
     EXPECT_NE(atomic_text.find("reference=blocked outcome=refused reason=reference is not allowed"),
               std::string::npos);
+    write_drive_file(drive_path.path() / "drive.txt", "from drive");
+    ASSERT_EQ(std::system(drive_sync.c_str()), 0);
+    EXPECT_EQ(read_drive_file(drive_path.path() / "cli.txt"), "round trip");
+    auto drive_report = std::ifstream{drive_output};
+    const auto drive_report_text = std::string{std::istreambuf_iterator<char>{drive_report}, {}};
+    EXPECT_NE(drive_report_text.find("reference=main outcome=applied"), std::string::npos);
+    EXPECT_NE(drive_report_text.find("path=drive.txt outcome=local-only"), std::string::npos);
+    ASSERT_EQ(std::system(drive_status.c_str()), 0);
+    auto drive_status_report = std::ifstream{drive_status_output};
+    const auto drive_status_text =
+        std::string{std::istreambuf_iterator<char>{drive_status_report}, {}};
+    EXPECT_NE(drive_status_text.find("remote=" + url), std::string::npos);
+    EXPECT_NE(drive_status_text.find("interrupted=false"), std::string::npos);
     ASSERT_EQ(std::system(pull.c_str()), 0);
     auto opened = liquid::runtime::block_on(liquid::repository::open(destination_path.path()));
     ASSERT_TRUE(opened);
     auto content = liquid::runtime::block_on(opened->read("cli.txt"));
     ASSERT_TRUE(content) << content.error().message << " " << content.error().context;
     EXPECT_EQ(text(*content), "round trip");
+    auto drive_content = liquid::runtime::block_on(opened->read("drive.txt"));
+    ASSERT_TRUE(drive_content);
+    EXPECT_EQ(text(*drive_content), "from drive");
 }
 #endif
 

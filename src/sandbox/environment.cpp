@@ -2,11 +2,13 @@
 
 #include <array>
 
+#include "build/normalise.hpp"
+
 namespace liquid::sandbox_detail {
 namespace {
 
 constexpr auto fixed_names =
-    std::array{"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH"};
+    std::array{"PATH", "HOME", "TMPDIR", "LANG", "TZ", "SOURCE_DATE_EPOCH", "ZERO_AR_DATE"};
 
 auto mechanism_for(std::string_view os) -> result<std::string> {
     if (os == "linux")
@@ -40,7 +42,8 @@ auto definition(const platform& target) -> result<objects::sandbox_record> {
                                    .home_root = "/liquid/home/{action}/",
                                    .temporary_root = "/liquid/tmp/{action}/",
                                    .fixed_environment = {fixed_names.begin(), fixed_names.end()},
-                                   .network = false};
+                                   .network = false,
+                                   .output_normalisers = build_detail::output_normaliser_rules()};
 }
 
 auto environment(const action_input& input,
@@ -65,6 +68,7 @@ auto environment(const action_input& input,
     output.values["LANG"] = "C.UTF-8";
     output.values["TZ"] = "UTC";
     output.values["SOURCE_DATE_EPOCH"] = std::to_string(source_time.time_since_epoch().count());
+    output.values["ZERO_AR_DATE"] = "1";
     return output;
 }
 

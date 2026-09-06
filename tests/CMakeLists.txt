@@ -60,6 +60,8 @@ add_executable(liquid-tests
   build/test_policy.cpp
   build/test_facts.cpp
   build/test_graph.cpp
+  build/test_content.cpp
+  build/test_normalise.cpp
   build/test_provenance.cpp
   build/test_why.cpp
   build/test_sbom.cpp
@@ -68,6 +70,13 @@ add_executable(liquid-tests
   build/test_wrap.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
+if(BUILD_SHARED_LIBS)
+  target_sources(liquid-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/build/content.cpp
+    ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
+    ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    ${PROJECT_SOURCE_DIR}/src/store/references.cpp)
+endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp)
 endif()
@@ -414,6 +423,7 @@ add_executable(liquid-header-tests
   headers/daemon.cpp
   headers/drip.cpp
   headers/delta.cpp
+  headers/drive.cpp
   headers/error.cpp
   headers/export.cpp
   headers/flow.cpp
@@ -529,6 +539,16 @@ if(LIQUID_REALWORLD_TESTS)
       -DLIQUID_REALWORLD_GIT_DIRECTORY=${LIQUID_REALWORLD_GIT_DIRECTORY}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/git/realworld.cmake)
   set_tests_properties(git-realworld PROPERTIES LABELS realworld)
+endif()
+
+option(LIQUID_CONTENT_CHAIN_TESTS "Register the opt-in content-addressed build chain" OFF)
+if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
+  add_test(NAME content-addressed-build-chain
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONTENT_CHAIN_ROOT=${CMAKE_CURRENT_BINARY_DIR}/content-addressed-build-chain
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/build/content-addressed-chain.cmake)
+  set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
 endif()
 
 add_executable(liquid-repository-scenario repository/scenario.cpp)

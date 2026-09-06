@@ -24,12 +24,18 @@ stores graph-derived SBOMs and linked-library ABI records, signs and stores its 
 binds that evidence to the signed result, verifies the graph, and writes native or DSSE/in-toto
 JSON. `abi.cpp` offloads linked-binary extraction, compares an output with the newest earlier
 descriptor for its path, stores `abi/1`, and issues `abi_compatibility/1`.
+`content.cpp` creates each result's canonical output tree, folds named upstream trees below
+`deps/<name>/`, imports signed result graphs between sibling project caches, and enumerates the
+signature-valid input/output claims consumed by dependency resolution. `normalise.cpp` classifies
+collected artifacts and applies directory-mode, deterministic-archive, and hash-based Python
+bytecode rules on the runtime compute pool before storage.
 `policy.cpp` validates and digests repository policy, walks source and toolchain input trees, verifies
 subject-indexed attestations, counts distinct approved issuers, and produces refusal or warning
 reports before cache lookup and execution.
 
 `why.cpp` re-evaluates that policy for a recorded action before classifying a hit or ordinary miss,
-and reports the first unsatisfied refuse rule as a typed policy cause.
+reports the first unsatisfied refuse rule as a typed policy cause, and identifies hits where distinct
+signed upstream input trees produced one unchanged named output tree.
 
 `facts.cpp` owns canonical configure-probe forms, exact toolchain/sysroot/target keys,
 content-addressed fact records, index rebuild, Autotools and CMake cache-variable discovery, and
