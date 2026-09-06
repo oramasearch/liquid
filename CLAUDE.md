@@ -132,6 +132,9 @@ Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and 
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
 metrics, REST, OpenAPI, and MCP are implemented. Log mode refuses until #83 supplies complete
 transparency inclusion verification.
+Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
+single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
+evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
 
 Liquid #166 adds public tree/change diff plus cursor-paged result, attestation, trace, and SBOM
 enumeration used by CLI record views.
