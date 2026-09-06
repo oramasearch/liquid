@@ -92,7 +92,8 @@ preserved and `path` becomes `error::context`.
 The install exports `liquid_forge_double` and the `liquid-forge-double` executable. The binary is
 started with `liquid-forge-double --listen <address>:<port>` and prints its repository URL once the
 listener is ready. It holds reviews, comments, protection records, and the review state machine in
-memory, and serves these seven lake capabilities:
+memory. The installed target carries its HTTP and TLS transport dependencies for both static and
+shared libliquid packages, and serves these seven lake capabilities:
 
 ```text
 GET  /v1/list_reviews

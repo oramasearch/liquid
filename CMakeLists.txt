@@ -560,7 +560,7 @@ target_include_directories(liquid_forge_double
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
 target_link_libraries(liquid_forge_double
   PUBLIC liquid::liquid
-  PRIVATE Boost::corosio Boost::http)
+  PRIVATE Boost::corosio Boost::corosio_openssl Boost::http)
 set_target_properties(liquid_forge_double PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_executable(liquid-forge-double tests/support/forge_double_main.cpp)
