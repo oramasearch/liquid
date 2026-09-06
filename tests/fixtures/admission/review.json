@@ -1,0 +1,24 @@
+{
+  "apiVersion": "admission.k8s.io/v1",
+  "kind": "AdmissionReview",
+  "request": {
+    "uid": "fixture-review",
+    "namespace": "default",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {"namespace": "default"},
+      "spec": {
+        "containers": [
+          {"name": "main", "image": "registry.example/liquid@sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+        ],
+        "initContainers": [
+          {"name": "prepare", "image": "registry.example/liquid@sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+        ],
+        "ephemeralContainers": [
+          {"name": "debug", "image": "registry.example/liquid@sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+        ]
+      }
+    }
+  }
+}
