@@ -109,8 +109,8 @@ approximate, or deleted positions across changes.
 Liquid #86 adds persisted agent base requirements, caller-stated write bases, path-read sets,
 line-hunk stale reports, and signed disjoint or forced re-validation records.
 Liquid #82 adds the typed CLI command and flag table, generated Markdown, stable JSON and man-page
-reference, and executable user guides. `liquid diff` exposes the existing public change-diff API
-for the first-repository guide.
+reference, executable user guides, and the documentation-site CI artifact. `liquid diff` exposes
+the existing public change-diff API for the first-repository guide.
 
 ### Vocabulary — use these words exactly
 

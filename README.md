@@ -56,7 +56,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > The CLI now validates every option from one typed command table and generates its Markdown,
 > stable JSON, and installed man-page reference from that table. Executable guides cover an
 > existing wrapped build, a first repository and sync peer, and the current keys-and-encryption
-> boundary.
+> boundary. CI renders the complete documentation tree as a downloadable static-site artifact.
 
 > **Phase 4 now includes the persisted demand-driven query graph, continuous clean validation, and per-definition C++ builds.** Registered coroutine query
 > kinds use canonical keys and values, record input and nested-query dependencies in read order,
