@@ -13,6 +13,9 @@ includes anything outside the public `liquid/` header tree. The `cli-why-json` a
 cache.
 The help/documentation comparison also pins the `scheduler` and `worker` command names.
 The scenario also pins `remote_bytes` in the status JSON contract.
+`conflict.cmake` creates a CRDT-suspicious conflict through a public-API fixture, verifies the
+status JSON path and digest entry, inspects the full value, resolves it, and checks that status is
+clear.
 It maps an anchor from the imported change through a later rename and checks the returned path and
 flags.
 It lists history through that rename, restores the imported version as a new drip, and cuts the

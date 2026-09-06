@@ -14,6 +14,8 @@ folding. `test_normalise.cpp` proves two `ar` headers with different owner, grou
 normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root
 binary and text kinds are unchanged, and tree modes preserve only portable executability. The
 provenance tests also enumerate the stored signed input/output claim.
+`test_conflicts.cpp` proves that reaching a conflict entry fails materialisation with its path and
+digest while a tree containing only the unaffected input materialises normally.
 
 `test_relocation.cpp` checks clean relative metadata and scripts, embedded virtual-root offsets,
 absolute pkg-config and CMake paths, and an absolute Mach-O install name. The `wrap/relocation`

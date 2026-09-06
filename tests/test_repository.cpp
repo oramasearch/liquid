@@ -1097,7 +1097,10 @@ TEST(Repository, diff_surfaces_recorded_conflict_values) {
     ASSERT_NE(same, changes->end());
     EXPECT_TRUE(has_change(*same, liquid::tree_diff_kind::conflicted));
     EXPECT_TRUE(same->old_conflicts.empty());
-    EXPECT_EQ(same->new_conflicts.size(), 2U);
+    ASSERT_EQ(same->new_conflicts.size(), 1U);
+    auto value = liquid::runtime::block_on(left->conflict_at("same"));
+    ASSERT_TRUE(value);
+    EXPECT_EQ(liquid::to_string(same->new_conflicts.front()), liquid::to_string(value->id));
 }
 
 TEST(Repository, path_history_follows_moves_and_restore_appends_a_drip) {
@@ -1498,8 +1501,12 @@ TEST(Repository, combine_collision_is_a_conflict_value) {
     auto conflicts = liquid::runtime::block_on(left->conflicts());
     ASSERT_TRUE(conflicts);
     ASSERT_EQ(conflicts->size(), 1U);
-    EXPECT_EQ(conflicts->front().path, "same");
-    EXPECT_EQ(conflicts->front().refs.size(), 2U);
+    EXPECT_EQ(conflicts->front().region.path, "same");
+    EXPECT_EQ(conflicts->front().kind, liquid::conflict_kind::structural);
+    EXPECT_EQ(liquid::to_string(conflicts->front().base),
+              liquid::to_string(conflicts->front().left));
+    EXPECT_NE(liquid::to_string(conflicts->front().left),
+              liquid::to_string(conflicts->front().right));
 }
 
 TEST(Repository, cut_loads_only_the_changed_directory_document) {
@@ -1817,15 +1824,18 @@ TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_val
     ASSERT_TRUE(right_conflicts);
     ASSERT_EQ(left_conflicts->size(), 1U);
     ASSERT_EQ(right_conflicts->size(), 1U);
-    EXPECT_EQ(left_conflicts->front().path, "a.txt");
-    EXPECT_EQ(left_conflicts->front().refs.size(), 3U);
-    ASSERT_EQ(left_conflicts->front().refs.size(), right_conflicts->front().refs.size());
-    for (std::size_t index = 0; index < left_conflicts->front().refs.size(); ++index) {
-        EXPECT_EQ(left_conflicts->front().refs[index].alg,
-                  right_conflicts->front().refs[index].alg);
-        EXPECT_EQ(left_conflicts->front().refs[index].bytes,
-                  right_conflicts->front().refs[index].bytes);
-    }
+    EXPECT_EQ(left_conflicts->front().region.path, "a.txt");
+    EXPECT_EQ(left_conflicts->front().kind, liquid::conflict_kind::text);
+    ASSERT_TRUE(left_conflicts->front().region.bytes);
+    EXPECT_EQ(left_conflicts->front().region.bytes->offset, 0U);
+    EXPECT_EQ(liquid::to_string(left_conflicts->front().id),
+              liquid::to_string(right_conflicts->front().id));
+    EXPECT_EQ(liquid::to_string(left_conflicts->front().base),
+              liquid::to_string(right_conflicts->front().base));
+    EXPECT_EQ(liquid::to_string(left_conflicts->front().left),
+              liquid::to_string(right_conflicts->front().left));
+    EXPECT_EQ(liquid::to_string(left_conflicts->front().right),
+              liquid::to_string(right_conflicts->front().right));
 
     auto cut = liquid::runtime::block_on(left->cut("record conflict"));
     ASSERT_TRUE(cut);
@@ -1833,18 +1843,49 @@ TEST(Repository, synchronized_replicas_turn_divergent_writes_into_a_conflict_val
     ASSERT_TRUE(history);
     ASSERT_FALSE(history->empty());
     EXPECT_EQ(history->front().conflicts.size(), 1U);
+    EXPECT_EQ(liquid::to_string(history->front().conflicts.front().id),
+              liquid::to_string(left_conflicts->front().id));
+    auto conflicted_tree = liquid::runtime::block_on(left->tree(history->front().root));
+    ASSERT_TRUE(conflicted_tree);
+    ASSERT_EQ(conflicted_tree->entries.size(), 1U);
+    EXPECT_EQ(conflicted_tree->entries.front().kind, liquid::node_kind::conflict);
+    EXPECT_EQ(liquid::to_string(conflicted_tree->entries.front().ref),
+              liquid::to_string(left_conflicts->front().id));
     auto reopened = liquid::runtime::block_on(liquid::repository::open(left_path.path()));
     ASSERT_TRUE(reopened);
     auto reopened_conflicts = liquid::runtime::block_on(reopened->conflicts());
     ASSERT_TRUE(reopened_conflicts);
     ASSERT_EQ(reopened_conflicts->size(), 1U);
-    EXPECT_EQ(reopened_conflicts->front().path, "a.txt");
-    EXPECT_EQ(reopened_conflicts->front().refs.size(), 3U);
+    EXPECT_EQ(reopened_conflicts->front().region.path, "a.txt");
+    EXPECT_EQ(liquid::to_string(reopened_conflicts->front().id),
+              liquid::to_string(left_conflicts->front().id));
     ASSERT_TRUE(liquid::runtime::block_on(left->write("a.txt", content("resolved"))));
-    ASSERT_TRUE(liquid::runtime::block_on(left->cut("resolve conflict")));
-    auto resolved = liquid::runtime::block_on(left->conflicts());
+    *left = {};
+    *reopened = {};
+    auto edited = liquid::runtime::block_on(liquid::repository::open(left_path.path()));
+    ASSERT_TRUE(edited);
+    auto edited_conflicts = liquid::runtime::block_on(edited->conflicts());
+    ASSERT_TRUE(edited_conflicts);
+    ASSERT_EQ(edited_conflicts->size(), 1U);
+    auto edited_contents = liquid::runtime::block_on(edited->read("a.txt"));
+    ASSERT_TRUE(edited_contents);
+    EXPECT_EQ(text(*edited_contents), "resolved");
+    auto edited_status = edited->status();
+    ASSERT_TRUE(edited_status);
+    ASSERT_EQ(edited_status->conflicts.size(), 1U);
+    const auto selected_resolution = edited_status->conflicts.front().selected;
+    auto resolution = liquid::runtime::block_on(edited->resolve_conflict("a.txt"));
+    ASSERT_TRUE(resolution);
+    auto resolved = liquid::runtime::block_on(edited->conflicts());
     ASSERT_TRUE(resolved);
     EXPECT_TRUE(resolved->empty());
+    auto resolved_history = liquid::runtime::block_on(edited->log());
+    ASSERT_TRUE(resolved_history);
+    ASSERT_EQ(resolved_history->front().resolutions.size(), 1U);
+    EXPECT_EQ(liquid::to_string(resolved_history->front().resolutions.front().conflict),
+              liquid::to_string(left_conflicts->front().id));
+    EXPECT_EQ(liquid::to_string(resolved_history->front().resolutions.front().value),
+              liquid::to_string(selected_resolution));
 }
 
 TEST(Repository, WriteFileMatchesWriteBlobAndRecordsOneDrip) {

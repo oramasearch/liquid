@@ -30,6 +30,9 @@ through the public repository API, runs an optional test filter, and prints each
 policy parsing through public repository APIs. Status projects persisted agent policy, and
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
+Status also lists unresolved path and conflict-digest pairs. `conflict.cpp` implements `show` and
+`resolve` only through the public repository conflict operations and prints the canonical inputs,
+region, kind, explanation, and resulting resolution change.
 
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new

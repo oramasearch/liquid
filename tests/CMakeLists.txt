@@ -66,6 +66,7 @@ add_executable(liquid-tests
   build/test_facts.cpp
   build/test_graph.cpp
   build/test_content.cpp
+  build/test_conflicts.cpp
   build/test_normalise.cpp
   build/test_provenance.cpp
   build/test_relocation.cpp
@@ -316,6 +317,14 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-scenario
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/scenario.cmake)
+  add_executable(liquid-conflict-cli-fixture cli/conflict_fixture.cpp)
+  target_link_libraries(liquid-conflict-cli-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-conflict
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CONFLICT_FIXTURE=$<TARGET_FILE:liquid-conflict-cli-fixture>
+      -DLIQUID_CONFLICT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/conflict-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/conflict.cmake)
   add_test(NAME cli-help-docs
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>

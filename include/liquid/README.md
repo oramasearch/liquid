@@ -4,6 +4,10 @@ Installed C++ headers in this directory define libliquid's supported API. `liqui
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.
 
+`object.hpp` defines the canonical conflict record, byte and node regions, conflict references,
+and change-resolution references. `repository.hpp` exposes unresolved inspection, producer
+recording, and resolution operations; all waiting operations remain coroutine-native.
+
 `frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
 descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
 errors, progress, and cancellation types while registering queries, commands, and panels.

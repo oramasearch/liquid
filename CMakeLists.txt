@@ -624,6 +624,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/transparency.cpp
     src/cli/test.cpp
     src/cli/repo.cpp
+    src/cli/conflict.cpp
     src/cli/review.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp

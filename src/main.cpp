@@ -74,6 +74,7 @@ auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
+auto conflict(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -97,6 +98,11 @@ constexpr auto commands = std::to_array<command>({
      "available",
      liquid_cli::repo_init},
     {"status", "status [--json]", "show repository status", "available", liquid_cli::repo_status},
+    {"conflict",
+     "conflict <show|resolve> <path>",
+     "inspect or resolve an unresolved conflict",
+     "available",
+     liquid_cli::conflict},
     {"data",
      "data <branch|list|discard|promote> ...",
      "manage session database branches",

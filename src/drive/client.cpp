@@ -364,7 +364,14 @@ void add_conflict(reconciliation_result& output,
     alternate.entry.name = std::filesystem::path{alternate.path}.filename().string();
     alternate.entry.node = repository_detail::drive_access::fresh_node();
     output.desired[alternate.path] = alternate;
-    output.conflicts.push_back({local.path, values});
+    output.conflicts.push_back(
+        {.base = base ? base->entry.ref : local.entry.ref,
+         .left = local.entry.ref,
+         .right = remote.entry.ref,
+         .region = {.path = local.path,
+                    .nodes = conflict_node_range{local.entry.node, remote.entry.node}},
+         .kind = conflict_kind::structural,
+         .explanation = "drive replicas contain different values at this path"});
     add_report(output,
                local,
                drive_reconciliation_kind::content_conflict,
@@ -385,7 +392,14 @@ void reconcile_single_side(reconciliation_result& output,
     }
     output.desired[value.path] = value;
     auto values = std::vector<digest>{base.entry.ref, value.entry.ref};
-    output.conflicts.push_back({value.path, values});
+    output.conflicts.push_back(
+        {.base = base.entry.ref,
+         .left = base.entry.ref,
+         .right = value.entry.ref,
+         .region = {.path = value.path,
+                    .nodes = conflict_node_range{base.entry.node, value.entry.node}},
+         .kind = conflict_kind::structural,
+         .explanation = "one drive replica deleted a path changed by the other"});
     add_report(
         output, value, drive_reconciliation_kind::delete_edit, std::nullopt, std::move(values));
 }
@@ -523,17 +537,24 @@ auto contains_reference(const file_map& files, const digest& reference) -> bool 
 void retain_unresolved_conflicts(reconciliation_result& output,
                                  std::span<const conflict> existing) {
     for (const auto& value : existing) {
-        const auto replaced = std::ranges::any_of(
-            output.conflicts, [&](const auto& current) { return current.path == value.path; });
-        if (replaced || !output.desired.contains(value.path) || value.refs.size() < 2) {
+        const auto replaced = std::ranges::any_of(output.conflicts, [&](const auto& current) {
+            return current.region.path == value.region.path;
+        });
+        if (replaced || !output.desired.contains(value.region.path)) {
             continue;
         }
-        const auto references = std::span{value.refs};
-        const auto current_values =
-            references.size() >= 3 ? references.last(2) : references.last(1);
-        if (std::ranges::all_of(current_values, [&](const auto& reference) {
-                return contains_reference(output.desired, reference);
-            })) {
+        const auto left_is_base = same_digest(value.left, value.base);
+        const auto right_is_base = same_digest(value.right, value.base);
+        auto retained = false;
+        if (left_is_base) {
+            retained = contains_reference(output.desired, value.right);
+        } else if (right_is_base) {
+            retained = contains_reference(output.desired, value.left);
+        } else {
+            retained = contains_reference(output.desired, value.left) &&
+                       contains_reference(output.desired, value.right);
+        }
+        if (retained) {
             output.conflicts.push_back(value);
         }
     }
@@ -544,14 +565,11 @@ auto same_conflicts(std::span<const conflict> left, std::span<const conflict> ri
         return false;
     }
     for (auto index = std::size_t{}; index < left.size(); ++index) {
-        if (left[index].path != right[index].path ||
-            left[index].refs.size() != right[index].refs.size()) {
+        if (left[index].region.path != right[index].region.path ||
+            !same_digest(left[index].base, right[index].base) ||
+            !same_digest(left[index].left, right[index].left) ||
+            !same_digest(left[index].right, right[index].right)) {
             return false;
-        }
-        for (auto value = std::size_t{}; value < left[index].refs.size(); ++value) {
-            if (!same_digest(left[index].refs[value], right[index].refs[value])) {
-                return false;
-            }
         }
     }
     return true;

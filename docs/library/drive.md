@@ -124,12 +124,14 @@ overflow converge through the same deterministic query.
 A concurrent content edit keeps the local bytes at the original path and writes the remote bytes
 as `<stem> (remote conflict)<extension>`. If that path exists, numbered suffixes are tried in
 ascending order. The repository conflict value names the original path and retains the base when
-present plus both current blob-record references. Conflict values are encoded in the mutable
-repository checkpoint and in the next change, so reopening the repository cannot discard them.
+present plus both current blob-record references. It is the canonical `conflict/1` object described
+in [`conflicts.md`](conflicts.md); the repository checkpoint and next change reference its digest,
+so reopening the repository cannot discard it.
 
-Both filenames remain ordinary tree entries and can be read, moved, or compared. Resolution is an
-ordinary write or remove followed by a cut; repository mutation clears the conflict for that path
-and appends new history. No resolution overwrites or rewrites the conflicting change.
+Both filenames remain available as selected working entries and can be read, moved, or compared.
+Resolution is an ordinary write followed by `liquid conflict resolve <path>`; the resulting change
+references both the conflict and selected value. No resolution overwrites or rewrites the
+conflicting change.
 An unrelated synchronization retains the conflict while its current references and original path
 remain in the tree; rebuilding status does not itself count as resolution.
 

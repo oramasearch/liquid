@@ -63,6 +63,20 @@ materialise_directory(repository& source, digest root, std::filesystem::path des
                 co_return std::unexpected(nested.error());
             continue;
         }
+        if (entry.kind == node_kind::conflict) {
+            auto conflict_bytes = co_await repository_detail::build_access::get(source, entry.ref);
+            if (!conflict_bytes) {
+                co_return std::unexpected(conflict_bytes.error());
+            }
+            auto value = objects::decode_conflict(*conflict_bytes);
+            if (!value) {
+                co_return std::unexpected(value.error());
+            }
+            co_return std::unexpected(
+                error{errc::conflict,
+                      "build input contains unresolved conflict",
+                      value->region.path + " (" + to_string(entry.ref) + ")"});
+        }
         if (entry.kind != node_kind::blob)
             co_return std::unexpected(error{errc::unsupported,
                                             "toolchain trees cannot contain repository entries",

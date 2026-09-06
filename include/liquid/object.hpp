@@ -26,6 +26,7 @@ enum class node_kind : std::uint8_t {
     result_,
     attestation,
     repo,
+    conflict,
 };
 
 struct LIQUID_EXPORT blob {
@@ -69,9 +70,49 @@ struct LIQUID_EXPORT change_ref {
     change_id id{};
 };
 
-struct LIQUID_EXPORT conflict {
+enum class conflict_kind : std::uint8_t {
+    text,
+    structural,
+    crdt_suspicious,
+};
+
+struct LIQUID_EXPORT conflict_byte_range {
+    std::uint64_t offset{};
+    std::uint64_t length{};
+};
+
+struct LIQUID_EXPORT conflict_node_range {
+    node_id first{};
+    node_id last{};
+};
+
+struct LIQUID_EXPORT conflict_region {
     std::string path;
-    std::vector<digest> refs;
+    std::optional<conflict_byte_range> bytes;
+    std::optional<conflict_node_range> nodes;
+};
+
+struct LIQUID_EXPORT conflict {
+    digest id{};
+    digest base{};
+    digest left{};
+    digest right{};
+    conflict_region region;
+    conflict_kind kind{conflict_kind::text};
+    std::string explanation;
+};
+
+struct LIQUID_EXPORT conflict_reference {
+    std::string path;
+    digest id{};
+    digest selected{};
+    node_kind selected_kind{node_kind::blob};
+    std::vector<digest> legacy_refs;
+};
+
+struct LIQUID_EXPORT conflict_resolution {
+    digest conflict{};
+    digest value{};
 };
 
 struct LIQUID_EXPORT document_nested_pointer {
@@ -98,8 +139,8 @@ struct LIQUID_EXPORT change {
     std::chrono::sys_seconds at;
     digest root;
     std::map<std::string, std::string> metadata;
-    std::optional<liquid::conflict> conflict;
-    std::vector<liquid::conflict> conflicts;
+    std::vector<conflict_reference> conflicts;
+    std::vector<conflict_resolution> resolutions;
     std::optional<digest> symbols;
     std::vector<std::byte> sig;
     document_state document;
