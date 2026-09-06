@@ -2,10 +2,11 @@
 
 GitHub Actions runs [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) for every push
 and pull request. Checkout recursively initializes the public Capy plus the private Corosio,
-automerge-cpp, HTTP, and oramacore-cpp submodules using `ORAMA_SUBMODULES_TOKEN`. The repository secret must exist
-and grant read access to `oramasearch/corosio`, `oramasearch/automerge-cpp`, and
-`oramasearch/http`, and `oramasearch/oramacore-cpp`; checkout fails before the build when it is
-absent. Local clones should use
+automerge-cpp, HTTP, and oramacore-cpp submodules using `ORAMA_SUBMODULES_TOKEN` when that secret
+is available, otherwise the job token. The preferred repository secret grants read access to
+`oramasearch/corosio`, `oramasearch/automerge-cpp`, `oramasearch/http`, and
+`oramasearch/oramacore-cpp`; a job token without that access fails during submodule checkout.
+Local clones should use
 `git clone --recurse-submodules`. Each job
 then builds without a dependency cache, runs CTest with failure output, and runs `liquid version`
 on each desktop platform.
@@ -84,12 +85,13 @@ The Linux jobs install `libfuse3-dev`, `fuse3`, Autoconf, and Automake. Configur
 pkg-config package on Linux, and the mount test exercises a 64 MiB repository through libfuse3
 when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device, the test reports
 that FUSE is unavailable and is skipped rather than silently substituting the materialisation
-path. The private submodule token remains an earlier gate: without `ORAMA_SUBMODULES_TOKEN`, CI
-stops at checkout before any FUSE proof can run.
+path. A job token must have access to every private submodule when `ORAMA_SUBMODULES_TOKEN` is not
+available; otherwise CI stops at checkout before any FUSE proof can run.
 
 ## Local Linux verification
 
-Hosted CI cannot build while the org submodule token is missing, and macOS builds hide two
+Hosted CI cannot build when neither the org submodule token nor the job token can read the private
+submodules, and macOS builds hide two
 classes of Linux difference: libc++ supplies some standard headers transitively where libstdc++
 does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
 `std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same

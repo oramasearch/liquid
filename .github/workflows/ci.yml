@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN || github.token }}
 
       - name: Install Linux toolchain
         if: matrix.platform == 'linux'
@@ -101,7 +101,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN || github.token }}
 
       - name: Install Linux toolchain
         if: matrix.platform == 'linux'
@@ -231,7 +231,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN || github.token }}
 
       - name: Install toolchain
         shell: bash
@@ -272,7 +272,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN }}
+          token: ${{ secrets.ORAMA_SUBMODULES_TOKEN || github.token }}
 
       - name: Install toolchain
         shell: bash
