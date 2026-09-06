@@ -373,6 +373,7 @@ set_target_properties(liquid_metadata_objects PROPERTIES
 add_library(libliquid
   src/asn1.cpp
   src/abi.cpp
+  src/admission/decision.cpp
   src/admission/policy.cpp
   src/admission/review.cpp
   src/admission/server.cpp

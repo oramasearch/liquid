@@ -103,6 +103,16 @@ auto text(std::span<const std::byte> value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
+auto count_occurrences(std::string_view value, std::string_view needle) -> std::size_t {
+    auto count = std::size_t{};
+    auto offset = std::size_t{};
+    while ((offset = value.find(needle, offset)) != std::string_view::npos) {
+        ++count;
+        offset += needle.size();
+    }
+    return count;
+}
+
 auto request(std::string url,
              std::string method = "GET",
              std::string suffix = {},
@@ -235,6 +245,39 @@ auto server_arguments(const std::filesystem::path& root,
     return output;
 }
 
+auto policy_set_server_arguments(const std::filesystem::path& root,
+                                 std::uint16_t port,
+                                 std::uint16_t control_port) -> std::vector<std::string> {
+    return {LIQUID_CLI,
+            "serve",
+            "admission",
+            "--policies",
+            (root / "policies").string(),
+            "--store",
+            (root / ".liquid-store").string(),
+            "--listen",
+            "127.0.0.1:" + std::to_string(port),
+            "--control-listen",
+            "127.0.0.1:" + std::to_string(control_port),
+            "--decision-replay",
+            "2",
+            "--insecure-http"};
+}
+
+auto wait_for_decision(const std::string& webhook,
+                       std::string_view route,
+                       std::string_view review,
+                       std::string_view expected) -> void {
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        auto response = request(webhook, "POST", std::string{route}, std::string{review});
+        if (text(response.body).find(expected) != std::string::npos) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    }
+    FAIL() << "admission decision did not update to " << expected;
+}
+
 TEST(AdmissionServer, serves_tls_control_and_cli_contracts) {
     const auto root = liquid::test::fixture_path("admission-server");
     std::filesystem::remove_all(root);
@@ -255,6 +298,9 @@ TEST(AdmissionServer, serves_tls_control_and_cli_contracts) {
     EXPECT_NE(text(accepted.body).find(R"("uid": "fixture-review")"), std::string::npos)
         << text(accepted.body);
     EXPECT_NE(text(accepted.body).find(R"("allowed": true)"), std::string::npos);
+    auto named_default = request(webhook, "POST", "/admit/default", review, false);
+    EXPECT_EQ(named_default.status, 200U);
+    EXPECT_NE(text(named_default.body).find(R"("policy": "default")"), std::string::npos);
 
     policy.issuers = {"taap:1:ed25519:not-accepted"};
     write_policy(root / "policy.json", policy);
@@ -302,6 +348,7 @@ TEST(AdmissionServer, serves_tls_control_and_cli_contracts) {
     auto verify =
         request(control, "GET", "/v1/verify?image=registry.example%2Fliquid%40sha256%3A" + digest);
     EXPECT_NE(text(verify.body).find(R"("allowed": true)"), std::string::npos);
+    EXPECT_NE(text(verify.body).find(R"("outcome": "allowed")"), std::string::npos);
     EXPECT_NE(text(verify.body).find("image_provenance/1"), std::string::npos);
     EXPECT_NE(text(request(control, "GET", "/v1").body).find("admission"), std::string::npos);
     EXPECT_NE(text(request(control, "GET", "/v1/policy").body).find("image_provenance/1"),
@@ -336,6 +383,78 @@ TEST(AdmissionServer, serves_tls_control_and_cli_contracts) {
         "/mcp",
         R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"admission_policy","arguments":{}}})");
     EXPECT_NE(text(called.body).find("attestation_source"), std::string::npos);
+}
+
+TEST(AdmissionServer, routes_atomic_policy_sets_and_replays_structured_decisions) {
+    const auto root = liquid::test::fixture_path("admission-policy-sets");
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "policies");
+    const auto statement = mint_with_cli(root);
+    const auto strict_path = root / "policies" / "strict.json";
+    const auto audit_path = root / "policies" / "audit.json";
+    auto strict = policy_for(statement.issuer.taap_id, root / ".liquid-store");
+    auto audit = strict;
+    audit.mode = liquid::admission_mode::off;
+    write_policy(strict_path, strict);
+    write_policy(audit_path, audit);
+    const auto port = free_port();
+    const auto control_port = free_port();
+    auto server = child_process{policy_set_server_arguments(root, port, control_port)};
+    const auto control = "http://127.0.0.1:" + std::to_string(control_port);
+    const auto webhook = "http://127.0.0.1:" + std::to_string(port);
+    wait_until_ready(control);
+
+    const auto review = read_file(std::filesystem::path{LIQUID_ADMISSION_FIXTURES} / "review.json");
+    auto accepted = request(webhook, "POST", "/admit/strict", review);
+    EXPECT_EQ(accepted.status, 200U);
+    EXPECT_NE(text(accepted.body).find(R"("policy": "strict")"), std::string::npos);
+    EXPECT_NE(text(accepted.body).find(R"("subject": "sha256:1111)"), std::string::npos);
+    EXPECT_NE(text(accepted.body).find(R"("outcome": "allowed")"), std::string::npos);
+    EXPECT_NE(text(accepted.body).find(R"("rule_id": "attestation.verified")"), std::string::npos);
+    EXPECT_NE(text(accepted.body).find(R"("evidence": [)"), std::string::npos);
+
+    auto replay = request(control, "GET", "/v1/decisions?after=0&limit=2");
+    const auto replay_text = text(replay.body);
+    EXPECT_EQ(replay.status, 200U);
+    EXPECT_EQ(replay_text.find("id: 1\n"), std::string::npos) << replay_text;
+    EXPECT_NE(replay_text.find("id: 2\n"), std::string::npos) << replay_text;
+    EXPECT_NE(replay_text.find("id: 3\n"), std::string::npos) << replay_text;
+    EXPECT_EQ(count_occurrences(replay_text, "event: decision"), 2U);
+
+    const auto tagged = read_file(std::filesystem::path{LIQUID_ADMISSION_FIXTURES} / "tagged.json");
+    auto audit_allowed = request(webhook, "POST", "/admit/audit", tagged);
+    EXPECT_NE(text(audit_allowed.body).find(R"("allowed": true)"), std::string::npos);
+    EXPECT_NE(text(audit_allowed.body).find(R"("rule_id": "policy.audit_only")"),
+              std::string::npos);
+    EXPECT_EQ(request(webhook, "POST", "/admit/missing", review).status, 404U);
+
+    strict.issuers = {"taap:1:ed25519:not-accepted"};
+    write_policy(strict_path, strict);
+    wait_for_decision(webhook, "/admit/strict", review, "issuer not accepted");
+
+    write_file(audit_path, "{");
+    EXPECT_EQ(request(control, "POST", "/v1/policy/reload", "{}").status, 400U);
+    auto retained = request(webhook, "POST", "/admit/strict", review);
+    EXPECT_NE(text(retained.body).find("issuer not accepted"), std::string::npos);
+    auto status = request(control, "GET", "/v1/policies");
+    EXPECT_NE(text(status.body).find("last_reload_error"), std::string::npos);
+    EXPECT_NE(text(status.body).find("audit.json"), std::string::npos);
+    EXPECT_NE(text(status.body).find("JSON"), std::string::npos);
+
+    strict.issuers = {statement.issuer.taap_id};
+    write_policy(strict_path, strict);
+    write_policy(audit_path, audit);
+    wait_for_decision(webhook, "/admit/strict", review, R"("outcome": "allowed")");
+
+    auto policies = request(control, "GET", "/v1/policies");
+    EXPECT_NE(text(policies.body).find("audit"), std::string::npos);
+    EXPECT_NE(text(policies.body).find("strict"), std::string::npos);
+    EXPECT_NE(text(request(control, "GET", "/v1/openapi.json").body).find("/admit/{policy}"),
+              std::string::npos);
+    auto tools = request(
+        control, "POST", "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})");
+    EXPECT_NE(text(tools.body).find("admission_decisions"), std::string::npos);
+    EXPECT_NE(text(tools.body).find("admission_policies"), std::string::npos);
 }
 
 TEST(AdmissionServer, starts_insecure_http_through_the_cli) {

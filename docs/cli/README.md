@@ -85,7 +85,7 @@ that the table and `liquid --help` name the same commands.
 | `hot-update` | `hot-update <classify\|apply\|status> ...` | Classify, apply, or inspect runtime updates. | available on macOS arm64 and Linux x86_64 |
 | `edit` | `edit <rename\|extract\|move\|apply> ... [--json] [--apply] [--agent <name>]` | Preview or apply a structural edit through the daemon. | available on macOS and Linux |
 | `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
-| `serve` | `serve admission --policy <file> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>]` | Serve image admission and its control API. | available |
+| `serve` | `serve admission <--policy <file>\|--policies <dir>> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>] [--decision-replay <count>]` | Serve named image-admission policies, structured decisions, and the control API. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
@@ -251,13 +251,16 @@ pattern; `*` matches any sequence and `?` one character. Supplying the flag refu
 all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
 there is no built-in authentication policy, so the default is appropriate for local use; network
 services embed the public server with their own authorization callback.
-`serve admission` loads the JSON policy documented in
-[`../library/admission.md`](../library/admission.md). Its admission listener defaults to
-`0.0.0.0:8443`, its control listener to `127.0.0.1:8083`, and TLS is required unless tests select
-`--insecure-http`. The environment forms are `LIQUID_ADMISSION_POLICY`,
+`serve admission` loads either one JSON policy as `default` with `--policy`, or every
+`<name>.json` in `--policies <dir>`, as documented in
+[`../library/admission.md`](../library/admission.md). Named sets are served at `/admit/<name>` and
+reload automatically as one atomic map. Its admission listener defaults to `0.0.0.0:8443`, its
+control listener to `127.0.0.1:8083`, and TLS is required unless tests select `--insecure-http`.
+The control listener publishes a bounded server-sent decision replay at `/v1/decisions`.
+The environment forms are `LIQUID_ADMISSION_POLICY`, `LIQUID_ADMISSION_POLICIES`,
 `LIQUID_ADMISSION_LISTEN`, `LIQUID_CONTROL_LISTEN`, `LIQUID_ADMISSION_TLS_CERT`,
-`LIQUID_ADMISSION_TLS_KEY`, `LIQUID_ADMISSION_ATTESTATION_SOURCE`, and
-`LIQUID_ADMISSION_LOG_CACHE`; flags win.
+`LIQUID_ADMISSION_TLS_KEY`, `LIQUID_ADMISSION_ATTESTATION_SOURCE`,
+`LIQUID_ADMISSION_LOG_CACHE`, and `LIQUID_ADMISSION_DECISION_REPLAY`; flags win.
 `version --json` is also available for scripts and returns
 `{"version":"0.0.1","grammar":"sha256:<canonical-lock-digest>"}`. Text output is line-oriented
 and stable. A library

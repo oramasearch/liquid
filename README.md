@@ -41,7 +41,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > stream and installable double are implemented. VFS full materialisation works on every platform;
 > HTTP/1.1 client and `serve sync` adapter are implemented. VFS full materialisation works on every platform;
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
-> policy reload, local or node-store evidence lookup, metrics, REST, OpenAPI, and MCP. Complete
+> atomically reloaded named policy sets at `/admit/<policy>`, structured CBOR/JSON decisions in
+> AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
+> metrics, REST, OpenAPI, and MCP. Complete
 > transparency inclusion verification remains #83 and therefore log mode currently refuses.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,

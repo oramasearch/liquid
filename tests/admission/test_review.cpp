@@ -112,6 +112,39 @@ TEST(AdmissionPolicy, round_trips_the_versioned_contract) {
     EXPECT_EQ(decoded->log.max_checkpoint_age_seconds, 300U);
 }
 
+TEST(AdmissionDecision, round_trips_cbor_and_json) {
+    const auto value = liquid::admission_decision{
+        .sequence = 42,
+        .policy = "strict",
+        .allowed = false,
+        .image = image,
+        .subject = image_subject(),
+        .reason = "issuer not accepted",
+        .reasons = {{.rule_id = "attestation.issuer_rejected", .message = "issuer not accepted"}},
+        .considered = {{.attestation = image_subject(),
+                        .profile = "image_provenance/1",
+                        .issuer = "taap:1:ed25519:rejected",
+                        .verified = false,
+                        .rule_id = "attestation.issuer_rejected",
+                        .reason = "issuer not accepted"}},
+    };
+    auto cbor = liquid::encode_admission_decision_cbor(value);
+    ASSERT_TRUE(cbor) << cbor.error().message;
+    auto decoded_cbor = liquid::decode_admission_decision_cbor(*cbor);
+    ASSERT_TRUE(decoded_cbor) << decoded_cbor.error().message;
+    auto reencoded_cbor = liquid::encode_admission_decision_cbor(*decoded_cbor);
+    ASSERT_TRUE(reencoded_cbor) << reencoded_cbor.error().message;
+    EXPECT_EQ(*reencoded_cbor, *cbor);
+
+    auto json = liquid::encode_admission_decision_json(value);
+    ASSERT_TRUE(json) << json.error().message;
+    auto decoded_json = liquid::decode_admission_decision_json(*json);
+    ASSERT_TRUE(decoded_json) << decoded_json.error().message;
+    auto reencoded_json = liquid::encode_admission_decision_json(*decoded_json);
+    ASSERT_TRUE(reencoded_json) << reencoded_json.error().message;
+    EXPECT_EQ(*reencoded_json, *json);
+}
+
 TEST(AdmissionReview, applies_all_image_decisions_without_assumption) {
     auto statement = signed_image();
     auto policy = policy_for(statement);
@@ -121,14 +154,22 @@ TEST(AdmissionReview, applies_all_image_decisions_without_assumption) {
 
     auto accepted = review(policy, records, verifier);
     EXPECT_TRUE(accepted.allowed);
+    ASSERT_TRUE(accepted.subject.has_value());
+    EXPECT_EQ(accepted.subject->alg, image_subject().alg);
+    EXPECT_EQ(accepted.subject->bytes, image_subject().bytes);
     EXPECT_TRUE(accepted.attestation.has_value());
+    ASSERT_EQ(accepted.reasons.size(), 1U);
+    EXPECT_EQ(accepted.reasons.front().rule_id, "attestation.verified");
     ASSERT_EQ(accepted.considered.size(), 1U);
     EXPECT_TRUE(accepted.considered.front().verified);
+    EXPECT_EQ(accepted.considered.front().rule_id, "attestation.verified");
 
     records.values.clear();
     auto absent = review(policy, records, verifier);
     EXPECT_FALSE(absent.allowed);
     EXPECT_EQ(absent.reason, "no attestation");
+    ASSERT_EQ(absent.reasons.size(), 1U);
+    EXPECT_EQ(absent.reasons.front().rule_id, "attestation.missing");
 
     records.values = {statement};
     auto wrong_issuer = policy;
