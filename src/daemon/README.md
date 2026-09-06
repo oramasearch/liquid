@@ -9,3 +9,7 @@ The public lifecycle and target interface are implemented in `src/daemon.cpp` an
 
 Presence reports are transient daemon events. The fan-out target receives local session and client
 updates without writing a drip or advancing a persisted cursor.
+
+Lock and unlock requests open the checkout through the public repository API, apply an optional
+connected authority callback, and send the complete current lock set to every fan-out target.
+Lock snapshots do not change target drip cursors.

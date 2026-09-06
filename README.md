@@ -58,8 +58,9 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, historical document state, composition,
-> conflict values, operation- and session-scoped local-intent undo, advisory
-> locks, private speculative agent sessions, semantic file/symbol/range leases, transient presence,
+> conflict values, operation- and session-scoped local-intent undo, configured exclusive checkout
+> locks with signed offline reconciliation and connected authority, private speculative agent
+> sessions, semantic file/symbol/range leases, transient presence,
 > compaction epochs, scoped delegation attribution, status, public tree/change diff,
 > edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
 > one-drip streaming file writes and tree imports, and caller-stated write bases with
@@ -224,6 +225,8 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > last divergence. Issue #85 persists actor, directory-document, and repository token buckets;
 > rejects over-budget writes before a CRDT transaction opens; applies the same author limits to
 > pushes; and reports persistence lag, consumer lag, watermarks, and rejection counts.
+> Issue #42 sends complete lock snapshots to daemon targets after `liquid lock` and `liquid unlock`
+> without advancing their drip cursors.
 
 > **Phase 4 local search and cost planning are implemented.** `liquid search`,
 > `repository::search`, and `repository::plan_search` select BM25F, verified positional trigrams,
@@ -258,7 +261,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > and returns minimal attributed conflict cores. `liquid resolve` prints the graph, stable JSON, or
 > package-selection explanations.
 > **Phase 5 configuration is implemented.** `.liquid` is a typed declarative language for package,
-> source, and target records with repository-local includes, exact source-located diagnostics,
+> source, target, and exclusive-checkout rule records with repository-local includes, exact source-located diagnostics,
 > canonical formatting and CBOR lowering, digest-verified source fetch, and ordinary-program
 > generators executed with signed provenance. `liquid config` checks, lowers, traces, and formats;
 > `liquid build --target` executes a lowered target through the existing action path and refuses
@@ -335,6 +338,7 @@ and Zetta's.
 - [`docs/library/relocation.md`](docs/library/relocation.md) — position-independent install rules, wrapper conventions, output checks, and waivers.
 - [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 - [`docs/library/configuration-language.md`](docs/library/configuration-language.md) — `.liquid` grammar, types, diagnostics, lowering, source verification, generators, and trace origins.
+- [`docs/library/locks.md`](docs/library/locks.md) — exclusive checkout path rules, records, authority, sync conflicts, daemon delivery, and CLI use.
 
 | | |
 |---|---|

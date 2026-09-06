@@ -22,7 +22,10 @@ and live local-byte accounting for long-running node stores.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
-claims, transient presence, and epoch compaction reports.
+claims, exclusive checkout rules and records, transient presence, and epoch compaction reports.
+`repository.hpp` exposes lock acquisition, holder-only release, configuration, enumeration, and
+the optional connected authorization callback. `daemon.hpp` exposes lock requests and complete
+lock-set delivery to local targets.
 
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of

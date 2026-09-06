@@ -155,6 +155,9 @@ auto append_generated(lowered_configuration& into,
     into.sources.insert(into.sources.end(),
                         std::make_move_iterator(generated.sources.begin()),
                         std::make_move_iterator(generated.sources.end()));
+    into.locks.rules.insert(into.locks.rules.end(),
+                            std::make_move_iterator(generated.locks.rules.begin()),
+                            std::make_move_iterator(generated.locks.rules.end()));
     return {};
 }
 

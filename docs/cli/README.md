@@ -5,8 +5,9 @@ directory unless a command names another repository; `wrap` instead snapshots th
 tree into its project cache. One-shot commands run library operations through `runtime::block_on`;
 `serve sync` awaits them on its listener executor. The CLI does not read repository storage directly.
 
-`init` imports regular files already present in its target directory through
-`repository::import_tree`; the local-tree form of `import` uses the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
+`init` lowers lock rules from `liquid.liquid`, or the first sorted top-level `.liquid` file, before
+it imports regular files through `repository::import_tree`; the local-tree form of `import` uses
+the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
 it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
 its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
 available, but daemon attachment returns the documented unsupported result because the current
@@ -58,8 +59,8 @@ built binary under the build directory before CTest compares it with the committ
 | `diff` | `diff <a> <b> [path] [--text] [--formats] [--json]` | Compare refs or change digests, optionally decoding changed containers. | available |
 | `ops` | `ops [--json]` | Alias for `log --ops`. | available |
 | `undo` | `undo [op-id]` or `undo --session <id> [--path <path>]... [--drip <id>]...` | Undo one operation or a session selection. | available |
-| `lock` | `lock <path>` | Advisory-lock a path. | available |
-| `unlock` | `unlock <path>` | Remove an advisory lock. | available |
+| `lock` | `lock <path> [--reason <text>]` | Acquire configured exclusive checkout for a path. | available |
+| `unlock` | `unlock <path>` | Release exclusive checkout held by the current identity. | available |
 | `session` | `session start <delegation>`, `session write <id> <path> --from <file>`, `session publish <id> [--message <text>]`, or `session discard <id>` | Manage a persisted private speculative replica. | available |
 | `compact` | `compact --epoch [--min-ack-peers <count>]` | Write and record a compact repository epoch. | available |
 | `mount` | `mount <mountpoint> [--read-only]` | Mount a lazy working tree until Ctrl-C. | available where FUSE is available |
@@ -105,6 +106,10 @@ built binary under the build directory before CTest compares it with the committ
 | `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 
 ## Output and errors
+
+`lock` prints the acquired path and `unlock` prints the released path. Acquisition requires a
+matching `.liquid` lock rule. A conflicting write reports the holder identity, acquisition time,
+and reason; [exclusive checkout locks](../library/locks.md) defines offline and connected authority.
 
 `status`, `data list`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`,
 and `cache stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,

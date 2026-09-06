@@ -1958,6 +1958,36 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                     response =
                         delivered ? encode_acknowledgement() : encode_error(delivered.error());
                 }
+            } else if (*operation == "lock" || *operation == "unlock") {
+                const auto* path = text_field(*decoded, "path");
+                const auto* reason = text_field(*decoded, "reason");
+                if (!path || path->empty() ||
+                    (*operation == "lock" && (!reason || reason->empty()))) {
+                    response = encode_error(
+                        failure(errc::invalid_argument, "invalid daemon lock request"));
+                } else {
+                    auto repository_options = liquid::repository_options{};
+                    repository_options.authorize_lock = state->options.authorize_lock;
+                    auto repository =
+                        co_await repository::open(state->checkout, repository_options);
+                    if (!repository) {
+                        response = encode_error(repository.error());
+                    } else {
+                        auto changed = *operation == "lock"
+                                           ? co_await repository->lock(*path, *reason)
+                                           : co_await repository->unlock(*path);
+                        if (!changed) {
+                            response = encode_error(changed.error());
+                        } else {
+                            auto locks = co_await repository->locks();
+                            auto delivered =
+                                locks ? co_await state->fanout->deliver_locks(std::move(*locks))
+                                      : result<void>{std::unexpected(locks.error())};
+                            response = delivered ? encode_acknowledgement()
+                                                 : encode_error(delivered.error());
+                        }
+                    }
+                }
             } else if (*operation == "build_start" || *operation == "build_next" ||
                        *operation == "build_plan" || *operation == "build_repository") {
                 response = co_await process_build_request(state, *decoded, *operation);
@@ -2361,6 +2391,59 @@ runtime::task<void> daemon::report_presence(liquid::presence value) {
 #else
     auto frame = encode_request(
         map({{"v", std::uint64_t{1}}, {"op", "presence"}, {"presence", presence_value(value)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    co_return result<void>{};
+#endif
+}
+
+runtime::task<void> daemon::lock(std::string path, std::string reason) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(path);
+    static_cast<void>(reason);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map({{"v", std::uint64_t{1}},
+                                     {"op", "lock"},
+                                     {"path", std::move(path)},
+                                     {"reason", std::move(reason)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    co_return result<void>{};
+#endif
+}
+
+runtime::task<void> daemon::unlock(std::string path) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(path);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(map(
+        {{"v", std::uint64_t{1}}, {"op", "unlock"}, {"path", std::move(path)}, {"reason", ""}}));
     if (!frame) {
         co_return std::unexpected(frame.error());
     }
