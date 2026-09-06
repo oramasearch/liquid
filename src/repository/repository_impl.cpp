@@ -18,6 +18,7 @@
 #include "build/policy.hpp"
 #include "build/repository_access.hpp"
 #include "crdt/document.hpp"
+#include "edit_codec.hpp"
 #include "encoding/cbor.hpp"
 #include "encryption/leaf.hpp"
 #include "flow_control.hpp"
@@ -5224,6 +5225,100 @@ runtime::task<symbol_record> repository::symbols(digest id) {
         co_return std::unexpected(encoded.error());
     }
     co_return decode_symbols(*encoded);
+}
+
+runtime::task<edit_result> repository::apply_edit(const edit_preview& preview) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto encoded_preview = encode_edit_preview(preview);
+    if (!encoded_preview) {
+        co_return std::unexpected(encoded_preview.error());
+    }
+    if (preview.changes.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "edit preview contains no accepted changes"));
+    }
+    auto prepared = std::vector<std::pair<std::string, std::vector<std::byte>>>{};
+    prepared.reserve(preview.changes.size());
+    for (const auto& file : preview.changes) {
+        auto before = co_await read(file.path);
+        if (!before && before.error().code != errc::not_found) {
+            co_return std::unexpected(before.error());
+        }
+        auto current = before ? std::move(*before) : std::vector<std::byte>{};
+        auto current_digest = hash(algorithm::blake3, current);
+        if (!current_digest) {
+            co_return std::unexpected(current_digest.error());
+        }
+        if (!same_digest(*current_digest, file.before)) {
+            co_return std::unexpected(
+                failure(errc::conflict, "structural edit preview is stale", file.path));
+        }
+        auto after = edit_detail::apply_changes(file, current);
+        if (!after) {
+            co_return std::unexpected(after.error());
+        }
+        prepared.emplace_back(file.path, std::move(*after));
+    }
+    const auto operation_start = impl_->current.operations.size();
+    const auto drip_start = impl_->current.drips.size();
+    for (auto& [path, contents] : prepared) {
+        auto written = co_await write(path, std::move(contents));
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+    }
+    auto grouped = stored_operation{};
+    auto operation_id = random_operation_id(impl_->hash_algorithm);
+    if (!operation_id) {
+        co_return std::unexpected(operation_id.error());
+    }
+    grouped.id = *operation_id;
+    grouped.kind = "structural_edit";
+    grouped.from = to_string(preview.id);
+    grouped.to = preview.attribution.tool + ":" + preview.attribution.operation;
+    if (preview.attribution.agent) {
+        grouped.to += ":" + *preview.attribution.agent;
+    }
+    for (auto index = operation_start; index < impl_->current.operations.size(); ++index) {
+        auto& operation = impl_->current.operations[index];
+        grouped.entries.insert(grouped.entries.end(),
+                               std::make_move_iterator(operation.entries.begin()),
+                               std::make_move_iterator(operation.entries.end()));
+    }
+    impl_->current.operations.erase(impl_->current.operations.begin() +
+                                        static_cast<std::ptrdiff_t>(operation_start),
+                                    impl_->current.operations.end());
+    impl_->record_operation(std::move(grouped));
+    auto saved = co_await impl_->checkpoint_or_journal();
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    auto result_value = edit_result{.operation = *operation_id};
+    result_value.drips.reserve(impl_->current.drips.size() - drip_start);
+    for (auto index = drip_start; index < impl_->current.drips.size(); ++index) {
+        auto id = hash(impl_->hash_algorithm, impl_->current.drips[index].body);
+        if (!id) {
+            co_return std::unexpected(id.error());
+        }
+        result_value.drips.push_back({*id});
+    }
+    for (const auto& file : preview.changes) {
+        auto after = co_await read(file.path);
+        if (!after) {
+            co_return std::unexpected(after.error());
+        }
+        auto actual = hash(algorithm::blake3, *after);
+        if (!actual) {
+            co_return std::unexpected(actual.error());
+        }
+        if (!same_digest(*actual, file.after)) {
+            co_return std::unexpected(
+                failure(errc::internal, "applied edit differs from its preview", file.path));
+        }
+    }
+    co_return result_value;
 }
 
 runtime::task<void> repository::set_policy(policy_config policy) {

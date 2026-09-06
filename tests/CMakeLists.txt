@@ -155,12 +155,13 @@ endif()
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
-  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp)
+  target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>"
     LIQUID_CLANG_FRONTEND="$<TARGET_FILE:liquid-frontend-clang>"
     LIQUID_FRONTEND_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/frontend-cmake"
+    LIQUID_BINARY_ROOT="${PROJECT_BINARY_DIR}"
     LIQUID_GRAMMAR_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/grammars"
     LIQUID_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
     LIQUID_NM="${CMAKE_NM}")
@@ -345,6 +346,12 @@ add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
 if(LIQUID_BUILD_FRONTENDS)
+  add_executable(liquid-edit-measure edit_measure.cpp)
+  target_link_libraries(liquid-edit-measure PRIVATE liquid::liquid)
+  target_compile_definitions(liquid-edit-measure PRIVATE
+    LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>")
+  add_dependencies(liquid-edit-measure liquid-frontend-tree-sitter)
+
   add_executable(liquid-frontend-measure frontend_measure.cpp)
   target_sources(liquid-frontend-measure PRIVATE ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp)
   if(NOT UNIX)
@@ -426,6 +433,7 @@ add_executable(liquid-header-tests
   headers/build.cpp
   headers/daemon.cpp
   headers/drip.cpp
+  headers/edit.cpp
   headers/delta.cpp
   headers/drive.cpp
   headers/error.cpp

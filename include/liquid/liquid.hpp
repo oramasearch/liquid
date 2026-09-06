@@ -9,6 +9,7 @@
 #include "liquid/daemon.hpp"
 #include "liquid/delta.hpp"
 #include "liquid/drip.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/drive.hpp"
 #include "liquid/error.hpp"
 #include "liquid/flow.hpp"

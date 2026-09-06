@@ -40,6 +40,10 @@ struct LIQUID_EXPORT change_id {
     digest value;
 };
 
+struct LIQUID_EXPORT op_id {
+    digest value;
+};
+
 struct LIQUID_EXPORT repo_ref {
     node_id repo_id{};
     change_id id{};

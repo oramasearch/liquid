@@ -40,7 +40,9 @@ void encode_value(const cbor_value& value, std::vector<std::uint8_t>& output) {
     std::visit(
         [&](const auto& item) {
             using type = std::decay_t<decltype(item)>;
-            if constexpr (std::is_same_v<type, std::uint64_t>) {
+            if constexpr (std::is_same_v<type, bool>) {
+                output.push_back(item ? 0xf5U : 0xf4U);
+            } else if constexpr (std::is_same_v<type, std::uint64_t>) {
                 append_unsigned(output, 0, item);
             } else if constexpr (std::is_same_v<type, cbor_value::bytes>) {
                 append_unsigned(output, 2, item.size());
@@ -121,7 +123,11 @@ private:
         }
         const auto initial = input_[position_++];
         const auto major = static_cast<std::uint8_t>(initial >> 5U);
-        auto size = unsigned_value(static_cast<std::uint8_t>(initial & 0x1fU));
+        const auto additional = static_cast<std::uint8_t>(initial & 0x1fU);
+        if (major == 7 && (additional == 20 || additional == 21)) {
+            return cbor_value{additional == 21};
+        }
+        auto size = unsigned_value(additional);
         if (!size) {
             return std::nullopt;
         }

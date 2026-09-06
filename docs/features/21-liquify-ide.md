@@ -117,6 +117,9 @@ operation. There is no clone, and disk grows with what you actually read.
 **Structural editing.** The AST already exists — liquid parses for incremental
 compilation, diff and search. Refactors, structural selection and structural diff
 ([03](03-diff-and-merge.md)) come from the tree the build is already using.
+Liquid #205 implements the shared libliquid and daemon records for C and C++ rename, extract,
+move, and concrete-tree edits, including preview, attribution, exact apply, and grouped undo.
+Liquify's selection, panels, and keyboard surface remain in liquify #8.
 
 **Multiplayer without a second system.** The datastore is a CRDT, so convergent
 concurrent editing is a property of the storage layer rather than a separate

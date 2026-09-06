@@ -385,6 +385,8 @@ add_library(libliquid
   src/drip.cpp
   src/drive/client.cpp
   src/delta.cpp
+  src/edit.cpp
+  src/edit_codec.cpp
   src/encryption/leaf.cpp
   src/error.cpp
   src/formats/dotenv.cpp
@@ -395,6 +397,7 @@ add_library(libliquid
   src/frontend/graph.cpp
   src/frontend/module.cpp
   src/frontend/symbols.cpp
+  src/frontend/syntax.cpp
   src/flow_control.cpp
   src/graph.cpp
   src/hash.cpp
@@ -551,6 +554,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/daemon.cpp
     src/cli/compose.cpp
     src/cli/delta.cpp
+    src/cli/edit.cpp
     src/cli/drive.cpp
     src/cli/gc.cpp
     src/cli/facts.cpp
