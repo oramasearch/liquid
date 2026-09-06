@@ -77,3 +77,41 @@ bearer credential. No TSA is trusted by default, and system certificate roots ar
 The timestamp command verifies the RFC 3161 and RFC 4998 relationship to the checkpoint signature
 value. Authentication of the lake checkpoint signature, tiles, and inclusion or consistency proofs
 belongs to liquid #207 and composes with this check.
+
+## Lake transparency-log verification
+
+`liquid::transparency` also verifies Lake transparency-log responses before a caller relies on
+them. The coroutine-native `log_source` interface lets applications and tests provide checkpoints,
+tiles, and proofs. `http_log_source` obtains Lake's HTTP representation without linking a Lake
+library.
+
+The client validates the checkpoint's compact canonical JSON hash, then the Ed25519 Lake signature
+over `TAAP/1 lake_checkpoint/1`, a NUL byte, and the CBOR checkpoint body. It accepts only
+configured witnesses with valid signatures over the canonical JSON body. Duplicate witness keys do
+not count twice, and too few distinct valid signatures fail with `checkpoint witness threshold not
+met`.
+
+Entry tiles use `LAKE-TILE-1\n` followed by nonzero big-endian lengths and canonical TAAP
+attestations. Hash tiles use `LAKE-HASH-TILE-1\n` followed by 32-byte hashes. Every tile hash is
+validated, every leaf is recomputed as `SHA256(0x00 || entry)`, and every parent as
+`SHA256(0x01 || left || right)`. The verifier fetches and compares available parent tiles before
+calculating the split-tree root, refusing an altered parent even if its leaf tile is valid.
+
+An inclusion proof must bind the supplied exact canonical TAAP bytes, leaf index, tree size, root,
+and checkpoint. A consistency proof must bind both the stored and new checkpoints and prove an
+append-only extension. Identity scans validate all tiles to the current checkpoint and return every
+canonical TAAP attestation naming the requested identity.
+
+The most recent accepted checkpoint is a canonical-CBOR repository metadata record under a
+SHA-256-derived log name, not a separate database. On first use, operators can pin a checkpoint
+with `bootstrap_policy::pinned`; `accept_with_warning` returns a recorded bootstrap warning.
+
+`liquid log verify <log-url> <attestation-base64url>` verifies inclusion and records its checkpoint.
+`liquid log consistency <log-url>` advances trusted state only through a consistency proof.
+`liquid log scan <log-url> <identity>` returns matching canonical attestations. `liquid verify
+--log <log-url>` requires inclusion for each agreeing reproducibility attestation. `liquid log
+timestamps <log-url>` and `liquid log verify --timestamps` retain the RFC 3161/RFC 4998 commands.
+
+`tests/fixtures/transparency/fixture.json` is copied from Lake commit `cb60ed4` and is generated
+by Lake's `tests/fixtures/transparency/regenerate.py`. The tests use its checkpoint, tiles, and
+proofs and cover modified, missing, reordered, substituted, forged, and parent-only corrupt data.

@@ -28,7 +28,7 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
-| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, timestamp, or recorded operation history and verify timestamp evidence. | available |
+| `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
@@ -66,7 +66,7 @@ that the table and `liquid --help` name the same commands.
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
 | `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
-| `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
+| `verify` | `verify <action\|--all\|--changed> [--explain] [--log <log-url>]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--session <id>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
@@ -239,6 +239,12 @@ never substitutes operating-system certificate roots. Successful output names th
 reports `timestamp_evidence=verified`, and prints each independently decoded archive timestamp.
 Lake checkpoint, tile, and proof authentication remains the separate `#207` verification layer.
 
+`log verify <log-url> <attestation-base64url>` validates exact canonical TAAP inclusion in a
+signed Lake checkpoint and records trusted state. `log consistency <log-url>` accepts only an
+append-only extension of that record. `log scan <log-url> <identity>` validates the bulk tiles and
+prints matching canonical attestations. `verify --log <log-url>` requires inclusion for every
+agreeing reproducibility attestation.
+
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
 The path follows a `node_id` rename; insertions and removals above shift the line; a replaced line
@@ -339,6 +345,14 @@ while planning. The default `--on-stale refuse` returns a conflict when head or 
 `disjoint` accepts only an untouched written/read set, and `force` records a caller that already
 re-planned against `repository::explain_stale`. `log --ops --json` projects `reasoned_from`, cursor,
 paths, and `revalidated` (`disjoint`, `forced`, or null) from the signed body.
+
+`log verify <log-url> <attestation-base64url>` validates exact canonical-TAAP inclusion in a
+signed checkpoint and records it in the current repository. `log consistency <log-url>` advances
+that record only when Lake provides a valid append-only proof. `log scan <log-url> <identity>`
+lists canonical entries naming the identity. A first accepted checkpoint prints
+`bootstrap_warning=true`; operators should record that trust decision. `verify --log <log-url>`
+requires the agreeing action's reproducibility attestation to be included in the same verified log.
+The existing `log --ops` and `log --json` options may be supplied in either order.
 
 `delta create <source> <target>` stores both artifacts, a `zstd-patch` blob, its delta record, and
 a signed `delta/1` attestation in the current `.liquid-store`. `delta apply <delta> <source>

@@ -34,6 +34,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > leased roots, epoch garbage collection, and pack compaction. Multiple repositories can use one
 > caller-owned store with repository-scoped checkpoints, journals, and retention leases. Capture subscriptions, default-blocking
 > secret scanning, the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`,
+> structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, and repository redaction are implemented. Repository
+> metadata also retains verified Lake transparency checkpoints: the public client verifies signed
+> witness-quorum checkpoints, all entry and parent hash tiles, exact TAAP inclusion, consistency,
+> and identity scans before callers trust a log response.
 > structured `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, and repository redaction are implemented. Repository
 > push and pull, signed metadata exchange, missing-object negotiation, the public sync server with
 > change and graph-derived per-reference authorization, mixed and atomic push outcomes, and the
@@ -44,7 +48,7 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > atomically reloaded named policy sets at `/admit/<policy>`, structured CBOR/JSON decisions in
 > AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
 > metrics, REST, OpenAPI, and MCP. Complete
-> transparency inclusion verification remains #83 and therefore log mode currently refuses.
+> transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and proofs before log mode accepts a record.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
 > per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the
@@ -279,12 +283,12 @@ and Zetta's.
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
+- [`docs/library/transparency.md`](docs/library/transparency.md) — Lake transparency-log checkpoints, tiles, proofs, scans, RFC 3161 timestamps, RFC 4998 evidence, and trust policy.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/deploy.md`](docs/library/deploy.md) — operator control-plane deployment records, digest-pinned interim images, rollback, status, and contract boundary.
-- [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.
 - [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.

@@ -45,6 +45,13 @@ Liquid #26 adds canonical output-tree claims, named upstream result/tree inputs 
 wrapped builds, per-kind output normalisation, unchanged-upstream explanations, and signed
 input/output claim enumeration.
 Liquid #58 adds typed ref/result retention, computed reachability, cost-aware size-capped eviction,
+and retention explanations. Liquid #207 adds signed Lake transparency checkpoint, witness quorum,
+tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 evidence
+verification with repository-backed trusted checkpoint state. Liquid #61 adds signed `sbom/1` attestations with graph-derived
+SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
+remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
+materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
+refusal for remote-eligible actions. Liquid #18 adds remote executor scheduling over those shared
 and retention explanations. Liquid #61 adds signed `sbom/1` attestations with graph-derived
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #27 adds ELF, Mach-O, and
 PE `abi/1` extraction, automatic result publication, signed compatibility attestations, public

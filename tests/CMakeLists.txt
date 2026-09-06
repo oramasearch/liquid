@@ -41,6 +41,7 @@ add_executable(liquid-tests
   test_secret.cpp
   test_store.cpp
   test_temporary_directory.cpp
+  test_lake_transparency.cpp
   test_transparency.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
@@ -109,6 +110,7 @@ target_link_libraries(liquid-tests PRIVATE
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
+  ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
   ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
@@ -192,7 +194,8 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
   LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
 target_compile_definitions(liquid-tests PRIVATE
-  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
+  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures"
+  LIQUID_TRANSPARENCY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/transparency/fixture.json")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp test_edit.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
