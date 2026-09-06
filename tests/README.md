@@ -209,3 +209,9 @@ Hot-update tests classify fixture pairs across all tiers, prove that comment-onl
 tier 0, require ABI evidence for tier 2, reject unsigned patches, and reconstruct a two-patch
 composition. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
 case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.
+`test_projection.cpp` imports the committed `fixtures/projection/root` install tree and covers
+package round trips, registry recognition, deterministic compression and output, OCI layers and
+attestation referrers, signed `projection/1`, digest-only Helm values, and native Helm lint when
+the tool is installed. The pinned target digests are the macOS/Linux byte-identity contract.
+The format-registry inventory also pins the Debian, RPM, and Alpine codecs beside the five launch
+codecs.

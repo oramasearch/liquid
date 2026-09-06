@@ -1,8 +1,9 @@
 # Format registry and codecs
 
-**Status: implemented by liquid #29.** libliquid owns a format registry used by repository diff,
-search, and storage. The launch codecs are ZIP, tar, HDF5, Parquet, and SQLite. They are synchronous
-CPU codecs; coroutine callers invoke them through `runtime::offload`.
+**Status: implemented by liquid #29 and extended by #28.** libliquid owns a format registry used by
+repository diff, search, storage, and package projection. The built-ins are ZIP, tar, HDF5,
+Parquet, SQLite, Debian, RPM, and Alpine packages. They are synchronous CPU codecs; coroutine
+callers invoke them through `runtime::offload`.
 
 ## Public API and module boundary
 
@@ -102,6 +103,16 @@ the record serial types, reads `sqlite_schema`, and emits schema plus rowid-keye
 ordinary tables, including overflow payload chains. The freelist is ignored. UTF-16 databases,
 index b-trees, and `WITHOUT ROWID` tables are outside this initial subset and return a specific
 unsupported result.
+
+### Debian, RPM, and Alpine packages
+
+Issue #28 registers bounded Tier 2 readers for `.deb`, `.rpm`, and `.apk`. Debian decoding checks
+the `ar` table, decompresses zstd or deterministic-gzip control and data tar members, and exposes
+control text plus payload paths. RPM decoding validates the lead and both header stores, reads name
+and version tags, decompresses the zstd payload, and walks cpio newc names. Alpine decoding requires
+exactly the control and data gzip members, exposes `.PKGINFO`, and lists data paths. The original
+package bytes remain authoritative; complete read-side codecs remain issue #70. Writer and
+dependency rules are in [projection.md](projection.md).
 
 ## Limits and nesting
 

@@ -50,14 +50,16 @@ auto file_entry(std::string path, std::vector<std::byte> bytes) -> liquid::forma
             .bytes = std::move(bytes)};
 }
 
-TEST(FormatRegistry, PublishesTheFiveLaunchCodecs) {
+TEST(FormatRegistry, PublishesBuiltInCodecs) {
     const auto codecs = liquid::format_registry::global().codecs();
     auto names = std::vector<std::string>{};
     for (const auto* value : codecs) {
         names.push_back(value->descriptor().name);
     }
     std::ranges::sort(names);
-    EXPECT_EQ(names, (std::vector<std::string>{"hdf5", "parquet", "sqlite", "tar", "zip"}));
+    EXPECT_EQ(
+        names,
+        (std::vector<std::string>{"apk", "deb", "hdf5", "parquet", "rpm", "sqlite", "tar", "zip"}));
     EXPECT_EQ(liquid::format_registry::global().find_by_extension("ARCHIVE.ZIP").size(), 1);
     EXPECT_EQ(liquid::format_registry::global().find_by_extension("data.parquet").size(), 1);
 }
