@@ -90,7 +90,10 @@ optional macFUSE on macOS ([`vfs.md`](vfs.md)).
 
 **Transparency and trust.** Repository metadata retains verified Lake transparency checkpoints:
 the public client verifies signed witness-quorum checkpoints, all entry and parent hash tiles,
-exact TAAP inclusion, consistency, and identity scans before callers trust a log response.
+exact TAAP inclusion, consistency, and identity scans before callers trust a log response. Each
+full or partial tile is reauthenticated through its parents to the selected checkpoint; cached
+tile bytes receive the same complete walk, and consistency verification completes that walk before
+it requests a proof.
 Complete transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and
 proofs before log mode accepts a record. Strict DER, CMS, and X.509 parsing plus verification-only
 RSA and ECDSA validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against
