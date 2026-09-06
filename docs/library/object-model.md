@@ -18,7 +18,7 @@ checked, transactions roll back, commit metadata and incremental saves exist, re
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
 checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, #41, #195's history/conflict persistence, and #205.**
+**Status: implemented for liquid #2, #3, #30, #41, #195's history/conflict persistence, and #205.**
 The private automerge-cpp wrapper, canonical CBOR codec, versioned sync framing and drip journal
 are implemented. Repository creation and opening, working-tree reads and writes, recorded moves
 and removals, snapshots and changes, references, composition, persisted conflict values, path
@@ -240,6 +240,11 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `preview_edit(request, attribution)` / `apply_edit(preview)` | Preview records exact range-local replacements and file digests. Apply checks every input before writing one drip per file, then groups every entry effect into one attributed `structural_edit` operation so one undo restores the complete edit. |
 | `undo_session(session, options)` | reverses the matching session newest first, optionally restricted to paths or drip IDs. Each touched directory is one wrapper transaction; candidates are published only after every transaction succeeds. |
 | `lock(path)` | `locks[pattern]` in the document, advisory offline; authoritative when lake holds the pattern (Phase 6). A write to a path locked by another actor is refused before any transaction opens. |
+| `fork_session(options)` / `open_session(id)` | Fork the current repository document at a recorded change into `sessions/<id>` on the same store. Content chunks remain shared; only the private repository document, directory checkpoints, and journal are distinct. Session writes never enter the shared drip journal. |
+| `session::publish(options)` / `discard()` | Diff the private head against its fork tree, validate every scope and the fork-point base, then persist the net result once with one signed `publish` drip per touched directory. Atomic publication restores all candidate documents on failure. Publish or discard closes the private state; discard also releases its leases. |
+| `lease(claim, ttl)` / `release(claim)` / `leases()` | Persist file, symbol, or byte-range intent in `leases`. Symbol claims resolve through the recorded symbol ranges. Overlapping claims and writes by another actor/session return `errc::locked` naming the holder. Expired claims are removed on observation. |
+| `report_presence(value)` / `presence()` | Maintain actor, session, path, optional range, activity, and timestamp in memory only. Values expire after 30 seconds and never enter checkpoints or journals. |
+| `compact(epoch_options)` / `epochs()` | Compact every loaded directory checkpoint, record the epoch number, document heads, timestamp, and compact byte count, then retire pre-epoch operations and drips. A cursor older than the retained journal receives the checkpoint archive. |
 | `history(path)` | walk snapshots newest first, discover the path's `node_id`, and follow that identity through moves; return values, deletions, actors, timestamps and messages. |
 | `restore(path, change)` | read the historical blob and append an ordinary write drip at the requested path; no ref or earlier change is modified. |
 
@@ -262,10 +267,27 @@ restored and are reported as skipped.
 
 Every open repository handle has a 16-byte session ID. `repository_options::session` supplies it;
 otherwise the handle generates a random value. All mutations authored through that handle carry
-the same ID. Issue #30 will supply an agent delegation's session value. Session undo plans the
+the same ID. A speculative agent session has its own ID and delegation. Session undo plans the
 whole selection before opening directory transactions, commits one transaction per touched
 directory, and publishes no candidate if any transaction fails. Path filters select operations
 touching that path or its descendants; drip filters select exact operation IDs.
+
+The repository document stores `leases` beside `locks` and `epochs` beside refs and operations.
+A lease key is `{path, kind, symbol?, range?}` and its value is `{by, session, since, expires,
+authority}`. Offline authority is advisory. `repository_options::authorize_lease` is the
+task-returning authoritative-peer hook: the complete proposed lease is sent there first, any
+refusal leaves local state unchanged, and acceptance records `lake` authority. Lake-side policy is
+owned by the corresponding lake work.
+
+Session metadata contains the actor, complete delegation, fork tree, fork change, and fork cursor.
+It lets the CLI reopen a session in another process without copying chunks. Publish renews live
+leases owned by that actor/session. Discard releases them and removes the exact private state
+directory.
+
+When `min_ack_peers` is nonzero, `repository_options::acknowledge_epoch` receives the candidate
+epoch and returns the count of known peers whose cursors cover its heads. An absent source or a
+count below the requested minimum returns `errc::busy` before the epoch is recorded or history is
+retired.
 
 ## Public tree comparison
 

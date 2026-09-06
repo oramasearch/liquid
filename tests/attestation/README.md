@@ -9,3 +9,4 @@ The `delta/1` example pins source, target, algorithm, and delta-record attribute
 The `hot_update/1` example pins old and new results, tier, symbols, object, record, and outcome.
 The `image_provenance/1` example pins the digest-reference, tree, and optional result fields used by
 admission.
+The `delegation/1` case validates scoped, attenuation-only agent authority.

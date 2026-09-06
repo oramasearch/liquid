@@ -98,6 +98,27 @@ auto map(std::initializer_list<std::pair<cbor::value, cbor::value>> fields) -> c
     return cbor::value{cbor::value::map{fields}};
 }
 
+auto presence_value(const liquid::presence& value) -> cbor::value {
+    auto range = cbor::value{cbor::null{}};
+    if (value.range) {
+        range = map({{"start_byte", value.range->start.byte},
+                     {"start_line", value.range->start.line},
+                     {"start_column", value.range->start.column},
+                     {"end_byte", value.range->end.byte},
+                     {"end_line", value.range->end.line},
+                     {"end_column", value.range->end.column}});
+    }
+    return map({{"actor", value.actor.taap_id},
+                {"session", to_string(value.session)},
+                {"path", value.path},
+                {"range", std::move(range)},
+                {"activity",
+                 value.activity == presence_activity::editing   ? cbor::value{"editing"}
+                 : value.activity == presence_activity::reading ? cbor::value{"reading"}
+                                                                : cbor::value{"idle"}},
+                {"at", static_cast<std::uint64_t>(value.at.time_since_epoch().count())}});
+}
+
 auto field(const cbor::value& source, std::string_view name) -> const cbor::value* {
     const auto* fields = std::get_if<cbor::value::map>(&source.data);
     if (!fields) {
@@ -125,6 +146,46 @@ auto unsigned_field(const cbor::value& source, std::string_view name) -> const s
 auto bool_field(const cbor::value& source, std::string_view name) -> const bool* {
     const auto* value = field(source, name);
     return value ? std::get_if<bool>(&value->data) : nullptr;
+}
+
+auto decode_presence_value(const cbor::value& source) -> result<liquid::presence> {
+    const auto* actor = text_field(source, "actor");
+    const auto* session_text = text_field(source, "session");
+    const auto* path = text_field(source, "path");
+    const auto* activity = text_field(source, "activity");
+    const auto* at = unsigned_field(source, "at");
+    const auto* range_value = field(source, "range");
+    if (!actor || actor->empty() || !session_text || !path || path->empty() || !activity ||
+        (*activity != "editing" && *activity != "reading" && *activity != "idle") || !at ||
+        !range_value) {
+        return std::unexpected(failure(errc::invalid_argument, "invalid presence report"));
+    }
+    auto session = parse_session_id(*session_text);
+    if (!session) {
+        return std::unexpected(session.error());
+    }
+    auto output = liquid::presence{.actor = {.taap_id = *actor},
+                                   .session = *session,
+                                   .path = *path,
+                                   .activity = *activity == "editing"   ? presence_activity::editing
+                                               : *activity == "reading" ? presence_activity::reading
+                                                                        : presence_activity::idle,
+                                   .at = std::chrono::sys_seconds{std::chrono::seconds{*at}}};
+    if (!std::holds_alternative<cbor::null>(range_value->data)) {
+        const auto* start_byte = unsigned_field(*range_value, "start_byte");
+        const auto* start_line = unsigned_field(*range_value, "start_line");
+        const auto* start_column = unsigned_field(*range_value, "start_column");
+        const auto* end_byte = unsigned_field(*range_value, "end_byte");
+        const auto* end_line = unsigned_field(*range_value, "end_line");
+        const auto* end_column = unsigned_field(*range_value, "end_column");
+        if (!start_byte || !start_line || !start_column || !end_byte || !end_line || !end_column ||
+            *start_byte > *end_byte) {
+            return std::unexpected(failure(errc::invalid_argument, "invalid presence range"));
+        }
+        output.range = frontend_source_range{{*start_byte, *start_line, *start_column},
+                                             {*end_byte, *end_line, *end_column}};
+    }
+    return output;
 }
 
 auto strings_value(const std::vector<std::string>& values) -> cbor::value {
@@ -1884,6 +1945,19 @@ runtime::task<void> run_service(std::shared_ptr<service_state> state) {
                     }
                     response = encode_acknowledgement();
                 }
+            } else if (*operation == "presence") {
+                const auto* encoded_presence = field(*decoded, "presence");
+                auto value = encoded_presence
+                                 ? decode_presence_value(*encoded_presence)
+                                 : result<liquid::presence>{std::unexpected(failure(
+                                       errc::invalid_argument, "presence report is missing"))};
+                if (!value) {
+                    response = encode_error(value.error());
+                } else {
+                    auto delivered = co_await state->fanout->deliver_presence(std::move(*value));
+                    response =
+                        delivered ? encode_acknowledgement() : encode_error(delivered.error());
+                }
             } else if (*operation == "build_start" || *operation == "build_next" ||
                        *operation == "build_plan" || *operation == "build_repository") {
                 response = co_await process_build_request(state, *decoded, *operation);
@@ -2274,6 +2348,31 @@ runtime::task<void> daemon::report_consumer_lag(std::string name, std::uint64_t 
         co_return std::unexpected(decoded.error());
     }
     co_return {};
+#endif
+}
+
+runtime::task<void> daemon::report_presence(liquid::presence value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "daemon is not attached"));
+    }
+#ifdef _WIN32
+    static_cast<void>(value);
+    co_return std::unexpected(unsupported_endpoint());
+#else
+    auto frame = encode_request(
+        map({{"v", std::uint64_t{1}}, {"op", "presence"}, {"presence", presence_value(value)}}));
+    if (!frame) {
+        co_return std::unexpected(frame.error());
+    }
+    auto response = co_await send_daemon_request(impl_->endpoint, std::move(*frame));
+    if (!response) {
+        co_return std::unexpected(response.error());
+    }
+    auto decoded = decode_response(*response);
+    if (!decoded) {
+        co_return std::unexpected(decoded.error());
+    }
+    co_return result<void>{};
 #endif
 }
 

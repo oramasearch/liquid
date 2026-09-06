@@ -24,6 +24,7 @@
 #include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/session.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
 
@@ -151,6 +152,8 @@ struct LIQUID_EXPORT repository_options {
     std::optional<remote_config> remote;
     data_config data{};
     std::optional<session_id> session;
+    lease_authorizer authorize_lease;
+    epoch_acknowledger acknowledge_epoch;
     bool defer_tree_load{};
 };
 
@@ -166,17 +169,6 @@ struct LIQUID_EXPORT change_input {
     std::string message;
     std::map<std::string, std::string> metadata;
     std::optional<std::string> ref;
-};
-
-struct LIQUID_EXPORT write_options {
-    std::uint32_t mode{0100644};
-    std::optional<write_base> base;
-    std::vector<std::string> depends_on;
-    enum class stale_action : std::uint8_t {
-        refuse,
-        accept_if_disjoint,
-        force,
-    } on_stale{stale_action::refuse};
 };
 
 struct LIQUID_EXPORT stale_path_change {
@@ -537,8 +529,17 @@ public:
     [[nodiscard]] runtime::task<undo_report> undo(op_id operation);
     [[nodiscard]] runtime::task<undo_report> undo_session(session_id session,
                                                           undo_options options = {});
+    [[nodiscard]] runtime::task<session> fork_session(session_options options);
+    [[nodiscard]] runtime::task<session> open_session(session_id id);
     [[nodiscard]] runtime::task<void> lock(std::string path);
     [[nodiscard]] runtime::task<void> unlock(std::string path);
+    [[nodiscard]] runtime::task<void> lease(lease_claim claim, std::chrono::seconds ttl);
+    [[nodiscard]] runtime::task<void> release(lease_claim claim);
+    [[nodiscard]] runtime::task<std::vector<semantic_lease>> leases();
+    [[nodiscard]] runtime::task<void> report_presence(presence value);
+    [[nodiscard]] runtime::task<std::vector<presence>> presence();
+    [[nodiscard]] runtime::task<epoch> compact(epoch_options options = {});
+    [[nodiscard]] runtime::task<std::vector<epoch>> epochs();
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
     [[nodiscard]] runtime::task<digest> store_symbols(symbol_record value);
     [[nodiscard]] runtime::task<symbol_record> symbols(digest id);
@@ -581,6 +582,7 @@ private:
     friend struct repository_detail::git_access;
     friend struct repository_detail::drive_access;
     friend struct repository_detail::sync_access;
+    friend class session;
     struct impl;
     std::unique_ptr<impl> impl_;
 };

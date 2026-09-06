@@ -642,6 +642,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/resolve.cpp
     src/cli/search.cpp
     src/cli/secret.cpp
+    src/cli/session.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
     src/cli/vfs.cpp

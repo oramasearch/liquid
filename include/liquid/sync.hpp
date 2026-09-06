@@ -14,13 +14,20 @@
 #include "liquid/object.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/session.hpp"
 
 namespace liquid {
 
 class repository;
 class store;
 
-enum class sync_item_kind : std::uint8_t { drip = 1, change = 2, directory = 3, reference = 4 };
+enum class sync_item_kind : std::uint8_t {
+    drip = 1,
+    change = 2,
+    directory = 3,
+    reference = 4,
+    presence = 5,
+};
 
 struct LIQUID_EXPORT sync_item {
     sync_item_kind kind{sync_item_kind::drip};

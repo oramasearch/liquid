@@ -54,6 +54,7 @@ owning issue in `error::context`.
 | `liquid/version.hpp` | now | implemented | `version`, `current_version()`, `version_string()`, `grammar_digest()` |
 | `liquid/export.hpp` | now | implemented | generated; `LIQUID_EXPORT` |
 | `liquid/runtime.hpp` | #97, #193 | implemented | the Capy boundary: `task<T>`, `io_result`, `when_all`, `timeout`, `delay`, `as_io`, `block_on`, `spawn`, `spawn_serial`, `offload`, `context` |
+| `liquid/session.hpp` | #30, #41, #86 | implemented | move-only speculative `session`, session/delegation options, atomic publish reports, semantic lease claims, transient presence, and epoch values |
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/admission.hpp` | #203, #238 | implemented | versioned policy and CBOR/JSON decision codecs, named policy-directory options, rule-attributed reasons and considered evidence, coroutine attestation-source and transparency-verifier interfaces, shared image review, and admission server options including bounded replay |
 | `liquid/attestation.hpp` | #14, #61, #62, #203 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM and image claims, attestation encoding, profile-keyed verification, and image-attestation minting |

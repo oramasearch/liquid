@@ -64,6 +64,7 @@ struct LIQUID_EXPORT drip {
     std::chrono::sys_seconds at;
     std::optional<write_base> reasoned_from;
     std::optional<stale_revalidation> revalidated;
+    std::optional<digest> delegation;
     std::optional<digest> scan_attestation;
     std::optional<scan_block> block;
     bool redacted{};

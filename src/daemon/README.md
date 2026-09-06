@@ -6,3 +6,6 @@ built-in `hot-update` target uses that field for its latest outcome, tier, and r
 
 The public lifecycle and target interface are implemented in `src/daemon.cpp` and documented in
 [`docs/library/incremental-engine.md`](../../docs/library/incremental-engine.md).
+
+Presence reports are transient daemon events. The fan-out target receives local session and client
+updates without writing a drip or advancing a persisted cursor.
