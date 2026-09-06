@@ -38,3 +38,8 @@ in `docs/library/projection.md`.
 canonical file, dirtree, dirmeta, commit, and summary bytes, retains regular-file and symbolic-link
 metadata, and writes both `archive-z2` and `bare-user` object stores. `tar/` also writes deterministic
 hard-link and symbolic-link entries used by bootc's `bare-split-xattrs` encapsulation.
+Issue #70 adds `ar/` for the bounded System V and BSD archive-member reader used by Debian
+decoding; `binary/codec.cpp` adapts the validated ELF, Mach-O, and PE readers to registry trees;
+`pdf/` owns the PDF object reader; `xml/` owns namespace-aware XML canonicalisation; `document/`
+owns OOXML, ODF, wheel, and JAR ZIP views; and `model/` owns Jupyter, safetensors, and pickle
+readers. None executes payloads, renders documents, disassembles code, or writes these formats.

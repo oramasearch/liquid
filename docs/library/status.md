@@ -42,10 +42,12 @@ live.
 change cuts, references, snapshots, historical document state, composition, conflict values,
 operation- and session-scoped local-intent undo, advisory locks, private speculative agent
 sessions, semantic file/symbol/range leases, transient presence, compaction epochs, scoped
-delegation attribution, status, public tree/change diff, edit-surviving text anchors, paged result,
+delegation attribution, stable-node per-line attribution, status, public tree/change diff,
+edit-surviving text anchors, paged result,
 attestation, trace, and SBOM enumeration, one-drip streaming file writes and tree imports, and
 caller-stated write bases with stale-reasoning refusal, disjoint re-validation, and forced
-re-planning records are implemented ([`object-model.md`](object-model.md)). TAAP/1 identities with
+re-planning records are implemented ([`object-model.md`](object-model.md),
+[`multiplayer.md`](multiplayer.md)). TAAP/1 identities with
 rotation and signed drips and changes, the internal CRDT metadata document, canonical CBOR codec,
 and drip journal are implemented behind libliquid. Directory CRDT checkpoints prefer compact bytes
 with checked full-history fallback and reopen as sync-capable documents; remote changes are
@@ -236,7 +238,8 @@ reports the query and inputs on divergence, and evicts the offending value.
 action are `action_result` graph nodes.
 
 **Frontends.** A versioned C frontend ABI loads replaceable shared or static language modules
-outside libliquid ([`frontends.md`](frontends.md)). The bundled tree-sitter fallback fetches 49
+outside libliquid, and the native liquify plugin descriptor accepts a versioned presence, lease,
+and attribution event callback table ([`frontends.md`](frontends.md)). The bundled tree-sitter fallback fetches 49
 exact-commit grammars under archive and per-file SHA-256 checks, registers their extensions, and
 discovers units from pinned tag queries where upstream supplies them; syntactic records and
 `liquid version --json` carry the grammar-lock digest. The distribution decision and inventory are
@@ -301,12 +304,13 @@ path ([`data-branching.md`](data-branching.md)).
 
 ## Phase 5: formats, projection, resolution, and configuration
 
-**Format registry.** Phase 5 includes the format registry and its first five codecs. ZIP, tar,
-HDF5, Parquet, and SQLite are decoded without format-vendor libraries through a versioned C module
-ABI. Format trees drive opt-in repository and CLI container diffs, archive entries use `!/` paths
-in search, and Tier 1 and Tier 2 entries are retained as deduplicated blobs beside the verbatim
-container. Uncompressed tar has a deterministic writer, while hard or unsupported format surfaces
-retain honest tiers and opaque reasons ([`formats.md`](formats.md)).
+**Format registry.** Phase 5 includes the format registry and dependency-free ZIP, tar, HDF5,
+Parquet, SQLite, linked-binary, PDF, notebook, office-document, package, wheel, JAR, safetensors,
+and non-executing pickle codecs through a versioned C module ABI. Format trees drive opt-in
+repository and CLI container diffs, archive entries use `!/` paths in search, and Tier 1 and Tier 2
+entries are retained as deduplicated blobs beside the verbatim container. Uncompressed tar has a
+deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
+reasons ([`formats.md`](formats.md)).
 
 **Projection.** Tier A package and image projection is implemented. One checked install tree
 projects to deterministic `.deb`, `.rpm`, `.apk`, Homebrew bottles, Arch recipes, OCI image

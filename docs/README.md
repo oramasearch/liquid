@@ -36,6 +36,7 @@ for what is implemented today.
 | Page | What it contains |
 |---|---|
 | [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, structural-edit operations, edit-surviving text anchors, checked compact-or-full CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, #174, and #205. |
+| [`library/multiplayer.md`](library/multiplayer.md) | Private sessions, leases, presence, epochs, stable-node per-line attribution, daemon transport, plugin delivery, CLI output, and the 10,000-line measurement. |
 | [`library/repository-import-primitives.md`](library/repository-import-primitives.md) | Importer-facing repository recording, metadata, historical-object, mode, and nesting primitives. |
 | [`library/store.md`](library/store.md) | Content-defined local and caller-owned shared stores, pre-pack write-through, remote-registered local eviction, on-disk formats, integrity checks, index, tuning, and rebuild. |
 | [`library/chunk-index-benchmark.md`](library/chunk-index-benchmark.md) | Reproducible RocksDB/LMDB chunk-index workload and recorded measurements. |
@@ -98,7 +99,7 @@ for what is implemented today.
 | Page | What it contains |
 |---|---|
 | [`library/incremental-engine.md`](library/incremental-engine.md) | Phase 4's implemented demand-driven query graph, measured restart and continuous clean validation, daemon lifecycle, flow watermarks, in-process consumer lag, build-stream and structural-edit forwarding, hot-update and drive targets, cached tests as actions, cursor fan-out, graph value eviction, per-definition frontend granularity, local search index, and cost planner; also designs symbols and liquify on the graph. |
-| [`library/frontends.md`](library/frontends.md) | The versioned frontend and liquify plugin C descriptors, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
+| [`library/frontends.md`](library/frontends.md) | The versioned frontend and liquify plugin C descriptors, multiplayer event callbacks, module loading, tree-sitter fallback, Clang C++ definition actions, graph invalidation, assembly, and own-tree measurement. |
 | [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
 | [`library/symbols.md`](library/symbols.md) | Content-addressed per-translation-unit symbol records, query behavior, fallback labelling, public repository access, and CLI use. |
 | [`library/edit.md`](library/edit.md) | Structural rename, extract, move, and concrete-tree edits; canonical records, preview/apply guarantees, attribution, grouped undo, CLI use, limits, and own-tree measurement. |
@@ -111,6 +112,8 @@ for what is implemented today.
 |---|---|
 | [`library/formats.md`](library/formats.md) | Issue #29's format registry and C ABI, fidelity tiers, launch codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
 | [`library/projection.md`](library/projection.md) | Issues #28 and #77's native packages, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap projection; deterministic writers, runtime pins, attestations, and peer proof. |
+| [`library/formats.md`](library/formats.md) | Issues #29 and #70's format registry and C ABI, fidelity tiers, codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
+| [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
 | [`library/resolution.md`](library/resolution.md) | Package and concretised records, spec grammar, universe layout, solver model, explanations, optimisation, and scale measurements. |
 | [`library/configuration-language.md`](library/configuration-language.md) | The typed `.liquid` grammar, exact diagnostics, package/target/source lowering, repository-local includes, verified source fetch, generators, and trace origins. |
 
@@ -118,7 +121,7 @@ for what is implemented today.
 
 | Page | What it contains |
 |---|---|
-| [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync and pin state, path history, flow status and retry output, examples, and verification. |
+| [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync and pin state, path history and blame, flow status and retry output, examples, and verification. |
 | [`cli/build-events.md`](cli/build-events.md) | The `liquid build --plan` and `--events` JSON-lines schemas, daemon operations, ordering, exit status, and edit behavior. |
 | [`cli/test.md`](cli/test.md) | CMake/native test discovery, filtering, cached action behavior, output, and exit status. |
 | [`cli/drive.md`](cli/drive.md) | `liquid drive` sync, status, pin, and unpin: remote configuration, reconciliation, and credentials. |

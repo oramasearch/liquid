@@ -132,8 +132,11 @@ atomicity, and upstream sync convergence; the repository replica case also cover
 actors and multi-round sync.
 
 `test_collaboration.cpp` covers speculative agent sessions, delegated publication, semantic leases,
-transient presence, and epoch resynchronization. `crdt/measure_epoch.cpp` records the documented
-compaction workload's bytes and load time.
+transient presence, epoch resynchronization, and line attribution across human and agent changes
+and a path move. `test_daemon.cpp` checks that the same attribution crosses the local wire, while
+`test_plugin_abi.c` is a real C plugin descriptor whose presence, lease, and attribution callbacks
+are driven by `test_plugin_abi.cpp`. `attribution_measure.cpp` records the 10,000-line query cost.
+`crdt/measure_epoch.cpp` records the documented compaction workload's bytes and load time.
 The Unix integration case in `test_sync.cpp` exchanges two disk repositories through the public
 server behind a small socket transport dispatched on the shared runtime, measures missing-object
 bytes across repeated pushes, pulls into an empty repository, and rejects a corrupted TAAP

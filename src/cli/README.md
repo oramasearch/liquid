@@ -51,6 +51,10 @@ filters language or format rows, and renders stable text, JSON, or the generated
 Diff, symbols, archive search, and wrap use the shared projection; #68, #69, and #70 must reuse it
 when their richer command paths land.
 
+`inspect.cpp` resolves a regular file or repository blob digest through public APIs, identifies its
+format codec, and prints the codec tier plus the decoded entry tree. Its JSON projection is stable
+and includes entry size, kind, and opaque-reader reason.
+
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
 `verify.cpp` parses action, all, changed, and graph selectors, calls the public verification APIs,
@@ -125,7 +129,10 @@ one-shot reconciliation. It also prints pending uploads, hydration debt, path av
 offline reasons; `pin` and `unpin` resolve the containing drive and call the public state API.
 `vfs.cpp` passes `LIQUID_TOKEN` to mounts that hydrate through a persisted drive endpoint. Both
 long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
-restores one as an ordinary repository drip through the public repository API.
+restores one as an ordinary repository drip through the public repository API. `blame.cpp`
+resolves the current head and asks the attached daemon for public per-line attribution records.
+Its text and JSON renderers expose line, change, session, actor, agent marker, and text without
+reading repository internals.
 
 `registry.cpp` implements `registry trust pin` and `registry trust show` through the public TUF
 client. It stores the exact trusted-root bytes and their SHA-256 pin in repository configuration;
