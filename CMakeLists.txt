@@ -480,6 +480,7 @@ add_library(libliquid
   src/formats/squashfs/squashfs.cpp
   src/formats/sqlite/sqlite.cpp
   src/formats/tar/tar.cpp
+  src/formats/tar/writer.cpp
   src/formats/zip/zip.cpp
   src/frontend/graph.cpp
   src/frontend/module.cpp

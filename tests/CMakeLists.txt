@@ -92,6 +92,9 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/content.cpp
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/package/common.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/squashfs/squashfs.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/tar/writer.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
     ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
@@ -99,6 +102,7 @@ if(BUILD_SHARED_LIBS)
   if(APPLE)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
   endif()
+  target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB)
 endif()
 if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
