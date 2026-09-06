@@ -12,7 +12,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`write`](write.md) | write a file from a stated base | available |
 | [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
 | [`search`](search.md) | search paths and contents | available |
-| [`log`](log.md) | show change or signed drip history | available |
+| [`log`](log.md) | show or verify change, signed drip, or timestamp history | available |
 | [`cut`](cut.md) | cut the working change | available |
 | [`refs`](refs.md) | list repository references | available |
 | [`diff`](diff.md) | compare two changes | available |

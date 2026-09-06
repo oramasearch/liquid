@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid log [--ops] [--json]
+liquid log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps
 ```
 
 ## Description

@@ -111,6 +111,9 @@ line-hunk stale reports, and signed disjoint or forced re-validation records.
 Liquid #82 adds the typed CLI command and flag table, generated Markdown, stable JSON and man-page
 reference, executable user guides, and the documentation-site CI artifact. `liquid diff` exposes
 the existing public change-diff API for the first-repository guide.
+Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
+3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
+anchors and historical certificate validation.
 
 ### Vocabulary — use these words exactly
 
@@ -375,6 +378,11 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
    through liquid's own layers (#155 transport, #156 codec, #16 client and conformance), and the
    same HTTP/2 layer serves liquid's own workers (#63) and lake later. Design:
    `docs/library/distribution.md`.
+10. **TSA signature verification is liquid's own, verification only** (Steve, 2026-09-05;
+    bridge decision 32). RFC 3161 and RFC 4998 verification uses liquid's strict DER, CMS, X.509,
+    RSA, and NIST-curve ECDSA readers and verifiers. It does not generate keys or signatures and
+    does not link a general-purpose cryptography library for these operations. Design:
+    `docs/library/transparency.md`.
 10. **Tier 2 tree-sitter grammars are fetched at configure time and pinned by digest** (liquid #72,
     2026-09-05). One canonical lock names an exact public-upstream commit, archive SHA-256,
     generated parser SHA-256, every hand-written scanner SHA-256, tag-query SHA-256, language ABI,
