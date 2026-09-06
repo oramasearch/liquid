@@ -25,6 +25,11 @@ enum class projection_target : std::uint8_t {
     helm_chart,
     ostree_commit,
     bootc_image,
+    homebrew,
+    pkgbuild,
+    appimage,
+    flatpak,
+    snap,
 };
 
 enum class ostree_repository_mode : std::uint8_t {

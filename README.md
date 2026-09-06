@@ -7,9 +7,9 @@ the sandbox observes what each action reads rather than trusting a declaration, 
 content-addressed, so a rebuild that produces identical bytes stops the cascade. Every write to
 disk is captured as a signed drip, and nothing is materialised until it is read. On top of the
 store sit the incremental query graph, dependency resolution with liquid's own solver, and
-projection of one checked install tree to `.deb`, `.rpm`, `.apk`, OCI images and Helm charts.
-The premise, the vocabulary, the design axioms and what liquid must do are stated in
-[`docs/features/README.md`](docs/features/README.md).
+projection of one checked install tree to native packages, ecosystem recipes, images, and bundled
+runtime formats. The premise, the vocabulary, the design axioms and what liquid must do are stated
+in [`docs/features/README.md`](docs/features/README.md).
 
 liquid is the tool. [lake](docs/features/18-lake-service.md) is the hosted service where it
 collects, and [liquify](docs/features/21-liquify-ide.md) is the IDE. The repository is an Orama

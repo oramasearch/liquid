@@ -110,6 +110,8 @@ for what is implemented today.
 
 | Page | What it contains |
 |---|---|
+| [`library/formats.md`](library/formats.md) | Issue #29's format registry and C ABI, fidelity tiers, launch codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
+| [`library/projection.md`](library/projection.md) | Issues #28 and #77's native packages, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap projection; deterministic writers, runtime pins, attestations, and peer proof. |
 | [`library/formats.md`](library/formats.md) | Issues #29 and #70's format registry and C ABI, fidelity tiers, codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
 | [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
 | [`library/resolution.md`](library/resolution.md) | Package and concretised records, spec grammar, universe layout, solver model, explanations, optimisation, and scale measurements. |
