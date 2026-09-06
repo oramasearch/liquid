@@ -23,7 +23,9 @@ OpenSSL generates ephemeral RSA and P-384 signatures only in the test process so
 verification engine is checked against an independent implementation for PKCS#1 v1.5, RSA-PSS,
 ECDSA, SHA-256, and SHA-384; no OpenSSL call enters the verification path.
 The main test binary compiles the private signature translation unit directly so this coverage also
-runs when libliquid's internal symbols are hidden by a shared build.
+runs when libliquid's internal symbols are hidden by a shared build. The shared test target likewise
+compiles the private package-common, tar writer and SquashFS writer translation units used by writer
+byte-identity tests; those helpers remain outside the public ABI.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
 `test_tuf.cpp` verifies Lake-produced root, targets, snapshot, and timestamp metadata; unique-key
@@ -91,8 +93,9 @@ Delta cases create and apply a zstd reference patch, verify its registered attes
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
 The `formats/` cases cover the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
-decoders, exact Tier 1 repack, deterministic tar writing, volatile fields, malformed boundaries,
-nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs used by
+decoders, exact Tier 1 repack, deterministic tar and SquashFS writing, volatile fields, malformed
+boundaries, nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs
+used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
 file writes, key diffs, v1/v2/v3 wrapped-key compatibility, age specification vectors, Shamir
@@ -162,9 +165,11 @@ clones leave no partial target.
 
 Drive coverage persists policy and per-path state across reopen, checks folder inheritance and
 explicit overrides, retains lazy placeholders, records peer failure reasons, queues repository
-writes, reports hydration state, and validates every extended-attribute value. The desktop badge
-mapping tests run without GNOME or KDE. Linux FUSE coverage calls the mounted attribute setters,
-getters, and list operation directly.
+writes, reports hydration state, and validates every extended-attribute value. A two-client case
+edits one path differently while both clients are offline, then verifies that sequential sync keeps
+both named files, the conflict references, and history for each name. The desktop badge mapping
+tests run without GNOME or KDE. Linux FUSE coverage calls the mounted attribute setters, getters,
+and list operation directly.
 
 Build tests cover the disk action index's reopen and rebuild paths, public configured-plan schema,
 named configuration errors, and current root digests on every platform. In the
@@ -241,6 +246,10 @@ composition. The Unix demo drives one Capy process across a signed tier-1 replac
 case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.
 `test_projection.cpp` imports the committed `fixtures/projection/root` install tree and covers
 package round trips, registry recognition, deterministic compression and output, OCI layers and
+attestation referrers, signed `projection/1`, digest-only Helm values, Homebrew bottles, Arch
+recipes, AppImage, Flatpak, Snap, adjacent DSSE collections, relocation refusal, and native Helm
+lint when the tool is installed. It round-trips the owned SquashFS through `unsquashfs` when that
+tool is installed. The pinned target digests are the macOS/Linux byte-identity contract.
 attestation referrers, signed `projection/1`, digest-only Helm values, and native Helm lint when
 the tool is installed. It also pins a GLib-derived OSTree commit checksum and bootc manifest digest,
 exercises base and overlay paths, writes `archive-z2` and `bare-user`, and checks symbolic-link

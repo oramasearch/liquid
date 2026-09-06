@@ -58,7 +58,7 @@ for what is implemented today.
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
-| [`library/drive.md`](library/drive.md) | Issues #195 and #235's persisted three-tree reconciliation, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
+| [`library/drive.md`](library/drive.md) | Issues #195, #235, and #258's persisted three-tree reconciliation, per-repository CRDT actors, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
 | [`library/forge-client.md`](library/forge-client.md) | Lake review records, coroutine calls, anchor advancement, polling events, error mapping, and the installable forge double. |
 | [`library/transparency.md`](library/transparency.md) | Lake checkpoint, tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 evidence verification; trust bootstrap and policy, CLI, failures, implementation notes, and fixture regeneration. |
@@ -117,6 +117,8 @@ for what is implemented today.
 
 | Page | What it contains |
 |---|---|
+| [`library/formats.md`](library/formats.md) | Issue #29's format registry and C ABI, fidelity tiers, launch codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
+| [`library/projection.md`](library/projection.md) | Issues #28 and #77's native packages, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap projection; deterministic writers, runtime pins, attestations, and peer proof. |
 | [`library/formats.md`](library/formats.md) | Issues #29 and #70's format registry and C ABI, fidelity tiers, codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
 | [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
 | [`library/resolution.md`](library/resolution.md) | Package and concretised records, spec grammar, universe layout, solver model, explanations, optimisation, and scale measurements. |

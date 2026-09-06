@@ -65,7 +65,7 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | \
             sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install --yes autoconf automake clang-19 clang-format-19 cmake fuse3 libfuse3-dev libssl-dev libstdc++-14-dev ninja-build postgresql postgresql-client zlib1g-dev
+          sudo apt-get install --yes autoconf automake clang-19 clang-format-19 cmake fuse3 libfuse3-dev libssl-dev libstdc++-14-dev ninja-build postgresql postgresql-client squashfs-tools zlib1g-dev
 
       - name: Install macOS toolchain
         if: matrix.platform == 'macos'
@@ -123,6 +123,27 @@ jobs:
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
           ctest --test-dir build --output-on-failure
 
+      - name: Run AppImage extraction peer
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/projection-peers"
+          LIQUID_PROJECTION_PEER_OUT="$RUNNER_TEMP/projection-peers" \
+            ./build/tests/liquid-tests \
+            --gtest_filter=Projection.emit_peer_artifacts_when_requested \
+            --gtest_color=no
+          "$RUNNER_TEMP/projection-peers/appimage/liquid-fixture-1.2.3-x86_64.AppImage" \
+            --appimage-extract-and-run
+
+      - name: Run Homebrew bottle peer
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          tools/projection-peers/run-homebrew-interop.sh \
+            "$PWD/build/tests/liquid-tests" \
+            "$PWD/build/liquid-hot-demo" \
+            "$RUNNER_TEMP/homebrew-projection-peer"
+
       - name: Run liquid version
         if: matrix.platform != 'windows'
         shell: bash
@@ -155,7 +176,7 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" | \
             sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install --yes autoconf automake clang-19 clang-format-19 cmake fuse3 libfuse3-dev libssl-dev libstdc++-14-dev ninja-build postgresql postgresql-client zlib1g-dev
+          sudo apt-get install --yes autoconf automake clang-19 clang-format-19 cmake fuse3 libfuse3-dev libssl-dev libstdc++-14-dev ninja-build postgresql postgresql-client squashfs-tools zlib1g-dev
 
       - name: Configure
         shell: bash

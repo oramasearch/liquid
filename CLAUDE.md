@@ -95,6 +95,9 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #77 adds deterministic Homebrew bottles and Arch recipes; pinned-runtime AppImages;
+Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and detached
+`projection/1`, provenance, and SBOM attestations.
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
@@ -158,7 +161,9 @@ repository sync server and the `serve sync` HTTP adapter; liquid #177 adds per-c
 change-graph-derived reference authorization; liquid #189 adds per-reference accepted/refused
 outcomes and opt-in atomic pushes. Liquid #195 adds persisted three-tree folder reconciliation,
 named conflict values, resumed transfer, reference refusal reporting, path history and restore,
-`liquid drive`, and the daemon drive target. Liquid #235 adds persisted per-path device state,
+`liquid drive`, and the daemon drive target. Liquid #258 binds imported active directory documents
+to each destination repository's actor so concurrent offline clients keep both named histories.
+Liquid #235 adds persisted per-path device state,
 pinning, policy-driven hydration, offline read and write status, FUSE xattrs, and Linux desktop
 badges. Liquid #247 adds `liquid clone` through the drive client, with persisted remote
 configuration and a fully materialised plain checkout. Full materialisation works on

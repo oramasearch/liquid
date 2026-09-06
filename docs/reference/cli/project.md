@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid project <oci|ostree|bootc|deb|rpm|apk|helm> <result|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
 
-Project a recorded result or tree into a package, OCI or bootc image, Helm chart, or OSTree commit.
+Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or bundled-runtime artifact.
 
 ## Options
 

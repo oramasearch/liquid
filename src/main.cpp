@@ -519,15 +519,16 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::config},
     {"project",
-     "project <oci|ostree|bootc|deb|rpm|apk|helm> <result|tree> [--overlay [path=]<tree>] "
+     "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
+     "<result|tree> [--overlay [path=]<tree>] "
      "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
      "project a build into an installable package, commit, image, or chart",
      "available",
      flags_project,
-     "Project a recorded result or tree into a package, OCI or bootc image, Helm chart, or OSTree "
-     "commit.",
+     "Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or "
+     "bundled-runtime artifact.",
      "liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json",
      normal_exit,
      argument_policy::ordinary,

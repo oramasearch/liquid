@@ -98,6 +98,7 @@ built binary under the build directory before CTest compares it with the committ
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into a native package, image, ecosystem recipe, or bundled-runtime format. | available |
 | `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm> <result\|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2\|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked tree into packages, OCI or bootc images, an OSTree commit, or a Helm chart. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
@@ -486,7 +487,10 @@ Repeatable `--depends` values are additive to reader-derived dependencies. Helm 
 `name=repository@sha256:digest[,port=N][,env=K=V][,volume=P]`. `--compat-gzip` selects liquid's
 deterministic gzip encoder for Debian and OCI; `--allow-abi-break` records an explicit override.
 Text output lists artifact and attestation digests, while `--json` adds pinned image references,
-dependency labels, and the ABI override bit. See [projection.md](../library/projection.md).
+dependency labels, and the ABI override bit. Homebrew and PKGBUILD emit ecosystem recipes beside
+their payload archives; AppImage, Flatpak, and Snap emit bundled-runtime layouts. Formats without
+an attachment mechanism place DSSE evidence in `<artifact>.attestations.json`. See
+[projection.md](../library/projection.md).
 
 The OS forms use the first digest as the base root and accept repeatable overlays. A bare overlay
 replaces matching paths at the root; `--overlay <path>=<tree-digest>` mounts it below a declared

@@ -96,6 +96,9 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/build/content.cpp
     ${PROJECT_SOURCE_DIR}/src/build/normalise.cpp
     ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/package/common.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/squashfs/squashfs.cpp
+    ${PROJECT_SOURCE_DIR}/src/formats/tar/writer.cpp
     ${PROJECT_SOURCE_DIR}/src/formats/ostree/ostree.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
     ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
@@ -104,6 +107,7 @@ if(BUILD_SHARED_LIBS)
   if(APPLE)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
   endif()
+  target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
@@ -195,6 +199,11 @@ find_program(LIQUID_HELM_EXECUTABLE helm)
 if(LIQUID_HELM_EXECUTABLE)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_HELM_EXECUTABLE="${LIQUID_HELM_EXECUTABLE}")
+endif()
+find_program(LIQUID_UNSQUASHFS_EXECUTABLE unsquashfs)
+if(LIQUID_UNSQUASHFS_EXECUTABLE)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_UNSQUASHFS_EXECUTABLE="${LIQUID_UNSQUASHFS_EXECUTABLE}")
 endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
@@ -762,6 +771,19 @@ if(LIQUID_CONTENT_CHAIN_TESTS AND UNIX AND LIQUID_BUILD_CLI)
       -DLIQUID_CONTENT_CHAIN_ROOT=${CMAKE_CURRENT_BINARY_DIR}/content-addressed-build-chain
       -P ${CMAKE_CURRENT_SOURCE_DIR}/build/content-addressed-chain.cmake)
   set_tests_properties(content-addressed-build-chain PROPERTIES LABELS realworld TIMEOUT 600)
+endif()
+
+find_program(LIQUID_FLATPAK_EXECUTABLE flatpak)
+find_program(LIQUID_FLATPAK_BUILDER_EXECUTABLE flatpak-builder)
+if(LIQUID_FLATPAK_EXECUTABLE AND LIQUID_FLATPAK_BUILDER_EXECUTABLE AND UNIX)
+  add_test(NAME projection-flatpak-realworld
+    COMMAND ${PROJECT_SOURCE_DIR}/tools/projection-peers/run-flatpak-interop.sh
+      $<TARGET_FILE:liquid-tests>
+      ${CMAKE_CURRENT_BINARY_DIR}/projection-flatpak-realworld)
+  set_tests_properties(projection-flatpak-realworld PROPERTIES
+    LABELS realworld
+    SKIP_RETURN_CODE 77
+    TIMEOUT 1200)
 endif()
 
 option(LIQUID_SPACK_REALWORLD_TESTS "Register the opt-in imported-package build subset" OFF)

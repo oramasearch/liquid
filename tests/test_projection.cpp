@@ -12,6 +12,7 @@
 
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "formats/squashfs/squashfs.hpp"
 #include "formats/ostree/ostree.hpp"
 #if !defined(LIQUID_SHARED_TEST_BUILD)
 #include "formats/tar/writer.hpp"
@@ -94,6 +95,14 @@ public:
 
     auto repository() -> liquid::repository& {
         return repository_;
+    }
+
+    auto import_tree(const std::filesystem::path& path) -> liquid::digest {
+        auto imported = liquid::runtime::block_on(repository_.import_tree(path));
+        EXPECT_TRUE(imported) << imported.error().message;
+        auto root = liquid::runtime::block_on(repository_.root_digest());
+        EXPECT_TRUE(root) << root.error().message;
+        return *root;
     }
 
     auto root() const -> liquid::digest {
@@ -229,6 +238,60 @@ TEST(Projection, package_writers_round_trip_and_are_byte_identical) {
     }
 }
 
+TEST(Projection, squashfs_writer_is_deterministic_and_rejects_unsafe_paths) {
+    const auto files = std::vector<liquid::formats::package::file>{
+        {"bin/fixture", {std::byte{'o'}, std::byte{'k'}, std::byte{'\n'}}, 0755},
+        {"share/fixture/value.txt", {std::byte{'v'}}, 0644}};
+    auto first = liquid::formats::squashfs::write(files, 1'700'000'000);
+    auto second = liquid::formats::squashfs::write(files, 1'700'000'000);
+    ASSERT_TRUE(first) << first.error().message;
+    ASSERT_TRUE(second) << second.error().message;
+    EXPECT_EQ(*first, *second);
+    auto digest = liquid::formats::package::sha256(*first);
+    ASSERT_TRUE(digest) << digest.error().message;
+    EXPECT_EQ(liquid::to_string(*digest),
+              "sha256:0c40e71e6af665d160632064c205f04aefd82ce18fe95fb2a16d2c1bb8f9aba0");
+    ASSERT_GE(first->size(), 96U);
+    EXPECT_EQ((*first)[0], std::byte{'h'});
+    EXPECT_EQ((*first)[1], std::byte{'s'});
+    EXPECT_EQ((*first)[2], std::byte{'q'});
+    EXPECT_EQ((*first)[3], std::byte{'s'});
+
+    const auto unsafe = std::vector<liquid::formats::package::file>{{"../escape", {}, 0644}};
+    auto rejected = liquid::formats::squashfs::write(unsafe, 1'700'000'000);
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error().code, liquid::errc::invalid_argument);
+}
+
+#if defined(LIQUID_UNSQUASHFS_EXECUTABLE)
+TEST(Projection, squashfs_writer_round_trips_through_unsquashfs) {
+    const auto root = liquid::test::fixture_path("liquid-squashfs-round-trip");
+    auto code = std::error_code{};
+    std::filesystem::remove_all(root, code);
+    std::filesystem::create_directories(root, code);
+    ASSERT_FALSE(code) << code.message();
+    const auto files = std::vector<liquid::formats::package::file>{
+        {"bin/fixture", {std::byte{'o'}, std::byte{'k'}, std::byte{'\n'}}, 0755},
+        {"share/fixture/value.txt", {std::byte{'v'}}, 0644}};
+    auto image = liquid::formats::squashfs::write(files, 1'700'000'000);
+    ASSERT_TRUE(image) << image.error().message;
+    const auto image_path = root / "fixture.squashfs";
+    auto stream = std::ofstream{image_path, std::ios::binary | std::ios::trunc};
+    stream.write(reinterpret_cast<const char*>(image->data()),
+                 static_cast<std::streamsize>(image->size()));
+    stream.close();
+    ASSERT_TRUE(stream);
+    const auto extracted = root / "extracted";
+    const auto command = std::string{"\"" LIQUID_UNSQUASHFS_EXECUTABLE "\" -f -d \""} +
+                         extracted.string() + "\" \"" + image_path.string() + "\"";
+    ASSERT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(read_text(extracted / "bin/fixture"), "ok\n");
+    EXPECT_EQ(read_text(extracted / "share/fixture/value.txt"), "v");
+    const auto permissions = std::filesystem::status(extracted / "bin/fixture").permissions();
+    EXPECT_NE(permissions & std::filesystem::perms::owner_exec, std::filesystem::perms::none);
+}
+#endif
+
 TEST(Projection, package_reader_limits_are_enforced) {
     auto fixture = projection_fixture{};
     auto report = fixture.project(fixture.request(liquid::projection_target::deb, "limited-deb"));
@@ -253,6 +316,9 @@ TEST(Projection, dependency_capabilities_follow_each_package_ecosystem) {
         (std::vector<std::string>{"declared-extra", "libc.so.6()(64bit)", "libfoo.so.1()(64bit)"}));
     EXPECT_EQ(liquid::projection_detail::dependencies(prepared, liquid::projection_target::apk),
               (std::vector<std::string>{"declared-extra", "so:libc.so.6", "so:libfoo.so.1"}));
+    EXPECT_EQ(
+        liquid::projection_detail::dependencies(prepared, liquid::projection_target::pkgbuild),
+        (std::vector<std::string>{"declared-extra", "glibc", "libfoo.so.1"}));
     EXPECT_EQ(liquid::projection_detail::provides(prepared, liquid::projection_target::rpm),
               (std::vector<std::string>{"libfixture.so.1()(64bit)"}));
 }
@@ -323,6 +389,162 @@ TEST(Projection, package_metadata_rejects_control_characters) {
     auto report = liquid::runtime::block_on(liquid::project(fixture.repository(), request));
     ASSERT_FALSE(report);
     EXPECT_EQ(report.error().code, liquid::errc::invalid_argument);
+}
+
+TEST(Projection, ecosystem_projections_are_deterministic_and_have_sidecar_attestations) {
+#if defined(_WIN32)
+    GTEST_SKIP() << "AppImage runtime embedding is available on Unix hosts";
+#endif
+    auto fixture = projection_fixture{};
+    const auto targets = std::array{liquid::projection_target::homebrew,
+                                    liquid::projection_target::pkgbuild,
+                                    liquid::projection_target::appimage,
+                                    liquid::projection_target::flatpak,
+                                    liquid::projection_target::snap};
+    const auto expected = std::array{
+        std::string_view{"sha256:f7a0a4d9d9eeb8de39ed784719bcba6a86bc6ade5a52fc81916ce233a8dc7b26"},
+        std::string_view{"sha256:61ac05b83641d3ed416a010d150fdfa1fd2af966b0b3dc6b6b8f3ce2486f1b2d"},
+        std::string_view{"sha256:178e0883f9b4f74652e9b90d5249427e46d7ea6d4ba3b06ca7c304ae007b82b7"},
+        std::string_view{"sha256:d7bcd81fb780a6f0254f959380f69008b493438e5cd60fb8c9e11187baa98006"},
+        std::string_view{
+            "sha256:04baf07ac8b4984e91531780e0fb94867ded7823c2d818d0c6c053b9bdd6a82a"}};
+    for (auto target_index = std::size_t{}; target_index < targets.size(); ++target_index) {
+        const auto target = targets[target_index];
+        auto first_request = fixture.request(target, std::string{liquid::to_string(target)});
+        auto second_request =
+            fixture.request(target, std::string{liquid::to_string(target)} + "-again");
+        first_request.metadata.declared_dependencies.clear();
+        second_request.metadata.declared_dependencies.clear();
+        auto first = fixture.project(std::move(first_request));
+        auto second = fixture.project(std::move(second_request));
+        ASSERT_FALSE(first.artifacts.empty());
+        ASSERT_EQ(first.artifacts.size(), second.artifacts.size());
+        ASSERT_EQ(first.artifacts.size() % 2, 0U);
+        EXPECT_EQ(liquid::to_string(first.artifacts.front().digest),
+                  liquid::to_string(second.artifacts.front().digest));
+        EXPECT_EQ(liquid::to_string(first.artifacts.front().digest), expected[target_index]);
+        for (auto index = std::size_t{}; index < first.artifacts.size(); index += 2) {
+            const auto& artifact = first.artifacts[index];
+            const auto& sidecar = first.artifacts[index + 1];
+            EXPECT_EQ(read_bytes(artifact.path), read_bytes(second.artifacts[index].path));
+            EXPECT_EQ(sidecar.path.string(), artifact.path.string() + ".attestations.json");
+            const auto text = read_text(sidecar.path);
+            EXPECT_NE(text.find(liquid::to_string(artifact.digest)), std::string::npos);
+            EXPECT_NE(text.find("application/vnd.liquid.taap.attestation.v1+cbor"),
+                      std::string::npos);
+        }
+        if (target == liquid::projection_target::appimage) {
+            const auto bytes = read_bytes(first.artifacts.front().path);
+            ASSERT_GT(bytes.size(), 944'636U);
+            EXPECT_EQ(bytes[944'632], std::byte{'h'});
+            EXPECT_EQ(bytes[944'633], std::byte{'s'});
+            EXPECT_EQ(bytes[944'634], std::byte{'q'});
+            EXPECT_EQ(bytes[944'635], std::byte{'s'});
+            const auto permissions =
+                std::filesystem::status(first.artifacts.front().path).permissions();
+            EXPECT_NE(permissions & std::filesystem::perms::owner_exec,
+                      std::filesystem::perms::none);
+        }
+    }
+}
+
+TEST(Projection, sidecar_exports_source_provenance_and_sboms) {
+    auto fixture = projection_fixture{};
+    const auto result = fixture.result_with_evidence();
+    auto request = fixture.request(liquid::projection_target::flatpak, "flatpak-evidence");
+    request.sources = {{result}};
+    request.metadata.architecture.clear();
+    auto report = fixture.project(std::move(request));
+    ASSERT_EQ(report.artifacts.size(), 2U);
+    ASSERT_EQ(report.attestations.size(), 4U);
+    const auto sidecar = read_text(report.artifacts.back().path);
+    auto offset = std::size_t{};
+    auto count = std::size_t{};
+    while ((offset = sidecar.find("\"payloadType\"", offset)) != std::string::npos) {
+        ++count;
+        ++offset;
+    }
+    EXPECT_EQ(count, 4U);
+    auto statement = liquid::runtime::block_on(
+        fixture.repository().attestations({.id = report.attestations.back()}));
+    ASSERT_TRUE(statement) << statement.error().message;
+    ASSERT_EQ(statement->records.size(), 1U);
+    EXPECT_EQ(statement->records.front().value.profile, "projection/1");
+}
+
+TEST(Projection, generated_recipes_and_manifests_pin_their_payloads) {
+    auto fixture = projection_fixture{};
+    auto homebrew = fixture.request(liquid::projection_target::homebrew, "homebrew-content");
+    homebrew.metadata.declared_dependencies.clear();
+    const auto bottle = fixture.project(std::move(homebrew));
+    ASSERT_GE(bottle.artifacts.size(), 6U);
+    const auto formula = read_text(bottle.artifacts[2].path);
+    EXPECT_NE(formula.find("bottle do"), std::string::npos);
+    EXPECT_NE(formula.find("cellar: :any_skip_relocation"), std::string::npos);
+    EXPECT_NE(
+        formula.find(liquid::formats::package::hex_bytes(bottle.artifacts.front().digest.bytes)),
+        std::string::npos);
+
+    auto arch = fixture.request(liquid::projection_target::pkgbuild, "pkgbuild-content");
+    arch.metadata.declared_dependencies.clear();
+    const auto pkgbuild = fixture.project(std::move(arch));
+    ASSERT_GE(pkgbuild.artifacts.size(), 6U);
+    const auto recipe = read_text(pkgbuild.artifacts.front().path);
+    const auto srcinfo = read_text(pkgbuild.artifacts[2].path);
+    EXPECT_NE(recipe.find("package()"), std::string::npos);
+    EXPECT_NE(recipe.find("sha256sums=("), std::string::npos);
+    EXPECT_NE(srcinfo.find("pkgname = liquid-fixture"), std::string::npos);
+    EXPECT_NE(srcinfo.find("sha256sums = "), std::string::npos);
+
+    const auto flatpak =
+        fixture.project(fixture.request(liquid::projection_target::flatpak, "flatpak-content"));
+    const auto manifest = read_text(flatpak.artifacts.front().path);
+    EXPECT_NE(manifest.find("\"runtime\": \"org.freedesktop.Platform\""), std::string::npos);
+    EXPECT_NE(manifest.find("\"runtime-version\": \"24.08\""), std::string::npos);
+    EXPECT_NE(manifest.find("\"sdk\": \"org.freedesktop.Sdk\""), std::string::npos);
+    EXPECT_TRUE(std::filesystem::exists(flatpak.artifacts.front().path.parent_path() / "metadata"));
+    EXPECT_TRUE(std::filesystem::exists(flatpak.artifacts.front().path.parent_path() /
+                                        "files/bin/liquid-fixture"));
+}
+
+#if defined(LIQUID_UNSQUASHFS_EXECUTABLE)
+TEST(Projection, snap_squashfs_lists_the_pack_ready_tree) {
+    auto fixture = projection_fixture{};
+    auto report = fixture.project(fixture.request(liquid::projection_target::snap, "snap-list"));
+    ASSERT_GE(report.artifacts.size(), 4U);
+    const auto listing = report.artifacts.front().path.string() + ".listing";
+    const auto command = std::string{"\"" LIQUID_UNSQUASHFS_EXECUTABLE "\" -l \""} +
+                         report.artifacts.front().path.string() + "\" > \"" + listing + "\"";
+    ASSERT_EQ(std::system(command.c_str()), 0);
+    const auto text = read_text(listing);
+    EXPECT_NE(text.find("meta/snap.yaml"), std::string::npos);
+    EXPECT_NE(text.find("usr/bin/liquid-fixture"), std::string::npos);
+}
+#endif
+
+TEST(Projection, every_new_target_refuses_a_non_relocatable_tree) {
+    auto fixture = projection_fixture{};
+    const auto root = liquid::test::fixture_path("liquid-projection-non-relocatable");
+    auto code = std::error_code{};
+    std::filesystem::remove_all(root, code);
+    std::filesystem::create_directories(root / "share", code);
+    ASSERT_FALSE(code) << code.message();
+    auto output = std::ofstream{root / "share/embedded.txt", std::ios::binary | std::ios::trunc};
+    output << "/liquid/work/output";
+    output.close();
+    ASSERT_TRUE(output);
+    const auto bad_tree = fixture.import_tree(root);
+    for (const auto target : {liquid::projection_target::homebrew,
+                              liquid::projection_target::pkgbuild,
+                              liquid::projection_target::appimage,
+                              liquid::projection_target::flatpak,
+                              liquid::projection_target::snap}) {
+        auto request = fixture.request(target, "relocation-refused");
+        request.sources = {{bad_tree}};
+        auto report = liquid::runtime::block_on(liquid::project(fixture.repository(), request));
+        ASSERT_FALSE(report) << liquid::to_string(target);
+        EXPECT_EQ(report.error().code, liquid::errc::invalid_argument);
+    }
 }
 
 TEST(Projection, oci_layout_is_deterministic_and_lists_attestation_referrers) {
@@ -615,6 +837,61 @@ TEST(Projection, emit_peer_artifacts_when_requested) {
     std::cout << "helm=" << chart.artifacts.front().path << ' '
               << liquid::to_string(chart.artifacts.front().digest) << ' '
               << liquid::to_string(chart.artifacts.back().digest) << '\n';
+
+    for (const auto target : {liquid::projection_target::homebrew,
+                              liquid::projection_target::pkgbuild,
+                              liquid::projection_target::appimage,
+                              liquid::projection_target::flatpak,
+                              liquid::projection_target::snap}) {
+        auto request = fixture.request(target, (root / liquid::to_string(target)).string());
+        request.metadata.declared_dependencies.clear();
+        auto report = fixture.project(std::move(request));
+        std::cout << liquid::to_string(target) << '=' << report.artifacts.front().path << ' '
+                  << liquid::to_string(report.artifacts.front().digest) << '\n';
+    }
+}
+
+TEST(Projection, emit_native_homebrew_peer_when_requested) {
+    const auto* binary = std::getenv("LIQUID_HOMEBREW_NATIVE_BINARY");
+    const auto* output = std::getenv("LIQUID_HOMEBREW_PEER_OUT");
+    if (binary == nullptr || output == nullptr) {
+        GTEST_SKIP() << "LIQUID_HOMEBREW_NATIVE_BINARY and LIQUID_HOMEBREW_PEER_OUT are not set";
+    }
+    const auto root = liquid::test::fixture_path("liquid-homebrew-native-root");
+    auto code = std::error_code{};
+    std::filesystem::remove_all(root, code);
+    std::filesystem::create_directories(root / "bin", code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::copy_file(binary,
+                               root / "bin/liquid-homebrew-fixture",
+                               std::filesystem::copy_options::overwrite_existing,
+                               code);
+    ASSERT_FALSE(code) << code.message();
+    std::filesystem::permissions(root / "bin/liquid-homebrew-fixture",
+                                 std::filesystem::perms::owner_exec |
+                                     std::filesystem::perms::group_exec |
+                                     std::filesystem::perms::others_exec,
+                                 std::filesystem::perm_options::add,
+                                 code);
+    ASSERT_FALSE(code) << code.message();
+    auto fixture = projection_fixture{};
+    const auto tree = fixture.import_tree(root);
+    auto request = fixture.request(liquid::projection_target::homebrew, output);
+    request.sources = {{tree}};
+    request.metadata.name = "liquid-homebrew-fixture";
+    request.metadata.version = "1.0.0";
+    request.metadata.release = "1";
+#if defined(__aarch64__) || defined(__arm64__)
+    request.metadata.architecture = "aarch64";
+#else
+    request.metadata.architecture = "x86_64";
+#endif
+    request.metadata.description = "Liquid Homebrew projection fixture";
+    request.metadata.declared_dependencies.clear();
+    auto report = fixture.project(std::move(request));
+    ASSERT_GE(report.artifacts.size(), 6U);
+    std::cout << "homebrew-native=" << report.artifacts.front().path << ' '
+              << liquid::to_string(report.artifacts.front().digest) << '\n';
 }
 
 } // namespace
