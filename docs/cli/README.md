@@ -55,7 +55,7 @@ that the table and `liquid --help` name the same commands.
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
+| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
@@ -241,8 +241,16 @@ a produced path opens that project's persistent cache. It verifies the result an
 writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible envelope, projected
 from the same canonical TAAP record.
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, the outer
-action's status, the disk hit rate, bytes transferred, bytes avoided, bytes rebuilt, and miss counts
-by reason. Its observability line names wall and critical-path durations, achieved parallelism, the
+action's status, its canonical `output_tree`, the disk hit rate, bytes transferred, bytes avoided,
+bytes rebuilt, and miss counts by reason. Repeatable `--input <name>=<result-or-tree-digest>` makes
+an upstream output tree available read-only below `deps/<name>/`. A result input must be signed and
+carry an output tree; a tree digest names those bytes directly. The dependency tree is folded into
+the action input, so a rebuild with a different source tree but the same normalised output tree is
+an exact downstream input match. `liquid why` reports that hit as `input deps/<name> unchanged:
+same normalised tree after upstream rebuild` when imported signed results establish both
+input/output claims.
+
+The observability line names wall and critical-path durations, achieved parallelism, the
 totals for queued, sandbox, exec, hash, and store phases, bytes served versus rebuilt, and the
 persisted trace digest. Following `critical_action` lines are the longest dependent chain, not a
 list sorted only by individual duration. `--explain` adds the
@@ -400,6 +408,7 @@ liquid hot-update classify blake3:<old-result> blake3:<new-result> --json
 liquid hot-update apply blake3:<patch-record> --endpoint .liquid/demo.sock
 liquid hot-update status blake3:<new-result> --json
 liquid wrap cmake -S . -B build -G Ninja
+liquid wrap --input zlib=blake3:<result-or-tree-digest> cmake --build build
 liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
 liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081
 liquid wrap --scheduler 127.0.0.1:50051 make -j8

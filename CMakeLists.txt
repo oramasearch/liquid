@@ -371,6 +371,7 @@ add_library(libliquid
   src/attestation/registry.cpp
   src/build/abi.cpp
   src/build/cache.cpp
+  src/build/content.cpp
   src/build/events.cpp
   src/build/executor.cpp
   src/build/distribution.cpp
@@ -379,6 +380,7 @@ add_library(libliquid
   src/build/facts.cpp
   src/build/verify.cpp
   src/build/materialise.cpp
+  src/build/normalise.cpp
   src/build/plan.cpp
   src/build/provenance.cpp
   src/build/trace.cpp

@@ -1,10 +1,10 @@
 # Command-line implementation
 
 Each source file maps one command group to public libliquid calls. `wrap.cpp` parses build-wrapper
-options, calls `liquid::build::wrap`, prints action and cache counts, per-tier action and byte
-counts, phase attribution, the critical path, and record-derived miss details for `--explain`.
-It also prints incompatible library reports and applies `--fail-on-abi-break` after a successful
-build.
+options and repeatable named result/tree inputs, calls `liquid::build::wrap`, and prints the
+canonical output tree, action and cache counts, per-tier action and byte counts, phase attribution,
+the critical path, record-derived miss details for `--explain`, and incompatible library reports.
+It applies `--fail-on-abi-break` after a successful build.
 `trace.cpp` implements profiled build invocation, Chrome trace export, and `why-slow` entirely
 through the public observability API. Text and Chrome trace projections include the recorded
 execution decision and every cost-model input. `why.cpp` implements `liquid why` and `liquid cache
