@@ -62,9 +62,6 @@ auto write_wrap_profile(const wrap_launch_request& request, const std::filesyste
         output << "(allow file-read* (subpath \"" << escaped(request.toolchain_mount.string())
                << "\"))\n";
     }
-    for (const auto& executable : request.executable_paths) {
-        output << "(allow file-read* (literal \"" << escaped(executable.string()) << "\"))\n";
-    }
     output << "(allow file-read* (literal \"" << escaped(request.hook.string()) << "\") (literal \""
            << escaped(request.plan.string()) << "\"))\n";
     output << "(allow file-read* (subpath \"/System\") (subpath \"/usr\") "

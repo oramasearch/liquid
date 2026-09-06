@@ -9,8 +9,9 @@ repository-owned action directory.
 The internal session-environment resolver and database probes retain shared-library visibility so
 the static and shared test suites exercise the same implementation.
 
-Client resolution prefers versioned PostgreSQL installation directories before `PATH`, avoiding
-Debian's `pg_wrapper` scripts so the captured toolchain always contains the real client binaries.
+Client resolution asks `pg_config --bindir` before `PATH`, avoiding wrapper scripts and recording
+the canonical installed client path in each data action. The launcher executes that installed path
+directly and keeps its repository-local toolchain directory for generated scripts only.
 
 Template copies are the portable lifecycle implementation. The filesystem capability probe and
 automatic selector cover the reflink decision; explicit reflink requests report `unsupported`

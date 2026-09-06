@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -25,6 +26,7 @@
 #include "data/testing.hpp"
 #include "liquid/data.hpp"
 #include "liquid/repository.hpp"
+#include "sandbox/sandbox.hpp"
 #include "temporary_directory.hpp"
 
 namespace {
@@ -322,6 +324,47 @@ private:
     bool started_{};
     bool ready_{};
 };
+
+#if defined(__APPLE__)
+TEST(DataBranch, sandbox_denies_an_external_binary_without_a_client_tool_allowance) {
+    const auto root = liquid::test::fixture_path("data-sandbox-" + unique_token());
+    const auto input = root / "input";
+    const auto external = root / "external-command";
+    const auto hook = input / "hook";
+    const auto trace = root / "trace";
+    const auto plan = input / "plan";
+    auto code = std::error_code{};
+    ASSERT_TRUE(std::filesystem::create_directories(input, code)) << code.message();
+    {
+        auto script = std::ofstream{external, std::ios::binary | std::ios::trunc};
+        ASSERT_TRUE(script);
+        script << "#!/bin/sh\nexit 0\n";
+    }
+    std::filesystem::permissions(
+        external,
+        std::filesystem::perms::owner_exec | std::filesystem::perms::owner_read |
+            std::filesystem::perms::group_exec | std::filesystem::perms::group_read,
+        std::filesystem::perm_options::replace,
+        code);
+    ASSERT_FALSE(code) << code.message();
+    {
+        auto hook_file = std::ofstream{hook, std::ios::binary | std::ios::trunc};
+        auto plan_file = std::ofstream{plan, std::ios::binary | std::ios::trunc};
+        ASSERT_TRUE(hook_file);
+        ASSERT_TRUE(plan_file);
+    }
+    auto launched = liquid::sandbox_detail::launch_wrap({.sandbox_root = root / "sandbox",
+                                                         .input_mount = input,
+                                                         .hook = hook,
+                                                         .trace = trace,
+                                                         .plan = plan,
+                                                         .command = {external.string()},
+                                                         .environment = {}});
+    ASSERT_TRUE(launched) << launched.error().message;
+    EXPECT_NE(launched->exit, 0);
+    std::filesystem::remove_all(root, code);
+}
+#endif
 
 TEST(DataBranch, isolates_discards_promotes_and_refuses_a_changed_base) {
     auto postgres = postgres_fixture{};

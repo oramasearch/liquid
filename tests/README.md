@@ -23,7 +23,7 @@ Linux, resolves a relative temporary root before subprocesses can change directo
 error when the temporary root is not writable, and removes the directory at process exit. Tests may
 use fixed names beneath that directory, but must never name a fixed path directly beneath the
 temporary root. `TemporaryDirectory.*` covers root selection, per-process stability, unique child
-creation, cleanup, and the failure diagnostic. Subprocess daemon coverage resolves the same root
+creation, cleanup, and the failure diagnostic. Subprocess daemon coverage supplies the same root
 relative to the checkout before changing directory.
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
@@ -34,9 +34,10 @@ fixture prefers versioned PostgreSQL binary directories before Debian's wrapper 
 case proves branch writes leave the base and sibling branch unchanged, session environments select
 their own URLs through a sandboxed client action, discard removes the database, quiet-base promote
 replaces it, changed-base promote is refused, records/configuration persist, and status exposes live
-branches. It skips with the missing prerequisite when neither mode is available. The portable
-selector case probes APFS/Linux copy-on-write support and proves an ineligible local cluster falls
-back to template copying.
+branches. It also proves an ordinary sandbox cannot execute an arbitrary external binary without a
+data client allowance. It skips with the missing prerequisite when neither mode is available. The
+portable selector case probes APFS/Linux copy-on-write support and proves an ineligible local
+cluster falls back to template copying.
 Spec parsing, canonical package records, universe loading, solver dimensions, cancellation,
 explanations, optimisation, CLI output, and the generated scale workload live in `resolve/`.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held

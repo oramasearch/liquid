@@ -51,7 +51,6 @@ struct wrap_launch_request {
     std::string cwd{"/liquid/work"};
     std::vector<std::string> command;
     std::map<std::string, std::string> environment;
-    std::vector<std::filesystem::path> executable_paths;
     bool network{};
 };
 

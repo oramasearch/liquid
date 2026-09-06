@@ -434,7 +434,6 @@ auto run_action_blocking(std::filesystem::path action,
                                                  .stderr_path = diagnostic_path,
                                                  .command = std::move(command),
                                                  .environment = std::move(record.environment),
-                                                 .executable_paths = {record.executable},
                                                  .network = true});
     if (!launched) {
         return std::unexpected(launched.error());
