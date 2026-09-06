@@ -46,9 +46,9 @@ bootc sources carry optional relative mount paths, options select the ref and re
 the report returns the OSTree commit independently of an OCI image digest.
 
 `admission.hpp` defines the versioned image-admission policy and CBOR/JSON decision record,
-rule-attributed review results, injected attestation-source and transparency-log interfaces, the
-one-image review operation, named policy-directory options, bounded replay, and the long-running
-admission server.
+rule-attributed review results, per-policy log mode and trust anchors, detailed transparency
+outcomes, injected attestation-source and transparency-log interfaces, the one-image review
+operation, named policy-directory options, bounded replay, and the long-running admission server.
 `identity.hpp` exposes algorithm- and custody-tagged actors, software and hardware key rotation,
 and TPM-capable key custody without exposing transport types. `release.hpp` exposes signed release
 policy and approval values plus distinct-identity threshold verification.

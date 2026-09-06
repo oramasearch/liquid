@@ -12,6 +12,7 @@
 #include "liquid/attestation.hpp"
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/transparency.hpp"
 
 namespace liquid {
 
@@ -21,8 +22,15 @@ enum class admission_mode : std::uint8_t {
     attestation_and_log,
 };
 
+enum class admission_log_mode : std::uint8_t {
+    deny,
+    verify,
+};
+
 struct LIQUID_EXPORT admission_log_policy {
+    admission_log_mode mode{admission_log_mode::deny};
     std::string lake;
+    transparency::log_trust trust;
     std::uint64_t max_checkpoint_age_seconds{};
 };
 
@@ -41,6 +49,15 @@ enum class log_verdict : std::uint8_t {
     included,
     not_included,
     unavailable,
+    denied,
+};
+
+struct LIQUID_EXPORT admission_log_verification {
+    log_verdict verdict{log_verdict::unavailable};
+    std::optional<digest> checkpoint;
+    std::uint64_t checkpoint_sequence{};
+    std::uint64_t tree_size{};
+    std::string reason;
 };
 
 class LIQUID_EXPORT attestation_source {
@@ -54,7 +71,8 @@ class LIQUID_EXPORT log_verifier {
 public:
     virtual ~log_verifier() = default;
 
-    [[nodiscard]] virtual runtime::task<log_verdict> verify_inclusion(digest attestation) = 0;
+    [[nodiscard]] virtual runtime::task<admission_log_verification>
+    verify_inclusion(std::vector<std::byte> attestation) = 0;
 };
 
 struct LIQUID_EXPORT admission_attestation_verdict {
@@ -64,6 +82,7 @@ struct LIQUID_EXPORT admission_attestation_verdict {
     bool verified{};
     std::string rule_id;
     std::string reason;
+    std::optional<admission_log_verification> log;
 };
 
 struct LIQUID_EXPORT admission_reason {
@@ -101,6 +120,8 @@ struct LIQUID_EXPORT admission_options {
 };
 
 [[nodiscard]] LIQUID_EXPORT std::string_view to_string(admission_mode value) noexcept;
+[[nodiscard]] LIQUID_EXPORT std::string_view to_string(admission_log_mode value) noexcept;
+[[nodiscard]] LIQUID_EXPORT std::string_view to_string(log_verdict value) noexcept;
 [[nodiscard]] LIQUID_EXPORT result<std::string>
 encode_admission_policy(const admission_policy& value);
 [[nodiscard]] LIQUID_EXPORT result<admission_policy> decode_admission_policy(std::string_view json);

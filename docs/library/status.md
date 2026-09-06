@@ -109,7 +109,10 @@ may accept them; `liquid registry trust` pins or displays the out-of-band root
 **Admission.** `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and
 control listeners, atomically reloaded named policy sets at `/admit/<policy>`, structured
 CBOR/JSON decisions in AdmissionReview status, a bounded local decision stream, local or
-node-store evidence lookup, metrics, REST, OpenAPI, and MCP ([`admission.md`](admission.md),
+node-store evidence lookup, and policy-pinned transparency verification through the shared
+checkpoint, parent-tile, and inclusion verifier. Each decision records the log outcome and exact
+failure reason. Metrics, REST, OpenAPI, and MCP expose the same record
+([`admission.md`](admission.md),
 [`../api/admission.md`](../api/admission.md)).
 
 **Search.** Repository-local BM25F, substring, and regex search over the working tree or named refs

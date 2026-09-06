@@ -6,3 +6,7 @@ keeping parsers, codecs, storage, network, solver, and runtime implementation ty
 
 Spack package-universe import lives under `import/`; it is dispatched by the existing import
 command group and exposed only through `include/liquid/import.hpp`.
+
+`lake_transparency.cpp` owns the shared checkpoint, complete parent-tile, inclusion, consistency,
+and identity-scan verifier. It accepts caller-pinned trust for admission and source-discovered trust
+for the existing repository workflows.
