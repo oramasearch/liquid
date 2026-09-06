@@ -23,7 +23,9 @@ HTTP read boundaries.
 
 The sync adapter uses liquid's shared private Corosio HTTP/1.1 client for URL parsing, request and
 response framing, chunked decoding, bearer authentication, and TLS. Protocol paths, media types,
-and CBOR envelopes remain owned by the sync layer.
+and CBOR envelopes remain owned by the sync layer. An endpoint retains the caller-provided
+repository URL as its remote-source identifier while the request client uses the parsed URL, so
+metadata-only drive pulls register chunks against the same source that later hydration uses.
 
 | Method and path | Request body | Successful response |
 |---|---|---|
