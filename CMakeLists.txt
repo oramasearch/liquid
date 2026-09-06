@@ -421,6 +421,10 @@ add_library(libliquid
   src/x509.cpp
   src/repository/diff.cpp
   src/repository/merge.cpp
+  src/resolve/records.cpp
+  src/resolve/concretizer.cpp
+  src/resolve/resolve.cpp
+  src/resolve/spec.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
   src/runtime/runtime.cpp
@@ -547,6 +551,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
+    src/cli/resolve.cpp
     src/cli/search.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
