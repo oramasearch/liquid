@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,6 +15,7 @@
 #include "liquid/hash.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/transparency.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
@@ -211,7 +213,8 @@ public:
 
     [[nodiscard]] liquid::runtime::task<transparency::tile>
     get_tile(std::uint32_t level, std::uint64_t index, std::uint64_t width) override {
-        if (missing_tile) {
+        ++tile_reads;
+        if (missing_tile || missing_level == level) {
             co_return std::unexpected(
                 failure(liquid::errc::not_found, "requested tile is missing"));
         }
@@ -233,12 +236,15 @@ public:
 
     [[nodiscard]] liquid::runtime::task<transparency::consistency_proof>
     get_consistency_proof(std::uint64_t, std::uint64_t) override {
-        co_return std::unexpected(
-            failure(liquid::errc::not_found, "consistency proof is not configured"));
+        ++consistency_requests;
+        co_return data_.consistency;
     }
 
     fixture data_;
     bool missing_tile{};
+    std::optional<std::uint32_t> missing_level;
+    std::size_t tile_reads{};
+    std::size_t consistency_requests{};
 };
 
 TEST(transparency, verifies_lake_conformance_fixture) {
@@ -286,12 +292,54 @@ TEST(transparency, cve_2026_56865_refuses_a_valid_leaf_tile_with_wrong_parent) {
     parent.data_.tiles[1].bytes[17] ^= std::byte{1};
     parent.data_.tiles[1].sha256 = digest(parent.data_.tiles[1].bytes);
     auto parent_client = transparency::log_client{parent};
-    EXPECT_FALSE(liquid::runtime::block_on(parent_client.verify_tiles(parent.data_.checkpoint)));
+    auto verified = liquid::runtime::block_on(parent_client.verify_tiles(parent.data_.checkpoint));
+    ASSERT_FALSE(verified);
+    EXPECT_NE(verified.error().message.find("tile level=1 index=0 width=3"), std::string::npos);
 
     data.inclusion[0].audit_path[0][0] ^= std::byte{1};
     EXPECT_FALSE(data.inclusion[0].verify(data.entries[0], data.checkpoint));
     data.consistency.audit_path[0][0] ^= std::byte{1};
     EXPECT_FALSE(data.consistency.verify(data.old_checkpoint, data.checkpoint));
+}
+
+TEST(transparency, cached_tiles_are_reauthenticated_to_the_selected_checkpoint) {
+    auto source = fixture_source{load_fixture()};
+    auto client = transparency::log_client{source};
+    ASSERT_TRUE(liquid::runtime::block_on(client.verify_tiles(source.data_.checkpoint)));
+    const auto cold_reads = source.tile_reads;
+    EXPECT_EQ(cold_reads, source.data_.tiles.size());
+
+    auto forged_checkpoint = source.data_.checkpoint;
+    forged_checkpoint.root_hash[0] ^= std::byte{1};
+    auto verified = liquid::runtime::block_on(client.verify_tiles(std::move(forged_checkpoint)));
+    ASSERT_FALSE(verified);
+    EXPECT_EQ(source.tile_reads, cold_reads);
+    EXPECT_EQ(verified.error().message, "entry and parent tiles do not reach checkpoint root");
+}
+
+TEST(transparency, consistency_refuses_a_skipped_tile_level_before_evaluating_the_proof) {
+    auto source = fixture_source{load_fixture()};
+    source.missing_level = 1;
+    auto repository = liquid::runtime::block_on(
+        liquid::repository::create(liquid::test::fixture_path("transparency-consistency")));
+    ASSERT_TRUE(repository) << repository.error().message;
+    auto trusted = liquid::runtime::block_on(
+        transparency::trust_checkpoint(*repository,
+                                       source.name(),
+                                       source.data_.old_checkpoint,
+                                       transparency::bootstrap_policy::pinned));
+    ASSERT_TRUE(trusted) << trusted.error().message;
+
+    auto client = transparency::log_client{source};
+    auto verified = liquid::runtime::block_on(client.verify_consistency(*repository));
+    ASSERT_FALSE(verified);
+    EXPECT_NE(verified.error().message.find("tile level=1 index=0 width=3"), std::string::npos);
+    EXPECT_EQ(source.consistency_requests, 0U);
+
+    source.missing_level.reset();
+    auto accepted = liquid::runtime::block_on(client.verify_consistency(*repository));
+    ASSERT_TRUE(accepted) << accepted.error().message;
+    EXPECT_EQ(source.consistency_requests, 1U);
 }
 
 TEST(transparency, requires_distinct_configured_witnesses) {

@@ -429,6 +429,9 @@ target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
 add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
 
+add_executable(liquid-transparency-measure EXCLUDE_FROM_ALL transparency_measure.cpp)
+target_link_libraries(liquid-transparency-measure PRIVATE liquid::liquid)
+
 if(LIQUID_BUILD_FRONTENDS)
   add_executable(liquid-edit-measure edit_measure.cpp)
   target_link_libraries(liquid-edit-measure PRIVATE liquid::liquid)

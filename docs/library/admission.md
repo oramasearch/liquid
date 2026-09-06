@@ -70,12 +70,14 @@ The internal `attestation_source` contract is one coroutine operation,
 implementation calls a node store at `GET /v1/attestations?subject=<digest>` and expects a JSON
 `attestations` array containing hex-encoded canonical attestation records. This is not a sync route.
 
-The `log_verifier` contract returns `included`, `not_included`, or `unavailable`. Its current lake
-implementation reads `GET /v1/transparency_checkpoint` and writes the last response to
-`--log-cache`. Complete tile/inclusion verification belongs to #83, so the implementation always
-returns `unavailable` until that work lands. Consequently `attestation+log` currently refuses with
-`log verifier unavailable`. Offline operation reads the cache and its configured age but refuses
-anything it cannot prove; it never treats cached presence as inclusion.
+The `log_verifier` contract returns `included`, `not_included`, or `unavailable`. The shared
+transparency client now performs #83's complete parent-tile walk, cache reauthentication, and
+checkpoint-bound inclusion verification. The admission lake adapter still reads only
+`GET /v1/transparency_checkpoint`, writes the last response to `--log-cache`, and returns
+`unavailable`; wiring that adapter to the shared client remains separate work. Consequently
+`attestation+log` currently refuses with `log verifier unavailable`. Offline operation reads the
+cache and its configured age but refuses anything it cannot prove; it never treats cached presence
+as inclusion.
 
 ## Decision record and stream
 
@@ -142,5 +144,5 @@ or mount a liquid store directory. A `liquid serve sync` double cannot satisfy t
 
 The webhook configuration, CRD, serving-certificate issuance, event adapter, and deployment
 ownership remain in oramasearch/k0s#15. Image projection and automatic statement emission remain in
-#28. Complete transparency verification remains in #83. Admission does not add runtime enforcement
-after a Pod has started and does not change lake.
+#28. Admission still needs to connect its checkpoint-only lake adapter to #83's shared verifier. It
+does not add runtime enforcement after a Pod has started and does not change lake.
