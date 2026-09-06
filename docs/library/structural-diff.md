@@ -73,6 +73,8 @@ C++, Python, JavaScript, TypeScript, Go, Rust, Java, Ruby, and Shell. Every othe
 lock mechanically reindents its committed sample and must return an empty formatting-only edit
 script. Separate tests cover comment changes, fallback labels, CLI text and JSON, ABI tail
 compatibility, and one parse per blob across a build followed by a diff.
+The shared-library test target exercises the matcher through its internal test boundary as well as
+the public repository result.
 
 The own-source measurement imported `a675cb9` (the pre-merge `origin/main`) and a second tree
 containing this change's 16 production source files, then ran a cold-cache comparison with:

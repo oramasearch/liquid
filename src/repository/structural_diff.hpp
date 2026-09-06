@@ -6,9 +6,10 @@
 
 namespace liquid::repository_detail {
 
-auto compare_structural(const parse_tree& old_tree,
-                        const parse_tree& new_tree,
-                        std::span<const std::byte> old_source,
-                        std::span<const std::byte> new_source) -> result<structural_diff>;
+LIQUID_EXPORT auto compare_structural(const parse_tree& old_tree,
+                                      const parse_tree& new_tree,
+                                      std::span<const std::byte> old_source,
+                                      std::span<const std::byte> new_source)
+    -> result<structural_diff>;
 
 } // namespace liquid::repository_detail
