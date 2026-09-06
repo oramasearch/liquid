@@ -27,6 +27,7 @@ that the table and `liquid --help` name the same commands.
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
@@ -72,6 +73,7 @@ that the table and `liquid --help` name the same commands.
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
 | `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
 | `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
+| `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 
 ## Output and errors
 
@@ -143,6 +145,29 @@ error: <code>: <message> (<context>)
 ```
 
 Invalid command usage exits with status 2 and starts with `error: usage:`.
+
+`resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
+Otherwise it reads canonical `package/1` files below `<path>/packages/`, or below `<path>` when it
+is itself the package directory. Specs containing spaces must be passed as one quoted argument.
+Text output prints each selected spec and digest, with dependencies indented beneath their root.
+`--json` prints the stable graph, including selection reasons, or conflict object. An unsatisfiable request prints its minimal
+attributed core and exits 1. `--explain` appends the reason list for every selected package;
+`--why <package>` prints only that package's explanation. With `--reuse`, `<path>/reuse.txt` must
+contain one already built concretised-spec digest per line; blank lines and lines beginning with
+`#` are ignored.
+## Node store commands
+
+`liquid node-store serve --root <path>` runs both node-store listeners. Optional flags are
+`--listen <unix://path>`, `--control-listen <address>`, and `--budget-bytes <count>`. Their
+environment defaults are `LIQUID_NODE_STORE_ROOT`, `LIQUID_NODE_STORE_LISTEN`,
+`LIQUID_CONTROL_LISTEN`, and `LIQUID_NODE_STORE_BUDGET_BYTES`; flags win. The issue #202 spelling
+includes the `serve` subcommand. The k0s #14 integration must use this spelling.
+
+`liquid node-store status [--control <address>] [--json]` reads the TCP `/v1` status.
+`liquid node-store mount <tree> --store <url> [--socket <path>]`, `unmount <tree>`, and
+`prefetch <tree>` are thin clients of the local Unix listener. The mount command reads an optional
+bearer from `LIQUID_TOKEN` and never prints it. The socket defaults to
+`/run/liquid/node-store.sock`, or to `LIQUID_NODE_STORE_LISTEN` with its `unix://` prefix removed.
 
 `write` is the scripted-agent file path. `--base` names the change the caller read and may append
 the repository journal cursor after `@`. Repeated `--depends-on` options declare other paths read

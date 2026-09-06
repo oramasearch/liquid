@@ -5,9 +5,10 @@
 > **Position:** Spack's resolution model is the best in existence and is the model
 > liquid follows. Nix's store model is the other half.
 >
-> **Status:** issue #27 implements `abi/1` extraction, stored descriptors, deterministic
-> compatibility reports, and signed comparisons for built shared libraries. Solver and package
-> consumers remain later work.
+> **Status:** implemented by issue #25: the public spec parser, canonical package and
+> concretised-spec records, package-universe loading, CDCL concretizer, lexicographic optimisation,
+> minimal attributed conflict cores, explanations, and `liquid resolve`. Issue #27 supplies the ABI
+> compatibility facts accepted by `resolve_options`.
 
 ## A dependency is a configured build, not a version
 
@@ -33,17 +34,19 @@ hdf5 @1.14.3 +mpi ~fortran %gcc@13.2 ^openmpi@5 target=zen4
 
 ## The solver
 
-A declarative constraint solver over **Answer Set Programming**, following Spack's
-move from a hand-written greedy resolver to Clingo.
+A declarative package encoding over liquid's own **conflict-driven clause-learning solver**,
+following the capabilities of Spack's move from a hand-written greedy resolver to Clingo without
+vendoring Clingo.
 
-Why ASP rather than SAT or PubGrub:
+Why an ASP-inspired declarative model rather than a greedy resolver or PubGrub alone:
 
-- The problem is genuinely **multi-dimensional** — versions, variants, compilers,
-  targets, virtual providers — not boolean satisfaction with a version axis.
+- The problem is genuinely **multi-dimensional** — versions, variants, compilers, targets and
+  virtual providers. Liquid grounds those dimensions to Boolean clauses without reducing the
+  public model to a version-only vocabulary.
 - It **optimises rather than merely satisfies**. "Any valid solution" is a bad answer
   when one requires rebuilding 400 packages and another requires none.
-- The **model is separable from the solver**. Resolution rules live in ASP where they
-  can be audited and extended, not buried in imperative code.
+- The **model is separable from the solver**. Resolution rules compile to clauses through a
+  private concretizer interface, keeping package policy auditable independently of CDCL search.
 - **Unsatisfiable cores** give real explanations.
 
 ### Optimisation objective
@@ -141,9 +144,12 @@ messages, and the escape hatch is an ordinary program rather than a language fea
 
 ## Open questions
 
-- **Concretisation latency.** Spack's solve can take minutes on large environments.
-  liquid inherits that risk and will need incremental re-solving.
-- **Whether to vendor Clingo or implement the solver.** Clingo is proven; a
-  dependency on it is a portability constraint.
+- ~~**Concretisation latency.**~~ Measured on the generated 500-package fan-in fixture on an Apple
+  Silicon macOS host: 80 ms cold and 81 ms for a one-root solve with all prior concretisations
+  offered for reuse, at load averages `{ 36.85 42.59 47.28 }`. The implementation currently
+  grounds each call independently; [`resolution.md`](../library/resolution.md) records the method.
+- ~~**Whether to vendor Clingo or implement the solver.**~~ **Resolved by Steve on 2026-09-05
+  (liquid-bridge decision 20): implement liquid's own CDCL solver behind the internal concretizer
+  interface; do not vendor Clingo.**
 - **How to seed the package repository.** A resolver with nothing to resolve is
   useless; importing from Spack, nixpkgs or conda-forge is the likely bootstrap.

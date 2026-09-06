@@ -403,6 +403,8 @@ add_library(libliquid
   src/git/sha1.cpp
   src/identity.cpp
   src/identity/taap.cpp
+  src/node_store.cpp
+  src/node_store/service.cpp
   src/crypto/crypto.cpp
   src/crypto/signature.cpp
   src/object.cpp
@@ -413,6 +415,7 @@ add_library(libliquid
   src/reapi/messages.cpp
   src/reapi/remote_client.cpp
   src/reapi/server.cpp
+  src/serve/http.cpp
   src/workers/protocol.cpp
   src/workers/control.cpp
   src/workers/scheduler.cpp
@@ -420,6 +423,10 @@ add_library(libliquid
   src/x509.cpp
   src/repository/diff.cpp
   src/repository/merge.cpp
+  src/resolve/records.cpp
+  src/resolve/concretizer.cpp
+  src/resolve/resolve.cpp
+  src/resolve/spec.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
   src/runtime/runtime.cpp
@@ -534,6 +541,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/history.cpp
     src/cli/identity.cpp
     src/cli/locks.cpp
+    src/cli/node_store.cpp
     src/cli/policy.cpp
     src/cli/provenance.cpp
     src/cli/sbom.cpp
@@ -545,6 +553,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/repo.cpp
     src/cli/trace.cpp
     src/cli/retain.cpp
+    src/cli/resolve.cpp
     src/cli/search.cpp
     src/cli/tree.cpp
     src/cli/verify.cpp
