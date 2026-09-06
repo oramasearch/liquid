@@ -57,6 +57,8 @@ checks a condition over the producer's output bytes before accepting a downstrea
 unchanged objects early cutoff without hiding a changed object from the linker.
 Refreshed saved actions retain their prior dependency order so invalidated producer outputs are
 known before any dependent plan is accepted.
+The exec-time hook is found relative to the running binary in a build tree or the installed
+`libexec/liquid` directory; its checkout-specific build path is never compiled into libliquid.
 Completed wrap reports include validation backlog, the most recent graph divergence, and
 incompatible linked-library comparisons. Unless
 verification is disabled, wrap schedules the combined graph and action sample after publication.

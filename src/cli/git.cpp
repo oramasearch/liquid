@@ -18,8 +18,27 @@ auto fail(const liquid::error& error) -> int {
 } // namespace
 
 auto git_import(int argc, char** argv) -> int {
+    if (argc == 1) {
+        auto repository =
+            liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
+        if (!repository) {
+            return fail(repository.error());
+        }
+        const auto report =
+            liquid::runtime::block_on(repository->import_tree(std::filesystem::path{argv[0]}));
+        if (!report) {
+            return fail(report.error());
+        }
+        std::println("files_seen={} changed={} bytes_hashed={} bytes_written={} drip={}",
+                     report->files_seen,
+                     report->changed,
+                     report->bytes_hashed,
+                     report->bytes_written,
+                     report->drip ? liquid::to_string(report->drip->value) : "none");
+        return 0;
+    }
     if (argc != 2 || std::string_view{argv[0]} != "git") {
-        std::println(stderr, "error: usage: import git <path> ()");
+        std::println(stderr, "error: usage: import <path> | import git <path> ()");
         return 2;
     }
     const auto path = std::filesystem::path{argv[1]};

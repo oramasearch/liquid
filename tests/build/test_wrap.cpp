@@ -267,10 +267,17 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
         fixture.project(), fixture.cache(), {"cmake", "-S", ".", "-B", "build", "-G", "Ninja"});
     ASSERT_TRUE(configured) << configured.error().message << ": " << configured.error().context;
     ASSERT_EQ(configured->exit, 0);
+    EXPECT_TRUE(std::filesystem::is_regular_file(fixture.project() / "build/CMakeCache.txt"));
     auto first =
         run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, false, 3);
     ASSERT_TRUE(first) << first.error().message << ": " << first.error().context;
     ASSERT_EQ(first->exit, 0);
+    auto cached_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(cached_repository) << cached_repository.error().message;
+    const auto imported_cache =
+        liquid::runtime::block_on(cached_repository->read("build/CMakeCache.txt"));
+    EXPECT_TRUE(imported_cache) << imported_cache.error().message;
     EXPECT_GE(first->processes_started, 3U);
     EXPECT_TRUE(std::filesystem::is_regular_file(fixture.project() / "build/wrapped"));
 
@@ -366,6 +373,8 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
         })) << liquid::to_string(tool);
     }
 
+    const auto before_second = repository->status();
+    ASSERT_TRUE(before_second) << before_second.error().message;
     auto second =
         run_wrap(fixture.project(), fixture.cache(), {"cmake", "--build", "build"}, false, 3);
     ASSERT_TRUE(second) << second.error().message << ": " << second.error().context;
@@ -373,6 +382,13 @@ TEST(BuildWrap, cmake_caches_children_outer_action_and_fixed_root_across_checkou
     EXPECT_EQ(second->processes_started, 0U);
     EXPECT_EQ(second->outer, liquid::cache_status::hit);
     EXPECT_EQ(second->hits + second->misses, second->actions);
+    EXPECT_LT(second->peak_rss_bytes, std::uint64_t{512 * 1024 * 1024});
+    auto after_second_repository =
+        liquid::runtime::block_on(liquid::repository::open(fixture.cache() / "repository"));
+    ASSERT_TRUE(after_second_repository) << after_second_repository.error().message;
+    const auto after_second = after_second_repository->status();
+    ASSERT_TRUE(after_second) << after_second.error().message;
+    EXPECT_EQ(after_second->pending_drips, before_second->pending_drips);
     auto statistics =
         liquid::runtime::block_on(liquid::build::cache_stats(fixture.project(), fixture.cache()));
     ASSERT_TRUE(statistics) << statistics.error().message;
