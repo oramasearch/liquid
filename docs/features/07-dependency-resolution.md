@@ -4,6 +4,10 @@
 >
 > **Position:** Spack's resolution model is the best in existence and is the model
 > liquid follows. Nix's store model is the other half.
+>
+> **Status:** issue #27 implements `abi/1` extraction, stored descriptors, deterministic
+> compatibility reports, and signed comparisons for built shared libraries. Solver and package
+> consumers remain later work.
 
 ## A dependency is a configured build, not a version
 

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "liquid/abi.hpp"
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/object.hpp"
@@ -67,6 +68,7 @@ struct sbom_record {
 [[nodiscard]] auto encode(const action_index_root& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const build_trace& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const sbom_record& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const abi_descriptor& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_execution_schedule(const execution_schedule& value)
     -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_attestation_body(const attestation& value)
@@ -87,6 +89,7 @@ struct sbom_record {
     -> result<action_index_root>;
 [[nodiscard]] auto decode_build_trace(std::span<const std::byte> bytes) -> result<build_trace>;
 [[nodiscard]] auto decode_sbom(std::span<const std::byte> bytes) -> result<sbom_record>;
+[[nodiscard]] auto decode_abi(std::span<const std::byte> bytes) -> result<abi_descriptor>;
 [[nodiscard]] auto decode_execution_schedule(std::span<const std::byte> bytes)
     -> result<execution_schedule>;
 [[nodiscard]] auto digest_of(algorithm hash_algorithm, std::span<const std::byte> bytes)

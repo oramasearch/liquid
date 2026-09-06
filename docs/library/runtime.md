@@ -22,11 +22,17 @@ workers. At process exit it stops the context, joins those threads, then destroy
 | `block_on` | CLI and tests | a new private context, run until its task completes |
 | `spawn` | long-lived I/O work | the process-wide shared runtime context |
 | `offload` | blocking CPU work | the compute thread pool; resumes on the caller executor |
+| `yield` | let other work run between steps of a long loop | posts the continuation to the caller executor |
 
 `spawn` reports its `result<void>` to a completion callback. `offload` moves the blocking
 callable into a coroutine frame and launches it on the compute pool. Completion posts a
 runtime-side wake to the caller executor; that wake queues the caller's continuation directly.
 The blocking pool never resumes the caller and never touches an executor-affine Capy event.
+`yield` is the way to give up the executor between steps of a long loop. It posts the caller's
+continuation and touches nothing afterwards; a zero `delay` is not a substitute, because Capy's
+`delay_awaitable::await_suspend` arms its timer before it registers its stop callback, and a
+timer that fires in that window resumes the coroutine before the callback exists, leaving the
+callback registered in memory the frame has already released (liquid #208).
 
 Use `runtime::as_io` when a liquid task must participate in Capy's `when_all` or `timeout`.
 The adapter preserves the liquid `result<T>` as the I/O payload; Capy's outer error code remains

@@ -25,6 +25,7 @@
 #include <mach-o/dyld.h>
 #endif
 
+#include "build/abi.hpp"
 #include "build/cache.hpp"
 #include "build/content.hpp"
 #include "build/executor.hpp"
@@ -1635,6 +1636,19 @@ runtime::task<void> record_rebuilt_action(repository& source,
     }
     report.cache.bytes_rebuilt += *bytes;
     add_timing(report, result_id{saved.result}, *value, cache_status::miss, start_offset);
+    auto abi_breaks = co_await build_detail::abi_breaks(source, *value);
+    if (!abi_breaks) {
+        co_return std::unexpected(abi_breaks.error());
+    }
+    for (auto& abi_break : *abi_breaks) {
+        const auto present = std::ranges::any_of(report.abi_breaks, [&](const auto& existing) {
+            return existing.output == abi_break.output &&
+                   same_digest(existing.previous, abi_break.previous);
+        });
+        if (!present) {
+            report.abi_breaks.push_back(std::move(abi_break));
+        }
+    }
     if (!reason_recorded) {
         auto action = co_await load_action(source, value->action);
         if (!action) {
@@ -1739,6 +1753,8 @@ runtime::task<std::optional<result_id>> import_remote_result(repository& source,
     }
     (*value)->provenance.reset();
     (*value)->sboms.clear();
+    (*value)->abis.clear();
+    (*value)->abi_compatibility.clear();
     (*value)->sig.clear();
     auto stored = co_await build_detail::store_result_with_provenance(source, **value);
     if (!stored) {

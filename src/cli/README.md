@@ -3,7 +3,8 @@
 Each source file maps one command group to public libliquid calls. `wrap.cpp` parses build-wrapper
 options and repeatable named result/tree inputs, calls `liquid::build::wrap`, and prints the
 canonical output tree, action and cache counts, per-tier action and byte counts, phase attribution,
-the critical path, and record-derived miss details for `--explain`.
+the critical path, record-derived miss details for `--explain`, and incompatible library reports.
+It applies `--fail-on-abi-break` after a successful build.
 `trace.cpp` implements profiled build invocation, Chrome trace export, and `why-slow` entirely
 through the public observability API. Text and Chrome trace projections include the recorded
 execution decision and every cost-model input. `why.cpp` implements `liquid why` and `liquid cache
@@ -39,6 +40,8 @@ The same command group implements `replay`: it parses an action or result plus `
 through public build APIs. It verifies before writing native JSON or the requested DSSE projection.
 `sbom.cpp` selects SPDX or CycloneDX, resolves a graph-derived document through the public build
 API, and uses the public foreign-binary path only when no producing result exists.
+`abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
+the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
 
 `policy.cpp` implements `policy check` and `policy explain` through public build APIs. It prints
 canonical rule configuration and per-input verified-identity counts without reading the store
@@ -79,5 +82,7 @@ also name the non-hermetic-read reason and its path for remote-eligibility diagn
 Status also projects daemon graph-validation backlog and the last divergence in text and JSON.
 Wrap output includes its graph backlog and last divergence record.
 
-`symbols.cpp` loads the compiler frontend when installed, falls back to tree-sitter, and presents
-the public symbol record without inspecting private repository storage.
+`symbols.cpp` detects the language from the public registry's extension table, uses the compiler
+frontend when it supports that language, falls back to the locked tree-sitter grammar, and presents
+the public symbol record without inspecting private repository storage. `version --json` includes
+the canonical grammar-lock digest alongside the release version.

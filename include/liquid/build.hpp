@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "liquid/abi.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/export.hpp"
 #include "liquid/frontend.hpp"
@@ -261,8 +262,10 @@ struct LIQUID_EXPORT action_result {
     std::optional<std::chrono::sys_seconds> started_at;
     std::optional<std::chrono::sys_seconds> finished_at;
     std::optional<digest> provenance;
-    std::uint64_t record_version{3};
+    std::uint64_t record_version{4};
     std::vector<digest> sboms;
+    std::vector<digest> abis;
+    std::vector<digest> abi_compatibility;
     std::optional<execution_schedule> schedule;
     std::optional<digest> output_tree;
 };
@@ -473,6 +476,12 @@ struct LIQUID_EXPORT wrap_report {
     std::uint64_t graph_validation_backlog{};
     std::optional<graph_validation_record> last_graph_divergence;
     std::optional<digest> output_tree;
+    struct abi_break {
+        std::string output;
+        digest previous;
+        abi_report report;
+    };
+    std::vector<abi_break> abi_breaks;
 };
 
 struct LIQUID_EXPORT known_output {

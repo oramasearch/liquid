@@ -185,6 +185,7 @@ result  { v, kind:"result", action: digest, exit: int, outputs: [ { path, mode, 
           started_at: time, finished_at: time, provenance: digest(attestation),
           output_tree: digest(tree),
           sboms: [ digest(attestation) … ],
+          abis: [ digest(abi/1) … ], abi_compatibility: [ digest(attestation) … ],
           schedule: { decision, history, size_class, input_bytes, remote_state_queried,
                       remote_missing_bytes, remote_queue_depth, remote_cache_locality_permille,
                       batch_supported, batch_size, local_estimate_ms, remote_estimate_ms, reason },
@@ -194,16 +195,18 @@ build_trace { v, kind:"build_trace", wall_ms, actions: [ { result, action, outpu
               cache: { hits, misses, bytes_served, bytes_rebuilt, bytes_avoided } }
 ```
 
-New result records use version 4. Version 4 adds `output_tree`, the canonical tree containing all
-result outputs. The signed result is therefore the producer's claim that the action input tree
-produced those content-addressed bytes. `build::known_outputs(repository&)` returns the distinct
-`{input_tree, output_tree}` pairs from signature-valid results without adding another record kind.
-Version 3 added phase durations that are non-overlapping and whose sum is the
+New result records use version 4. Its phase durations are non-overlapping and their sum is the
 recorded action duration: queue wait, sandbox preparation, tool execution, result analysis and
-hashing, then local-store writes. Version 3 adds the immutable scheduling decision and every cost
-model input; it does not change the five timing phases. The decoder continues to accept versions 1
-through 3 and maps version 1's `upload_ms` value to the store phase. Remote transfer is not folded into
-local store time; absent bytes and the transfer estimate are explicit schedule fields.
+hashing, then local-store writes. Version 4 adds optional `output_tree`, the canonical tree containing
+all locally collected result outputs, plus descriptor and compatibility-attestation references for
+shared-library outputs. A REAPI metadata bridge may use version 4 before a local output tree is
+available. When present, the signed result is the producer's claim that the action input tree produced
+those content-addressed bytes. `build::known_outputs(repository&)` returns the distinct `{input_tree,
+output_tree}` pairs from signature-valid results without adding another record kind. Version 3 added
+the immutable scheduling decision and every cost model input without changing the five timing phases.
+The decoder continues to accept versions 1 through 3 and maps version 1's `upload_ms` value to the
+store phase. Remote transfer is not folded into local store time; absent bytes and the transfer
+estimate are explicit schedule fields.
 
 - The **toolchain is an input tree** (features/06): compilers, sysroot and tools are
   materialised into the sandbox from the store and addressed by content; the `toolchain`
@@ -332,8 +335,8 @@ Issue #11 implements both stages through `src/build/cache.{hpp,cpp}`. Validation
 manifest path from the action's current input-tree record and compares the referenced blob digest;
 it never hashes a checkout path. Missing paths have no actual digest. Results are tried newest
 first. A candidate is served only when its result and action records decode, the action derives the
-same candidate key, the producer's TAAP `result` signature and referenced provenance and SBOMs verify, every
-manifest entry matches, and every output and stream blob record still exists.
+same candidate key, the producer's TAAP `result` signature and referenced provenance, SBOM, and ABI
+records verify, every manifest entry matches, and every output and stream blob record still exists.
 `action_result::cache` and `why` describe the current execution request and are not part of the
 immutable producer-signed result bytes.
 `src/build/why.cpp` turns recorded comparisons into the public `why_report` and persists the
