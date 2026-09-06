@@ -68,9 +68,12 @@ owning issue in `error::context`.
 | `liquid/frontend.hpp` | #65, #66, #193 | implemented | checked shared/static frontend loading, language registry, source units, symbol-record codec, the unit-keyed query-graph coordinator, and the shared diagnostic value used by build events |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/node_store.hpp` | #202 | implemented | per-node shared chunk store, metadata-only image receipt, reference-counted read-only image mounts, hydration/reuse counters, logical byte budget and remote-content eviction, local snapshotter API, and TCP control surfaces |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #195, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, path history and restore, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
+| `liquid/resolve.hpp` | #25, #27 | implemented | plain spec/package/concretisation values, canonical record codecs, filesystem and repository universe loading, reuse, known-output and ABI-compatibility inputs, asynchronous CDCL resolution, minimal attributed conflict cores, stable explanations and JSON |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #85, #86, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; flow-controlled memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; stale-base validation; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted REAPI remote, agent, and flow configuration, typed retention policy, retention explanations, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #111 | implemented (#4, #7, #53, #111); declared (#51) | TAAP `actor`, `signer`, identity rotation and chain verification, versioned data-key rotation, keyring and custody providers |
@@ -81,6 +84,7 @@ owning issue in `error::context`.
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
+| `liquid/sync.hpp` | #160, #165, #177, #189, #202, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, whole-graph and metadata-only `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull, node stores, and lake clients |
 | `liquid/sync.hpp` | #85, #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, peer flow rejection and retry reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 
 ### `liquid/error.hpp`
@@ -422,6 +426,41 @@ injected action executor only when the symbol query is demanded.
 `repository::store_symbols(record)` stores and associates a record, while
 `repository::symbols(subject)` returns the associated public value.
 
+### `liquid/node_store.hpp`
+
+```cpp
+struct node_store_options {
+  std::filesystem::path root;
+  std::string listen{"unix:///run/liquid/node-store.sock"};
+  std::string control_listen{"127.0.0.1:8082"};
+  std::uint64_t budget_bytes{};
+};
+struct mount_request { digest tree; std::string store_url; std::string bearer; };
+struct mount_result {
+  std::filesystem::path path; digest tree;
+  std::uint64_t records_fetched, bytes_remote;
+};
+struct unmount_request {
+  std::optional<digest> tree;
+  std::optional<std::filesystem::path> path;
+};
+struct prefetch_request { digest tree; };
+struct node_store_mount {
+  digest tree; std::filesystem::path path; std::uint32_t references;
+  std::uint64_t chunks_fetched, bytes_fetched, bytes_avoided, hydrated_bytes;
+};
+struct node_store_status {
+  std::uint64_t store_bytes, budget_bytes, evictions;
+  std::vector<node_store_mount> mounts;
+  std::optional<std::string> last_error;
+};
+runtime::task<void> serve_node_store(node_store_options);
+```
+
+The Unix listener alone exposes mount lifecycle calls. The TCP control listener exposes status,
+attestation bytes, budget and eviction operations, OpenAPI, metrics, and MCP. See
+[`node-store.md`](node-store.md) and [`../api/node-store.md`](../api/node-store.md).
+
 ### `liquid/store.hpp`
 
 ```cpp
@@ -431,6 +470,9 @@ class blob_write_through {
                                   std::span<const digest> chunks,
                                   std::span<const std::uint64_t> chunk_sizes) = 0;
 };
+using hydration_observer = std::function<runtime::task<void>(
+    digest content, digest chunk, std::uint64_t bytes, bool content_complete)>;
+using remote_access_observer = std::function<void(digest content)>;
 struct store_options {
   algorithm hash_algorithm{algorithm::blake3};
   std::uint64_t pack_size{};
@@ -439,6 +481,8 @@ struct store_options {
   bool durable{};
   std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources;
   std::shared_ptr<blob_write_through> write_through;
+  hydration_observer on_hydration;
+  remote_access_observer on_remote_access;
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -461,6 +505,9 @@ class store {                          // the chunk store: chunks, packs, liquid
  public:
   static runtime::task<store> open(std::filesystem::path, store_options = {});
   runtime::task<digest> put(std::vector<std::byte>);              // chunked, deduplicated, indexed
+  runtime::task<void> register_remote_source(
+      std::string, std::shared_ptr<remote_blob_source>);          // add/replace after open
+  runtime::task<std::uint64_t> local_bytes();                     // live unique raw chunk bytes
   runtime::task<digest> put_file(std::filesystem::path);          // streams from disk; a 40 GB file never sits in memory
   runtime::task<void> get_to_file(digest, std::filesystem::path); // streams to disk
   runtime::task<std::vector<std::byte>> get(digest);              // verified on read
@@ -546,6 +593,7 @@ struct sync_report {
   std::vector<sync_ref_outcome> references; std::uint64_t retry_after_ms;
   std::string exhausted_scope;
 };
+struct sync_metadata_report { std::uint64_t trees, blobs, bytes_remote; };
 struct sync_endpoint_options { /* token, cursor, batch size */ bool atomic; };
 struct sync_ref_update {
   std::string name; std::optional<change_id> old_head; change_id new_head; bool fast_forward;
@@ -570,6 +618,7 @@ class sync_session {
  public:
   runtime::task<sync_transfer_report> send(std::span<const digest> roots);
   runtime::task<sync_transfer_report> receive(std::span<const digest> roots);
+  runtime::task<sync_metadata_report> receive_metadata(std::span<const digest> roots);
 };
 class sync_endpoint final : public remote_blob_source {
  public:
@@ -590,6 +639,8 @@ the byte-span handlers and do not include private codec headers.
 upstream directory sync messages, refs, and referenced object roots. `import_drips(span)` verifies
 and applies the entire span against candidates before one checkpoint. The endpoint uses the protocol
 in [sync.md](sync.md); pack frames remain private wire data.
+`receive_metadata` accepts tree roots, stores only tree and blob records, registers blob content at
+the session's remote source and instance, and reports fetched record counts plus bytes still remote.
 
 ### `liquid/delta.hpp`
 
@@ -1411,6 +1462,8 @@ access, compact/shallow metadata checkpoints, upstream sync framing, and patch o
 (manifest, segments, BM25F term records, and positional trigrams), `src/vfs/` (Cloud
 Files, File Provider, FUSE), `src/runtime/` (Corosio), `src/identity/` (the TAAP implementation and
 key custody providers). Their headers live beside their sources, never under `include/`.
+The `src/resolve/` concretizer and CDCL clauses are also private; public callers provide package
+records and receive content-addressed concretisations without depending on the engine encoding.
 
 ## ABI policy
 

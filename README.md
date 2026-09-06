@@ -125,6 +125,10 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > bounded requeue after worker loss, size-class placement from #18's recorded decision, REAPI
 > Execution and ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces.
 > Measured transfer timing remains Phase 3 work.
+> The per-node runtime chunk store is implemented with metadata-only image receipt,
+> reference-counted read-only VFS mounts, shared-chunk reuse counters, logical byte-budget
+> eviction, a local snapshotter listener, TCP health/metrics/REST/OpenAPI/MCP control, and the
+> `liquid node-store` CLI. The containerd proxy snapshotter remains in k0s #14.
 > Repository `config.policy` rules can require registered-profile attestations from approved builders
 > for source and toolchain inputs before execution; `liquid policy check` evaluates a cached target
 > without building, and the policy digest isolates cache candidates.
@@ -182,6 +186,15 @@ and Railway** over one content-addressed store, with identity, secrets and PKI.
 > atomic manifest replacement makes the whole change visible at once. Identical blobs are indexed
 > once even when several paths refer to them. Named refs use snapshot-specific index slots.
 
+> **Phase 5 dependency resolution is implemented.** Canonical
+> `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
+> concrete dependencies, compiler and target constraints, conflicts, and patches. The public
+> Spack-style parser reports exact error columns, while directory and repository universes use the
+> documented `packages/` tree. Liquid's own CDCL engine chooses virtual providers, binds compilers
+> as dependencies, applies target-family fallback, optimises reuse before freshness and defaults,
+> and returns minimal attributed conflict cores. `liquid resolve` prints the graph, stable JSON, or
+> package-selection explanations.
+
 ## Where this sits
 
 liquid is an **Orama** project (`oramasearch/liquid`, private). It is one module of
@@ -237,6 +250,7 @@ and Zetta's.
 - [`docs/cli/test.md`](docs/cli/test.md) — test discovery, filtering, cached execution, and output.
 - [`docs/library/sbom.md`](docs/library/sbom.md) — graph-derived SPDX/CycloneDX SBOMs, signed records, binary inference, and verification.
 - [`docs/library/abi.md`](docs/library/abi.md) — binary ABI extraction, stored descriptors, compatibility reports, attestations, and CLI use.
+- [`docs/library/resolution.md`](docs/library/resolution.md) — package and concretised records, spec parsing, the private CDCL engine boundary, explanations, and solver measurements.
 
 | | |
 |---|---|

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "liquid/store.hpp"
+#include "objects/records.hpp"
 #include "repository/store_access.hpp"
 #include "store/references.hpp"
 
@@ -54,11 +55,18 @@ auto read_remote_object(remote_blob_source& peer, std::string instance, digest i
 struct sync_session::impl {
     store* local{};
     remote_blob_source* peer{};
+    std::string source;
     std::string instance;
 };
 
 sync_session::sync_session(store& local, remote_blob_source& peer, std::string instance)
-    : impl_(std::make_unique<impl>(impl{&local, &peer, std::move(instance)})) {}
+    : sync_session(local, peer, instance, instance) {}
+
+sync_session::sync_session(store& local,
+                           remote_blob_source& peer,
+                           std::string source,
+                           std::string instance)
+    : impl_(std::make_unique<impl>(impl{&local, &peer, std::move(source), std::move(instance)})) {}
 
 sync_session::~sync_session() = default;
 sync_session::sync_session(sync_session&&) noexcept = default;
@@ -159,6 +167,109 @@ runtime::task<sync_transfer_report> sync_session::receive(std::span<const digest
         const auto references = registry.extract(kind, bytes);
         for (const auto& reference : references.digests) {
             pending.push_back(reference);
+        }
+    }
+    co_return report;
+}
+
+runtime::task<sync_metadata_report> sync_session::receive_metadata(std::span<const digest> roots) {
+    if (!impl_ || !impl_->local || !impl_->peer) {
+        co_return std::unexpected(sync_error(errc::invalid_argument, "sync session is empty"));
+    }
+    if (impl_->source.empty()) {
+        co_return std::unexpected(
+            sync_error(errc::invalid_argument, "metadata source id is empty"));
+    }
+    enum class metadata_kind : std::uint8_t { tree, blob };
+    struct pending_metadata {
+        digest id;
+        metadata_kind kind{metadata_kind::tree};
+    };
+    auto pending = std::deque<pending_metadata>{};
+    for (const auto& root : roots) {
+        pending.push_back({root, metadata_kind::tree});
+    }
+    auto visited = std::set<std::string>{};
+    auto report = sync_metadata_report{};
+    while (!pending.empty()) {
+        const auto item = pending.front();
+        pending.pop_front();
+        if (!visited.insert(to_string(item.id)).second) {
+            continue;
+        }
+        auto present = co_await impl_->local->contains(item.id);
+        if (!present) {
+            co_return std::unexpected(present.error());
+        }
+        auto bytes = std::vector<std::byte>{};
+        if (*present) {
+            auto loaded = co_await impl_->local->get(item.id);
+            if (!loaded) {
+                co_return std::unexpected(loaded.error());
+            }
+            bytes = std::move(*loaded);
+        } else {
+            auto loaded = co_await read_remote_object(*impl_->peer, impl_->instance, item.id);
+            if (!loaded) {
+                co_return std::unexpected(loaded.error());
+            }
+            auto stored = co_await repository_detail::store_access::put_verified(
+                *impl_->local, item.id, *loaded);
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+            if (!same_digest(*stored, item.id)) {
+                co_return std::unexpected(sync_error(
+                    errc::corrupt, "stored metadata identity changed", to_string(item.id)));
+            }
+            bytes = std::move(*loaded);
+            if (item.kind == metadata_kind::tree) {
+                ++report.trees;
+            } else {
+                ++report.blobs;
+            }
+        }
+        if (item.kind == metadata_kind::tree) {
+            auto tree = objects::decode_tree(bytes);
+            if (!tree) {
+                co_return std::unexpected(tree.error());
+            }
+            for (const auto& entry : tree->entries) {
+                if (entry.kind == node_kind::tree || entry.kind == node_kind::repo) {
+                    pending.push_back({entry.ref, metadata_kind::tree});
+                    continue;
+                }
+                if (entry.kind == node_kind::blob) {
+                    pending.push_back({entry.ref, metadata_kind::blob});
+                    continue;
+                }
+                co_return std::unexpected(
+                    sync_error(errc::corrupt, "image tree contains a non-file entry", entry.name));
+            }
+            continue;
+        }
+        auto blob = objects::decode_blob(bytes);
+        if (!blob) {
+            co_return std::unexpected(blob.error());
+        }
+        if (blob->content.alg != algorithm::blake3 && blob->content.alg != algorithm::sha256) {
+            co_return std::unexpected(sync_error(errc::unsupported,
+                                                 "blob record has no remote-capable content digest",
+                                                 to_string(item.id)));
+        }
+        blob->remote = remote_blob_location{impl_->source, impl_->instance};
+        auto registered = co_await impl_->local->register_remote(*blob);
+        if (!registered) {
+            co_return std::unexpected(registered.error());
+        }
+        for (auto index = std::size_t{}; index < blob->chunks.size(); ++index) {
+            auto chunk_present = co_await impl_->local->contains(blob->chunks[index]);
+            if (!chunk_present) {
+                co_return std::unexpected(chunk_present.error());
+            }
+            if (!*chunk_present) {
+                report.bytes_remote += blob->chunk_sizes[index];
+            }
         }
     }
     co_return report;
