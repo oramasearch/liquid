@@ -3,11 +3,14 @@
 **What.** The HTTP/1.1 protocol used by libliquid clients and lake to exchange repository
 metadata and content. lake's `docs/api/sync.md` mirrors this page.
 
-**Status: implemented by liquid #160, #165, #177, and #189.** Metadata export and import are
+**Status: implemented by liquid #160, #165, #177, #189, and the shared request factoring in
+#201.** Metadata export and import are
 bounded by caller-provided spans. Imports verify the selected metadata before changing repository
 state, while reference authorization and application are reported per ref. Content negotiation and
 transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
 owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
+The endpoint uses the shared private URL, socket, TLS, request, response, chunked-decoding, and
+bearer implementation in `src/net/http_client.hpp`.
 
 ## Repository URL and requests
 

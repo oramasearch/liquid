@@ -15,8 +15,6 @@ graph, associates new reachability with change callbacks, accumulates named verd
 accepted ref set, applies the optional atomic rule, exports pull pages, answers missing-object
 queries and logical range reads, verifies pack uploads, and encodes canonical error bodies.
 
-`endpoint.cpp` is the private Corosio and `oramasearch/http` adapter. It parses HTTP/HTTPS repository
-URLs, resolves and connects on the caller's Capy executor, supports content-length and chunked
-responses, supplies bearer authentication, validates or synthesizes legacy push outcomes, and
-composes metadata with the object session for push and pull. The public types contain no transport
-implementation types.
+`endpoint.cpp` adapts sync bodies to the shared private Corosio HTTP/1.1 client in `src/net/`. It
+validates or synthesizes legacy push outcomes and composes metadata with the object session for
+push and pull. The public types contain no transport implementation types.
