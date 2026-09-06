@@ -452,12 +452,13 @@ repository document. Nested repository entries retain their local child index be
 objects live in a separate repository store; directory pages remain paged. `LIQUID_JOURNAL` is a
 fixed-size pointer to a paged checkpoint; signed drip bytes are bounded to 64 KiB before another
 checkpoint is published. Each loaded directory is a private CRDT document cached by its `node_id`;
- saving a checkpoint prefers `save_compact()` bytes, verifies that they reopen as a full document,
+saving a checkpoint prefers `save_compact()` bytes, verifies that they reopen as a full document,
 and falls back to complete upstream history bytes when needed. The checked bytes refresh the
 `dirs` entry and replace the active instance. Journal publication persists only cached directories;
 a checkpoint synchronizes reachable directories before publication. A checkpoint occurs at `cut`
-and after the configured
-interval (64 by default). The checkpoint digest and heads are published before journal entries
+and after the configured interval (64 by default). Session undo follows the same bounded journal
+publication path rather than serializing a repository document directly. The checkpoint digest and
+heads are published before journal entries
 covered by those heads are retired. On open, each directory document is loaded sync-capable and
 restored lazily against the journaled working tree before its next mutation. Matching entries are
 left intact, so recovery is idempotent across process restarts.

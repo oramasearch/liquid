@@ -3287,12 +3287,7 @@ struct repository::impl {
             }
         }
         current.pending_drips += planned->report.applied.size();
-        auto encoded = encode_repository_document(current);
-        if (!encoded) {
-            rollback();
-            co_return std::unexpected(encoded.error());
-        }
-        auto saved = co_await store_detail::write_file(journal_marker(), std::move(*encoded));
+        auto saved = co_await checkpoint_or_journal();
         if (!saved) {
             rollback();
             co_return std::unexpected(saved.error());
