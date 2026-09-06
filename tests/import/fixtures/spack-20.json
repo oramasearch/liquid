@@ -1,0 +1,568 @@
+{
+  "packages": [
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "zlib",
+      "patches": [
+        {
+          "sha256": null,
+          "url": "https://example.invalid/zlib-relocation.patch",
+          "when": null
+        }
+      ],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "8483dc6ec3b3afcaba2907ddb3187026357f294352579a68183f97fa097d9c12",
+          "url": "https://example.invalid/zlib-1.1.0.tar.gz",
+          "version": "1.1.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "bzip2",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "906f0e85152d66f29b9de8757534c0c0600875583baf62262bbde806f9286a6c",
+          "url": "https://example.invalid/bzip2-1.2.0.tar.gz",
+          "version": "1.2.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "xz",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "dbcbc2c193e2cafed9f696148cf44ca4315274239604e1786ee16f287a3b1df9",
+          "url": "https://example.invalid/xz-1.3.0.tar.gz",
+          "version": "1.3.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "expat",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "5f372cb1090e0bed69f013fe4feef01cda5077574cb56dfd2236814f4e589a1f",
+          "url": "https://example.invalid/expat-1.4.0.tar.gz",
+          "version": "1.4.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "libffi",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "98aefe98c29a03b13f3e4ad351df70b7f61d251698d944882003bb170cf28ca6",
+          "url": "https://example.invalid/libffi-1.5.0.tar.gz",
+          "version": "1.5.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "pcre2",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "cbec7301c0a906db7282052238404456adc217f6519fccc3d2a72a80d8927eec",
+          "url": "https://example.invalid/pcre2-1.6.0.tar.gz",
+          "version": "1.6.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [
+        {
+          "constraint": "1:",
+          "name": "zlib",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        }
+      ],
+      "losses": [],
+      "name": "libpng",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "beb755076731b90b0681b1695ffd888bafe54069eb72c3bc796effb98ff5bbfc",
+          "url": "https://example.invalid/libpng-1.7.0.tar.gz",
+          "version": "1.7.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "sqlite",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "f90321f49f8c8c3565e89f8330a5e00497d8f78c8f1749ce9ee4cb5249cce8b7",
+          "url": "https://example.invalid/sqlite-1.8.0.tar.gz",
+          "version": "1.8.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "ncurses",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "fa08855913a3dd4d6020f42b839d547e9c7d2e6f2f877313c991f0565b7fa0a8",
+          "url": "https://example.invalid/ncurses-1.9.0.tar.gz",
+          "version": "1.9.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [
+        {
+          "constraint": null,
+          "name": "ncurses",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        }
+      ],
+      "losses": [],
+      "name": "readline",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "50dd511f586a79a292a98721ef9d81a0226705486b488c19798c084cdfe03cf6",
+          "url": "https://example.invalid/readline-1.10.0.tar.gz",
+          "version": "1.10.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "cmake",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "4c8ea24b12ff9655a220d3df3f0c3ae66dbad1ac1d3dd10de9b992fd2db06476",
+          "url": "https://example.invalid/cmake-1.11.0.tar.gz",
+          "version": "1.11.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "openssl",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "2549debd610d3ebfb4100d6a78e510958ff4179c1d398fa6d086451bbb6feaf1",
+          "url": "https://example.invalid/openssl-1.12.0.tar.gz",
+          "version": "1.12.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "openmpi",
+      "patches": [],
+      "provides": [
+        {
+          "name": "mpi",
+          "version": "3:5"
+        }
+      ],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "091a078c5e7093808e5fb423a806b252c336b3a97381ee864b06df1799a5a6b7",
+          "url": "https://example.invalid/openmpi-1.13.0.tar.gz",
+          "version": "1.13.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [
+        {
+          "constraint": "~mpi",
+          "message": "MPI-disabled HDF5 is excluded",
+          "when": null
+        }
+      ],
+      "dependencies": [
+        {
+          "constraint": null,
+          "name": "zlib",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        },
+        {
+          "constraint": "3:",
+          "name": "mpi",
+          "types": [
+            "build",
+            "link",
+            "run"
+          ],
+          "virtual": true,
+          "when": "+mpi"
+        }
+      ],
+      "losses": [
+        {
+          "field": "build.arguments",
+          "kind": "dynamic_value",
+          "reason": "Fortran arguments depend on the selected compiler"
+        },
+        {
+          "field": "build.phases",
+          "kind": "custom_phase",
+          "reason": "cache_test_examples"
+        }
+      ],
+      "name": "hdf5",
+      "patches": [],
+      "provides": [],
+      "variants": [
+        {
+          "default": true,
+          "name": "mpi",
+          "values": [
+            true,
+            false
+          ],
+          "when": null
+        }
+      ],
+      "versions": [
+        {
+          "sha256": "9d00a3ee5d3f54e0b1db1f6440b6a4b50614fe2a282fe5eb0697ee1c96d0c3c6",
+          "url": "https://example.invalid/hdf5-1.14.0.tar.gz",
+          "version": "1.14.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [
+        {
+          "constraint": null,
+          "name": "hdf5",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        },
+        {
+          "constraint": null,
+          "name": "zlib",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        }
+      ],
+      "losses": [],
+      "name": "netcdf-c",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "69c7bac593ba9537d2b7a28303b0da629c547642a82ee7f8a2db4922629e271a",
+          "url": "https://example.invalid/netcdf-c-1.15.0.tar.gz",
+          "version": "1.15.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "openblas",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "1cde5e3b71a521c4b03fb71dc9d37e37f29160f7131c4b2ec7feec29bbfd2668",
+          "url": "https://example.invalid/openblas-1.16.0.tar.gz",
+          "version": "1.16.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "fftw",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "6f96c1e6595e5ec949b86edd6f867d823b159025b0da21a4ed2cf3917ff54705",
+          "url": "https://example.invalid/fftw-1.17.0.tar.gz",
+          "version": "1.17.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "cmake"
+      },
+      "conflicts": [],
+      "dependencies": [
+        {
+          "constraint": null,
+          "name": "openssl",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        },
+        {
+          "constraint": null,
+          "name": "sqlite",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        },
+        {
+          "constraint": null,
+          "name": "libffi",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        }
+      ],
+      "losses": [],
+      "name": "python",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "e8c7d40d5ac74bbaf546af9b8377bef0f4ca43407ce4d1a7cf5dff0d11d49e41",
+          "url": "https://example.invalid/python-1.18.0.tar.gz",
+          "version": "1.18.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "autotools"
+      },
+      "conflicts": [],
+      "dependencies": [
+        {
+          "constraint": null,
+          "name": "zlib",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        },
+        {
+          "constraint": null,
+          "name": "bzip2",
+          "types": [
+            "link"
+          ],
+          "virtual": false,
+          "when": null
+        }
+      ],
+      "losses": [],
+      "name": "boost",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "47554ac6ef006405a9632b02927336a54a1ae724ff69583496dcf16263d2555a",
+          "url": "https://example.invalid/boost-1.19.0.tar.gz",
+          "version": "1.19.0"
+        }
+      ]
+    },
+    {
+      "build": {
+        "arguments": [],
+        "system": "python"
+      },
+      "conflicts": [],
+      "dependencies": [],
+      "losses": [],
+      "name": "pkgconf",
+      "patches": [],
+      "provides": [],
+      "variants": [],
+      "versions": [
+        {
+          "sha256": "112a80f2ba633e802af79f37169bc765b229a4a883c59a28bd5ea60ec5b340cf",
+          "url": "https://example.invalid/pkgconf-1.20.0.tar.gz",
+          "version": "1.20.0"
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "carrier": "liquid wrapped action",
+    "profile": "slsa_provenance/1"
+  },
+  "roots": [
+    "hdf5+mpi",
+    "netcdf-c",
+    "openblas",
+    "fftw",
+    "python",
+    "cmake",
+    "boost",
+    "openssl"
+  ],
+  "schema": "spack-export/1",
+  "spack": {
+    "checkout_digest": "sha256:23d3c92e495aee9ab284c9c78a2a32bc2e5937a92f6bcb7e33fd73ccb37cc566",
+    "revision": "0123456789abcdef0123456789abcdef01234567"
+  }
+}

@@ -1,0 +1,21 @@
+source zlib-1.1.0 {
+    digest: sha256:8483dc6ec3b3afcaba2907ddb3187026357f294352579a68183f97fa097d9c12
+    kind: archive
+    url: "https://example.invalid/zlib-1.1.0.tar.gz"
+}
+
+package zlib {
+    versions: [1.1.0]
+    patch {
+        digest: sha256:2002ecf9d402d790b3a4c990d638d3abb2517e4d60c535419578f75eda7e4a91
+    }
+}
+
+build zlib {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/8483dc6ec3b3afcaba2907ddb3187026357f294352579a68183f97fa097d9c12 -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["zlib-1.1.0"]
+    install {
+        layout: prefix
+    }
+}

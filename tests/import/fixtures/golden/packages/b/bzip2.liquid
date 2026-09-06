@@ -1,0 +1,18 @@
+source bzip2-1.2.0 {
+    digest: sha256:906f0e85152d66f29b9de8757534c0c0600875583baf62262bbde806f9286a6c
+    kind: archive
+    url: "https://example.invalid/bzip2-1.2.0.tar.gz"
+}
+
+package bzip2 {
+    versions: [1.2.0]
+}
+
+build bzip2 {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/906f0e85152d66f29b9de8757534c0c0600875583baf62262bbde806f9286a6c -C source --strip-components=1; cmake -S source -B build -DCMAKE_INSTALL_PREFIX=/; cmake --build build; DESTDIR=$PWD/out/prefix cmake --install build"]
+    outputs: [path "out/prefix"]
+    sources: ["bzip2-1.2.0"]
+    install {
+        layout: prefix
+    }
+}

@@ -13,6 +13,7 @@ struct archive {
     std::string name;
     std::string version;
     std::vector<std::string> files;
+    std::vector<package::file> data_files;
 };
 
 [[nodiscard]] auto write(const package_metadata& metadata,

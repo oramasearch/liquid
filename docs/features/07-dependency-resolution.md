@@ -174,5 +174,9 @@ implemented in [configuration-language.md](../library/configuration-language.md)
 - ~~**Whether to vendor Clingo or implement the solver.**~~ **Resolved by Steve on 2026-09-05
   (liquid-bridge decision 20): implement liquid's own CDCL solver behind the internal concretizer
   interface; do not vendor Clingo.**
-- **How to seed the package repository.** A resolver with nothing to resolve is
-  useless; importing from Spack, nixpkgs or conda-forge is the likely bootstrap.
+- ~~**How to seed the package repository.**~~ **Resolved by issue #75: export a digest-pinned
+  Spack checkout through Spack's own Python API, then import its versioned JSON into canonical
+  `.liquid` documents and `package/1` records.** Spack is first because liquid already follows its
+  package model. nixpkgs would require a Nix evaluator and conda-forge carries less build structure;
+  both remain later options. The mapping and loss accounting are in
+  [`import-spack.md`](../library/import-spack.md).

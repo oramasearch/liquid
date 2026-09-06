@@ -134,11 +134,12 @@ and target builds are Capy tasks. None starts a raw thread, and no coroutine cal
 
 ## Sources by digest
 
-`repository::fetch_source(source)` performs a GET through liquid's existing HTTP client. HTTPS
-uses the existing Corosio TLS path, and the operation refuses plaintext HTTP even when called
-without the checker. The response is hashed with the declared unkeyed algorithm before any write
-reaches the store. A mismatch returns both expected and actual digests and leaves the bytes absent.
-There is no overload without a declared digest.
+`repository::fetch_source(source)` first reuses content already present under the declared digest.
+Otherwise it performs a GET through liquid's existing HTTP client. HTTPS uses the existing Corosio
+TLS path, and the operation refuses plaintext HTTP even when called without the checker. The
+response is hashed with the declared unkeyed algorithm before any write reaches the store. A
+mismatch returns both expected and actual digests and leaves the bytes absent. There is no overload
+without a declared digest.
 
 ## Ordinary-program generator
 

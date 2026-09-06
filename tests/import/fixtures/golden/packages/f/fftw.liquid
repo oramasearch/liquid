@@ -1,0 +1,18 @@
+source fftw-1.17.0 {
+    digest: sha256:6f96c1e6595e5ec949b86edd6f867d823b159025b0da21a4ed2cf3917ff54705
+    kind: archive
+    url: "https://example.invalid/fftw-1.17.0.tar.gz"
+}
+
+package fftw {
+    versions: [1.17.0]
+}
+
+build fftw {
+    command: ["sh", "-c", "set -eu; rm -rf source build out/prefix; mkdir -p source build out/prefix; tar -xf deps/__liquid_sources/sha256/6f96c1e6595e5ec949b86edd6f867d823b159025b0da21a4ed2cf3917ff54705 -C source --strip-components=1; cd source; ./configure --prefix=/; make; make DESTDIR=$OLDPWD/out/prefix install"]
+    outputs: [path "out/prefix"]
+    sources: ["fftw-1.17.0"]
+    install {
+        layout: prefix
+    }
+}

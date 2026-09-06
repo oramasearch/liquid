@@ -13,3 +13,6 @@ updates without writing a drip or advancing a persisted cursor.
 Lock and unlock requests open the checkout through the public repository API, apply an optional
 connected authority callback, and send the complete current lock set to every fan-out target.
 Lock snapshots do not change target drip cursors.
+The daemon request protocol also carries the public per-line attribution query. It validates the
+path and change, delegates history reconstruction to `repository::attribution`, and returns a
+versioned canonical-CBOR line array with actor, session, change, and agent fields.

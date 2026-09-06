@@ -98,6 +98,9 @@ attestation artifacts; and the `liquid project` command.
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
+Liquid #70 adds Tier 2 registry views for linked binaries, PDF objects, Jupyter cells, OOXML and
+ODF XML parts, package payloads, wheels, JARs, safetensors tensors, and non-executing pickle
+opcodes.
 Liquid #193 adds move-only public build handles and multi-subscriber Capy event streams, daemon
 forwarding, stable JSON-lines CLI output, CMake/native test target discovery, cached test actions,
 and `liquid test`.
@@ -130,6 +133,17 @@ journal are implemented. Liquid #41 adds per-handle session IDs, complete mutati
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
 exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
 transient presence, compaction epochs, and delegation-attributed publication. Directory
+Liquid #75 adds the provenance-linked Spack exporter, public `import_spack` task, formatter-backed
+package documents and canonical universe records, digest pinning for patches, explicit loss reports,
+the 500-package resolution fixture, and the opt-in Linux build subset. Spack is the first importer;
+nixpkgs and conda-forge remain later options.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+local-intent operation and session undo reports, operation-log CLI output, and historical refs,
+locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
+transient presence, compaction epochs, and delegation-attributed publication. Liquid #248 adds
+stable-node per-line attribution through the repository and daemon APIs, `liquid blame`, and
+versioned presence, lease, and attribution callbacks for native plugins. Directory
 Liquid #59 configures liquid's FetchContent dependencies outside the sandbox, builds liquid under
 `liquid wrap`, retains configured CMake inputs, requires a fully cached second run, and compares
 the wrapped static library and CLI byte for byte with the CMake bootstrap. The REAPI transport and
@@ -146,7 +160,8 @@ outcomes and opt-in atomic pushes. Liquid #195 adds persisted three-tree folder 
 named conflict values, resumed transfer, reference refusal reporting, path history and restore,
 `liquid drive`, and the daemon drive target. Liquid #235 adds persisted per-path device state,
 pinning, policy-driven hydration, offline read and write status, FUSE xattrs, and Linux desktop
-badges. Full materialisation works on
+badges. Liquid #247 adds `liquid clone` through the drive client, with persisted remote
+configuration and a fully materialised plain checkout. Full materialisation works on
 every platform; lazy VFS mounts use
 libfuse3 on Linux and optional macFUSE on macOS. The CLI covers the Phase 1 repository, capture,
 store, VFS, identity, Git import/export, and the Phase 2 build wrapper. Clang 17+, CMake + Ninja,

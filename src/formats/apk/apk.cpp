@@ -81,6 +81,8 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
     for (const auto& entry : data_tree->entries) {
         output.files.push_back(entry.path);
     }
+    output.control_entries = std::move(control_tree->entries);
+    output.data_entries = std::move(data_tree->entries);
     return output;
 }
 

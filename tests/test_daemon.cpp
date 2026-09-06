@@ -288,6 +288,34 @@ TEST(Daemon, lock_and_unlock_publish_the_current_lock_set) {
     EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
 }
 
+TEST(Daemon, attribution_query_crosses_the_wire) {
+    temporary_repository location;
+    auto source = liquid::runtime::block_on(liquid::repository::open(location.path()));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("notes.txt", bytes("one\ntwo\n"))));
+    auto change = liquid::runtime::block_on(source->cut("notes"));
+    ASSERT_TRUE(change);
+    auto direct = liquid::runtime::block_on(source->attribution("notes.txt", *change));
+    ASSERT_TRUE(direct);
+
+    auto started = liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+    auto remote = liquid::runtime::block_on(started->attribution("notes.txt", *change));
+    ASSERT_TRUE(remote) << (remote ? "" : remote.error().message);
+    ASSERT_EQ(remote->size(), direct->size());
+    for (auto index = std::size_t{}; index < direct->size(); ++index) {
+        EXPECT_EQ(remote->at(index).line, direct->at(index).line);
+        EXPECT_EQ(remote->at(index).text, direct->at(index).text);
+        EXPECT_EQ(remote->at(index).by.taap_id, direct->at(index).by.taap_id);
+        EXPECT_EQ(remote->at(index).session, direct->at(index).session);
+        EXPECT_EQ(liquid::to_string(remote->at(index).change.value),
+                  liquid::to_string(direct->at(index).change.value));
+        EXPECT_EQ(remote->at(index).agent, direct->at(index).agent);
+    }
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+}
+
 TEST(Daemon, exits_when_idle_and_refuses_late_attach) {
     temporary_repository location;
     auto started = liquid::runtime::block_on(
