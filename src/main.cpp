@@ -33,9 +33,11 @@ auto capture_resume(int argc, char** argv) -> int;
 auto capture_watch(int argc, char** argv) -> int;
 auto history_undo(int argc, char** argv) -> int;
 auto history_operations(int argc, char** argv) -> int;
+auto path_history(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
+auto keys(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
@@ -60,11 +62,15 @@ auto sync_push(int argc, char** argv) -> int;
 auto sync_pull(int argc, char** argv) -> int;
 auto serve(int argc, char** argv) -> int;
 auto daemon_command(int argc, char** argv) -> int;
+auto drive(int argc, char** argv) -> int;
 auto scheduler(int argc, char** argv) -> int;
 auto worker(int argc, char** argv) -> int;
+auto node_store(int argc, char** argv) -> int;
 auto search(int argc, char** argv) -> int;
 auto symbols(int argc, char** argv) -> int;
 auto abi(int argc, char** argv) -> int;
+auto edit(int argc, char** argv) -> int;
+auto resolve(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -99,6 +105,13 @@ constexpr auto flags_search = std::to_array<flag>({
     {"--ref", "<name>", "Search a named reference or change digest.", "working tree"},
     {"--limit", "<count>", "Limit results to a value from 1 through 1000.", "20"},
 });
+constexpr auto flags_resolve = std::to_array<flag>({
+    {"--universe", "<path>", "Read package candidates from this directory.", "current directory"},
+    {"--reuse", {}, "Reuse the existing resolution when it remains valid.", "false"},
+    {"--explain", {}, "Show the selected candidates and rejected constraints.", "false"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--why", "<package>", "Explain the constraints selecting a package.", "none"},
+});
 constexpr auto flags_log = std::to_array<flag>({
     {"--ops", {}, "Show signed drips and operation metadata.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
@@ -107,11 +120,35 @@ constexpr auto flags_log = std::to_array<flag>({
 constexpr auto flags_atomic = std::to_array<flag>({
     {"--atomic", {}, "Refuse every reference update when any update is refused.", "false"},
 });
+constexpr auto flags_history = std::to_array<flag>({
+    {"--restore", "<change>", "Restore the path from the named change.", "none"},
+});
+constexpr auto flags_drive = std::to_array<flag>({
+    {"--watch", {}, "Continue synchronizing after the first successful transfer.", "false"},
+});
 constexpr auto flags_serve = std::to_array<flag>({
     {"--listen", "<address>", "Select the listener address.", "127.0.0.1"},
     {"--port", "<port>", "Select the sync listener port.", "8080"},
     {"--allow-ref", "<glob>", "Permit a reference-name glob; repeatable.", "all references"},
     {"--instance", "<name>", "Select the REAPI instance name.", "empty"},
+    {"--insecure-http", {}, "Serve admission requests without TLS.", "false"},
+    {"--policy", "<file>", "Read the admission policy from this file.", "none"},
+    {"--control-listen", "<address>", "Select the admission control listener.", "none"},
+    {"--tls-cert", "<path>", "Read the admission TLS certificate from this file.", "none"},
+    {"--tls-key", "<path>", "Read the admission TLS private key from this file.", "none"},
+    {"--attestation-source", "<url>", "Read admission attestations from this source.", "none"},
+    {"--store", "<path>", "Read admission attestations from this store.", "none"},
+    {"--log-cache", "<path>", "Store admission log cache data at this path.", "none"},
+});
+constexpr auto flags_keys = std::to_array<flag>({
+    {"--to", "<custody-uri>", "Rewrap a data key for this custody URI.", "none"},
+    {"--threshold", "<count>", "Set the number of shares required to recover a key.", "none"},
+    {"--shares", "<count>", "Set the number of custody shares to create.", "none"},
+});
+constexpr auto flags_attest = std::to_array<flag>({
+    {"--tree", "<digest>", "Bind an image attestation to this repository tree.", "none"},
+    {"--result", "<id>", "Bind an image attestation to this build result.", "none"},
+    {"--store", "<path>", "Read or write attestations in this store.", "repository store"},
 });
 constexpr auto flags_to = std::to_array<flag>({
     {"--to", "<change>", "Select the target change.", "none"},
@@ -160,6 +197,7 @@ constexpr auto flags_wrap = std::to_array<flag>({
      "Set driver parallelism and compilation-database width.",
      "runtime default"},
     {"--target", "<triple>", "Select configure facts for a target triple.", "host target"},
+    {"--input", "<name>=<result|tree>", "Bind a named result or tree input; repeatable.", "none"},
     {"--remote", "<endpoint>", "Use a stock REAPI remote endpoint.", "none"},
     {"--scheduler", "<endpoint>", "Use a liquid scheduler endpoint.", "none"},
     {"--remote-instance", "<name>", "Select the remote instance.", "empty"},
@@ -178,6 +216,23 @@ constexpr auto flags_wrap = std::to_array<flag>({
     {"--no-verify", {}, "Skip background verification sampling.", "false"},
     {"--explain", {}, "Print recorded cache-miss details.", "false"},
     {"--fail-on-abi-break", {}, "Return failure when a rebuilt library is incompatible.", "false"},
+});
+constexpr auto flags_edit = std::to_array<flag>({
+    {"--apply", {}, "Apply the planned edit.", "false"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--value", {}, "Use a value selection for an extraction.", "false"},
+    {"--agent", "<name>", "Record the named agent as the edit author.", "none"},
+    {"--at", "<line>", "Insert or move content at this one-based line.", "none"},
+});
+constexpr auto flags_node_store = std::to_array<flag>({
+    {"--root", "<path>", "Store node chunks below this directory.", "LIQUID_NODE_STORE_ROOT"},
+    {"--listen", "<unix://path>", "Select the node-store service listener.", "none"},
+    {"--control-listen", "<address>", "Select the node-store control listener.", "none"},
+    {"--budget-bytes", "<count>", "Set the node-cache byte budget.", "implementation default"},
+    {"--control", "<address>", "Select the node-store control endpoint.", "none"},
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--socket", "<path>", "Select the mount socket path.", "none"},
+    {"--store", "<url>", "Select the node chunk store endpoint.", "none"},
 });
 constexpr auto flags_build = std::to_array<flag>({
     {"--plan", {}, "Print the configured action plan without executing.", "false"},
@@ -293,6 +348,17 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::search},
+    {"resolve",
+     "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
+     "<package> <spec>... [--universe <path>] [--reuse] [--json]",
+     "concretise package specifications",
+     "available",
+     flags_resolve,
+     "Resolve package constraints against an available candidate universe.",
+     "liquid resolve example@^1.0 --universe packages",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::resolve},
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps",
      "show or verify change, signed drip, or timestamp history",
@@ -334,6 +400,26 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_diff},
+    {"history",
+     "history <path> [--restore <change>]",
+     "show or restore path history",
+     "available",
+     flags_history,
+     "Show the changes affecting a path or restore its content from a selected change.",
+     "liquid history notes.txt",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::path_history},
+    {"drive",
+     "drive <sync <folder> <remote> [--watch]|status [folder]>",
+     "synchronize a drive folder",
+     "available",
+     flags_drive,
+     "Synchronize a local folder with a drive remote or report synchronization state.",
+     "liquid drive sync ./documents https://example.invalid/drive --watch",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::drive},
     {"push",
      "push [--atomic] <url>",
      "push repository changes and objects",
@@ -356,11 +442,12 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::sync_pull},
     {"serve",
-     "serve sync <path> [sync options] | serve reapi --listen <address> [--instance <name>]",
-     "serve repository sync or REAPI",
+     "serve sync <path> [sync options] | serve reapi --listen <address> [--instance <name>] | "
+     "serve admission --policy <file> [admission options]",
+     "serve repository sync, REAPI, or image admission",
      "available",
      flags_serve,
-     "Serve repository synchronization or the repository CAS and ActionCache.",
+     "Serve repository synchronization, the repository CAS and ActionCache, or image admission.",
      "liquid serve sync . --listen 127.0.0.1 --port 8080",
      normal_exit,
      argument_policy::ordinary,
@@ -535,12 +622,22 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::identity},
-    {"attest",
-     "attest <show|verify> <digest>",
-     "show or verify an attestation",
+    {"keys",
+     "keys <show|rewrap|rotate|revoke|split> ...",
+     "inspect and manage data-key custody",
      "available",
-     {},
-     "Decode or verify a registered TAAP attestation from the current store.",
+     flags_keys,
+     "Inspect, rotate, revoke, rewrap, or split data-key custody material.",
+     "liquid keys show",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::keys},
+    {"attest",
+     "attest <show|verify> <digest> | attest image <ref@sha256:...> --tree <digest> [...]",
+     "show, verify, or mint an image attestation",
+     "available",
+     flags_attest,
+     "Decode, verify, or mint a registered TAAP attestation from the current store.",
      "liquid attest verify blake3:<attestation-digest>",
      normal_exit,
      argument_policy::ordinary,
@@ -626,8 +723,19 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::symbols},
+    {"edit",
+     "edit <rename|extract|move|apply> ... [--json] [--apply] [--agent <name>]",
+     "preview or apply a structural edit",
+     "available on macOS and Linux",
+     flags_edit,
+     "Plan or apply a structural rename, extraction, move, or edit operation.",
+     "liquid edit rename src/main.cpp:42 old_name new_name --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::edit},
     {"wrap",
-     "wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] "
+     "wrap [--jobs <count>] [--target <triple>] [--input <name>=<result|tree>] "
+     "[--remote <endpoint>|--scheduler <endpoint>] "
      "[remote options] "
      "[--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> "
      "[args...]",
@@ -763,6 +871,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::docs},
+    {"node-store",
+     "node-store <serve|status|mount|unmount|prefetch> [options]",
+     "run or control the runtime node chunk store",
+     "available on Linux with FUSE and on macOS with macFUSE",
+     flags_node_store,
+     "Run, inspect, or mount the runtime node chunk store.",
+     "liquid node-store status --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::node_store},
 });
 
 auto print_usage() -> void {

@@ -12,13 +12,16 @@ Each command page is generated from the same metadata used to validate flags and
 | [`write`](write.md) | write a file from a stated base | available |
 | [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
 | [`search`](search.md) | search paths and contents | available |
+| [`resolve`](resolve.md) | concretise package specifications | available |
 | [`log`](log.md) | show or verify change, signed drip, or timestamp history | available |
 | [`cut`](cut.md) | cut the working change | available |
 | [`refs`](refs.md) | list repository references | available |
 | [`diff`](diff.md) | compare two changes | available |
+| [`history`](history.md) | show or restore path history | available |
+| [`drive`](drive.md) | synchronize a drive folder | available |
 | [`push`](push.md) | push repository changes and objects | available |
 | [`pull`](pull.md) | pull repository changes and objects | available |
-| [`serve`](serve.md) | serve repository sync or REAPI | available |
+| [`serve`](serve.md) | serve repository sync, REAPI, or image admission | available |
 | [`move`](move.md) | record a path move | available |
 | [`rm`](rm.md) | record a path removal | available |
 | [`anchor`](anchor.md) | map a text position between changes | available |
@@ -36,7 +39,8 @@ Each command page is generated from the same metadata used to validate flags and
 | [`export`](export.md) | export as a Git repository | available |
 | [`retain`](retain.md) | explain retention for an object | available |
 | [`identity`](identity.md) | show or rotate the device identity | available |
-| [`attest`](attest.md) | show or verify an attestation | available |
+| [`keys`](keys.md) | inspect and manage data-key custody | available |
+| [`attest`](attest.md) | show, verify, or mint an image attestation | available |
 | [`delta`](delta.md) | create, apply, or fetch an artifact delta | available |
 | [`verify`](verify.md) | re-execute and compare cached actions or the query graph | available on Linux with FUSE and on macOS with macFUSE |
 | [`replay`](replay.md) | reproduce and compare a recorded action | available on Linux with FUSE and on macOS with macFUSE |
@@ -45,6 +49,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`sbom`](sbom.md) | print a derived or explicitly inferred SBOM | available |
 | [`abi`](abi.md) | show or compare library ABIs | available |
 | [`symbols`](symbols.md) | show compiler or syntactic symbols for a source path | available |
+| [`edit`](edit.md) | preview or apply a structural edit | available on macOS and Linux |
 | [`wrap`](wrap.md) | run an existing build as cached actions | available on Linux with FUSE and on macOS with macFUSE |
 | [`build`](build.md) | plan or start a configured repository build, profile a command, stream events, or export a trace | available on Linux with FUSE and on macOS with macFUSE |
 | [`test`](test.md) | run discovered tests as cached actions | available on Linux with FUSE and on macOS with macFUSE |
@@ -58,3 +63,4 @@ Each command page is generated from the same metadata used to validate flags and
 | [`resume`](resume.md) | resume working-tree capture | available |
 | [`watch`](watch.md) | capture changes until Ctrl-C | available |
 | [`docs`](docs.md) | generate the CLI reference | available |
+| [`node-store`](node-store.md) | run or control the runtime node chunk store | available on Linux with FUSE and on macOS with macFUSE |

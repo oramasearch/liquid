@@ -15,8 +15,10 @@
 
 #include "liquid/abi.hpp"
 #include "liquid/build.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
+#include "liquid/flow.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
@@ -31,6 +33,7 @@ struct search_access;
 struct testing;
 struct vfs_access;
 struct git_access;
+struct drive_access;
 struct sync_access;
 } // namespace repository_detail
 
@@ -120,6 +123,7 @@ struct LIQUID_EXPORT repository_options {
     agents_config agents{};
     policy_config policy{};
     retention_config retention{};
+    flow_config flow{};
     std::optional<remote_config> remote;
     std::optional<session_id> session;
 };
@@ -226,6 +230,18 @@ struct LIQUID_EXPORT mapped_anchor {
     bool deleted{};
 };
 
+struct LIQUID_EXPORT path_history_entry {
+    change_id change;
+    std::string path;
+    node_id node{};
+    std::optional<digest> value;
+    std::uint32_t mode{0100644};
+    actor by;
+    std::chrono::sys_seconds at;
+    std::string message;
+    bool deleted{};
+};
+
 struct LIQUID_EXPORT record_cursor {
     std::string token;
 };
@@ -284,10 +300,6 @@ struct LIQUID_EXPORT revision_readability {
 struct LIQUID_EXPORT readability_report {
     std::vector<revision_readability> revisions;
     std::vector<std::string> limits;
-};
-
-struct LIQUID_EXPORT op_id {
-    digest value;
 };
 
 struct LIQUID_EXPORT operation_record {
@@ -433,6 +445,8 @@ public:
     [[nodiscard]] runtime::task<mapped_anchor> map_anchor(text_anchor anchor, change_id target);
     [[nodiscard]] runtime::task<std::vector<mapped_anchor>>
     map_anchors(std::span<const text_anchor> anchors, change_id target);
+    [[nodiscard]] runtime::task<std::vector<path_history_entry>> history(std::string path);
+    [[nodiscard]] runtime::task<void> restore(std::string path, change_id change);
     [[nodiscard]] runtime::task<record_page<repository_result>> results(result_filter filter = {});
     [[nodiscard]] runtime::task<action_input> action(digest id);
     [[nodiscard]] runtime::task<record_page<repository_attestation>>
@@ -459,6 +473,9 @@ public:
     [[nodiscard]] runtime::task<digest> store_attestation(attestation value);
     [[nodiscard]] runtime::task<digest> store_symbols(symbol_record value);
     [[nodiscard]] runtime::task<symbol_record> symbols(digest id);
+    [[nodiscard]] runtime::task<edit_preview> preview_edit(edit_request request,
+                                                           edit_attribution attribution);
+    [[nodiscard]] runtime::task<edit_result> apply_edit(const edit_preview& preview);
     [[nodiscard]] runtime::task<void> set_policy(policy_config policy);
     [[nodiscard]] runtime::task<collection_report> collect(collection_options options = {});
     [[nodiscard]] runtime::task<retention_explanation> retain_explain(digest id);
@@ -475,6 +492,8 @@ public:
                                                           std::span<sync_item> output);
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
+    [[nodiscard]] flow_config flow_configuration() const;
+    [[nodiscard]] std::vector<flow_bucket_status> flow_buckets() const;
 
 private:
     [[nodiscard]] runtime::task<std::optional<stale_revalidation>>
@@ -488,6 +507,7 @@ private:
     friend struct repository_detail::testing;
     friend struct repository_detail::vfs_access;
     friend struct repository_detail::git_access;
+    friend struct repository_detail::drive_access;
     friend struct repository_detail::sync_access;
     struct impl;
     std::unique_ptr<impl> impl_;

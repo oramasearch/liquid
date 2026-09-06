@@ -5,16 +5,20 @@
 ## Synopsis
 
 ```text
-liquid attest <show|verify> <digest>
+liquid attest <show|verify> <digest> | attest image <ref@sha256:...> --tree <digest> [...]
 ```
 
 ## Description
 
-Decode or verify a registered TAAP attestation from the current store.
+Decode, verify, or mint a registered TAAP attestation from the current store.
 
 ## Options
 
-This command has no command-specific options.
+| Flag | Argument | Description | Default |
+|---|---|---|---|
+| `--tree` | `<digest>` | Bind an image attestation to this repository tree. | none |
+| `--result` | `<id>` | Bind an image attestation to this build result. | none |
+| `--store` | `<path>` | Read or write attestations in this store. | repository store |
 
 ## Availability
 

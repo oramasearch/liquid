@@ -13,6 +13,11 @@ optional disjoint or forced result; the reader retains version 1 support. Stale 
 the shared text-hunk implementation against historical and current blob records and appends no
 drip.
 
+The repository document persists `config.flow`. Process-shared controllers enforce actor,
+containing-directory, and repository buckets immediately before a CRDT transaction opens;
+oversized updates and exhausted buckets return without an operation or drip. Live balances and
+rejection counters are not persisted.
+
 Public tree comparison flattens immutable tree records into repository-relative paths, matches
 entries by `node_id`, and reports moves independently from mode and content changes. Change-level
 comparison also attaches the conflict values stored on each change. Text hunk generation reads
@@ -22,13 +27,16 @@ Text-anchor mapping reuses one change-level text diff, indexes anchors by their 
 walks each matched path's line hunks in order. It follows renames through `node_id`, shifts lines
 for earlier count changes, marks replacements approximate, and marks removed regions deleted.
 
-At every cut and configured drip interval, cached directory documents are compact-saved, stored,
-and immediately reopened shallowly. The repository marker is published before the covered journal
-state is retired; open restores later journaled working-tree updates on the shallow documents.
+At every cut and configured drip interval, cached directory documents are compact-saved and
+immediately load-checked. A state that does not round-trip in compact form falls back to complete
+upstream history bytes. Stored documents reopen sync-capable. The repository marker is published
+before the covered journal state is retired; open restores later journaled working-tree updates.
+Checkpoints with pending drips reconcile reachable parent documents; a no-op open checkpoint keeps
+untouched directory documents lazy.
 Each checkout path contributes the device component of its automerge actor ID, preventing cloned
 repositories from authoring contradictory concurrent sequences under one actor.
-Sync import reconstructs a full-history candidate from each compact checkpoint before receiving
-peer messages, so retries remain valid even though active directory documents are shallow.
+Sync import reconstructs a full-history candidate before receiving peer messages, so retries remain
+valid across either checkpoint encoding.
 
 The build adapter uses the repository's device signer for result records and reproducibility
 attestations. It reads persisted cache, verification, and retention policy, synchronizes named ref
@@ -89,3 +97,13 @@ shallow documents.
 
 `repository::store_symbols` stores one canonical symbol record and its source-blob association.
 `repository::symbols` resolves and decodes that content-addressed value.
+
+Structural-edit preview reads those working-tree blobs and symbol records, producing exact
+range-local replacements and refusal records. Apply validates every before digest before the
+first write, replays only the previewed replacements through `repository::write`, checks after
+digests, and groups all per-file effects into one attributed `structural_edit` operation for undo.
+The private drive adapter stages filesystem files through bounded store streaming, exposes tree
+snapshots and content identities to the three-tree reconciler, records selected existing blob
+references without copying their bytes, merges pulled directory documents before reconciliation,
+records local and remote parents when they differ, and publishes files atomically. Drive state
+itself remains repository metadata, and its remote shadow repository borrows the same object store.

@@ -57,6 +57,12 @@ auto run(int argc, char** argv, bool push) -> int {
         if (!synced) {
             return fail(synced.error());
         }
+        if (synced->retry_after_ms != 0) {
+            std::println("flow_rejected scope={} retry_after_ms={}",
+                         synced->exhausted_scope,
+                         synced->retry_after_ms);
+            return 1;
+        }
         std::println("metadata_items={}", synced->metadata_items);
         std::println("objects_sent={}", synced->sent.objects);
         std::println("bytes_sent={}", synced->sent.bytes);

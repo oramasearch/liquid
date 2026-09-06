@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid serve sync <path> [sync options] | serve reapi --listen <address> [--instance <name>]
+liquid serve sync <path> [sync options] | serve reapi --listen <address> [--instance <name>] | serve admission --policy <file> [admission options]
 ```
 
 ## Description
 
-Serve repository synchronization or the repository CAS and ActionCache.
+Serve repository synchronization, the repository CAS and ActionCache, or image admission.
 
 ## Options
 
@@ -20,6 +20,14 @@ Serve repository synchronization or the repository CAS and ActionCache.
 | `--port` | `<port>` | Select the sync listener port. | 8080 |
 | `--allow-ref` | `<glob>` | Permit a reference-name glob; repeatable. | all references |
 | `--instance` | `<name>` | Select the REAPI instance name. | empty |
+| `--insecure-http` | — | Serve admission requests without TLS. | false |
+| `--policy` | `<file>` | Read the admission policy from this file. | none |
+| `--control-listen` | `<address>` | Select the admission control listener. | none |
+| `--tls-cert` | `<path>` | Read the admission TLS certificate from this file. | none |
+| `--tls-key` | `<path>` | Read the admission TLS private key from this file. | none |
+| `--attestation-source` | `<url>` | Read admission attestations from this source. | none |
+| `--store` | `<path>` | Read admission attestations from this store. | none |
+| `--log-cache` | `<path>` | Store admission log cache data at this path. | none |
 
 ## Availability
 

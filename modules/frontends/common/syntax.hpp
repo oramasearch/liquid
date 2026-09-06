@@ -68,5 +68,7 @@ auto encode_symbols(std::string_view language,
                     std::string_view origin,
                     std::string_view grammar_digest,
                     const std::vector<syntax_symbol>& symbols) -> std::vector<std::uint8_t>;
+auto encode_syntax_tree(std::string_view language, std::span<const std::uint8_t> source)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error>;
 
 } // namespace liquid_frontend

@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid wrap [--jobs <count>] [--target <triple>] [--remote <endpoint>|--scheduler <endpoint>] [remote options] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]
+liquid wrap [--jobs <count>] [--target <triple>] [--input <name>=<result|tree>] [--remote <endpoint>|--scheduler <endpoint>] [remote options] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]
 ```
 
 ## Description
@@ -18,6 +18,7 @@ Run an unchanged build in the observed mount and reuse valid tool actions before
 |---|---|---|---|
 | `--jobs` | `<count>` | Set driver parallelism and compilation-database width. | runtime default |
 | `--target` | `<triple>` | Select configure facts for a target triple. | host target |
+| `--input` | `<name>=<result\|tree>` | Bind a named result or tree input; repeatable. | none |
 | `--remote` | `<endpoint>` | Use a stock REAPI remote endpoint. | none |
 | `--scheduler` | `<endpoint>` | Use a liquid scheduler endpoint. | none |
 | `--remote-instance` | `<name>` | Select the remote instance. | empty |

@@ -76,9 +76,9 @@ is wrong.
 | [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, splitting and merging unrelated codebases. |
 | [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML. |
 | [04](04-build-engine.md) | Build engine | The incremental query graph, actions, early cutoff, compile-as-you-type, and local critical-path traces. |
-| [05](05-caching.md) | Caching | Built-in build/compiler caching with miss explanations, byte statistics, and phase attribution. |
+| [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
-| [07](07-dependency-resolution.md) | Dependency resolution | Spack-grade constraint solving plus implemented linked-library ABI extraction and compatibility reports. |
+| [07](07-dependency-resolution.md) | Dependency resolution | Content-addressed build inputs plus linked-library ABI extraction and compatibility reports are implemented; Spack-grade solving over variants, compilers, targets and virtual providers follows. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, attestations, reproducibility verification, build-input policy, and the attacks this prevents. |
@@ -95,7 +95,7 @@ is wrong.
 | [21](21-liquify-ide.md) | **liquify** | The IDE. No language server, because the editor and the build are one graph. |
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 | [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
-| [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Many people and many agents changing the same things at once — and what agents need that humans do not. |
+| [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Agent/document/repository write buckets and daemon flow watermarks are implemented; private replicas, presence, and semantic conflict work remain. |
 | [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, and the append-only log with optional public anchoring. |
 
 ## Status
