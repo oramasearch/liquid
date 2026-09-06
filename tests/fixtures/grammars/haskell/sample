@@ -1,0 +1,4 @@
+module Sample where
+
+answer :: Int
+answer = 42

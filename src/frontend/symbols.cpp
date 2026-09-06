@@ -206,11 +206,13 @@ auto decode_with_subject(std::optional<digest> subject, std::span<const std::byt
     const auto* record_kind = find(*decoded, "kind");
     const auto* language = find(*decoded, "language");
     const auto* origin = find(*decoded, "origin");
+    const auto* grammar = find(*decoded, "grammar");
     const auto* occurrences = find(*decoded, "occurrences");
     const auto* number = version ? std::get_if<std::uint64_t>(&version->data) : nullptr;
     const auto* kind_text = record_kind ? std::get_if<std::string>(&record_kind->data) : nullptr;
     const auto* language_text = language ? std::get_if<std::string>(&language->data) : nullptr;
     const auto* origin_text = origin ? std::get_if<std::string>(&origin->data) : nullptr;
+    const auto* grammar_text = grammar ? std::get_if<std::string>(&grammar->data) : nullptr;
     if (!number || *number != 1 || (kind_text && *kind_text != "symbols") || !language_text ||
         !origin_text || !occurrences ||
         (*origin_text != "compiler" && *origin_text != "syntactic")) {
@@ -234,11 +236,16 @@ auto decode_with_subject(std::optional<digest> subject, std::span<const std::byt
     if (!decoded_occurrences) {
         return std::unexpected(decoded_occurrences.error());
     }
-    return symbol_record{*subject,
-                         *language_text,
-                         *origin_text == "compiler" ? symbol_origin::compiler
-                                                    : symbol_origin::syntactic,
-                         std::move(*decoded_occurrences)};
+    if (grammar && !grammar_text) {
+        return std::unexpected(symbol_error(errc::corrupt, "invalid symbol grammar digest"));
+    }
+    return symbol_record{
+        .subject = *subject,
+        .language = *language_text,
+        .origin = *origin_text == "compiler" ? symbol_origin::compiler : symbol_origin::syntactic,
+        .grammar = grammar_text ? *grammar_text : std::string{},
+        .occurrences = std::move(*decoded_occurrences),
+    };
 }
 
 } // namespace
@@ -263,14 +270,19 @@ auto encode_symbols(const symbol_record& value) -> result<std::vector<std::byte>
         }
         occurrences.emplace_back(std::move(fields));
     }
-    return cbor::encode(map({{"v", std::uint64_t{1}},
-                             {"kind", "symbols"},
-                             {"subject", encode_digest(value.subject)},
-                             {"language", value.language},
-                             {"origin",
-                              value.origin == symbol_origin::compiler ? cbor::value{"compiler"}
-                                                                      : cbor::value{"syntactic"}},
-                             {"occurrences", std::move(occurrences)}}));
+    auto fields =
+        cbor::value::map{{"v", std::uint64_t{1}},
+                         {"kind", "symbols"},
+                         {"subject", encode_digest(value.subject)},
+                         {"language", value.language},
+                         {"origin",
+                          value.origin == symbol_origin::compiler ? cbor::value{"compiler"}
+                                                                  : cbor::value{"syntactic"}},
+                         {"occurrences", std::move(occurrences)}};
+    if (!value.grammar.empty()) {
+        fields.emplace_back("grammar", value.grammar);
+    }
+    return cbor::encode(cbor::value{std::move(fields)});
 }
 
 auto decode_symbols(std::span<const std::byte> value) -> result<symbol_record> {

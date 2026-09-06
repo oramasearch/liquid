@@ -1,0 +1,4 @@
+$answer: red;
+.sample {
+  color: $answer;
+}

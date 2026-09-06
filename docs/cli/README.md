@@ -121,7 +121,9 @@ services embed the public server with their own authorization callback.
 `LIQUID_ADMISSION_LISTEN`, `LIQUID_CONTROL_LISTEN`, `LIQUID_ADMISSION_TLS_CERT`,
 `LIQUID_ADMISSION_TLS_KEY`, `LIQUID_ADMISSION_ATTESTATION_SOURCE`, and
 `LIQUID_ADMISSION_LOG_CACHE`; flags win.
-`version --json` is also available for scripts. Text output is line-oriented and stable. A library
+`version --json` is also available for scripts and returns
+`{"version":"0.0.1","grammar":"sha256:<canonical-lock-digest>"}`. Text output is line-oriented
+and stable. A library
 error always has this shape and exits with status 1:
 
 ```text

@@ -732,11 +732,7 @@ namespace {
 
 runtime::task<void> run_scheduled_graph_validation(std::filesystem::path working_tree,
                                                    std::filesystem::path cache_directory) {
-    auto [yield_error] = co_await runtime::delay(std::chrono::nanoseconds{1});
-    if (yield_error) {
-        co_return std::unexpected(
-            error{errc::internal, yield_error.message(), "scheduled graph validation"});
-    }
+    co_await runtime::yield();
     auto verified = co_await build::verify_graph(std::move(working_tree),
                                                  {.cache_directory = std::move(cache_directory)});
     if (!verified) {
