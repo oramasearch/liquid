@@ -129,6 +129,14 @@ Liquid #74 adds the typed declarative `.liquid` configuration language, exact so
 diagnostics, canonical formatting and package/target/source lowering, repository-local includes,
 digest-verified source fetch, action-backed generators with provenance, and configured target CLI.
 Configured target results must pass the relocation publication check before they are returned.
+Liquid #42 adds configured exclusive checkout path patterns, holder/time/reason lock records,
+holder-aware write refusal and release, signed offline reconciliation through conflict values,
+connected lake authorization callbacks, daemon lock snapshots, and `liquid lock`/`unlock`.
+The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
+journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+local-intent operation and session undo reports, operation-log CLI output, and historical refs,
+exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
+transient presence, compaction epochs, and delegation-attributed publication. Directory
 Liquid #75 adds the provenance-linked Spack exporter, public `import_spack` task, formatter-backed
 package documents and canonical universe records, digest pinning for patches, explicit loss reports,
 the 500-package resolution fixture, and the opt-in Linux build subset. Spack is the first importer;
@@ -200,6 +208,9 @@ line-hunk stale reports, and signed disjoint or forced re-validation records.
 Liquid #82 adds the typed CLI command and flag table, generated Markdown, stable JSON and man-page
 reference, executable user guides, and the documentation-site CI artifact. `liquid diff` exposes
 the existing public change-diff API for the first-repository guide.
+Liquid #54 adds the `liquid-offline` CTest suite, which reruns every CLI test in the macOS or Linux
+sandbox with networking denied and verifies the only intentional network requirements before a
+handler starts.
 Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA and ECDSA for RFC
 3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
 anchors and historical certificate validation.

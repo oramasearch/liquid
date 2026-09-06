@@ -1,5 +1,8 @@
 # Tests
 
+Exclusive checkout coverage spans repository holder/refusal/release and offline-sync cases,
+configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
+
 The default suite covers the public library surface and the local store. Focused garbage
 collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
@@ -128,6 +131,8 @@ literal and regex hit identities across scan and trigrams, pin cost choices and 
 exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI
 explanation contract. The opt-in measurement target records scan and
 index costs across working-set sizes.
+Every CLI CTest carries `liquid-cli`; `cli-offline` reruns that complete label through the platform
+sandbox with networking denied and verifies the only four intentional network requirements.
 `liquid-repository-open-measure` prepares the 100-directory, 10,000-drip checkpoint workload and
 measures a fresh-process repository open for the automerge-cpp adoption comparison.
 Focused CRDT cases verify commit metadata, compact checkpoint journal replay, corrupt-sync

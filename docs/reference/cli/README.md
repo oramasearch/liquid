@@ -39,8 +39,8 @@ Each command page is generated from the same metadata used to validate flags and
 | [`combine`](combine.md) | combine another repository | available |
 | [`ops`](ops.md) | list recorded operations | available |
 | [`undo`](undo.md) | undo the newest, named, or session operations | available |
-| [`lock`](lock.md) | advisory-lock a path | available |
-| [`unlock`](unlock.md) | remove an advisory lock | available |
+| [`lock`](lock.md) | exclusively lock a configured path | available |
+| [`unlock`](unlock.md) | release an exclusive lock | available |
 | [`session`](session.md) | manage a private speculative replica | available |
 | [`compact`](compact.md) | checkpoint a repository epoch | available |
 | [`mount`](mount.md) | mount a lazy working tree | available where FUSE is available |

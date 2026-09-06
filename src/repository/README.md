@@ -110,6 +110,13 @@ Import works on repository and directory candidates, verifies TAAP signatures an
 receives, and publishes one checkpoint only after the complete batch passes. An empty repository
 may adopt the incoming repository identity; a non-empty unrelated repository is rejected.
 
+Exclusive checkout persists named path-pattern rules and holder, time, reason, and authority
+records. Mutations allow the holder and reject a different actor with the complete lock details.
+Acquire, release, and rule replacement use signed version-4 drips. Import verifies each lock holder
+against the signing actor and turns concurrent different-holder records into issue #40 conflict
+values while retaining the local claim. An injected authorizer runs before connected acquire or
+release changes local state.
+
 Every document mutation records its operation, session, and before/after effects. Operation undo
 and filtered session undo derive inverses from those effects, skip state changed by newer intent,
 and append their results without rewriting source or imported records. Each touched directory uses

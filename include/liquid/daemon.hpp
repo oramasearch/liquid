@@ -36,6 +36,10 @@ public:
         static_cast<void>(value);
         co_return result<void>{};
     }
+    [[nodiscard]] virtual runtime::task<void> deliver_locks(std::vector<exclusive_lock> values) {
+        static_cast<void>(values);
+        co_return result<void>{};
+    }
     [[nodiscard]] virtual auto detail() const -> std::optional<std::string> {
         return std::nullopt;
     }
@@ -76,6 +80,7 @@ struct LIQUID_EXPORT daemon_options {
     capture_options capture{};
     std::vector<std::shared_ptr<daemon_target>> targets;
     std::string drive_bearer_token;
+    lock_authorizer authorize_lock;
 };
 
 class LIQUID_EXPORT daemon {
@@ -104,6 +109,9 @@ public:
                                                                            change_id change);
     [[nodiscard]] runtime::task<void> report_consumer_lag(std::string name, std::uint64_t behind);
     [[nodiscard]] runtime::task<void> report_presence(liquid::presence value);
+    [[nodiscard]] runtime::task<void> lock(std::string path,
+                                           std::string reason = "exclusive checkout");
+    [[nodiscard]] runtime::task<void> unlock(std::string path);
     [[nodiscard]] runtime::task<void> shutdown();
     [[nodiscard]] runtime::task<void> wait();
 
