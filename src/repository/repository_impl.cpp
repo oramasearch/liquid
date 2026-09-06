@@ -107,6 +107,7 @@ struct repository_document {
     std::uint32_t verification_rate{20};
     agents_config agents;
     hot_update_config hot_update;
+    deployment_config deploy;
     policy_config policy;
     retention_config retention{};
     flow_config flow{};
@@ -555,6 +556,29 @@ auto encode_repository_document(const repository_document& value)
         hot_update_targets.push_back(map({{"name", cbor::value{target.name}},
                                           {"endpoint", cbor::value{target.endpoint.string()}}}));
     }
+    auto deploy_environments = cbor::value::array{};
+    for (const auto& [name, environment] : value.deploy.environments) {
+        auto variables = cbor::value::array{};
+        for (const auto& [key, variable] : environment.env) {
+            variables.push_back(
+                map({{"name", cbor::value{key}}, {"value", cbor::value{variable}}}));
+        }
+        auto secrets = cbor::value::array{};
+        for (const auto& secret : environment.secrets) {
+            secrets.push_back(cbor::value{secret});
+        }
+        deploy_environments.push_back(map(
+            {{"name", cbor::value{name}},
+             {"domain",
+              environment.domain ? cbor::value{*environment.domain} : cbor::value{cbor::null{}}},
+             {"env", cbor::value{std::move(variables)}},
+             {"secrets", cbor::value{std::move(secrets)}}}));
+    }
+    auto deploy =
+        map({{"control_plane", cbor::value{value.deploy.control_plane}},
+             {"environments", cbor::value{std::move(deploy_environments)}},
+             {"on_push",
+              cbor::value{value.deploy.on_push == deploy_on_push::preview ? "preview" : "none"}}});
     auto config =
         map({{"encrypt", map({{"paths", cbor::value{std::move(encryption_paths)}}})},
              {"cache", map({{"publish", cbor::value{value.cache_publish}}})},
@@ -578,6 +602,7 @@ auto encode_repository_document(const repository_document& value)
              {"hot_update",
               map({{"restart_hook", cbor::value{std::move(restart_hook)}},
                    {"targets", cbor::value{std::move(hot_update_targets)}}})},
+             {"deploy", std::move(deploy)},
              {"flow", std::move(flow)},
              {"remote", std::move(remote)}});
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
@@ -1151,6 +1176,77 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                         failure(errc::corrupt, "invalid hot-update target", "repository document"));
                 }
                 output.hot_update.targets.push_back({*name, *endpoint});
+            }
+        }
+        if (const auto* deploy = find(*config, "deploy")) {
+            const auto* control_value = find(*deploy, "control_plane");
+            const auto* environments_value = find(*deploy, "environments");
+            const auto* on_push_value = find(*deploy, "on_push");
+            const auto* control =
+                control_value ? std::get_if<std::string>(&control_value->data) : nullptr;
+            const auto* environments =
+                environments_value ? std::get_if<cbor::value::array>(&environments_value->data)
+                                   : nullptr;
+            const auto* on_push =
+                on_push_value ? std::get_if<std::string>(&on_push_value->data) : nullptr;
+            if (!control || !environments || !on_push ||
+                (*on_push != "none" && *on_push != "preview")) {
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid deployment config", "repository document"));
+            }
+            output.deploy.control_plane = *control;
+            output.deploy.on_push =
+                *on_push == "preview" ? deploy_on_push::preview : deploy_on_push::none;
+            for (const auto& item : *environments) {
+                const auto* name_value = find(item, "name");
+                const auto* domain_value = find(item, "domain");
+                const auto* env_value = find(item, "env");
+                const auto* secrets_value = find(item, "secrets");
+                const auto* name =
+                    name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+                const auto* variables =
+                    env_value ? std::get_if<cbor::value::array>(&env_value->data) : nullptr;
+                const auto* secrets =
+                    secrets_value ? std::get_if<cbor::value::array>(&secrets_value->data) : nullptr;
+                if (!name || name->empty() || !domain_value || !variables || !secrets) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid deployment environment", "repository document"));
+                }
+                auto environment = deploy_environment_config{};
+                if (!std::holds_alternative<cbor::null>(domain_value->data)) {
+                    const auto* domain = std::get_if<std::string>(&domain_value->data);
+                    if (!domain || domain->empty()) {
+                        return std::unexpected(failure(
+                            errc::corrupt, "invalid deployment domain", "repository document"));
+                    }
+                    environment.domain = *domain;
+                }
+                for (const auto& variable : *variables) {
+                    const auto* key_value = find(variable, "name");
+                    const auto* value_value = find(variable, "value");
+                    const auto* key =
+                        key_value ? std::get_if<std::string>(&key_value->data) : nullptr;
+                    const auto* value =
+                        value_value ? std::get_if<std::string>(&value_value->data) : nullptr;
+                    if (!key || key->empty() || !value ||
+                        !environment.env.emplace(*key, *value).second) {
+                        return std::unexpected(failure(
+                            errc::corrupt, "invalid deployment variable", "repository document"));
+                    }
+                }
+                for (const auto& secret_value : *secrets) {
+                    const auto* secret = std::get_if<std::string>(&secret_value.data);
+                    if (!secret || secret->empty()) {
+                        return std::unexpected(failure(errc::corrupt,
+                                                       "invalid deployment secret reference",
+                                                       "repository document"));
+                    }
+                    environment.secrets.push_back(*secret);
+                }
+                if (!output.deploy.environments.emplace(*name, std::move(environment)).second) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "duplicate deployment environment", "repository document"));
+                }
             }
         }
         if (const auto* flow = find(*config, "flow")) {
@@ -4300,6 +4396,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     document.verification_rate = options.verify.rate;
     document.agents = std::move(options.agents);
     document.hot_update = std::move(options.hot_update);
+    document.deploy = std::move(options.deploy);
     document.policy = std::move(options.policy);
     document.retention = std::move(options.retention);
     document.flow = std::move(options.flow);
@@ -4431,6 +4528,10 @@ hot_update_config repository::hot_update_configuration() const {
     return impl_ ? impl_->current.hot_update : hot_update_config{};
 }
 
+deployment_config repository::deploy_configuration() const {
+    return impl_ ? impl_->current.deploy : deployment_config{};
+}
+
 flow_config repository::flow_configuration() const {
     return impl_ ? impl_->current.flow : flow_config{};
 }
@@ -4442,6 +4543,12 @@ runtime::task<::liquid::tree> repository::root() {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     co_return co_await impl_->root_tree();
+}
+result<node_id> repository::id() const {
+    if (!impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return impl_->current.repository;
 }
 runtime::task<digest> repository::root_digest() {
     if (!impl_)

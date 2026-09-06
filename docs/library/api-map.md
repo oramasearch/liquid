@@ -1722,3 +1722,9 @@ refactor.
   first header; see rules 4 and 6.
 - ~~Where the automerge document boundary sits for very large trees.~~ **Resolved
   (2026-09-04):** one document per directory; see [`object-model.md`](object-model.md).
+# `liquid/deploy.hpp`
+
+`deploy::create`, `list`, `rollback`, and `status` are coroutine-native clients for the
+operator-owned deployment control plane. They use plain deployment records, digest-pinned OCI
+references, opaque secret references, and shared HTTP/1.1 bearer-envelope handling. The
+provisional wire definition is [`deploy.md`](deploy.md).

@@ -29,3 +29,6 @@ transparency-log interfaces, the one-image review operation, and the long-runnin
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
 engine and its clause encoding stay private.
+`deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
+status calls for an operator-owned control plane. Its interim image input is an OCI reference
+pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.

@@ -269,6 +269,7 @@ and Zetta's.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
 - [`docs/library/http2.md`](docs/library/http2.md) — private Corosio HTTP/2 and gRPC framing, h2c and TLS ALPN interoperability.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/deploy.md`](docs/library/deploy.md) — operator control-plane deployment records, digest-pinned interim images, rollback, status, and contract boundary.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/forge-client.md`](docs/library/forge-client.md) — lake review calls, anchor advancement, polling events, error mapping, and test double.

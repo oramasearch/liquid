@@ -1,5 +1,11 @@
 # lake.live — the hosted service
 
+## Deployment control plane
+
+Deployment desired state is not a lake capability. Liquid sends deployment intent to the
+operator-owned `/v1` control plane; the operator records and reconciles it. Lake may later mirror
+deployment records for pages or audit, but is not on the deployment path.
+
 > Research: [21-consumer-sync-and-web](../research/21-consumer-sync-and-web/) ·
 > [12-artifact-distribution](../research/12-artifact-distribution/) ·
 > [20-deployment-runtime-k8s](../research/20-deployment-runtime-k8s/)

@@ -73,6 +73,7 @@ auto hot_update(int argc, char** argv) -> int;
 auto edit(int argc, char** argv) -> int;
 auto resolve(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
+auto deploy(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -160,6 +161,13 @@ constexpr auto commands = std::to_array<command>({
      "review a lake change in place",
      "available",
      liquid_cli::review},
+    {"deploy",
+     "deploy [--control <url>] [--env <name>] [--image <ref@sha256:...>] [--to "
+     "<change|deployment>] "
+     "[--wait] | deploy <status|list> [--control <url>] [--env <name>] [--json]",
+     "create, inspect, or roll back an environment deployment",
+     "available",
+     liquid_cli::deploy},
     {"serve",
      "serve sync <path> [...] | serve admission --policy <file> [...]",
      "serve repository sync or image admission",
