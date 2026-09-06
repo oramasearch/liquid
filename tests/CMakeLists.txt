@@ -6,6 +6,7 @@ set(LIQUID_HTTP2_TEST_SOURCES
 
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
+  test_asn1.cpp
   test_drip.cpp
   test_delta.cpp
   test_daemon.cpp
@@ -30,6 +31,8 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_store.cpp
   test_temporary_directory.cpp
+  test_transparency.cpp
+  ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
   admission/test_review.cpp
   scan/test_capture.cpp
@@ -71,11 +74,15 @@ target_link_libraries(liquid-tests PRIVATE
   liquid_monocypher
   orama::oramacore-cpp
   GTest::gtest_main
+  Boost::assert
+  Boost::config
+  Boost::throw_exception
   Boost::corosio
   Boost::corosio_openssl)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
+  ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
   ${monocypher_source_SOURCE_DIR}/src
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
@@ -134,6 +141,8 @@ if(UNIX)
     LIQUID_ADMISSION_TLS_CERT="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
     LIQUID_ADMISSION_TLS_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem")
 endif()
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures")
 if(LIQUID_BUILD_FRONTENDS)
   target_sources(liquid-tests PRIVATE build/test_frontend.cpp build/test_grammars.cpp)
   add_dependencies(liquid-tests liquid-frontend-tree-sitter liquid-frontend-clang)
@@ -248,6 +257,10 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_DOCS=${PROJECT_SOURCE_DIR}/docs/cli/README.md
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/help-docs.cmake)
+  add_test(NAME cli-transparency-configuration
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/transparency.cmake)
   add_test(NAME cli-delta
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
