@@ -126,7 +126,10 @@ one-shot reconciliation. It also prints pending uploads, hydration debt, path av
 offline reasons; `pin` and `unpin` resolve the containing drive and call the public state API.
 `vfs.cpp` passes `LIQUID_TOKEN` to mounts that hydrate through a persisted drive endpoint. Both
 long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
-restores one as an ordinary repository drip through the public repository API.
+restores one as an ordinary repository drip through the public repository API. `blame.cpp`
+resolves the current head and asks the attached daemon for public per-line attribution records.
+Its text and JSON renderers expose line, change, session, actor, agent marker, and text without
+reading repository internals.
 
 `registry.cpp` implements `registry trust pin` and `registry trust show` through the public TUF
 client. It stores the exact trusted-root bytes and their SHA-256 pin in repository configuration;

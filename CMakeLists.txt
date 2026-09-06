@@ -626,6 +626,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/arguments.cpp
     src/cli/anchor.cpp
     src/cli/attestation.cpp
+    src/cli/blame.cpp
     src/cli/capture.cpp
     src/cli/daemon.cpp
     src/cli/compose.cpp

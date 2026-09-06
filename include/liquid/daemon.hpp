@@ -100,6 +100,8 @@ public:
     [[nodiscard]] runtime::task<edit_preview> preview_edit(edit_request request,
                                                            edit_attribution attribution);
     [[nodiscard]] runtime::task<edit_result> apply_edit(edit_preview preview);
+    [[nodiscard]] runtime::task<std::vector<line_attribution>> attribution(std::string path,
+                                                                           change_id change);
     [[nodiscard]] runtime::task<void> report_consumer_lag(std::string name, std::uint64_t behind);
     [[nodiscard]] runtime::task<void> report_presence(liquid::presence value);
     [[nodiscard]] runtime::task<void> shutdown();

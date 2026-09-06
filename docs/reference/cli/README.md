@@ -22,6 +22,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`refs`](refs.md) | list repository references | available |
 | [`diff`](diff.md) | compare changes and supported container formats | available |
 | [`history`](history.md) | show or restore path history | available |
+| [`blame`](blame.md) | show the session and change that last wrote each line | available on macOS and Linux |
 | [`drive`](drive.md) | synchronize a drive folder | available |
 | [`registry`](registry.md) | manage artifact-registry trust | available |
 | [`push`](push.md) | push repository changes and objects | available |

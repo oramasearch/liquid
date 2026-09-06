@@ -22,6 +22,8 @@ It maps an anchor from the imported change through a later rename and checks the
 flags.
 It lists history through that rename, restores the imported version as a new drip, and cuts the
 restoration without changing an earlier change.
+`blame.cmake` creates a two-line repository and verifies both the versioned JSON attribution object
+and the line-oriented text form through the daemon-backed command.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 
