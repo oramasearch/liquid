@@ -232,3 +232,5 @@ exercises base and overlay paths, writes `archive-z2` and `bare-user`, and check
 objects. The pinned target digests are the macOS/Linux byte-identity contract.
 The format-registry inventory also pins the Debian, RPM, and Alpine codecs beside the five launch
 codecs.
+Support-matrix tests compare every live codec and locked grammar with `support_matrix()`, and pin
+the compiler frontend as the strongest C++ registration.

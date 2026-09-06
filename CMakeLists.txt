@@ -527,6 +527,7 @@ add_library(libliquid
   src/sync/session.cpp
   src/lake_transparency.cpp
   src/transparency.cpp
+  src/tiers.cpp
   src/tuf.cpp
   src/version.cpp
   src/vfs.cpp
@@ -649,6 +650,8 @@ if(LIQUID_BUILD_CLI)
     src/cli/log.cpp
     src/cli/transparency.cpp
     src/cli/test.cpp
+    src/cli/tier.cpp
+    src/cli/tiers.cpp
     src/cli/repo.cpp
     src/cli/registry.cpp
     src/cli/review.cpp

@@ -26,10 +26,16 @@ It also parses `search --explain` as JSON and pins the scan choice, literal clas
 freshness input, and three-alternative shape for the small imported working set.
 
 `format-diff.cmake` creates two changes through the public repository API and proves that
-`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and tier.
+`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and the
+shared tier line. It also pins Tier 0 text fallback, the JSON tier object, and a Tier 3 opaque
+archive-search result.
 
 `symbols-python.cmake` creates a Python source file and proves `liquid symbols` selects the locked
-Python grammar and reports `origin=syntactic`.
+Python grammar and reports its Tier 2 digest plus `origin=syntactic`.
+
+`tiers-docs.cmake` compares the two generated feature blocks with `liquid tiers --markdown`.
+`tiers-json.cmake` pins stable full output and filtered C++ and ZIP rows. `wrap-tier.cmake` requires
+the wrapper to name the host sandbox even when the backend is unavailable.
 
 `retain-explain.cmake` reads the fixture's retained change digest and proves the command names the
 persisted rule, lease ID, and expiry.

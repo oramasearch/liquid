@@ -78,6 +78,24 @@ encoding at all — protobuf explicitly does not — and mutable formats like HD
 SQLite and PDF encode their construction history in their layout. liquid does not
 pretend to repack what cannot be repacked.
 
+The executable derives this declaration from the live codec registry. `unknown` is the Tier 3
+construction used when no codec recognises an object; named rows state each codec's advertised best
+tier and exact resource limits. Recognition may lower an individual input.
+
+<!-- formats:begin -->
+| Format | Tier | Codec | Limits |
+|---|---:|---|---|
+| `apk` | 2 | `apk` | depth 1; 536870912 bytes; 1000000 entries |
+| `deb` | 2 | `deb` | depth 1; 536870912 bytes; 1000000 entries |
+| `hdf5` | 2 | `hdf5` | depth 8; 268435456 bytes; 100000 entries |
+| `parquet` | 2 | `parquet` | depth 8; 268435456 bytes; 100000 entries |
+| `rpm` | 2 | `rpm` | depth 1; 536870912 bytes; 1000000 entries |
+| `sqlite` | 2 | `sqlite` | depth 8; 268435456 bytes; 100000 entries |
+| `tar` | 1 | `tar` | depth 8; 268435456 bytes; 100000 entries |
+| `unknown` | 3 | `none` | depth 8; 268435456 bytes; 100000 entries |
+| `zip` | 1 | `zip` | depth 8; 268435456 bytes; 100000 entries |
+<!-- formats:end -->
+
 ### Formats at launch
 
 | Format | Treatment |

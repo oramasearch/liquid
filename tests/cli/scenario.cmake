@@ -42,10 +42,13 @@ run_liquid(search_plan_output search_plan_error search_plan_result "${workspace}
   search --explain "\"first\"")
 require_success(search_plan_result search_plan_output search_plan_error)
 string(JSON search_executor GET "${search_plan_output}" executor)
+string(JSON search_tier GET "${search_plan_output}" tier level)
+string(JSON search_mechanism GET "${search_plan_output}" tier mechanism)
 string(JSON search_kind GET "${search_plan_output}" query_kind)
 string(JSON search_alternatives LENGTH "${search_plan_output}" alternatives)
 string(JSON search_drips GET "${search_plan_output}" inputs drips_since_index_update)
-if(NOT search_executor STREQUAL "scan" OR NOT search_kind STREQUAL "literal" OR
+if(NOT search_tier EQUAL 0 OR NOT search_mechanism STREQUAL "chunking" OR
+   NOT search_executor STREQUAL "scan" OR NOT search_kind STREQUAL "literal" OR
    NOT search_alternatives EQUAL 3 OR NOT search_drips EQUAL 0)
   message(FATAL_ERROR "search explain JSON changed: ${search_plan_output}")
 endif()

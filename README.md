@@ -67,6 +67,11 @@ of it.
 > refusals; apply verifies file digests, writes one drip per file, and records one attributed
 > operation for whole-edit undo. The bundled tree-sitter frontend now exposes concrete syntax, and
 > `liquid edit` previews or applies through the checkout daemon.
+> Liquid #71 adds the pure public support matrix derived from loaded frontend modules and registered
+> format codecs, with declared platform wrapper backends. C++ resolves to its Tier 3 compiler
+> frontend while the digest-locked grammar registry supplies Tier 2 rows. `liquid tiers` renders
+> stable text, JSON, and generated feature tables, and degraded command results name their actual
+> tier and mechanism.
 
 > **Phase 2 now includes `liquid wrap`, local sandboxed action execution, the persistent disk cache,
 > sampled reproducibility verification, signed SLSA provenance, record-derived cache diagnostics,
@@ -272,6 +277,7 @@ and Zetta's.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, OSTree commits, bootc images, byte identity, and attached attestations.
+- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, derived dependencies, byte identity, and attached attestations.
 - [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.
