@@ -17,6 +17,7 @@ search engine, a PaaS, Dropbox, Clerk and Vault.
 it — liquid is the tool, lake is where it collects. A mix of **GitHub, Google Drive
 and Railway** over one content-addressed store, with identity, secrets and PKI.
 
+> **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, pluggable KEK custody with trust-domain data-key rotation and revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > **Status: the Phase 1 store exit criterion is met; the chunk store, bounded-memory file streaming, garbage collection with pack compaction, deterministic crash simulator, first working repository, local Git import/export, trust-domain data-key rotation with revision readability, TAAP/1 identities with rotation plus signed drips and changes, local change capture, agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env` encryption, and the macOS/Linux checkout daemon are implemented.** Code is a C++26 **libliquid**
 > (`liquid::liquid`, static by default, shared with `BUILD_SHARED_LIBS`) plus the `liquid` binary
@@ -249,6 +250,7 @@ and Zetta's.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, peer flow limits, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — RFC 3161 timestamp and RFC 4998 evidence verification design and trust policy.
 - [`docs/library/sync.md`](docs/library/sync.md) — signed repository metadata, per-reference push outcomes, and pack-framed object exchange over HTTP/1.1.
+- [`docs/library/sealed-secrets.md`](docs/library/sealed-secrets.md) — the Lake sealed-secret record, key agreement, authenticated scope, custody boundary, and fixture.
 - [`docs/library/drive.md`](docs/library/drive.md) — persisted three-tree folder synchronization, conflicts, transfer resume, path history, and daemon watching.
 - [`docs/library/chunk-index-benchmark.md`](docs/library/chunk-index-benchmark.md) — reproducible RocksDB/LMDB chunk-index measurements.
 - [`docs/library/store.md`](docs/library/store.md) — local store layout, packs, integrity, index, tuning, and rebuild.

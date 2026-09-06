@@ -36,6 +36,8 @@ check each format's identifying field.
 `delta.cmake` drives create, apply, and catalog fetch through the executable and compares target,
 applied, and fetched file digests.
 `diff.cmake` cuts two changes and checks that the public repository diff is rendered by the CLI.
+`secret.cmake` seals file input to raw CBOR and base64, unseals both forms through the executable,
+and proves that the plaintext is absent from stderr.
 
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
