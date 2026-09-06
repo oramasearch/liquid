@@ -40,6 +40,7 @@
 #include "liquid/sync.hpp"
 #include "liquid/tiers.hpp"
 #include "liquid/transparency.hpp"
+#include "liquid/tuf.hpp"
 #include "liquid/version.hpp"
 #include "liquid/vfs.hpp"
 #include "liquid/workers.hpp"

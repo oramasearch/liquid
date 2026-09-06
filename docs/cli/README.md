@@ -40,6 +40,7 @@ built binary under the build directory before CTest compares it with the committ
 | `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
+| `registry` | `registry trust <pin <root.json>\|show>` | Pin or inspect the current repository's trusted TUF root. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `config` | `config check <file\|dir> \| config lower <file> [--json] [--trace] \| config format <file>` | Check, lower, trace, or canonically format `.liquid` configuration. | available |
 | `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |

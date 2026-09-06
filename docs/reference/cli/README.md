@@ -23,6 +23,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`diff`](diff.md) | compare changes and supported container formats | available |
 | [`history`](history.md) | show or restore path history | available |
 | [`drive`](drive.md) | synchronize a drive folder | available |
+| [`registry`](registry.md) | manage artifact-registry trust | available |
 | [`push`](push.md) | push repository changes and objects | available |
 | [`pull`](pull.md) | pull repository changes and objects | available |
 | [`review`](review.md) | review a lake change in place | available |
