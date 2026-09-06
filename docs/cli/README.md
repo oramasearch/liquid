@@ -12,6 +12,13 @@ its configured idle exit or `liquid daemon --shutdown`. Windows repository comma
 available, but daemon attachment returns the documented unsupported result because the current
 Corosio revision has no named-pipe transport.
 
+`clone <url|drive-folder> [<dir>]` creates a plain checkout through the public drive client. A
+configured drive folder supplies its persisted remote URL; an endpoint URL is used directly. When
+`dir` is omitted, the last endpoint path component is used, with `repository` as the fallback.
+Clone pins the repository root, so every pulled file is materialized even when it exceeds the
+drive client's ordinary on-demand hydration threshold. The remote remains configured for later
+`drive status` and synchronization.
+
 Focused command contracts: [`build`](build-events.md) plans and events, and [`test`](test.md).
 
 ## Commands and options
@@ -32,13 +39,16 @@ built binary under the build directory before CTest compares it with the committ
 | `version` | `version [--json]` | Print the library version. | available |
 | `tiers` | `tiers [--json\|--markdown] [--language <name>\|--format <name>]` | Print declared language, format, and platform support. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
+| `clone` | `clone <url\|drive-folder> [<dir>] [--json]` | Clone, configure, and fully materialize a repository. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
+| `inspect` | `inspect <path\|digest> [--json]` | Show the selected format codec, tier, and decoded entry tree. | available |
 | `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
+| `blame` | `blame <path> [--json]` | Show the session and change that last wrote each line. | available on macOS and Linux |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
 | `registry` | `registry trust <pin <root.json>\|show>` | Pin or inspect the current repository's trusted TUF root. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
@@ -283,6 +293,17 @@ sets `approximate`; and a removed line or file sets `deleted`.
 `history` follows the same stable node through moves. `--restore` appends an ordinary working-tree
 drip from the selected change and leaves prior changes and refs untouched. See
 [`history.md`](history.md).
+`clone` accepts `LIQUID_TOKEN` as a bearer credential and does not persist it. Text output names
+the remote and absolute landing path. `--json` writes one object with `path`, `remote`,
+`objects_received`, and `bytes_received`. An existing non-empty destination is refused before any
+network request. HTTP authentication and repository lookup errors retain the library error names
+`unauthorized` and `not_found`; a non-empty destination is `already_exists`. Failed transfers
+remove clone-created target state and preserve an existing empty target directory.
+`blame` resolves the current head and asks the checkout daemon for the public attribution query.
+Its line-oriented form prints one-based line, change, session, actor, agent marker, and text.
+`--json` emits a version-1 object with `path`, `change`, and the same values under `lines`; strings
+use JSON escaping and empty files produce an empty array. The command refuses directories, missing
+paths, and non-UTF-8 content. See [`../library/multiplayer.md`](../library/multiplayer.md).
 `drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
 counts, conflicts, per-path outcomes, and per-reference outcomes. `drive status` also prints the
 hydration threshold, folder-pin rule, pending upload count, non-local byte hydration debt, last
@@ -605,6 +626,7 @@ hashed before their digest enters a package document. See
 ```sh
 liquid version --json
 liquid init .
+LIQUID_TOKEN="$token" liquid clone https://lake.example/repositories/project ./project
 liquid status --json
 liquid daemon
 liquid daemon --shutdown
@@ -684,6 +706,8 @@ liquid facts export
 liquid serve reapi --listen 127.0.0.1:8980
 liquid history src/main.cpp
 liquid history src/main.cpp --restore blake3:<change-digest>
+liquid blame src/main.cpp
+liquid blame src/main.cpp --json
 liquid drive sync ~/Documents https://lake.live/api/repositories/example
 liquid drive status ~/Documents
 liquid drive pin ~/Documents/Projects
@@ -713,6 +737,8 @@ and fetches a delta through the built executable and compares the produced files
 `cli-tiers-json` pins ordering, filters, C++'s Tier 3 frontend, and repeat-run byte stability.
 `cli-secret` round-trips raw CBOR and base64 through the executable and checks that stderr never
 contains the value.
+`cli-blame` creates a repository, invokes the daemon-backed text and JSON forms, and checks their
+stable fields.
 `tests/test_daemon.cpp` runs start-on-first-status through the built CLI and verifies that a library
 client attaches to the same process.
 The privileged Linux build fixtures also invoke `replay --json` for an indexed action and require

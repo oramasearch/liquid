@@ -51,6 +51,10 @@ filters language or format rows, and renders stable text, JSON, or the generated
 Diff, symbols, archive search, and wrap use the shared projection; #68, #69, and #70 must reuse it
 when their richer command paths land.
 
+`inspect.cpp` resolves a regular file or repository blob digest through public APIs, identifies its
+format codec, and prints the codec tier plus the decoded entry tree. Its JSON projection is stable
+and includes entry size, kind, and opaque-reader reason.
+
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
 `verify.cpp` parses action, all, changed, and graph selectors, calls the public verification APIs,
@@ -93,6 +97,10 @@ by dependency; conflict and package-choice explanations use the stable library f
 `sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
 optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
+`clone.cpp` resolves either a sync URL or a configured drive folder, refuses a non-empty target,
+and composes `drive_client::open`, root pinning, and one synchronization. This adopts the remote
+repository identity, retains the remote configuration, and fully materializes the plain checkout.
+It passes `LIQUID_TOKEN` without storing it and prints either the landing path or stable JSON.
 `deploy.cpp` implements deployment creation, listing, rollback, and status through the public
 deployment API. It resolves the operator control-plane URL from `--control`, `LIQUID_CONTROL_PLANE`,
 or persisted repository configuration, and passes `LIQUID_TOKEN` only as a bearer credential.
@@ -122,7 +130,10 @@ one-shot reconciliation. It also prints pending uploads, hydration debt, path av
 offline reasons; `pin` and `unpin` resolve the containing drive and call the public state API.
 `vfs.cpp` passes `LIQUID_TOKEN` to mounts that hydrate through a persisted drive endpoint. Both
 long-running commands wait with Capy tasks. `history.cpp` lists node-following path versions and
-restores one as an ordinary repository drip through the public repository API.
+restores one as an ordinary repository drip through the public repository API. `blame.cpp`
+resolves the current head and asks the attached daemon for public per-line attribution records.
+Its text and JSON renderers expose line, change, session, actor, agent marker, and text without
+reading repository internals.
 
 `registry.cpp` implements `registry trust pin` and `registry trust show` through the public TUF
 client. It stores the exact trusted-root bytes and their SHA-256 pin in repository configuration;

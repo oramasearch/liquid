@@ -80,6 +80,15 @@ struct LIQUID_EXPORT presence {
     std::chrono::sys_seconds at{};
 };
 
+struct LIQUID_EXPORT line_attribution {
+    std::uint64_t line{};
+    std::string text;
+    liquid::actor by;
+    session_id session;
+    change_id change;
+    bool agent{};
+};
+
 struct LIQUID_EXPORT session_options {
     liquid::actor actor;
     attestation delegation;

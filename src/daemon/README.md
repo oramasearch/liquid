@@ -9,3 +9,7 @@ The public lifecycle and target interface are implemented in `src/daemon.cpp` an
 
 Presence reports are transient daemon events. The fan-out target receives local session and client
 updates without writing a drip or advancing a persisted cursor.
+
+The daemon request protocol also carries the public per-line attribution query. It validates the
+path and change, delegates history reconstruction to `repository::attribution`, and returns a
+versioned canonical-CBOR line array with actor, session, change, and agent fields.
