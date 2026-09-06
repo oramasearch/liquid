@@ -7,6 +7,8 @@ rebuild, the read-only publication default, mixed-cost size-cap eviction, SLSA p
 and verification, tamper rejection, DSSE/in-toto shape plus digest round-trip, shared-model
 SPDX/CycloneDX structure, fully marked system-binary inference, and cursor pages over public
 results, attestations, traces, and result-scoped SBOMs.
+The SBOM finalization bound publishes 24 producer actions and gives one final action 96 reads and
+24 outputs; result creation and cache validation must complete within twenty seconds.
 `test_content.cpp` covers canonical output-tree paths and modes plus read-only named dependency
 folding. `test_normalise.cpp` proves two `ar` headers with different owner, group, mode, and time
 normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root

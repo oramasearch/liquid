@@ -297,6 +297,48 @@ blob receives a `container_diff` naming the codec and observed tier, then added,
 modified logical paths with optional nested container diffs. The name `structural` remains reserved
 for source syntax work. Format details and limits are in [formats.md](formats.md).
 
+## Tree import
+
+`repository::import_tree(root, import_options)` walks a local directory one directory at a time,
+hashes every included regular file through the object store, and compares the resulting blob record
+identity with the current working tree. Only added, removed, content-changed, or mode-changed
+entries alter the tree. A non-empty import records one `import` drip whose entry list contains only
+the changed paths; an unchanged tree returns no drip. `tree_import_report` returns that optional
+shared `op_id` drip identifier plus `files_seen`, `changed`,
+`bytes_hashed`, and `bytes_written`.
+
+`import_options::ignore_patterns` supplements `.gitignore` and `.liquidignore` at the imported
+root. Patterns use the repository glob rules; a leading slash anchors at that root and a trailing
+slash selects the directory and its descendants. A `/**` rule also excludes that directory itself,
+so the walk never opens its descendants. Rules are evaluated in order; a later `!` rule includes a
+path again, including the directory selected by an earlier `/**` rule. `wrap` uses that form for the requested preconfigured build directory, which is an input
+to the wrapped CMake build even when the repository ignores build directories. By default symbolic
+links are skipped.
+
+The paged walker represents a new directory with no prior page rather than a synthetic digest, so
+adding a configured build directory does not attempt to load a nonexistent tree object.
+
+Rules from the imported root are evaluated first and caller-supplied rules last, allowing a caller to
+include one configured directory without weakening the root's other exclusions.
+`follow_symlinks` follows them, and `message` is retained with the recorded operation. `liquid
+init`, local `liquid import <path>`, and `liquid wrap` use this one primitive; Git history import
+remains its separate historical-object path.
+
+The repository regression covers an unchanged import, a one-file change with one changed tree
+entry, a removal, both ignore sources, and a synthetic 1,024-file import under a 512 MiB RSS
+ceiling on macOS and Linux.
+
+The walk retains the directory stack and changed entries, never a collection of all discovered
+paths. On a reopened repository it reads and replaces one stored tree page at a time, rather than
+reconstructing the prior tree before comparing it. The imported drip participates in the 64 KiB
+repository journal budget documented in [`build-engine.md`](build-engine.md); reaching that budget
+checkpoints the already-paged tree. Thus importing is bounded by `O(depth + changed entries +
+journal budget)`, rather than the size of either tree.
+
+Recording a change after a paged import reuses an unloaded root page directly. It does not turn the
+unloaded entry map into an empty tree, so configured inputs retained by a deferred open remain in
+the recorded snapshot.
+
 ## Anchors
 
 Issue #174 adds text positions that follow a file from one change to another without changing the
@@ -413,11 +455,19 @@ build-measure/tests/liquid-repository-open-measure open build-measure/open-1
 ## Implementation notes
 
 `LIQUID_REPO` contains the digest text of the latest repository checkpoint. Its replacement is
-written through Corosio to a sibling temporary file and atomically renamed. Each loaded directory
-is a private CRDT document cached by its `node_id`; saving a checkpoint prefers `save_compact()`
-bytes, verifies that they reopen as a full document, and falls back to complete upstream history
-bytes when needed. The checked bytes refresh the `dirs` entry and replace the active instance. A checkpoint occurs at `cut` and after the configured drip
-interval (64 by default). The checkpoint digest and heads are published before journal entries
+written through Corosio to a sibling temporary file and atomically renamed. A current checkpoint
+stores the root as a tree-page digest rather than embedding the recursive working tree in the
+repository document. Nested repository entries retain their local child index because their
+objects live in a separate repository store; directory pages remain paged. `LIQUID_JOURNAL` is a
+fixed-size pointer to a paged checkpoint; signed drip bytes are bounded to 64 KiB before another
+checkpoint is published. Each loaded directory is a private CRDT document cached by its `node_id`;
+saving a checkpoint prefers `save_compact()` bytes, verifies that they reopen as a full document,
+and falls back to complete upstream history bytes when needed. The checked bytes refresh the
+`dirs` entry and replace the active instance. Journal publication persists only cached directories;
+a checkpoint synchronizes reachable directories before publication. A checkpoint occurs at `cut`
+and after the configured interval (64 by default). Session undo follows the same bounded journal
+publication path rather than serializing a repository document directly. The checkpoint digest and
+heads are published before journal entries
 covered by those heads are retired. On open, each directory document is loaded sync-capable and
 restored lazily against the journaled working tree before its next mutation. Matching entries are
 left intact, so recovery is idempotent across process restarts.
