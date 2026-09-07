@@ -15,7 +15,8 @@ Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
 same library as a pinned submodule, lake will. The mapped public headers compile and link; the
 error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
-store, liquid #199's pre-pack write-through callback and remote-registered local eviction,
+store, liquid #278's coroutine-native persistence backend with disk and in-memory implementations,
+liquid #199's pre-pack write-through callback and remote-registered local eviction,
 liquid #4's TAAP/1 actor identities,
 liquid #111's identity-key rotation and chain verification, liquid #81's software, FIDO2, and PIV
 identity backends, TPM-sealed KEK custody, and threshold release approval, signed drips and changes, liquid #7's

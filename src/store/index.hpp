@@ -14,6 +14,10 @@
 #include "mapped_file.hpp"
 #include "pack.hpp"
 
+namespace liquid {
+class store_backend;
+}
+
 namespace liquid::store_detail {
 
 struct index_record {
@@ -39,6 +43,10 @@ struct chunk_index_options {
 class chunk_index {
 public:
     explicit chunk_index(std::filesystem::path root, chunk_index_options options = {});
+    chunk_index(std::shared_ptr<::liquid::store_backend> backend,
+                std::string prefix,
+                std::filesystem::path context,
+                chunk_index_options options = {});
 
     [[nodiscard]] runtime::task<void> open();
     [[nodiscard]] result<void> insert(index_entry entry);
@@ -68,7 +76,7 @@ private:
     struct run {
         std::uint64_t sequence{};
         algorithm algorithm_value{};
-        std::filesystem::path path;
+        std::string key;
         std::uint64_t record_count{};
         std::uint64_t records_offset{};
         std::span<const std::uint32_t> fanout;
@@ -81,14 +89,17 @@ private:
     };
 
     std::filesystem::path root_;
+    std::shared_ptr<::liquid::store_backend> backend_;
+    std::string prefix_;
     std::map<algorithm, algorithm_state> states_;
     std::uint64_t next_sequence_{1};
     std::uint32_t highest_pack_id_{};
     std::uint64_t collection_epoch_{};
     chunk_index_options options_;
 
-    [[nodiscard]] result<run>
+    [[nodiscard]] runtime::task<run>
     map_run(std::uint64_t sequence, algorithm algorithm_value, std::uint64_t expected_count) const;
+    [[nodiscard]] std::string key(std::string_view name) const;
     [[nodiscard]] runtime::task<void> flush(algorithm algorithm_value);
     [[nodiscard]] runtime::task<void> compact(algorithm algorithm_value);
     [[nodiscard]] runtime::task<void> write_manifest();

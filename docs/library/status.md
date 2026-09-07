@@ -29,12 +29,14 @@ approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 ident
 ([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),
 [`release-approval.md`](release-approval.md)).
 
-**Store.** The local store implements open, put, bounded-memory `put_file` and `get_to_file`, get,
+**Store.** The store implements an injected coroutine-native persistence backend with disk and
+in-memory reference implementations, plus open, put, bounded-memory `put_file` and `get_to_file`, get,
 range read, contains, trust-domain encrypted objects with passphrase, raw-key-file, age/X25519,
 cloud KMS, lake transit, Shamir, or TPM PCR-bound custody, versioned data-key rotation and
 revocation, repository readability reports, leased roots, epoch garbage collection, and pack compaction
 ([`store.md`](store.md), [`encryption.md`](encryption.md), [`gc.md`](gc.md),
-[`simulation.md`](simulation.md)). Store owners can await a whole-content write-through callback
+[`simulation.md`](simulation.md)). The disk backend remains the default, and the crash simulator
+runs the same invariants against disk and memory. Store owners can await a whole-content write-through callback
 before the first local pack write and evict remote-registered local copies without losing their
 remote location. Multiple repositories can use one caller-owned store with repository-scoped
 checkpoints, journals, and retention leases. `liquid gc --explain` reports why retained chunks are

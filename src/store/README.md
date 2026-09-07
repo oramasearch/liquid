@@ -4,13 +4,20 @@ Repository configuration encryption uses the private `repository_detail::store_a
 choose a plaintext metadata put or an explicit trust-domain encrypted put for whole-file payload
 chunks; the public store API keeps its existing default-key behavior.
 
-This directory owns FastCDC chunking, append-only packs, the fixed-width index, persisted local
+This directory owns FastCDC chunking, append-only packs, the fixed-width index, persisted backend
 leases, per-kind reference extraction, and epoch collection. `collector.cpp` preserves the
 ordering documented in `docs/library/gc.md`: committed tombstone manifest, index manifest, then
 whole-pack removal. `compactor.cpp` rewrites selected partially dead packs by copying physical
-frames byte-for-byte, with the collection manifest rename as the commit point. The object map also
+frames byte-for-byte, with the atomic collection-manifest put and durability barrier as the commit
+point. The object map also
 provides `store::key_version` with the recorded trust-domain data-key version and verifies whether
 the attached keyring can currently unwrap it; key-id parsing stays in `src/identity/key_version.hpp`.
+
+`backend.cpp` is the disk reference implementation of the public persistence contract. Store
+metadata, pack appends and sealing, mapped index runs, leases, collection, and compaction use
+logical backend keys. Disk runs retain the mapped-file fast path; non-disk runs are held in owned
+memory after a backend range read. Every blocking filesystem metadata operation uses
+`runtime::offload`.
 
 Targeted redaction removes selected object-map entries, commits tombstones for their unshared
 frames, rebuilds the index, and compacts only affected packs. It is separate from lease-driven

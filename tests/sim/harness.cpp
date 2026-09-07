@@ -16,6 +16,7 @@
 #include "liquid/hash.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "memory_backend.hpp"
 
 namespace liquid::sim {
 namespace {
@@ -131,9 +132,19 @@ std::size_t input_size(std::mt19937_64& random) {
     return 40U + static_cast<std::size_t>(random() % (4U * 1024U - 40U + 1));
 }
 
-result<store> open_store(const std::filesystem::path& path) {
+std::shared_ptr<store_backend> make_backend(simulation_backend kind,
+                                            const std::filesystem::path& path) {
+    if (kind == simulation_backend::memory) {
+        return std::make_shared<memory_store_backend>();
+    }
+    return make_disk_store_backend(path);
+}
+
+result<store> open_store(const std::filesystem::path& path,
+                         const std::shared_ptr<store_backend>& backend) {
     store_options options;
     options.pack_size = 64U * 1024U;
+    options.backend = backend;
     return runtime::block_on(store::open(path, options));
 }
 
@@ -171,10 +182,11 @@ failure(std::uint64_t seed, std::uint64_t step, std::string message) {
 
 std::optional<simulation_failure> open_again(store& subject,
                                              const std::filesystem::path& path,
+                                             const std::shared_ptr<store_backend>& backend,
                                              std::uint64_t seed,
                                              std::uint64_t step) {
     subject = {};
-    auto reopened = open_store(path);
+    auto reopened = open_store(path, backend);
     if (!reopened)
         return failure(seed, step, "reopen failed: " + reopened.error().message);
     subject = std::move(*reopened);
@@ -183,6 +195,7 @@ std::optional<simulation_failure> open_again(store& subject,
 
 std::optional<simulation_failure> run_schedule(store& subject,
                                                const std::filesystem::path& path,
+                                               const std::shared_ptr<store_backend>& backend,
                                                const std::vector<operation>& schedule,
                                                object_map& acknowledged,
                                                lease_map& roots,
@@ -241,7 +254,7 @@ std::optional<simulation_failure> run_schedule(store& subject,
             continue;
         }
         if (item.kind == operation_kind::reopen) {
-            auto reopened = open_again(subject, path, seed, fault_step);
+            auto reopened = open_again(subject, path, backend, seed, fault_step);
             if (crash && crash->fired())
                 return std::nullopt;
             if (reopened)
@@ -331,13 +344,16 @@ std::vector<operation> make_schedule(std::mt19937_64& random,
 
 } // namespace
 
-simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem::path& workspace) {
+simulation_result run_store_simulation(std::uint64_t seed,
+                                       const std::filesystem::path& workspace,
+                                       simulation_backend backend_kind) {
     std::mt19937_64 random(seed);
     const auto initial = make_bytes(40U + random() % 4057U, random());
     const auto schedule = make_schedule(random, initial);
 
     temporary_directory probe(workspace / ("probe-" + std::to_string(seed)));
-    auto probe_opened = open_store(probe.path());
+    auto probe_backend = make_backend(backend_kind, probe.path());
+    auto probe_opened = open_store(probe.path(), probe_backend);
     if (!probe_opened)
         return {0,
                 0,
@@ -361,6 +377,7 @@ simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem
         injector_guard guard(&counter);
         if (auto failed = run_schedule(*probe_opened,
                                        probe.path(),
+                                       probe_backend,
                                        schedule,
                                        probe_acknowledged,
                                        probe_roots,
@@ -377,7 +394,8 @@ simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem
 
     const auto fault_step = 1U + random() % counter.count();
     temporary_directory actual(workspace / ("actual-" + std::to_string(seed)));
-    auto opened = open_store(actual.path());
+    auto actual_backend = make_backend(backend_kind, actual.path());
+    auto opened = open_store(actual.path(), actual_backend);
     if (!opened)
         return {fault_step,
                 0,
@@ -407,6 +425,7 @@ simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem
         injector_guard guard(&crash);
         if (auto failed = run_schedule(*opened,
                                        actual.path(),
+                                       actual_backend,
                                        schedule,
                                        acknowledged,
                                        roots,
@@ -421,7 +440,7 @@ simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem
         return {fault_step, 0, failure(seed, fault_step, "selected fault point was not reached")};
     *opened = {};
 
-    auto reopened = open_store(actual.path());
+    auto reopened = open_store(actual.path(), actual_backend);
     if (!reopened) {
         return {fault_step,
                 0,
@@ -430,8 +449,14 @@ simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem
                         "reopen failed after " + crash.description() + ": " +
                             reopened.error().message)};
     }
-    for (const auto& entry : std::filesystem::directory_iterator(actual.path() / "gc")) {
-        if (entry.path().filename().string().starts_with("compact-")) {
+    auto pending = runtime::block_on(actual_backend->list("gc/compact-"));
+    if (!pending) {
+        return {fault_step,
+                0,
+                failure(seed, fault_step, "could not list pending compactions after reopen")};
+    }
+    for (const auto& entry : *pending) {
+        if (entry.key.ends_with(".pending")) {
             return {fault_step,
                     0,
                     failure(seed, fault_step, "compaction recovery left a pending operation")};
@@ -493,16 +518,21 @@ simulation_result run_store_simulation(std::uint64_t seed, const std::filesystem
     }
 
     *reopened = {};
-    std::error_code removed_index;
-    std::filesystem::remove_all(actual.path() / "index", removed_index);
-    if (removed_index) {
-        return {fault_step,
-                orphans,
-                failure(seed,
-                        fault_step,
-                        "could not remove index for rebuild: " + removed_index.message())};
+    auto index_entries = runtime::block_on(actual_backend->list("index/"));
+    if (!index_entries) {
+        return {fault_step, orphans, failure(seed, fault_step, "could not list index for rebuild")};
     }
-    reopened = open_store(actual.path());
+    for (const auto& entry : *index_entries) {
+        auto removed = runtime::block_on(actual_backend->remove(entry.key));
+        if (!removed && removed.error().code != errc::not_found) {
+            return {fault_step,
+                    orphans,
+                    failure(seed,
+                            fault_step,
+                            "could not remove index for rebuild: " + removed.error().message)};
+        }
+    }
+    reopened = open_store(actual.path(), actual_backend);
     if (!reopened) {
         return {fault_step,
                 orphans,
