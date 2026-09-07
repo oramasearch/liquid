@@ -1,5 +1,8 @@
 # Source implementation
 
+`liquid split` documents owned destination storage, original signed history, nested support, and
+failure cleanup in its typed command table. The implementation lives in libliquid.
+
 `main.cpp` owns the public CLI command table and dispatches each command to its focused adapter
 under `cli/`. Library implementation directories follow the installed public API areas while
 keeping parsers, codecs, storage, network, solver, and runtime implementation types private.

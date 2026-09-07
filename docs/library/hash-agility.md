@@ -19,7 +19,7 @@ memtable and immutable run set for each algorithm, allowing the two forms to
 resolve side by side. Reopening a repository with the same
 `repository_options::storage` preserves its selected write algorithm; the option
 also reserves the repository boundary for future key custody configuration.
-Change IDs reconstructed by `log` use that algorithm and can be passed directly
+Change IDs reconstructed by `log` use each referenced change's stored algorithm and can be passed directly
 to `at`. Repository directory creation uses it for both the placeholder object
 reference and its operation identifier.
 
@@ -38,8 +38,8 @@ store algorithm does not alter CRDT actor identity.
 
 The store's metadata-only reference extractor can decode a change without an
 algorithm because it reads embedded references and discards the reconstructed
-change ID. Repository operations always provide their configured algorithm when
-they decode a change ID.
+change ID. History traversal provides each referenced digest's algorithm when decoding its change ID,
+including history imported by composition from a differently configured store.
 
 ## Signature identifiers
 

@@ -1,5 +1,8 @@
 # liquid
 
+Standalone ordinary and nested splits own their data and retain original signed history; see
+[`docs/library/split.md`](docs/library/split.md).
+
 liquid is a content-addressed, coroutine-native version control system and build system in one
 program. One chunk store holds source, binaries, packages, images, search indexes and encrypted
 data. One dependency graph of pure actions builds, packages, indexes and deploys from that store;

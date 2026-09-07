@@ -1,5 +1,8 @@
 # CLI tests
 
+`split.cmake` verifies ordinary and nested splits in separate CLI processes after moving or
+deleting their sources, checks materialised bytes and prior history, and rejects failed output.
+
 `scenario.cmake` drives the built `liquid` executable through the Phase 1 command-line scenario
 without watcher capture: import files with `init`, inspect status, cut, move, nest a second
 repository, split a subtree, combine it, inspect JSON history, undo the move, reject a locked

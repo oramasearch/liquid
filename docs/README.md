@@ -24,6 +24,7 @@ for what is implemented today.
 
 | Page | What it contains |
 |---|---|
+| [`library/split.md`](library/split.md) | Standalone split ownership, original history and identities, nested repositories, publication, and verification. |
 | [`library/status.md`](library/status.md) | What libliquid and the `liquid` binary implement today, by phase, and the known limits in one place. |
 | [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, structural-edit operations, edit-surviving text anchors, compact/shallow CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, #174, and #205. |

@@ -1,5 +1,9 @@
 # Implementation status
 
+Issue #2: ordinary and nested splits own their referenced chunks and expose original signed
+history after source removal. Shared-store sources produce standalone destinations. Publication
+and limitations are documented in [`split.md`](split.md).
+
 This page states what libliquid and the `liquid` binary implement today, by phase, and what each
 phase still lacks. It is the consolidated status record that the root `README.md` used to carry;
 the root file now keeps a short summary and links here. Each paragraph names the page that holds
