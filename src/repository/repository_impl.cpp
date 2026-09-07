@@ -5691,10 +5691,19 @@ runtime::task<std::vector<std::byte>> repository::read(std::string path) {
         if (!entry) {
             co_return std::unexpected(entry.error());
         }
-        if (!*entry || (*entry)->kind != node_kind::blob) {
+        if (*entry && (*entry)->kind == node_kind::blob) {
+            co_return co_await impl_->blob_contents((*entry)->id, std::move(path));
+        }
+        if (!*entry || (*entry)->kind != node_kind::conflict) {
             co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
         }
-        co_return co_await impl_->blob_contents((*entry)->id, std::move(path));
+        const auto conflict =
+            std::ranges::find(impl_->current.conflict_values, path, &conflict_reference::path);
+        if (conflict == impl_->current.conflict_values.end() ||
+            conflict->selected_kind != node_kind::blob) {
+            co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
+        }
+        co_return co_await impl_->blob_contents(conflict->selected, std::move(path));
     }
     auto* entry = lookup(impl_->current.root, *parts);
     if (entry && entry->kind == entry_kind::file) {
@@ -9411,7 +9420,7 @@ runtime::task<std::vector<path_history_entry>> repository::history(std::string p
             co_return std::unexpected(found.error());
         }
         if (*found) {
-            if ((*found)->kind != node_kind::blob) {
+            if ((*found)->kind != node_kind::blob && (*found)->kind != node_kind::conflict) {
                 co_return std::unexpected(
                     failure(errc::invalid_argument, "history path is not a file", path));
             }

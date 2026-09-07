@@ -1244,6 +1244,11 @@ TEST(Drive, concurrent_offline_edits_from_two_clients_keep_both_named_versions) 
     EXPECT_NE(liquid::to_string(second_upload->status.conflicts.front().base),
               liquid::to_string(liquid::digest{}));
 
+    auto recorded = liquid::runtime::block_on(server_repository->conflict_at("shared.txt"));
+    ASSERT_TRUE(recorded) << recorded.error().message;
+    EXPECT_EQ(recorded->kind, liquid::conflict_kind::structural);
+    EXPECT_EQ(recorded->region.path, "shared.txt");
+
     auto original = liquid::runtime::block_on(server_repository->read("shared.txt"));
     ASSERT_TRUE(original) << original.error().message;
     EXPECT_EQ(text(*original), "second offline edit");

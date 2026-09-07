@@ -57,8 +57,13 @@ The live repository retains the CRDT-selected blob, tree, or nested repository e
 conflict reference. Reads and edits use that selected entry. Checkpoints persist enough selection
 metadata to reconstruct the working tree after reopen while subsequent cuts continue to publish a
 conflict tree entry.
-If a converged CRDT directory omits a conflicted file path, file reads use that persisted selected
-blob until the conflict is resolved.
+If a converged CRDT directory omits a conflicted file path, and when a received change restores a
+paged conflict tree entry, file reads use that persisted selected blob until the conflict is
+resolved. Materialisation still rejects the conflict tree entry, so selecting a working value does
+not hide an unresolved conflict from a build.
+Path history follows the stable node retained by a conflict tree entry. This keeps a drive path and
+its deterministic alternate name independently visible in history while the conflicting path names
+the conflict value for its unresolved revision.
 
 Change record version 3 adds two canonical lists:
 
