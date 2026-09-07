@@ -76,16 +76,15 @@ Encrypted frames use the encrypted variant of the frame magic, and their compres
 replaced by `nonce[24] || tag[16] || ciphertext`. The nonce comes from the operating system random
 source for every new chunk. Recovery can structurally recognize a complete encrypted frame; its
 AEAD authentication and keyed digest are verified when the chunk is read with its trust-domain
-key. The object map format is now `LQOBJ5`: each record adds the descriptor and per-chunk 64-bit
-resemblance hashes to `LQOBJ4`'s raw chunk sizes, `LQOBJ3`'s descriptor digest and object kind,
-and `LQOBJ2`'s encryption flag and optional length-prefixed key id. The sizes let `read` jump to
-the first chunk overlapping a large offset without loading preceding chunks. The resemblance
-hashes preserve the similarity measurement with each object entry. A zero
+key. The object map format is `LQOBJ4`: each record adds raw chunk sizes to `LQOBJ3`'s descriptor
+digest and object kind, and `LQOBJ2`'s encryption flag and optional length-prefixed key id. The
+sizes let `read` jump to
+the first chunk overlapping a large offset without loading preceding chunks. `LQOBJ5` remains
+readable, but resemblance values are write-path-only and new catalogs use `LQOBJ4`. A zero
 descriptor algorithm is the sentinel for legacy records that predate stored chunk-list objects.
 Its chunk-list descriptor contains the same key id and is encrypted too. `LQOBJ1` plaintext and `LQOBJ2`
 encrypted metadata remain readable, as do `LQOBJ3` and `LQOBJ4`; the next metadata write fills
-legacy chunk sizes from pack tables and writes zero resemblance hashes where an older catalog did
-not record them before publishing `LQOBJ5`.
+legacy chunk sizes from pack tables before publishing `LQOBJ4`.
 
 Every encrypted read first unwraps the domain data key, then authenticates and decompresses each
 requested chunk and verifies its keyed id. A missing or wrong key is `unauthorized` with the key

@@ -403,7 +403,6 @@ runtime::task<void> store_backend::load_objects() {
                     co_return std::unexpected(store_error(
                         errc::corrupt, "truncated descriptor resemblance hash", path.string()));
                 }
-                object.descriptor_resemblance = get_u64(bytes, at);
                 at += 8;
             }
             const auto kind_size = get_u16(bytes, at);
@@ -426,7 +425,6 @@ runtime::task<void> store_backend::load_objects() {
                 store_error(errc::corrupt, "truncated object chunks", path.string()));
         object.chunks.reserve(chunks);
         object.chunk_sizes.reserve(version_four || version_five ? chunks : 0);
-        object.chunk_resemblances.reserve(version_five ? chunks : 0);
         for (std::uint32_t chunk = 0; chunk < chunks; ++chunk) {
             digest id{};
             if (!valid_algorithm(std::to_integer<unsigned char>(bytes[at])))
@@ -441,7 +439,6 @@ runtime::task<void> store_backend::load_objects() {
                 at += 8;
             }
             if (version_five) {
-                object.chunk_resemblances.push_back(get_u64(bytes, at));
                 at += 8;
             }
         }
@@ -670,7 +667,7 @@ runtime::task<void> store_backend::stage_objects() {
                 raw_sizes.try_emplace(to_string(entry.id), entry.raw_length);
         }
     }
-    std::vector<std::byte> bytes(objects_magic_v5.begin(), objects_magic_v5.end());
+    std::vector<std::byte> bytes(objects_magic_v4.begin(), objects_magic_v4.end());
     put_u32(bytes, static_cast<std::uint32_t>(objects_.size()));
     for (auto& [unused, object] : objects_) {
         if (object.chunk_sizes.empty() && !object.chunks.empty()) {
@@ -687,14 +684,6 @@ runtime::task<void> store_backend::stage_objects() {
             co_return std::unexpected(store_error(
                 errc::corrupt, "object chunk sizes are incomplete", to_string(object.id)));
         }
-        if (object.chunk_resemblances.empty()) {
-            object.chunk_resemblances.resize(object.chunks.size());
-        }
-        if (object.chunk_resemblances.size() != object.chunks.size()) {
-            co_return std::unexpected(store_error(errc::corrupt,
-                                                  "object chunk resemblance hashes are incomplete",
-                                                  to_string(object.id)));
-        }
         bytes.push_back(std::byte{static_cast<unsigned char>(object.id.alg)});
         bytes.insert(bytes.end(), object.id.bytes.begin(), object.id.bytes.end());
         put_u64(bytes, object.size);
@@ -710,7 +699,6 @@ runtime::task<void> store_backend::stage_objects() {
                             ? std::byte{static_cast<unsigned char>(object.descriptor.alg)}
                             : std::byte{0});
         bytes.insert(bytes.end(), object.descriptor.bytes.begin(), object.descriptor.bytes.end());
-        put_u64(bytes, object.descriptor_resemblance);
         put_u16(bytes, static_cast<std::uint16_t>(object.kind.size()));
         bytes.insert(bytes.end(),
                      reinterpret_cast<const std::byte*>(object.kind.data()),
@@ -721,7 +709,6 @@ runtime::task<void> store_backend::stage_objects() {
             bytes.push_back(std::byte{static_cast<unsigned char>(chunk.alg)});
             bytes.insert(bytes.end(), chunk.bytes.begin(), chunk.bytes.end());
             put_u64(bytes, object.chunk_sizes[index]);
-            put_u64(bytes, object.chunk_resemblances[index]);
         }
     }
     co_return co_await write_file(root_ / "packs" / "objects.meta.tmp", std::move(bytes));
@@ -1231,7 +1218,6 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
                                            delta_scope);
         if (!stored)
             co_return std::unexpected(stored.error());
-        object.chunk_resemblances.push_back(stored->resemblance);
     }
     auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
     const auto descriptor_id = encryption
@@ -1246,7 +1232,6 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
         co_return std::unexpected(descriptor_stored.error());
     object.descriptor = *descriptor_id;
     object.has_descriptor = true;
-    object.descriptor_resemblance = descriptor_stored->resemblance;
     auto saved = co_await add_object(std::move(object));
     if (!saved)
         co_return std::unexpected(saved.error());
@@ -1321,7 +1306,6 @@ store_backend::scan_file(std::filesystem::path source,
             }
             object.chunks.push_back(*id);
             object.chunk_sizes.push_back(chunk_size);
-            object.chunk_resemblances.push_back(resemblance);
         }
         offset += wanted;
     }
@@ -1346,7 +1330,6 @@ store_backend::scan_file(std::filesystem::path source,
         }
         object.chunks.push_back(*id);
         object.chunk_sizes.push_back(chunk_size);
-        object.chunk_resemblances.push_back(resemblance);
     }
     object.id = whole_hasher.finish();
     co_return object;
@@ -1478,7 +1461,6 @@ runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
         }
         object.descriptor = *descriptor_id;
         object.has_descriptor = true;
-        object.descriptor_resemblance = descriptor_stored->resemblance;
         const auto whole = object.id;
         auto saved = co_await add_object(std::move(object));
         if (!saved) {
