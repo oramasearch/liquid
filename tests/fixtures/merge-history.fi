@@ -1,0 +1,59 @@
+blob
+mark :1
+data 25
+int base() { return 0; }
+
+blob
+mark :2
+data 55
+int base() { return 0; }
+int left_only() { return 1; }
+
+blob
+mark :3
+data 56
+int base() { return 0; }
+int right_only() { return 2; }
+
+blob
+mark :4
+data 86
+int base() { return 0; }
+int left_only() { return 1; }
+int right_only() { return 2; }
+
+commit refs/heads/main
+mark :10
+author Fixture <fixture@example.invalid> 1700000000 +0000
+committer Fixture <fixture@example.invalid> 1700000000 +0000
+data 4
+base
+M 100644 :1 functions.cpp
+
+commit refs/heads/left
+mark :11
+author Fixture <fixture@example.invalid> 1700000001 +0000
+committer Fixture <fixture@example.invalid> 1700000001 +0000
+data 4
+left
+from :10
+M 100644 :2 functions.cpp
+
+commit refs/heads/right
+mark :12
+author Fixture <fixture@example.invalid> 1700000002 +0000
+committer Fixture <fixture@example.invalid> 1700000002 +0000
+data 5
+right
+from :10
+M 100644 :3 functions.cpp
+
+commit refs/heads/main
+mark :13
+author Fixture <fixture@example.invalid> 1700000003 +0000
+committer Fixture <fixture@example.invalid> 1700000003 +0000
+data 5
+merge
+from :11
+merge :12
+M 100644 :4 functions.cpp

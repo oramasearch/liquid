@@ -65,6 +65,9 @@ resolution and conflict workload, structural convergence cases for disjoint addi
 same-name additions and malformed proposals, explicit proposal acceptance, grammarless text
 fallback, a pinned 560-package Spack export, digest-less patch pinning, and the opt-in Linux build
 subset.
+`merge_measure.cpp` imports Git merge histories, reconstructs every changed path across base,
+parents, and human result, and classifies the structural proposal. Its CTest fixture is a committed
+fast-import history with disjoint function additions.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered

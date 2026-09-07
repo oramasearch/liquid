@@ -51,3 +51,23 @@ resolution binding. `liquid conflicts [--json]` lists identifiers, kinds, paths,
 Conflict records remain version 1. `proposal`, `reasons`, and `node` are optional on decode, so
 existing records continue to load. The ordinary object-reachability and sync paths carry proposal
 blobs and new conflict kinds.
+
+## Merge-quality measurement
+
+`liquid-merge-measure` imports Git history and classifies merge commits as clean and identical,
+clean but different, conflict raised, or suspicious raised. Git revisions are matched by path
+because Git import creates fresh CRDT node identifiers for historical snapshots. The classifier
+reconstructs every changed path across base, both parents, and the human result, including
+one-sided changes and merge-only edits. A populated state directory resumes from its completed
+import. The suite runs a fresh import against the committed fixture history. The public-corpus
+table records the exact repository and commit range used for the issue #69 acceptance run.
+
+| Repository | License | Commit range | Merges | Clean identical | Clean different | Conflict | Suspicious | Load average |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| committed fixture | repository fixture | `afa637a3c249..5e507d146aa8` | 1 | 1 | 0 | 0 | 0 | 3.55713 |
+| [fmt](https://github.com/fmtlib/fmt) | MIT | `ec27d5d8a168..2d4d8a13c2b4` | 166 | 131 | 1 | 8 | 26 | 4.89453 |
+| [CLI11](https://github.com/CLIUtils/CLI11) | BSD-3-Clause | `2db15139cb34..c1cfe00d2f3d` | 20 | 13 | 1 | 5 | 1 | 4.6626 |
+| [spdlog](https://github.com/gabime/spdlog) | MIT | `681e40ce46c5..57cb5fb7a8ff` | 582 | 514 | 6 | 21 | 41 | 3.77979 |
+
+The dangerous cell is clean but different: a result accepted without review that does not match
+the human merge. Corpus runs keep that count visible even when every other category is expected.
