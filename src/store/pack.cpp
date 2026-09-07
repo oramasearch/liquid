@@ -469,7 +469,7 @@ runtime::task<pack_entry> append_pack_entry(std::shared_ptr<::liquid::store_back
     auto compressed = std::vector<std::byte>{};
     auto base = std::optional<digest>{};
     if (!encryption_key && !candidates.empty()) {
-        auto delta = co_await runtime::offload([raw, candidates = std::move(candidates)] {
+        auto delta = co_await runtime::offload([&raw, candidates = std::move(candidates)] {
             const auto bound = ZSTD_compressBound(raw.size());
             auto* context = ZSTD_createCCtx();
             if (!context) {

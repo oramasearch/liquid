@@ -735,6 +735,21 @@ TEST(Store, SimilarChunksRoundTripThroughDeltaFramesAndReopen) {
     EXPECT_EQ(*restored, target);
 }
 
+TEST(Store, SimilarSmallChunksSkipDeltaFrames) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    const auto base = bytes(4U * 1024U, 7002);
+    auto target = base;
+    for (auto index = std::size_t{1000}; index != 1040; ++index) {
+        target[index] ^= std::byte{0x5a};
+    }
+    const auto base_id = put_scoped(store, base);
+    const auto target_id = put_scoped(store, target);
+    ASSERT_TRUE(base_id.has_value()) << base_id.error().message;
+    ASSERT_TRUE(target_id.has_value()) << target_id.error().message;
+    EXPECT_FALSE(has_delta_frame(temporary.path()));
+}
+
 TEST(Store, ResemblanceHashKeepsAnUnchangedSampleForAnInteriorEdit) {
     const auto base = bytes(4096, 7003);
     auto edited = base;

@@ -26,9 +26,11 @@ struct stored_object {
     std::string key_id;
     digest descriptor{};
     bool has_descriptor{};
+    std::uint64_t descriptor_resemblance{};
     std::string kind{"unknown"};
     std::vector<digest> chunks;
     std::vector<std::uint64_t> chunk_sizes;
+    std::vector<std::uint64_t> chunk_resemblances;
 };
 
 class store_backend {

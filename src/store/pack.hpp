@@ -34,7 +34,7 @@ struct pack_entry {
 
 struct delta_dictionary {
     digest id{};
-    std::vector<std::byte> bytes;
+    std::span<const std::byte> bytes;
 };
 
 struct pack_contents {
