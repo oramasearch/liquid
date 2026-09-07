@@ -52,6 +52,7 @@ built binary under the build directory before CTest compares it with the committ
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `clone` | `clone <url\|drive-folder> [<dir>] [--json]` | Clone, configure, and fully materialize a repository. | available |
 | `status` | `status [--json]` | Show repository status. | available |
+| `conflict` | `conflict <show\|resolve> <path>` | Inspect or resolve an unresolved conflict. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
@@ -111,6 +112,9 @@ built binary under the build directory before CTest compares it with the committ
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap\|dsc> <result\|change\|tree> [--name <name>] [--version <version>] [--distribution <suite>] [target options]` | Project checked content into Tier A artifacts or a Debian Tier B source package. | available |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm\|macos-pkg\|macos-dmg\|msix\|winget> <result\|install-tree\|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--json]` | Project a checked tree into a package or image, or an MSIX into winget manifests. Platform installers are unsigned and include a signing request. | available on the target platform; winget is portable |
+| `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
+| `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart, with optional ownership checking. | available |
 | `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
 | `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
@@ -190,13 +194,18 @@ bytes. `log --ops --json` includes a `delegation` digest for version-3 agent dri
 show` prints every typed attribute.
 
 `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
-but not present in the local store, plus `agents.require_base`, the configured actor list, and one
-row per live application-data branch. JSON status returns those records in `data_branches`.
+but not present in the local store, plus `agents.require_base`, the configured actor list, one line
+per unresolved conflict, and one row per live application-data branch. JSON status returns
+conflicts as path and digest objects in `conflicts` and branch records in `data_branches`.
 Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
 adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
 successful delivery count.
+`conflict show <path>` prints the canonical conflict digest, base, both sides, merge kind, range,
+and explanation. After the selected working path contains the intended result, `conflict resolve
+<path>` cuts an ordinary change that references the conflict and selected value. See
+[`conflicts.md`](../library/conflicts.md).
 The `hot-update` target also emits `daemon_target_detail=<name> <detail>` after a successful
 delivery. Its detail names the configured build target, `patched` or `restart` outcome, tier, and
 content-addressed record.
@@ -547,6 +556,20 @@ liquid project bootc <base-tree> --overlay usr/local=<tree> --ref <name> --arch 
 OSTree accepts `archive-z2` and `bare-user`; bootc always writes an OCI layout. Text output prints
 `commit: <sha256-hex>` before the artifact line. The bootc artifact line carries the OCI manifest
 digest, while OSTree's artifact digest is the commit checksum. JSON includes `ostree_commit`.
+
+`macos-pkg`, `macos-dmg`, and `msix` use the same checked-tree input and add platform identity
+metadata. The package is reproducible; the disk image reports that it is not. `winget` instead
+accepts one MSIX path and requires `--installer-url`, then emits the three pinned YAML manifests.
+Every installer projection writes a JSON signing request beside the unsigned artifact.
+
+`sign macos` accepts a Keychain custody URI. Release packages normally name the distinct installer
+and application certificates as `keychain:<installer>|<application>`; application signing uses the
+request's entitlements. Notarisation runs only when all `LIQUID_APPLE_NOTARY_*` values are present,
+and `--no-notarize` is for temporary test identities. `sign windows` accepts `file:<pfx>` with the
+password in `LIQUID_WINDOWS_PFX_PASSWORD`, or `csp:<provider>|<container>|<certificate>` for a
+non-exportable key. `--timestamp-server` enables RFC 3161 timestamping. `sign verify` reads the
+sidecar, verifies its TAAP signature and signed digest, and invokes the platform's native verifier.
+See [projection.md](../library/projection.md#unsigned-projection-and-platform-signing).
 
 `wrap` prints `actions`, cache `hits` and `misses`, started output-producing processes, the outer
 action's status, its canonical `output_tree`, the disk hit rate, bytes transferred, bytes avoided,

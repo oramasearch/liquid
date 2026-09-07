@@ -109,7 +109,10 @@ may accept them; `liquid registry trust` pins or displays the out-of-band root
 **Admission.** `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and
 control listeners, atomically reloaded named policy sets at `/admit/<policy>`, structured
 CBOR/JSON decisions in AdmissionReview status, a bounded local decision stream, local or
-node-store evidence lookup, metrics, REST, OpenAPI, and MCP ([`admission.md`](admission.md),
+node-store evidence lookup, and policy-pinned transparency verification through the shared
+checkpoint, parent-tile, and inclusion verifier. Each decision records the log outcome and exact
+failure reason. Metrics, REST, OpenAPI, and MCP expose the same record
+([`admission.md`](admission.md),
 [`../api/admission.md`](../api/admission.md)).
 
 **Search.** Repository-local BM25F, substring, and regex search over the working tree or named refs
@@ -339,8 +342,9 @@ and target constraints, conflicts, and patches. The public Spack-style parser re
 columns, while directory and repository universes use the documented `packages/` tree. Liquid's
 own CDCL engine chooses virtual providers, binds compilers as dependencies, applies target-family
 fallback, optimises reuse before freshness and defaults, and returns minimal attributed conflict
-cores. `liquid resolve` prints the graph, stable JSON, or package-selection explanations
-([`resolution.md`](resolution.md)).
+cores. Selected graphs are constructed iteratively, so dependency-chain length never consumes
+worker-thread stack. `liquid resolve` prints the graph, stable JSON, or package-selection
+explanations ([`resolution.md`](resolution.md)).
 
 **Configuration.** `.liquid` is a typed declarative language for package, source, and target
 records with repository-local includes, exact source-located diagnostics, canonical formatting and

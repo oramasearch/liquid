@@ -87,6 +87,15 @@ iteration order cannot affect the result. `resolve` runs grounding and solving a
 `runtime::offload` operations and checks the caller's stop token before, between, and during those
 phases.
 
+Graph construction is iterative. Once a model is chosen, the builder walks the selected packages in
+postorder with an explicit frame stack: a frame opens when a package is first reached and plans its
+dependency and compiler edges, and closes once every edge target has a node, binding the edge
+digests, hashing the canonical record, and publishing the node. A package holds at most one open
+frame, so the stack never exceeds the number of selected packages and every frame lives on the heap.
+Native recursion depth is constant whatever the dependency-chain length. The bound matters because
+`runtime::offload` runs the solver on a runtime pool thread, whose stack on macOS is 512 KiB rather
+than the main thread's 8 MiB.
+
 ## Optimisation
 
 Models are compared lexicographically, never by a blended score:
@@ -153,6 +162,18 @@ vm.loadavg={ 36.85 42.59 47.28 }
 The measurement includes both offloaded grounding and solving but not fixture construction. The
 second call grounds independently and demonstrates reuse preference rather than an incremental
 grounder cache.
+
+### Worker-thread stack bound
+
+Issue #263 recorded this fixture crashing with a bus error in Release builds while an unoptimised
+build passed. Graph construction then recursed once per dependency edge, and the fixture's offset-1
+edges form a 500-package chain, so 500 native frames ran on a pool thread with a 512 KiB stack. At
+`-O3` on Apple Silicon each frame was 704 bytes, 344 KiB in total, and the remaining margin
+depended on inlining decisions elsewhere in the binary; when it ran out, the fault landed in a
+`std::variant` allocation inside version comparison at the deepest level. AddressSanitizer reports
+the same failure as `stack-overflow`. Construction is now iterative as described above, and the
+suite also resolves a 2,000-package strict chain, whose recursive form would have needed about
+1.4 MiB of native stack.
 
 ## Open questions
 

@@ -10,6 +10,10 @@ builds layouts, image layers, subject-bound attestation manifests, and indexes.
 `debian_source.cpp` writes the Debian Tier B source tree, deterministic source archives, and `.dsc`;
 its Build-Depends mapping comes from the pinned, peer-derived table under `fixtures/`.
 `helm.cpp` materialises the fixed chart templates and the equivalent OCI chart artifact.
+`platform.cpp` invokes Apple or Windows SDK packaging tools, pins the portable manifests, records
+reproducibility, and emits unsigned signing requests. `platform_tools.cpp` is the captured native
+process and file boundary. `signing.cpp` applies Developer ID or Authenticode outside projection,
+writes `platform_signature/1`, and re-runs the native verifier.
 `scripts.cpp` maps one validated install intent to the fixed Debian, RPM, and Alpine lifecycle
 templates. `conflicts.cpp` indexes owned package paths across a request batch or an installed
 inventory and derives explicit replacement relationships. Package projection embeds canonical

@@ -67,6 +67,18 @@ auto cbor_reasons(const admission_decision& value) -> cbor::value {
 auto cbor_evidence(const admission_decision& value) -> cbor::value {
     auto output = cbor::value::array{};
     for (const auto& evidence : value.considered) {
+        auto log = cbor::value{cbor::null{}};
+        if (evidence.log) {
+            log = cbor_map({
+                {"outcome", cbor::value{std::string{to_string(evidence.log->verdict)}}},
+                {"checkpoint",
+                 evidence.log->checkpoint ? cbor::value{to_string(*evidence.log->checkpoint)}
+                                          : cbor::value{cbor::null{}}},
+                {"checkpoint_sequence", cbor::value{evidence.log->checkpoint_sequence}},
+                {"tree_size", cbor::value{evidence.log->tree_size}},
+                {"reason", cbor::value{evidence.log->reason}},
+            });
+        }
         output.push_back(cbor_map({
             {"attestation", cbor::value{to_string(evidence.attestation)}},
             {"profile", cbor::value{evidence.profile}},
@@ -74,6 +86,7 @@ auto cbor_evidence(const admission_decision& value) -> cbor::value {
             {"verified", cbor::value{evidence.verified}},
             {"rule_id", cbor::value{evidence.rule_id}},
             {"reason", cbor::value{evidence.reason}},
+            {"log", std::move(log)},
         }));
     }
     return cbor::value{std::move(output)};
@@ -93,6 +106,19 @@ auto json_reasons(const admission_decision& value) -> json::value {
 auto json_evidence(const admission_decision& value) -> json::value {
     auto output = json::value::array{};
     for (const auto& evidence : value.considered) {
+        auto log = json::value{json::null{}};
+        if (evidence.log) {
+            log = json::value{json::value::object{
+                {"outcome", json::value{std::string{to_string(evidence.log->verdict)}}},
+                {"checkpoint",
+                 evidence.log->checkpoint ? json::value{to_string(*evidence.log->checkpoint)}
+                                          : json::value{json::null{}}},
+                {"checkpoint_sequence",
+                 json::value{json::number{std::to_string(evidence.log->checkpoint_sequence)}}},
+                {"tree_size", json::value{json::number{std::to_string(evidence.log->tree_size)}}},
+                {"reason", json::value{evidence.log->reason}},
+            }};
+        }
         output.emplace_back(json::value::object{
             {"attestation", json::value{to_string(evidence.attestation)}},
             {"profile", json::value{evidence.profile}},
@@ -100,6 +126,7 @@ auto json_evidence(const admission_decision& value) -> json::value {
             {"verified", json::value{evidence.verified}},
             {"rule_id", json::value{evidence.rule_id}},
             {"reason", json::value{evidence.reason}},
+            {"log", std::move(log)},
         });
     }
     return json::value{std::move(output)};
@@ -173,6 +200,110 @@ auto parse_subject(std::string_view value, std::string_view field) -> result<dig
     return *parsed;
 }
 
+auto parse_log_verdict(std::string_view value, std::string_view field) -> result<log_verdict> {
+    if (value == "included") {
+        return log_verdict::included;
+    }
+    if (value == "not_included") {
+        return log_verdict::not_included;
+    }
+    if (value == "unavailable") {
+        return log_verdict::unavailable;
+    }
+    if (value == "denied") {
+        return log_verdict::denied;
+    }
+    return std::unexpected(decision_error("unsupported log outcome", std::string{field}));
+}
+
+auto decode_cbor_log(const cbor::value* value)
+    -> result<std::optional<admission_log_verification>> {
+    if (!value || std::holds_alternative<cbor::null>(value->data)) {
+        return std::optional<admission_log_verification>{};
+    }
+    if (!std::holds_alternative<cbor::value::map>(value->data)) {
+        return std::unexpected(decision_error("field must be an object or null", "evidence.log"));
+    }
+    auto outcome = parse_cbor_text(cbor_field(*value, "outcome"), "evidence.log.outcome");
+    auto sequence = parse_cbor_unsigned(cbor_field(*value, "checkpoint_sequence"),
+                                        "evidence.log.checkpoint_sequence");
+    auto tree_size = parse_cbor_unsigned(cbor_field(*value, "tree_size"), "evidence.log.tree_size");
+    auto reason = parse_cbor_text(cbor_field(*value, "reason"), "evidence.log.reason");
+    if (!outcome || !sequence || !tree_size || !reason) {
+        return std::unexpected(!outcome     ? outcome.error()
+                               : !sequence  ? sequence.error()
+                               : !tree_size ? tree_size.error()
+                                            : reason.error());
+    }
+    auto verdict = parse_log_verdict(*outcome, "evidence.log.outcome");
+    if (!verdict) {
+        return std::unexpected(verdict.error());
+    }
+    auto output = admission_log_verification{.verdict = *verdict,
+                                             .checkpoint_sequence = *sequence,
+                                             .tree_size = *tree_size,
+                                             .reason = std::move(*reason)};
+    const auto* checkpoint = cbor_field(*value, "checkpoint");
+    if (!checkpoint) {
+        return std::unexpected(decision_error("field is required", "evidence.log.checkpoint"));
+    }
+    if (const auto* text = std::get_if<std::string>(&checkpoint->data)) {
+        auto parsed = parse_subject(*text, "evidence.log.checkpoint");
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        output.checkpoint = *parsed;
+    } else if (!std::holds_alternative<cbor::null>(checkpoint->data)) {
+        return std::unexpected(
+            decision_error("field must be a digest or null", "evidence.log.checkpoint"));
+    }
+    return std::optional<admission_log_verification>{std::move(output)};
+}
+
+auto decode_json_log(const json::value* value)
+    -> result<std::optional<admission_log_verification>> {
+    if (!value || std::holds_alternative<json::null>(value->data)) {
+        return std::optional<admission_log_verification>{};
+    }
+    if (!std::holds_alternative<json::value::object>(value->data)) {
+        return std::unexpected(decision_error("field must be an object or null", "evidence.log"));
+    }
+    auto outcome = parse_json_text(json_field(*value, "outcome"), "evidence.log.outcome");
+    auto sequence = parse_json_unsigned(json_field(*value, "checkpoint_sequence"),
+                                        "evidence.log.checkpoint_sequence");
+    auto tree_size = parse_json_unsigned(json_field(*value, "tree_size"), "evidence.log.tree_size");
+    auto reason = parse_json_text(json_field(*value, "reason"), "evidence.log.reason");
+    if (!outcome || !sequence || !tree_size || !reason) {
+        return std::unexpected(!outcome     ? outcome.error()
+                               : !sequence  ? sequence.error()
+                               : !tree_size ? tree_size.error()
+                                            : reason.error());
+    }
+    auto verdict = parse_log_verdict(*outcome, "evidence.log.outcome");
+    if (!verdict) {
+        return std::unexpected(verdict.error());
+    }
+    auto output = admission_log_verification{.verdict = *verdict,
+                                             .checkpoint_sequence = *sequence,
+                                             .tree_size = *tree_size,
+                                             .reason = std::move(*reason)};
+    const auto* checkpoint = json_field(*value, "checkpoint");
+    if (!checkpoint) {
+        return std::unexpected(decision_error("field is required", "evidence.log.checkpoint"));
+    }
+    if (const auto* text = std::get_if<std::string>(&checkpoint->data)) {
+        auto parsed = parse_subject(*text, "evidence.log.checkpoint");
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        output.checkpoint = *parsed;
+    } else if (!std::holds_alternative<json::null>(checkpoint->data)) {
+        return std::unexpected(
+            decision_error("field must be a digest or null", "evidence.log.checkpoint"));
+    }
+    return std::optional<admission_log_verification>{std::move(output)};
+}
+
 auto decode_cbor_reasons(const cbor::value* value) -> result<std::vector<admission_reason>> {
     const auto* values = value ? std::get_if<cbor::value::array>(&value->data) : nullptr;
     if (!values) {
@@ -228,6 +359,7 @@ auto decode_cbor_evidence(const cbor::value* value)
         const auto* verified = verified_value ? std::get_if<bool>(&verified_value->data) : nullptr;
         auto rule = parse_cbor_text(cbor_field(item, "rule_id"), "evidence.rule_id");
         auto reason = parse_cbor_text(cbor_field(item, "reason"), "evidence.reason");
+        auto log = decode_cbor_log(cbor_field(item, "log"));
         if (!attestation) {
             return std::unexpected(attestation.error());
         }
@@ -250,12 +382,16 @@ auto decode_cbor_evidence(const cbor::value* value)
         if (!reason) {
             return std::unexpected(reason.error());
         }
+        if (!log) {
+            return std::unexpected(log.error());
+        }
         output.push_back({.attestation = *id,
                           .profile = std::move(*profile),
                           .issuer = std::move(*issuer),
                           .verified = *verified,
                           .rule_id = std::move(*rule),
-                          .reason = std::move(*reason)});
+                          .reason = std::move(*reason),
+                          .log = std::move(*log)});
     }
     return output;
 }
@@ -275,6 +411,7 @@ auto decode_json_evidence(const json::value* value)
         const auto* verified = verified_value ? std::get_if<bool>(&verified_value->data) : nullptr;
         auto rule = parse_json_text(json_field(item, "rule_id"), "evidence.rule_id");
         auto reason = parse_json_text(json_field(item, "reason"), "evidence.reason");
+        auto log = decode_json_log(json_field(item, "log"));
         if (!attestation) {
             return std::unexpected(attestation.error());
         }
@@ -297,12 +434,16 @@ auto decode_json_evidence(const json::value* value)
         if (!reason) {
             return std::unexpected(reason.error());
         }
+        if (!log) {
+            return std::unexpected(log.error());
+        }
         output.push_back({.attestation = *id,
                           .profile = std::move(*profile),
                           .issuer = std::move(*issuer),
                           .verified = *verified,
                           .rule_id = std::move(*rule),
-                          .reason = std::move(*reason)});
+                          .reason = std::move(*reason),
+                          .log = std::move(*log)});
     }
     return output;
 }

@@ -98,6 +98,9 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #76 adds reproducible unsigned macOS packages, explicitly non-reproducible disk images,
+deterministic MSIX and winget manifests, custody-selected platform signing, native verification,
+and the `platform_signature/1` chain. The credentialed Apple notarisation run remains pending.
 Liquid #80 adds canonical declarative install intents, fixed Debian/RPM/Alpine lifecycle-script
 generation, script SBOM and projection binding, batch and installed-inventory file conflict
 detection, derived replacement relationships, and atomic projected-tree generations with install,
@@ -143,7 +146,9 @@ Liquid #42 adds configured exclusive checkout path patterns, holder/time/reason 
 holder-aware write refusal and release, signed offline reconciliation through conflict values,
 connected lake authorization callbacks, daemon lock snapshots, and `liquid lock`/`unlock`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
-journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+journal are implemented. Liquid #40 adds canonical first-class conflict records, conflict tree
+entries, version-3 change resolution references, status and CLI handling, sync reachability, and
+conflict-aware build materialisation. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
 exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
 transient presence, compaction epochs, and delegation-attributed publication. Directory
@@ -187,8 +192,9 @@ benchmarks live under `bench/` and are excluded unless their build option is ena
 Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and the fail-closed
 `liquid serve admission` Kubernetes webhook. Its TLS admission and independent control listeners
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
-metrics, REST, OpenAPI, and MCP are implemented. The shared #83 transparency verifier is complete;
-the admission lake adapter remains fail-closed until it calls that verifier.
+metrics, REST, OpenAPI, and MCP are implemented. Liquid #268 connects log-mode admission to the
+shared #83 verifier with policy-pinned log identity and witness trust, complete parent-tile and
+inclusion verification, and recorded outcomes.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.

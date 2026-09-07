@@ -91,17 +91,34 @@ std::vector<digest> extract_change(std::span<const std::byte> bytes) {
         return {};
     std::vector<digest> output;
     output.reserve(1 + change->parents.size() + change->conflicts.size() +
+                   change->resolutions.size() * 2 +
                    static_cast<std::size_t>(change->symbols.has_value()));
     append_once(output, change->root);
     for (const auto& parent : change->parents)
         append_once(output, parent.id.value);
     for (const auto& conflict : change->conflicts) {
-        for (const auto& reference : conflict.refs)
+        if (conflict.id.alg != algorithm{}) {
+            append_once(output, conflict.id);
+        }
+        for (const auto& reference : conflict.legacy_refs) {
             append_once(output, reference);
+        }
+    }
+    for (const auto& resolution : change->resolutions) {
+        append_once(output, resolution.conflict);
+        append_once(output, resolution.value);
     }
     if (change->symbols)
         append_once(output, *change->symbols);
     return output;
+}
+
+std::vector<digest> extract_conflict(std::span<const std::byte> bytes) {
+    const auto conflict = objects::decode_conflict(bytes);
+    if (!conflict) {
+        return {};
+    }
+    return {conflict->base, conflict->left, conflict->right};
 }
 
 std::vector<digest> extract_blob(std::span<const std::byte> bytes) {
@@ -213,6 +230,7 @@ reference_registry::reference_registry() {
     register_kind("blob", extract_blob);
     register_kind("tree", extract_tree);
     register_kind("change", extract_change);
+    register_kind("conflict", extract_conflict);
     register_kind("action", extract_action);
     register_kind("result", extract_result);
     register_kind("action-index-root", extract_action_index_root);
@@ -269,6 +287,8 @@ std::string detect_object_kind(std::span<const std::byte> bytes) {
         return "blob";
     if (objects::decode_change(bytes))
         return "change";
+    if (objects::decode_conflict(bytes))
+        return "conflict";
     if (objects::decode_attestation(bytes))
         return "attestation";
     if (decode_delta(bytes))

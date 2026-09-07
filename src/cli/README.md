@@ -30,6 +30,9 @@ through the public repository API, runs an optional test filter, and prints each
 policy parsing through public repository APIs. Status projects persisted agent policy, and
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
+Status also lists unresolved path and conflict-digest pairs. `conflict.cpp` implements `show` and
+`resolve` only through the public repository conflict operations and prints the canonical inputs,
+region, kind, explanation, and resulting resolution change.
 
 `repo.cpp` also lowers top-level lock rules before repository initialization. `locks.cpp` attaches
 to the checkout daemon and acquires or releases exclusive checkout through the public daemon API;
@@ -78,6 +81,14 @@ API, and uses the public foreign-binary path only when no producing result exist
 and replacement options, distinguishes results, changes, and bare tree digests, calls the public
 projection task, and prints text or stable JSON reports. It does not read format writers or
 repository internals.
+`project.cpp` parses package, OCI, Helm, macOS, MSIX, and winget requests, distinguishes stored
+results from bare tree digests and winget installer paths, calls the public projection task, and
+prints text or stable JSON reports. `sign.cpp` passes custody URIs to the public external signer and
+verifies `platform_signature/1` through the platform verifier. Neither reads package writers or
+repository internals.
+`project.cpp` parses package, OCI, and Helm requests, installed-inventory and replacement options,
+distinguishes stored results from bare tree digests, calls the public projection task, and prints
+text or stable JSON reports. It does not read package writers or repository internals.
 `install.cpp` maps package or tree installation, generation listing, and rollback directly to the
 public atomic-generation tasks.
 `project.cpp` parses native-package, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap

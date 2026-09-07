@@ -583,6 +583,74 @@ TEST(Sync, exchanges_disk_repositories_and_only_new_objects) {
     EXPECT_EQ(text(*two), "two");
 }
 
+TEST(Sync, push_and_pull_clone_preserve_unresolved_conflicts) {
+    temporary_directory source_path;
+    temporary_directory clone_path;
+    temporary_directory server_path;
+    auto opened_store =
+        liquid::runtime::block_on(liquid::store::open(server_path.path() / "store"));
+    ASSERT_TRUE(opened_store);
+    auto server_store = std::move(*opened_store);
+    auto server_options = liquid::repository_options{};
+    server_options.store = &server_store;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create("repository", server_options));
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(server_repository);
+    ASSERT_TRUE(source);
+
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("document.txt", bytes("base"))));
+    auto base_tree = liquid::runtime::block_on(source->root());
+    ASSERT_TRUE(base_tree);
+    ASSERT_EQ(base_tree->entries.size(), 1U);
+    const auto base = base_tree->entries.front().ref;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("document.txt", bytes("left"))));
+    auto left_tree = liquid::runtime::block_on(source->root());
+    ASSERT_TRUE(left_tree);
+    ASSERT_EQ(left_tree->entries.size(), 1U);
+    const auto left = left_tree->entries.front().ref;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("document.txt", bytes("right"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("safe.txt", bytes("available"))));
+    auto right_tree = liquid::runtime::block_on(source->root());
+    ASSERT_TRUE(right_tree);
+    const auto right_entry =
+        std::ranges::find(right_tree->entries, "document.txt", &liquid::tree_entry::name);
+    ASSERT_NE(right_entry, right_tree->entries.end());
+    const auto right = right_entry->ref;
+
+    auto conflict = liquid::conflict{
+        .base = base,
+        .left = left,
+        .right = right,
+        .region = {.path = "document.txt", .bytes = liquid::conflict_byte_range{0, 5}},
+        .kind = liquid::conflict_kind::text,
+        .explanation = "both replicas changed the same bytes"};
+    auto conflict_id = liquid::runtime::block_on(source->record_conflict(std::move(conflict)));
+    ASSERT_TRUE(conflict_id);
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("record unresolved conflict")));
+
+    auto sync_server = liquid::sync_server{*server_repository, server_store};
+    sync_http_server http{sync_server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+    ASSERT_TRUE(pushed) << pushed.error().message << " " << pushed.error().context;
+    auto server_conflict =
+        liquid::runtime::block_on(server_repository->conflict_at("document.txt"));
+    ASSERT_TRUE(server_conflict) << server_conflict.error().message;
+    EXPECT_EQ(liquid::to_string(server_conflict->id), liquid::to_string(*conflict_id));
+
+    auto clone = liquid::runtime::block_on(liquid::repository::create(clone_path.path()));
+    ASSERT_TRUE(clone);
+    auto pulled = liquid::runtime::block_on(endpoint.pull(*clone));
+    ASSERT_TRUE(pulled) << pulled.error().message << " " << pulled.error().context;
+    auto cloned_conflict = liquid::runtime::block_on(clone->conflict_at("document.txt"));
+    ASSERT_TRUE(cloned_conflict) << cloned_conflict.error().message;
+    EXPECT_EQ(liquid::to_string(cloned_conflict->id), liquid::to_string(*conflict_id));
+    auto safe = liquid::runtime::block_on(clone->read("safe.txt"));
+    ASSERT_TRUE(safe);
+    EXPECT_EQ(text(*safe), "available");
+}
+
 TEST(Sync, peer_bucket_returns_retry_report_and_leaves_repository_unchanged) {
     temporary_directory source_path;
     temporary_directory destination_path;
@@ -1073,8 +1141,8 @@ TEST(Drive, seeded_reconciliation_covers_every_case_and_converges_through_sync_s
     EXPECT_EQ(read_drive_file(folder.path() / "shared.txt"), left);
     EXPECT_EQ(read_drive_file(folder.path() / "shared (remote conflict).txt"), right);
     ASSERT_EQ(conflicted->status.conflicts.size(), 1U);
-    EXPECT_EQ(conflicted->status.conflicts.front().path, "shared.txt");
-    EXPECT_EQ(conflicted->status.conflicts.front().refs.size(), 3U);
+    EXPECT_EQ(conflicted->status.conflicts.front().region.path, "shared.txt");
+    EXPECT_EQ(conflicted->status.conflicts.front().kind, liquid::conflict_kind::structural);
 
     std::filesystem::rename(folder.path() / "nested/remote.txt", folder.path() / "moved.txt");
     auto moved = liquid::runtime::block_on(client->sync());
@@ -1083,7 +1151,7 @@ TEST(Drive, seeded_reconciliation_covers_every_case_and_converges_through_sync_s
     EXPECT_FALSE(std::filesystem::exists(folder.path() / "nested/remote.txt"));
     EXPECT_EQ(read_drive_file(folder.path() / "moved.txt"), remote_value);
     ASSERT_EQ(moved->status.conflicts.size(), 1U);
-    EXPECT_EQ(moved->status.conflicts.front().path, "shared.txt");
+    EXPECT_EQ(moved->status.conflicts.front().region.path, "shared.txt");
 
     write_drive_file(folder.path() / "shared.txt", "resolved");
     std::filesystem::remove(folder.path() / "shared (remote conflict).txt");
@@ -1171,8 +1239,15 @@ TEST(Drive, concurrent_offline_edits_from_two_clients_keep_both_named_versions) 
     EXPECT_EQ(read_drive_file(second_folder.path() / "shared (remote conflict).txt"),
               "first offline edit");
     ASSERT_EQ(second_upload->status.conflicts.size(), 1U);
-    EXPECT_EQ(second_upload->status.conflicts.front().path, "shared.txt");
-    EXPECT_EQ(second_upload->status.conflicts.front().refs.size(), 3U);
+    EXPECT_EQ(second_upload->status.conflicts.front().region.path, "shared.txt");
+    EXPECT_EQ(second_upload->status.conflicts.front().kind, liquid::conflict_kind::structural);
+    EXPECT_NE(liquid::to_string(second_upload->status.conflicts.front().base),
+              liquid::to_string(liquid::digest{}));
+
+    auto recorded = liquid::runtime::block_on(server_repository->conflict_at("shared.txt"));
+    ASSERT_TRUE(recorded) << recorded.error().message;
+    EXPECT_EQ(recorded->kind, liquid::conflict_kind::structural);
+    EXPECT_EQ(recorded->region.path, "shared.txt");
 
     auto original = liquid::runtime::block_on(server_repository->read("shared.txt"));
     ASSERT_TRUE(original) << original.error().message;

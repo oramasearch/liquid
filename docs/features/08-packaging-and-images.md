@@ -8,10 +8,12 @@
 > attestations. Issue #77 adds Homebrew bottles, Arch binary-package recipes, AppImage, Flatpak, and
 > Snap, including the owned SquashFS writer and detached attestations. Issue #78 adds deterministic
 > `archive-z2` and `bare-user` OSTree commits plus bootc OCI encapsulation from a digest-pinned base
-> tree and overlays. Issue #80 adds declarative install intent, generated maintainer scripts,
-> file-owner conflict detection, derived replacement relationships, and generation-based
-> install/rollback. Issue #79 implements Tier B for Debian source packages; other distribution
-> source-policy formats remain deferred.
+> tree and overlays. Issue #76 adds reproducible unsigned macOS packages, explicitly non-reproducible
+> disk images, deterministic MSIX and winget manifests, external platform signing, and the
+> `platform_signature/1` chain. The credentialed Apple notarisation run remains pending. Issue #80
+> adds declarative install intent, generated maintainer scripts, file-owner conflict detection,
+> derived replacement relationships, and generation-based install/rollback. Issue #79 implements
+> Tier B for Debian source packages; other distribution source-policy formats remain deferred.
 
 ## Projection, not translation
 
@@ -45,8 +47,8 @@ policy linter in a pinned peer environment.
 | **Alpine `apk`** | The simplest correct target; the natural first implementation. |
 | **Arch `PKGBUILD`** | Implemented as a deterministic binary-package source archive, `PKGBUILD`, and `.SRCINFO`, with derived ELF dependencies. |
 | **Homebrew** | Formulae and stable-gzip bottles implemented with relocation refusal and `:any_skip_relocation`. |
-| **Windows** | MSI / MSIX / winget, with Authenticode signing. |
-| **macOS** | `pkg` / `dmg`, with **codesigning and notarisation** — a hard gate, not polish. |
+| **Windows** | MSIX and winget with Authenticode signing are implemented. MSI is not part of #76. |
+| **macOS** | Reproducible unsigned `pkg`, non-reproducible `dmg`, external codesigning, and the notarisation path are implemented. The credentialed notarisation gate is pending. |
 | **Flatpak / Snap / AppImage** | Implemented manifests, pack-ready trees, pinned AppImage runtimes, and owned SquashFS output. External runtime/store publication remains separate. |
 | **OCI images** | See below. |
 | **ostree / bootc commits** | Implemented in #78: a supplied root tree plus path-mounted overlays becomes a reproducible OSTree commit and a component-layered bootc OCI layout. Booting it is Phase 7. |
@@ -163,5 +165,6 @@ peer environment.
 
 ## Open questions
 
-- **Signing key custody per platform** — Authenticode and notarisation have
-  incompatible trust models.
+- **Apple notarisation credentials** — the credentialed run remains pending; its custody and
+  signature model are documented in
+  [projection.md](../library/projection.md#signing-key-custody-per-platform).

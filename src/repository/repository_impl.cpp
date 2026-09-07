@@ -104,7 +104,8 @@ struct repository_document {
     std::vector<exclusive_lock> locks;
     std::vector<semantic_lease> leases;
     std::vector<epoch> epochs;
-    std::vector<conflict> conflict_values;
+    std::vector<conflict_reference> conflict_values;
+    std::vector<conflict_resolution> pending_resolutions;
     std::vector<persisted_drip> drips;
     std::vector<encryption_path_rule> encryption_rules;
     bool cache_publish{};
@@ -640,12 +641,21 @@ auto encode_repository_document(const repository_document& value)
     }
     auto conflicts = cbor::value::array{};
     for (const auto& conflict : value.conflict_values) {
-        auto references = cbor::value::array{};
-        for (const auto& reference : conflict.refs) {
-            references.push_back(digest_value(reference));
+        if (conflict.id.alg != algorithm{}) {
+            conflicts.push_back(
+                map({{"path", cbor::value{conflict.path}},
+                     {"id", digest_value(conflict.id)},
+                     {"selected", digest_value(conflict.selected)},
+                     {"selected_kind",
+                      cbor::value{static_cast<std::uint64_t>(conflict.selected_kind)}}}));
+        } else {
+            auto references = cbor::value::array{};
+            for (const auto& reference : conflict.legacy_refs) {
+                references.push_back(digest_value(reference));
+            }
+            conflicts.push_back(map({{"path", cbor::value{conflict.path}},
+                                     {"refs", cbor::value{std::move(references)}}}));
         }
-        conflicts.push_back(map(
-            {{"path", cbor::value{conflict.path}}, {"refs", cbor::value{std::move(references)}}}));
     }
     auto head = value.head ? digest_value(value.head->value) : cbor::value{cbor::null{}};
     auto drips = cbor::value::array{};
@@ -1351,21 +1361,58 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
     if (conflict_values) {
         for (const auto& item : *conflict_values) {
             const auto* path_value = find(item, "path");
+            const auto* id_value = find(item, "id");
+            const auto* selected_value = find(item, "selected");
+            const auto* selected_kind_value = find(item, "selected_kind");
             const auto* refs_value = find(item, "refs");
             const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
             const auto* refs =
                 refs_value ? std::get_if<cbor::value::array>(&refs_value->data) : nullptr;
-            if (!path || path->empty() || !refs || refs->size() < 2) {
+            if (!path || path->empty() || (id_value == nullptr) == (refs == nullptr)) {
                 return std::unexpected(
                     failure(errc::corrupt, "invalid conflict value", "repository document"));
             }
-            auto value = conflict{.path = *path};
-            for (const auto& reference : *refs) {
-                auto decoded_reference = decode_digest(reference);
-                if (!decoded_reference) {
-                    return std::unexpected(decoded_reference.error());
+            auto value = conflict_reference{.path = *path};
+            if (id_value) {
+                const auto* selected_kind =
+                    selected_kind_value ? std::get_if<std::uint64_t>(&selected_kind_value->data)
+                                        : nullptr;
+                auto decoded_id = decode_digest(*id_value);
+                auto decoded_selected =
+                    selected_value
+                        ? decode_digest(*selected_value)
+                        : result<digest>{std::unexpected(failure(
+                              errc::corrupt, "invalid conflict selection", "repository document"))};
+                const auto valid_selected_kind =
+                    selected_kind &&
+                    (*selected_kind == static_cast<std::uint64_t>(node_kind::blob) ||
+                     *selected_kind == static_cast<std::uint64_t>(node_kind::tree) ||
+                     *selected_kind == static_cast<std::uint64_t>(node_kind::repo));
+                if (!decoded_id || !decoded_selected || !valid_selected_kind) {
+                    if (!decoded_id) {
+                        return std::unexpected(decoded_id.error());
+                    }
+                    if (!decoded_selected) {
+                        return std::unexpected(decoded_selected.error());
+                    }
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid conflict selection", "repository document"));
                 }
-                value.refs.push_back(*decoded_reference);
+                value.id = *decoded_id;
+                value.selected = *decoded_selected;
+                value.selected_kind = static_cast<node_kind>(*selected_kind);
+            } else {
+                if (refs->size() < 2) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid legacy conflict value", "repository document"));
+                }
+                for (const auto& reference : *refs) {
+                    auto decoded_reference = decode_digest(reference);
+                    if (!decoded_reference) {
+                        return std::unexpected(decoded_reference.error());
+                    }
+                    value.legacy_refs.push_back(*decoded_reference);
+                }
             }
             output.conflict_values.push_back(std::move(value));
         }
@@ -3105,6 +3152,36 @@ apply_synced_refs(store& objects,
         candidate.refs[name] = id;
         if (name == "main") {
             candidate.head = id;
+            auto encoded = co_await objects.get(id.value);
+            if (!encoded) {
+                co_return std::unexpected(encoded.error());
+            }
+            auto change = objects::decode_change(*encoded);
+            if (!change) {
+                co_return std::unexpected(change.error());
+            }
+            candidate.conflict_values = change->conflicts;
+            for (auto& conflict : candidate.conflict_values) {
+                if (conflict.id.alg == algorithm{}) {
+                    continue;
+                }
+                auto parts = split_path(conflict.path);
+                if (!parts) {
+                    co_return std::unexpected(parts.error());
+                }
+                const auto* selected = lookup(candidate.root, *parts);
+                if (!selected) {
+                    co_return std::unexpected(
+                        failure(errc::corrupt, "conflict path is absent", conflict.path));
+                }
+                conflict.selected = selected->object;
+                conflict.selected_kind = node_kind::blob;
+                if (selected->kind == entry_kind::directory) {
+                    conflict.selected_kind = node_kind::tree;
+                } else if (selected->kind == entry_kind::nested_repository) {
+                    conflict.selected_kind = node_kind::repo;
+                }
+            }
         }
     }
     co_return result<void>{};
@@ -3189,16 +3266,29 @@ runtime::task<void> reconcile_lock_drips(repository_document& candidate,
         }
         const auto duplicate =
             std::ranges::any_of(candidate.conflict_values, [&](const auto& value) {
-                return value.path == decoded->lock->path &&
-                       std::ranges::any_of(
-                           value.refs,
-                           [&](const auto& id) { return same_digest(id, *local_id); }) &&
-                       std::ranges::any_of(
-                           value.refs, [&](const auto& id) { return same_digest(id, *remote_id); });
+                return value.path == decoded->lock->path;
             });
         if (!duplicate) {
-            candidate.conflict_values.push_back(
-                {.path = decoded->lock->path, .refs = {*local_id, *remote_id}});
+            auto value =
+                conflict{.base = *local_id,
+                         .left = *local_id,
+                         .right = *remote_id,
+                         .region = {.path = decoded->lock->path, .bytes = conflict_byte_range{}},
+                         .kind = conflict_kind::crdt_suspicious,
+                         .explanation = "concurrent lock claims disagree"};
+            auto encoded = objects::encode(value);
+            if (!encoded) {
+                co_return std::unexpected(encoded.error());
+            }
+            auto id =
+                co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+            if (!id) {
+                co_return std::unexpected(id.error());
+            }
+            candidate.conflict_values.push_back({.path = decoded->lock->path,
+                                                 .id = *id,
+                                                 .selected = *local_id,
+                                                 .selected_kind = node_kind::blob});
         }
     }
     co_return result<void>{};
@@ -3579,7 +3669,7 @@ struct repository::impl {
     auto journal_marker() const -> std::filesystem::path {
         return root_path / "LIQUID_JOURNAL";
     }
-    runtime::task<void> restore_paged_tree(working_entry& destination) {
+    runtime::task<void> restore_paged_tree(working_entry& destination, std::string path = {}) {
         auto bytes = co_await objects.get(destination.object);
         if (!bytes) {
             co_return std::unexpected(bytes.error());
@@ -3589,16 +3679,29 @@ struct repository::impl {
             co_return std::unexpected(tree.error());
         }
         for (const auto& entry : tree->entries) {
+            const auto child_path = path.empty() ? entry.name : path + "/" + entry.name;
             auto kind = entry_kind::file;
-            if (entry.kind == node_kind::tree) {
+            auto reference = entry.ref;
+            auto stored_kind = entry.kind;
+            if (entry.kind == node_kind::conflict) {
+                const auto conflict = std::ranges::find(
+                    current.conflict_values, child_path, &conflict_reference::path);
+                if (conflict == current.conflict_values.end()) {
+                    co_return std::unexpected(
+                        failure(errc::corrupt, "conflict selection is absent", child_path));
+                }
+                reference = conflict->selected;
+                stored_kind = conflict->selected_kind;
+            }
+            if (stored_kind == node_kind::tree) {
                 kind = entry_kind::directory;
-            } else if (entry.kind == node_kind::repo) {
+            } else if (stored_kind == node_kind::repo) {
                 kind = entry_kind::nested_repository;
-            } else if (entry.kind != node_kind::blob) {
+            } else if (stored_kind != node_kind::blob) {
                 co_return std::unexpected(
                     failure(errc::corrupt, "invalid repository tree entry", entry.name));
             }
-            auto child = working_entry{kind, entry.node, entry.mode, entry.ref, {}, entry.nested};
+            auto child = working_entry{kind, entry.node, entry.mode, reference, {}, entry.nested};
             if (kind == entry_kind::nested_repository) {
                 const auto retained = current.nested_entries.find(to_string(child.object));
                 if (retained != current.nested_entries.end()) {
@@ -3606,7 +3709,7 @@ struct repository::impl {
                 }
             }
             if (kind == entry_kind::directory) {
-                auto restored = co_await restore_paged_tree(child);
+                auto restored = co_await restore_paged_tree(child, child_path);
                 if (!restored) {
                     co_return std::unexpected(restored.error());
                 }
@@ -4276,13 +4379,21 @@ struct repository::impl {
         }
         co_return planned->report;
     }
-    runtime::task<digest> snapshot(working_entry& entry) {
+    runtime::task<digest>
+    snapshot(working_entry& entry, std::string path = {}, bool include_conflicts = true) {
         ::liquid::tree value{};
         for (auto& [name, child] : entry.entries) {
+            const auto child_path = path.empty() ? name : path + "/" + name;
             digest reference = child.object;
             node_kind kind = node_kind::blob;
-            if (child.kind == entry_kind::directory) {
-                auto nested = co_await snapshot(child);
+            const auto conflicted =
+                std::ranges::find(current.conflict_values, child_path, &conflict_reference::path);
+            if (include_conflicts && conflicted != current.conflict_values.end() &&
+                conflicted->id.alg != algorithm{}) {
+                reference = conflicted->id;
+                kind = node_kind::conflict;
+            } else if (child.kind == entry_kind::directory) {
+                auto nested = co_await snapshot(child, child_path, include_conflicts);
                 if (!nested)
                     co_return std::unexpected(nested.error());
                 reference = *nested;
@@ -4390,6 +4501,57 @@ struct repository::impl {
                 failure(errc::corrupt, "blob size does not match content", std::move(path)));
         }
         co_return output;
+    }
+    runtime::task<digest> store_conflict_value(conflict value) {
+        auto parts = split_path(value.region.path);
+        if (!parts) {
+            co_return std::unexpected(parts.error());
+        }
+        auto* selected = lookup(current.root, *parts);
+        if (!selected) {
+            co_return std::unexpected(
+                failure(errc::not_found, "conflict path is absent", value.region.path));
+        }
+        const auto previous_selected = selected->object;
+        auto selected_kind = node_kind::blob;
+        if (selected->kind == entry_kind::directory) {
+            selected_kind = node_kind::tree;
+        } else if (selected->kind == entry_kind::nested_repository) {
+            selected_kind = node_kind::repo;
+        }
+        if (selected_kind != node_kind::blob) {
+            auto selected_root = co_await snapshot(*selected, value.region.path, false);
+            if (!selected_root) {
+                co_return std::unexpected(selected_root.error());
+            }
+            if (same_digest(value.base, previous_selected)) {
+                value.base = *selected_root;
+            }
+            if (same_digest(value.left, previous_selected)) {
+                value.left = *selected_root;
+            }
+            if (same_digest(value.right, previous_selected)) {
+                value.right = *selected_root;
+            }
+        }
+        auto encoded = objects::encode(value);
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        auto stored =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        auto reference = conflict_reference{.path = value.region.path,
+                                            .id = *stored,
+                                            .selected = selected->object,
+                                            .selected_kind = selected_kind};
+        std::erase_if(current.conflict_values, [&](const conflict_reference& existing) {
+            return existing.path == reference.path;
+        });
+        current.conflict_values.push_back(std::move(reference));
+        co_return *stored;
     }
     runtime::task<std::vector<std::byte>> read_at(std::string path, change_id revision) {
         auto change_bytes = co_await objects.get(revision.value);
@@ -4760,8 +4922,12 @@ struct repository::impl {
                                  entry_kind::file, entry_node, options.mode, *reference, {}, {}})
                     .first;
         }
-        std::erase_if(current.conflict_values,
-                      [&](const conflict& value) { return value.path == path; });
+        const auto conflict =
+            std::ranges::find(current.conflict_values, path, &conflict_reference::path);
+        if (conflict != current.conflict_values.end()) {
+            conflict->selected = *reference;
+            conflict->selected_kind = node_kind::blob;
+        }
         auto operation = random_operation_id(hash_algorithm);
         if (!operation)
             co_return std::unexpected(operation.error());
@@ -5525,15 +5691,31 @@ runtime::task<std::vector<std::byte>> repository::read(std::string path) {
         if (!entry) {
             co_return std::unexpected(entry.error());
         }
-        if (!*entry || (*entry)->kind != node_kind::blob) {
+        if (*entry && (*entry)->kind == node_kind::blob) {
+            co_return co_await impl_->blob_contents((*entry)->id, std::move(path));
+        }
+        if (!*entry || (*entry)->kind != node_kind::conflict) {
             co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
         }
-        co_return co_await impl_->blob_contents((*entry)->id, std::move(path));
+        const auto conflict =
+            std::ranges::find(impl_->current.conflict_values, path, &conflict_reference::path);
+        if (conflict == impl_->current.conflict_values.end() ||
+            conflict->selected_kind != node_kind::blob) {
+            co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
+        }
+        co_return co_await impl_->blob_contents(conflict->selected, std::move(path));
     }
     auto* entry = lookup(impl_->current.root, *parts);
-    if (!entry || entry->kind != entry_kind::file)
+    if (entry && entry->kind == entry_kind::file) {
+        co_return co_await impl_->blob_contents(entry->object, std::move(path));
+    }
+    const auto conflict =
+        std::ranges::find(impl_->current.conflict_values, path, &conflict_reference::path);
+    if (conflict == impl_->current.conflict_values.end() ||
+        conflict->selected_kind != node_kind::blob) {
         co_return std::unexpected(failure(errc::not_found, "file does not exist", path));
-    co_return co_await impl_->blob_contents(entry->object, std::move(path));
+    }
+    co_return co_await impl_->blob_contents(conflict->selected, std::move(path));
 }
 runtime::task<std::vector<std::byte>> repository::read_decrypted(std::string path) {
     if (!impl_) {
@@ -6288,13 +6470,14 @@ runtime::task<change_id> repository::record_from_tree(change_input input, digest
     value.root = root;
     value.metadata = std::move(input.metadata);
     value.conflicts = impl_->current.conflict_values;
+    value.resolutions = impl_->current.pending_resolutions;
     value.document = public_document_state(impl_->current);
     auto document_heads = co_await impl_->capture_document_heads();
     if (!document_heads) {
         co_return std::unexpected(document_heads.error());
     }
     value.heads = std::move(*document_heads);
-    value.record_version = 2;
+    value.record_version = 3;
     auto body = objects::encode_change_body(value);
     if (!body)
         co_return std::unexpected(body.error());
@@ -6312,6 +6495,7 @@ runtime::task<change_id> repository::record_from_tree(change_input input, digest
         co_await repository_detail::store_access::put_plain(impl_->objects, std::move(*encoded));
     if (!stored)
         co_return std::unexpected(stored.error());
+    impl_->current.pending_resolutions.clear();
     change_id id{*stored};
     if (input.ref) {
         const auto previous_head = impl_->current.head;
@@ -6882,11 +7066,17 @@ runtime::task<void> repository::combine(repository other, std::optional<std::str
         before = found->second;
     }
     if ((*parent)->entries.contains(parts->back())) {
-        if (auto value =
-                repository_detail::entry_conflict(path,
-                                                  (*parent)->entries.at(parts->back()).object,
-                                                  other.impl_->current.root.object))
-            impl_->current.conflict_values.push_back(std::move(*value));
+        const auto& existing = (*parent)->entries.at(parts->back());
+        if (auto value = repository_detail::entry_conflict(path,
+                                                           existing.object,
+                                                           other.impl_->current.root.object,
+                                                           existing.node,
+                                                           other.impl_->current.root.node)) {
+            auto stored = co_await impl_->store_conflict_value(std::move(*value));
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+        }
     } else {
         auto copy = other.impl_->current.root;
         copy.kind = entry_kind::nested_repository;
@@ -6950,7 +7140,115 @@ runtime::task<void> repository::nest_ref(std::string path, repo_ref reference) {
 runtime::task<std::vector<conflict>> repository::conflicts() {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    co_return impl_->current.conflict_values;
+    auto output = std::vector<conflict>{};
+    output.reserve(impl_->current.conflict_values.size());
+    for (const auto& reference : impl_->current.conflict_values) {
+        if (reference.id.alg == algorithm{}) {
+            co_return std::unexpected(
+                failure(errc::unsupported, "legacy conflict requires a new merge", reference.path));
+        }
+        auto encoded = co_await impl_->objects.get(reference.id);
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        auto value = objects::decode_conflict(*encoded, impl_->hash_algorithm);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        output.push_back(std::move(*value));
+    }
+    co_return output;
+}
+runtime::task<conflict> repository::conflict_at(std::string path) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto found =
+        std::ranges::find(impl_->current.conflict_values, path, &conflict_reference::path);
+    if (found == impl_->current.conflict_values.end()) {
+        co_return std::unexpected(failure(errc::not_found, "conflict does not exist", path));
+    }
+    if (found->id.alg == algorithm{}) {
+        co_return std::unexpected(
+            failure(errc::unsupported, "legacy conflict requires a new merge", path));
+    }
+    auto encoded = co_await impl_->objects.get(found->id);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return objects::decode_conflict(*encoded, impl_->hash_algorithm);
+}
+runtime::task<digest> repository::record_conflict(conflict value) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto parts = split_path(value.region.path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    if (impl_->current.root_is_paged) {
+        auto loaded = co_await impl_->load_paged_root();
+        if (!loaded) {
+            co_return std::unexpected(loaded.error());
+        }
+    }
+    const auto* entry = lookup(impl_->current.root, *parts);
+    if (!entry) {
+        co_return std::unexpected(
+            failure(errc::not_found, "conflict path does not exist", value.region.path));
+    }
+    const auto path = value.region.path;
+    auto stored = co_await impl_->store_conflict_value(std::move(value));
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    auto operation = random_operation_id(impl_->hash_algorithm);
+    if (!operation) {
+        co_return std::unexpected(operation.error());
+    }
+    impl_->record_operation(*operation, "conflict", path, {}, entry->node, std::nullopt);
+    const auto at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    auto signed_drip = co_await impl_->append_drip("conflict", entry->node, at, {path}, {}, {});
+    if (!signed_drip) {
+        co_return std::unexpected(signed_drip.error());
+    }
+    ++impl_->current.pending_drips;
+    auto saved = co_await impl_->checkpoint_or_journal();
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    co_return *stored;
+}
+runtime::task<change_id> repository::resolve_conflict(std::string path) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (impl_->current.root_is_paged) {
+        auto loaded = co_await impl_->load_paged_root();
+        if (!loaded) {
+            co_return std::unexpected(loaded.error());
+        }
+    }
+    auto parts = split_path(path);
+    if (!parts) {
+        co_return std::unexpected(parts.error());
+    }
+    const auto* entry = lookup(impl_->current.root, *parts);
+    const auto found =
+        std::ranges::find(impl_->current.conflict_values, path, &conflict_reference::path);
+    if (!entry || found == impl_->current.conflict_values.end()) {
+        co_return std::unexpected(failure(errc::not_found, "conflict does not exist", path));
+    }
+    const auto reference = *found;
+    impl_->current.conflict_values.erase(found);
+    impl_->current.pending_resolutions.push_back({reference.id, entry->object});
+    auto resolved = co_await cut("resolve conflict at " + path);
+    if (!resolved) {
+        impl_->current.pending_resolutions.clear();
+        impl_->current.conflict_values.push_back(reference);
+        co_return std::unexpected(resolved.error());
+    }
+    co_return *resolved;
 }
 runtime::task<std::vector<operation_record>> repository::operations(log_options) {
     if (!impl_)
@@ -8724,7 +9022,11 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
     }
     append_working_roots(impl_->current.root, object_roots);
     for (const auto& conflict : impl_->current.conflict_values) {
-        object_roots.insert(object_roots.end(), conflict.refs.begin(), conflict.refs.end());
+        if (conflict.id.alg != algorithm{}) {
+            object_roots.push_back(conflict.id);
+        }
+        object_roots.insert(
+            object_roots.end(), conflict.legacy_refs.begin(), conflict.legacy_refs.end());
     }
     for (const auto& [node, id] : impl_->current.dirs) {
         static_cast<void>(node);
@@ -9118,7 +9420,7 @@ runtime::task<std::vector<path_history_entry>> repository::history(std::string p
             co_return std::unexpected(found.error());
         }
         if (*found) {
-            if ((*found)->kind != node_kind::blob) {
+            if ((*found)->kind != node_kind::blob && (*found)->kind != node_kind::conflict) {
                 co_return std::unexpected(
                     failure(errc::invalid_argument, "history path is not a file", path));
             }
@@ -9883,12 +10185,26 @@ runtime::task<void> repository_detail::testing::sync(repository& left, repositor
                 base = operation.prior->object;
         if (!base)
             continue;
-        auto value = repository_detail::three_way_entry_conflict(
-            path, *base, left_entry.object, right_entry->second.object);
+        auto left_bytes = co_await left.impl_->blob_contents(left_entry.object, path);
+        if (!left_bytes) {
+            co_return std::unexpected(left_bytes.error());
+        }
+        auto right_bytes = co_await right.impl_->blob_contents(right_entry->second.object, path);
+        if (!right_bytes) {
+            co_return std::unexpected(right_bytes.error());
+        }
+        auto value = repository_detail::three_way_text_conflict(
+            path, *base, left_entry.object, right_entry->second.object, *left_bytes, *right_bytes);
         if (!value)
             continue;
-        left.impl_->current.conflict_values.push_back(*value);
-        right.impl_->current.conflict_values.push_back(*value);
+        auto left_stored = co_await left.impl_->store_conflict_value(*value);
+        if (!left_stored) {
+            co_return std::unexpected(left_stored.error());
+        }
+        auto right_stored = co_await right.impl_->store_conflict_value(*value);
+        if (!right_stored) {
+            co_return std::unexpected(right_stored.error());
+        }
     }
     auto left_applied =
         apply_synced_directory(left.impl_->current, left.impl_->current.root.node, **left_document);
@@ -9987,7 +10303,7 @@ runtime::task<digest> repository_detail::drive_access::snapshot(repository& sour
     if (!source.impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
-    co_return co_await source.impl_->snapshot(source.impl_->current.root);
+    co_return co_await source.impl_->snapshot(source.impl_->current.root, {}, false);
 }
 
 runtime::task<repository_detail::staged_drive_file> repository_detail::drive_access::stage(
@@ -10081,7 +10397,13 @@ repository_detail::drive_access::replace_conflicts(repository& destination,
     if (!destination.impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
-    destination.impl_->current.conflict_values = std::move(conflicts);
+    destination.impl_->current.conflict_values.clear();
+    for (auto& value : conflicts) {
+        auto stored = co_await destination.impl_->store_conflict_value(std::move(value));
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+    }
     auto saved = co_await destination.impl_->checkpoint_or_journal();
     if (!saved) {
         co_return std::unexpected(saved.error());

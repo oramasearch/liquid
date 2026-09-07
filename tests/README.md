@@ -84,6 +84,12 @@ Secret detector, inline capture, `scan_result/1`, and redaction cases live in `s
 X25519 failure paths, deterministic interoperability fixture, and Lake public-key response.
 `cli/secret.cmake` exercises raw-CBOR and base64 command round trips without stderr disclosure.
 Registry schema, freshness, commitment, and legacy digest cases live in `attestation/`.
+Platform manifest pins remain in `test_projection.cpp`; `platform/` drives the macOS and Windows
+CI installer proofs with temporary identities, native installation, program launch, and signed
+sidecar verification.
+`test_transparency.cpp` consumes Lake's deterministic fixture and checks checkpoint signatures,
+witness quorum, every tile level, inclusion and consistency proofs, and altered or missing input.
+Its `cve_2026_56865` case keeps valid leaf bytes while changing a verified parent hash tile.
 `test_lake_transparency.cpp` consumes Lake's deterministic fixture and checks checkpoint signatures,
 witness quorum, every full and partial tile level, inclusion and consistency proofs, cache
 reauthentication, and altered or missing input. Its `cve_2026_56865` case keeps valid leaf bytes
@@ -91,7 +97,8 @@ while changing a verified parent hash tile and requires the failure to name that
 level case proves consistency verification completes the tile walk before requesting its proof.
 `liquid-transparency-measure` times cold and cached verification of a synthetic `2^16`-leaf log.
 Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
-Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
+Kubernetes fixtures, policy-pinned checkpoint trust, valid inclusion, forged parent tiles,
+untrusted checkpoints, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
@@ -129,6 +136,9 @@ each continuation returns to the caller executor without losing a wake during su
 drip bodies, same-path line-hunk reports, declared read dependencies, disjoint and forced records,
 and a synchronized replica whose signed write arrives before refusal. The CLI scenario
 also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
+Conflict coverage pins canonical records, text and structural producers, reopen, resolution
+references, push and fresh-pull transfer, unrelated reads, build rejection, and the CRDT-suspicious
+CLI test double.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
 exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI

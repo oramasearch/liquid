@@ -140,6 +140,10 @@ auto removal_test(projection_target target) -> std::string {
     case projection_target::ostree_commit:
     case projection_target::bootc_image:
     case projection_target::helm_chart:
+    case projection_target::macos_pkg:
+    case projection_target::macos_dmg:
+    case projection_target::msix:
+    case projection_target::winget_manifest:
     case projection_target::homebrew:
     case projection_target::pkgbuild:
     case projection_target::appimage:

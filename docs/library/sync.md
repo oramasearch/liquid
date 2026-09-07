@@ -9,6 +9,9 @@ bounded by caller-provided spans. Imports verify the selected metadata before ch
 state, while reference authorization and application are reported per ref. Content negotiation and
 transfer reuse `remote_blob_source` and the store's pack-entry framing. The public `sync_server`
 owns protocol decoding and repository dispatch; `liquid serve sync` is its local HTTP/1.1 adapter.
+Conflict objects participate in the same reachable graph as blobs and trees. Accepting a new
+`main` ref rebuilds the destination's unresolved index from the version-3 change, so push and a
+fresh pull preserve unresolved paths and their base, left, and right objects.
 The endpoint, [forge client](forge-client.md), admission evidence, transparency lookups, and
 sealed-secret key lookup share the private `src/http1/client.cpp` transport for socket, TLS,
 request, and response handling. `src/net/http_client.*` supplies URL decomposition and reusable

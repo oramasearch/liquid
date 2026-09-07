@@ -557,7 +557,10 @@ add_library(libliquid
   src/projection/oci.cpp
   src/projection/ostree.cpp
   src/projection/package.cpp
+  src/projection/platform.cpp
+  src/projection/platform_tools.cpp
   src/projection/projection.cpp
+  src/projection/signing.cpp
   src/projection/rules.cpp
   src/projection/scripts.cpp
   src/reapi/conversion.cpp
@@ -747,6 +750,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/tier.cpp
     src/cli/tiers.cpp
     src/cli/repo.cpp
+    src/cli/conflict.cpp
     src/cli/registry.cpp
     src/cli/review.cpp
     src/cli/release.cpp
@@ -899,6 +903,9 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/liquidConfig.cmake
 # Tests: GoogleTest via FetchContent + CTest, matching Zetta.
 # -----------------------------------------------------------------------------
 if(LIQUID_BUILD_TESTS)
+  add_executable(liquid-platform-installer-fixture tests/platform/installer_fixture.cpp)
+  target_link_libraries(liquid-platform-installer-fixture PRIVATE liquid::liquid)
+  add_executable(liquid-platform-installer-program tests/platform/installer_program.cpp)
   FetchContent_Declare(googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG        v1.17.0)

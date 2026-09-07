@@ -18,7 +18,7 @@ checked, transactions roll back, commit metadata and incremental saves exist, re
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
 checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, #30, #41, #42, #195's history/conflict persistence, and #205.**
+**Status: implemented for liquid #2, #3, #30, #40, #41, #42, #195's history/conflict persistence, and #205.**
 The private automerge-cpp wrapper, canonical CBOR codec, versioned sync framing and drip journal
 are implemented. Repository creation and opening, working-tree reads and writes, recorded moves
 and removals, snapshots and changes, references, composition, persisted conflict values, path
@@ -47,13 +47,21 @@ blob/1      { v:1, kind:"blob", size, chunks:[digest…], chunk_sizes:[uint…],
               format_entries?:[digest…] }
 blob/2      { v:2, kind:"blob", digest, size, chunks:[digest…], chunk_sizes:[uint…],
               remote?:{source,instance}, format_entries?:[digest…] }
-tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo, id:node_id, ref:digest | repo_ref } … ] }   # sorted by name, bytewise
+tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo|conflict,
+              id:digest, node:node_id, ref:digest, nested?:repo_ref } … ] }   # sorted by name, bytewise
+conflict/1  { v:1, kind:"conflict", base:digest, left:digest, right:digest,
+              region:{path, bytes:{offset,length}|nodes:{first,last}},
+              merge_kind:text|structural|crdt-suspicious, explanation:text }
 change/1    { v:1, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), conflicts?:[conflict…], symbols?:digest, sig:bytes }
 change/2    { v:2, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), document:{refs,locks,nested},
               heads:[{directory:node_id,values:[bytes…]}…], conflicts?:[conflict…],
               symbols?:digest, sig:bytes }
+change/3    { v:3, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
+              root:digest(tree), document:{refs,locks,nested}, heads:[...],
+              conflicts:[{path,id:digest(conflict)}...],
+              resolutions:[{conflict:digest,value:digest}...], symbols?:digest, sig:bytes }
 repo        { v, kind:"repo", repo_id, name, created:time, root_change:change_ref? }
 attestation { v, kind:"attestation", subject:digest, profile, subject_kind?, attributes?,
               attribute_disclosure_commitments?, detectors:[text...], findings:uint, at:time,
@@ -102,8 +110,10 @@ authoritative bytes.
   CRDT archives so `document_at(change_id)` can validate the historical point without consulting
   or modifying an active shallow document. Version 1 changes remain readable for tree history;
   they do not have a historical document projection.
-- **`conflicts`** (liquid #40) and **`symbols`** (liquid #47) are the two fields that cannot be
-  added later, so they are in the record from the first commit, optional and empty.
+- **`conflicts`** names unresolved `conflict/1` records. Version 3 replaces the legacy inline
+  references with one digest per path and adds **`resolutions`**, which binds a resolved conflict
+  digest to the selected value. See [`conflicts.md`](conflicts.md).
+- **`symbols`** (liquid #47) remains an optional record reference.
 - **`sig`** is the TAAP signature over the record with `sig` absent (liquid #4).
 - Attestation schemas, subject kinds, freshness rules, and selective-disclosure commitments are
   registered by liquid #62. `scan_result/1` (liquid #50) retains its original record bytes; it is
@@ -539,12 +549,15 @@ change digest is the digest of its canonical bytes and is never an automerge has
   each clone, and exchange directory-document sync frames both ways. Each working copy keeps its
   CRDT-selected entry and reports one `a.txt` conflict value containing the base, left and right
   references. The next cut carries that value, repository reopen preserves it, and an ordinary
-  resolution write clears it.
+  resolution write clears it and creates a version-3 resolution reference. Push the unresolved
+  change through a sync server, pull it into a fresh repository, and assert that both the conflict
+  and an unrelated file remain available. See [`conflicts.md`](conflicts.md).
 - Path history: write two versions, move and delete the path, then query by the moved name. Restore
   the first change and assert that it adds one pending drip while the prior log head is unchanged.
 
-The Phase 1 merge helper preserves both differing object references in a `conflict` value. The
-entry remains readable from the local directory document while callers resolve that value.
+Text synchronization, repository composition, drive reconciliation, and CRDT integrations use the
+same content-addressed conflict value. The selected entry remains readable from the local directory
+document while callers prepare and record a resolution.
 
 ## How to change
 

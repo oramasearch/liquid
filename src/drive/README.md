@@ -12,8 +12,9 @@ publication syscalls use `runtime::offload`; file contents enter and leave the s
 time. The in-memory path index refuses to exceed the configured ceiling.
 
 The three-tree query keys established files by `node_id`, combines a move on one side with an edit
-on the other, retains both content records for concurrent edits, and gives the remote value a
-deterministic visible conflict name. Transfer interruption is persisted before network activity;
+on the other, retains concurrent inputs through the canonical conflict record, and gives the
+remote value a deterministic visible conflict name. Drive status decodes the same conflict values
+used by text synchronization, composition, and CRDT producers. Transfer interruption is persisted before network activity;
 the existing missing-object negotiation makes the next run resume without republishing partial
 metadata.
 

@@ -432,24 +432,36 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
     if (group == groups.end()) {
         co_return result<void>{};
     }
-    std::vector<const run*> input;
+    // The merge below suspends on every write. A concurrent flush inserts into `state.runs` and
+    // reallocates it, so nothing here may point into that vector: each input is copied by value,
+    // and the mapping is read through its own bytes, which a vector move does not disturb.
+    struct source_run {
+        std::uint64_t sequence{};
+        std::uint64_t record_count{};
+        std::uint64_t records_offset{};
+        std::span<const std::byte> bytes;
+    };
+    std::vector<source_run> input;
     std::set<std::uint64_t> old_sequences;
     std::uint64_t capacity = 0;
     for (const auto index : group->second) {
-        input.push_back(&state.runs[index]);
-        old_sequences.insert(state.runs[index].sequence);
-        capacity += state.runs[index].record_count;
+        const auto& source = state.runs[index];
+        input.push_back({.sequence = source.sequence,
+                         .record_count = source.record_count,
+                         .records_offset = source.records_offset,
+                         .bytes = source.mapping.bytes()});
+        old_sequences.insert(source.sequence);
+        capacity += source.record_count;
     }
     struct cursor {
-        const run* source{};
         std::uint64_t position{};
     };
     std::vector<cursor> cursors;
     std::vector<std::optional<index_entry>> heads;
-    for (const auto* source : input) {
-        cursors.push_back({source, 0});
-        heads.push_back(decode_record(
-            source->mapping.bytes().subspan(source->records_offset, record_size), alg));
+    for (const auto& source : input) {
+        cursors.push_back({0});
+        heads.push_back(
+            decode_record(source.bytes.subspan(source.records_offset, record_size), alg));
     }
     const auto bloom_size = std::max<std::uint64_t>(1, (capacity * 10 + 7) / 8);
     std::array<std::uint32_t, fanout_count> fanout{};
@@ -483,7 +495,7 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
         std::size_t newest = *choice;
         for (std::size_t i = 0; i < heads.size(); ++i) {
             if (heads[i] && heads[i]->id.bytes == key &&
-                input[i]->sequence > input[newest]->sequence) {
+                input[i].sequence > input[newest].sequence) {
                 newest = i;
             }
         }
@@ -508,12 +520,12 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
                 continue;
             }
             ++cursors[i].position;
-            if (cursors[i].position == input[i]->record_count) {
+            if (cursors[i].position == input[i].record_count) {
                 heads[i] = std::nullopt;
             } else {
                 heads[i] = decode_record(
-                    input[i]->mapping.bytes().subspan(
-                        input[i]->records_offset + cursors[i].position * record_size, record_size),
+                    input[i].bytes.subspan(
+                        input[i].records_offset + cursors[i].position * record_size, record_size),
                     alg);
             }
         }
@@ -540,10 +552,12 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
     if (!mapped) {
         co_return std::unexpected(mapped.error());
     }
+    // state.runs may have grown while this coroutine suspended, so size it from the vector as it
+    // is now and select by sequence, never by the indices the group was built from.
     std::vector<run> retained;
     std::vector<run> old;
-    retained.reserve(state.runs.size() - input.size() + 1);
-    old.reserve(input.size());
+    retained.reserve(state.runs.size() + 1);
+    old.reserve(old_sequences.size());
     for (auto& source : state.runs) {
         if (old_sequences.contains(source.sequence)) {
             old.push_back(std::move(source));

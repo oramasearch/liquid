@@ -84,5 +84,17 @@ project_package(repository& source, projection_target target, prepared_projectio
                                 prepared_projection prepared,
                                 std::span<const projection_service> services)
     -> runtime::task<projection_report>;
+[[nodiscard]] auto project_macos(repository& source,
+                                 projection_target target,
+                                 prepared_projection prepared) -> runtime::task<projection_report>;
+[[nodiscard]] auto project_msix(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_winget(repository& source, const projection_request& request)
+    -> runtime::task<projection_report>;
+[[nodiscard]] LIQUID_EXPORT auto appx_manifest(const package_metadata& metadata)
+    -> result<std::string>;
+[[nodiscard]] LIQUID_EXPORT auto
+winget_manifests(const package_metadata& metadata, std::string_view installer_url, digest installer)
+    -> result<std::map<std::string, std::string>>;
 
 } // namespace liquid::projection_detail
