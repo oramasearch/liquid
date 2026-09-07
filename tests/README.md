@@ -75,7 +75,8 @@ shared builds.
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered
 eviction, live-byte accounting, runtime source registration, hydration observation, collector
-reclamation, and range/full rehydration. `test_repository.cpp` pins the exact readability report
+reclamation, resemblance-selected delta round trips and interrupted appends, and range/full
+rehydration. `test_repository.cpp` pins the exact readability report
 for revisions written before and after rotation and its three disclosure statements.
 `test_node_store.cpp` checks local and operator status, readiness, metrics, attestation bytes,
 OpenAPI isolation, and the three MCP tool declarations. Its Linux FUSE case mounts two 64 MiB

@@ -13,6 +13,12 @@ point. The object map also
 provides `store::key_version` with the recorded trust-domain data-key version and verifies whether
 the attached keyring can currently unwrap it; key-id parsing stays in `src/identity/key_version.hpp`.
 
+`chunker.cpp` computes a rolling-shingle resemblance hash alongside FastCDC. `store_impl.cpp`
+persists those hashes in `LQOBJ5`, keeps a path-scoped 256-entry/16-MiB candidate cache, and caps
+delta chains at eight. Candidate selection uses retained raw bytes and never performs a base read
+or hash on the write path. `pack.cpp` stores dictionary-compressed targets with a digest-addressed
+base while retaining the fixed pack table. The collector marks transitive bases; repack mode
+rewrites old deltas against their oldest useful base through the ordinary compaction transaction.
 `backend.cpp` is the disk reference implementation of the public persistence contract. Store
 metadata, pack appends and sealing, mapped index runs, leases, collection, and compaction use
 logical backend keys. Disk runs retain the mapped-file fast path; non-disk runs are held in owned

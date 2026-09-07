@@ -93,6 +93,7 @@ struct LIQUID_EXPORT collection_options {
     bool explain{};
     double compact_below{0.5};
     bool compact_only{};
+    bool repack{};
 };
 
 struct LIQUID_EXPORT retained_chunk {
@@ -122,6 +123,7 @@ struct LIQUID_EXPORT collection_report {
     std::uint64_t packs_compacted{};
     std::uint64_t bytes_reclaimed_by_compaction{};
     std::uint64_t bytes_written_by_compaction{};
+    std::uint64_t deltas_rebased{};
 };
 
 class LIQUID_EXPORT lease {
@@ -184,6 +186,8 @@ private:
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
     [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);
+    [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
+                                                  std::string delta_scope);
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input,
                                                   algorithm hash_algorithm);
     [[nodiscard]] runtime::task<digest> put_encrypted(std::vector<std::byte> input,

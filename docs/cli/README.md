@@ -21,6 +21,8 @@ drive client's ordinary on-demand hydration threshold. The remote remains config
 `drive status` and synchronization.
 
 Focused command contracts: [`build`](build-events.md) plans and events, and [`test`](test.md).
+`liquid repack [repository]` rewrites packs containing chunk deltas so each target refers directly
+to its oldest useful base and prints the rewritten pack, delta, and byte counts.
 
 ## Offline operation
 

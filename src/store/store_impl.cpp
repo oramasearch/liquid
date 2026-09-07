@@ -61,6 +61,14 @@ constexpr std::array<std::byte, 8> objects_magic_v4{std::byte{'L'},
                                                     std::byte{4},
                                                     std::byte{0},
                                                     std::byte{0}};
+constexpr std::array<std::byte, 8> objects_magic_v5{std::byte{'L'},
+                                                    std::byte{'Q'},
+                                                    std::byte{'O'},
+                                                    std::byte{'B'},
+                                                    std::byte{'J'},
+                                                    std::byte{5},
+                                                    std::byte{0},
+                                                    std::byte{0}};
 constexpr std::array<std::byte, 8> remotes_magic_v1{std::byte{'L'},
                                                     std::byte{'Q'},
                                                     std::byte{'R'},
@@ -71,6 +79,12 @@ constexpr std::array<std::byte, 8> remotes_magic_v1{std::byte{'L'},
                                                     std::byte{0}};
 
 constexpr std::size_t file_window_size = 8U * 1024U * 1024U;
+constexpr std::size_t maximum_delta_depth = 8;
+constexpr std::size_t maximum_delta_candidates = 256;
+constexpr std::size_t maximum_delta_candidates_per_scope = 8;
+constexpr std::size_t maximum_delta_candidate_bytes = 16U * 1024U * 1024U;
+constexpr std::size_t maximum_delta_attempted_scopes = 256;
+constexpr std::size_t minimum_delta_chunk_bytes = 8U * 1024U;
 
 class incremental_digest {
 public:
@@ -373,7 +387,11 @@ runtime::task<void> store_backend::load_objects() {
     const bool version_four =
         bytes.size() >= objects_magic_v4.size() &&
         std::equal(objects_magic_v4.begin(), objects_magic_v4.end(), bytes.begin());
-    if ((!version_one && !version_two && !version_three && !version_four) || bytes.size() < 12)
+    const bool version_five =
+        bytes.size() >= objects_magic_v5.size() &&
+        std::equal(objects_magic_v5.begin(), objects_magic_v5.end(), bytes.begin());
+    if ((!version_one && !version_two && !version_three && !version_four && !version_five) ||
+        bytes.size() < 12)
         co_return std::unexpected(store_error(errc::corrupt, "invalid object map", path.string()));
     const auto count = get_u32(bytes, 8);
     std::size_t at = 12;
@@ -388,7 +406,7 @@ runtime::task<void> store_backend::load_objects() {
         at += 32;
         object.size = get_u64(bytes, at);
         at += 8;
-        if (version_two || version_three || version_four) {
+        if (version_two || version_three || version_four || version_five) {
             if (at == bytes.size())
                 co_return std::unexpected(
                     store_error(errc::corrupt, "truncated object encryption flag", path.string()));
@@ -409,7 +427,7 @@ runtime::task<void> store_backend::load_objects() {
                 at += size;
             }
         }
-        if (version_three || version_four) {
+        if (version_three || version_four || version_five) {
             if (at + 35 > bytes.size()) {
                 co_return std::unexpected(
                     store_error(errc::corrupt, "truncated object descriptor", path.string()));
@@ -423,6 +441,14 @@ runtime::task<void> store_backend::load_objects() {
             object.descriptor.alg = static_cast<algorithm>(descriptor_algorithm);
             std::copy_n(bytes.begin() + at, 32, object.descriptor.bytes.begin());
             at += 32;
+            if (version_five) {
+                if (at + 8 > bytes.size()) {
+                    co_return std::unexpected(store_error(
+                        errc::corrupt, "truncated descriptor resemblance hash", path.string()));
+                }
+                object.descriptor_resemblance = get_u64(bytes, at);
+                at += 8;
+            }
             const auto kind_size = get_u16(bytes, at);
             at += 2;
             if (kind_size == 0 || at + kind_size > bytes.size()) {
@@ -437,12 +463,13 @@ runtime::task<void> store_backend::load_objects() {
                 store_error(errc::corrupt, "truncated object chunks", path.string()));
         const auto chunks = get_u32(bytes, at);
         at += 4;
-        const auto chunk_record_size = version_four ? 41U : 33U;
+        const auto chunk_record_size = version_five ? 49U : version_four ? 41U : 33U;
         if (chunks > (bytes.size() - at) / chunk_record_size)
             co_return std::unexpected(
                 store_error(errc::corrupt, "truncated object chunks", path.string()));
         object.chunks.reserve(chunks);
-        object.chunk_sizes.reserve(version_four ? chunks : 0);
+        object.chunk_sizes.reserve(version_four || version_five ? chunks : 0);
+        object.chunk_resemblances.reserve(version_five ? chunks : 0);
         for (std::uint32_t chunk = 0; chunk < chunks; ++chunk) {
             digest id{};
             if (!valid_algorithm(std::to_integer<unsigned char>(bytes[at])))
@@ -452,12 +479,16 @@ runtime::task<void> store_backend::load_objects() {
             std::copy_n(bytes.begin() + at, 32, id.bytes.begin());
             at += 32;
             object.chunks.push_back(id);
-            if (version_four) {
+            if (version_four || version_five) {
                 object.chunk_sizes.push_back(get_u64(bytes, at));
                 at += 8;
             }
+            if (version_five) {
+                object.chunk_resemblances.push_back(get_u64(bytes, at));
+                at += 8;
+            }
         }
-        if (version_four) {
+        if (version_four || version_five) {
             auto total = std::uint64_t{};
             for (const auto size : object.chunk_sizes) {
                 if (size > object.size - total) {
@@ -679,7 +710,7 @@ runtime::task<void> store_backend::stage_objects() {
                 raw_sizes.try_emplace(to_string(entry.id), entry.raw_length);
         }
     }
-    std::vector<std::byte> bytes(objects_magic_v4.begin(), objects_magic_v4.end());
+    std::vector<std::byte> bytes(objects_magic_v5.begin(), objects_magic_v5.end());
     put_u32(bytes, static_cast<std::uint32_t>(objects_.size()));
     for (auto& [unused, object] : objects_) {
         if (object.chunk_sizes.empty() && !object.chunks.empty()) {
@@ -696,6 +727,14 @@ runtime::task<void> store_backend::stage_objects() {
             co_return std::unexpected(store_error(
                 errc::corrupt, "object chunk sizes are incomplete", to_string(object.id)));
         }
+        if (object.chunk_resemblances.empty()) {
+            object.chunk_resemblances.resize(object.chunks.size());
+        }
+        if (object.chunk_resemblances.size() != object.chunks.size()) {
+            co_return std::unexpected(store_error(errc::corrupt,
+                                                  "object chunk resemblance hashes are incomplete",
+                                                  to_string(object.id)));
+        }
         bytes.push_back(std::byte{static_cast<unsigned char>(object.id.alg)});
         bytes.insert(bytes.end(), object.id.bytes.begin(), object.id.bytes.end());
         put_u64(bytes, object.size);
@@ -711,6 +750,7 @@ runtime::task<void> store_backend::stage_objects() {
                             ? std::byte{static_cast<unsigned char>(object.descriptor.alg)}
                             : std::byte{0});
         bytes.insert(bytes.end(), object.descriptor.bytes.begin(), object.descriptor.bytes.end());
+        put_u64(bytes, object.descriptor_resemblance);
         put_u16(bytes, static_cast<std::uint16_t>(object.kind.size()));
         bytes.insert(bytes.end(),
                      reinterpret_cast<const std::byte*>(object.kind.data()),
@@ -721,6 +761,7 @@ runtime::task<void> store_backend::stage_objects() {
             bytes.push_back(std::byte{static_cast<unsigned char>(chunk.alg)});
             bytes.insert(bytes.end(), chunk.bytes.begin(), chunk.bytes.end());
             put_u64(bytes, object.chunk_sizes[index]);
+            put_u64(bytes, object.chunk_resemblances[index]);
         }
     }
     co_return co_await persistence_->put("packs/objects.meta.tmp", std::move(bytes));
@@ -769,8 +810,12 @@ runtime::task<void> store_backend::index_packs(bool rebuild) {
             highest = std::max(highest, id);
             for (std::size_t frame = 0; frame != pack->entries.size(); ++frame) {
                 const auto& entry = pack->entries[frame];
-                if (!collection->dead(id, frame))
+                if (!collection->dead(id, frame)) {
                     all.push_back({entry.id, entry.location});
+                    if (entry.base) {
+                        chunk_bases_.insert_or_assign(to_string(entry.id), *entry.base);
+                    }
+                }
             }
             packs_.emplace(id, std::move(*pack));
         }
@@ -803,15 +848,108 @@ runtime::task<void> store_backend::index_packs(bool rebuild) {
     co_return co_await index_.flush();
 }
 
-runtime::task<pack_entry> store_backend::store_chunk(
-    digest id, std::vector<std::byte> raw, std::optional<crypto_detail::domain_keys> encryption) {
+void store_backend::remember_delta_candidate(std::string_view scope,
+                                             std::uint64_t resemblance,
+                                             digest id,
+                                             std::span<const std::byte> bytes) {
+    if (bytes.size() > maximum_delta_candidate_bytes) {
+        return;
+    }
+    auto& candidates = delta_candidates_[std::string{scope}];
+    const auto existing = candidates.find(resemblance);
+    if (existing == candidates.end() && candidates.size() >= maximum_delta_candidates_per_scope) {
+        return;
+    }
+    if (existing != candidates.end()) {
+        delta_candidate_bytes_ -= existing->second.bytes.size();
+        std::erase_if(delta_candidate_order_, [scope, resemblance](const delta_candidate_key& key) {
+            return key.scope == scope && key.resemblance == resemblance;
+        });
+    }
+    candidates.insert_or_assign(
+        resemblance, delta_candidate{id, std::vector<std::byte>{bytes.begin(), bytes.end()}});
+    delta_candidate_bytes_ += bytes.size();
+    delta_candidate_order_.push_back({std::string{scope}, resemblance, id});
+    while (delta_candidate_order_.size() > maximum_delta_candidates ||
+           delta_candidate_bytes_ > maximum_delta_candidate_bytes) {
+        auto expired = std::move(delta_candidate_order_.front());
+        delta_candidate_order_.pop_front();
+        const auto scoped = delta_candidates_.find(expired.scope);
+        if (scoped == delta_candidates_.end()) {
+            continue;
+        }
+        const auto candidate = scoped->second.find(expired.resemblance);
+        if (candidate == scoped->second.end() || candidate->second.id.alg != expired.id.alg ||
+            candidate->second.id.bytes != expired.id.bytes) {
+            continue;
+        }
+        delta_candidate_bytes_ -= candidate->second.bytes.size();
+        scoped->second.erase(candidate);
+        if (scoped->second.empty()) {
+            delta_candidates_.erase(scoped);
+        }
+    }
+}
+
+runtime::task<pack_entry>
+store_backend::store_chunk(digest id,
+                           std::vector<std::byte> raw,
+                           std::uint64_t resemblance,
+                           std::optional<crypto_detail::domain_keys> encryption,
+                           std::string_view delta_scope) {
+    const auto delta_eligible =
+        !encryption && !delta_scope.empty() && raw.size() >= minimum_delta_chunk_bytes;
+    auto scope = std::string{};
+    if (delta_eligible) {
+        scope = delta_scope;
+    }
     auto present = index_.find(id);
     if (!present)
         co_return std::unexpected(present.error());
-    if (*present)
-        co_return pack_entry{id, **present, static_cast<std::uint32_t>(raw.size())};
+    if (*present) {
+        if (delta_eligible) {
+            remember_delta_candidate(scope, resemblance, id, raw);
+        }
+        auto entry = pack_entry{id, **present, static_cast<std::uint32_t>(raw.size())};
+        entry.resemblance = resemblance;
+        if (const auto base = chunk_bases_.find(to_string(id)); base != chunk_bases_.end()) {
+            entry.base = base->second;
+        }
+        co_return entry;
+    }
+    auto candidates = std::vector<delta_dictionary>{};
+    if (delta_eligible) {
+        const auto scoped = delta_candidates_.find(scope);
+        if (scoped != delta_candidates_.end()) {
+            const auto candidate = scoped->second.find(resemblance);
+            if (candidate != scoped->second.end() &&
+                (candidate->second.id.alg != id.alg || candidate->second.id.bytes != id.bytes)) {
+                auto depth = std::size_t{};
+                auto current = candidate->second.id;
+                while (true) {
+                    const auto base = chunk_bases_.find(to_string(current));
+                    if (base == chunk_bases_.end()) {
+                        break;
+                    }
+                    ++depth;
+                    current = base->second;
+                    if (depth >= maximum_delta_depth) {
+                        break;
+                    }
+                }
+                if (depth < maximum_delta_depth) {
+                    candidates.push_back({candidate->second.id,
+                                          std::span<const std::byte>{candidate->second.bytes}});
+                }
+            }
+        }
+    }
     const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
     auto& destination = packs_.at(current_pack_);
+    auto candidate_bytes = std::vector<std::byte>{};
+    if (delta_eligible) {
+        candidate_bytes = raw;
+    }
     auto written = co_await append_pack_entry(
         persistence_,
         pack_key(current_pack_),
@@ -819,9 +957,19 @@ runtime::task<pack_entry> store_backend::store_chunk(
         id,
         std::move(raw),
         encryption ? std::optional{encryption->chunk_encryption} : std::nullopt,
-        options_.durable);
+        options_.durable,
+        std::move(candidates));
     if (!written)
         co_return std::unexpected(written.error());
+    written->resemblance = resemblance;
+    if (written->base) {
+        chunk_bases_.insert_or_assign(to_string(id), *written->base);
+    } else {
+        chunk_bases_.erase(to_string(id));
+    }
+    if (delta_eligible) {
+        remember_delta_candidate(scope, resemblance, id, candidate_bytes);
+    }
     destination.entries.push_back(*written);
     destination.data_end += 49 + written->location.length;
     auto inserted = index_.insert({id, written->location});
@@ -845,18 +993,42 @@ runtime::task<pack_entry> store_backend::store_chunk(
 
 runtime::task<std::vector<std::byte>>
 store_backend::load_chunk(digest id, std::optional<crypto_detail::domain_keys> encryption) {
+    co_return co_await load_chunk(id, std::move(encryption), 0);
+}
+
+runtime::task<std::vector<std::byte>> store_backend::load_chunk(
+    digest id, std::optional<crypto_detail::domain_keys> encryption, std::size_t depth) {
+    if (depth > maximum_delta_depth) {
+        co_return std::unexpected(
+            store_error(errc::corrupt, "delta chunk chain is too deep", to_string(id)));
+    }
     auto found = index_.find(id);
     if (!found)
         co_return std::unexpected(found.error());
     if (!*found)
         co_return std::unexpected(
             store_error(errc::not_found, "chunk is not present", to_string(id)));
+    auto dictionary = std::optional<delta_dictionary>{};
+    auto dictionary_bytes = std::optional<std::vector<std::byte>>{};
+    if (const auto base = chunk_bases_.find(to_string(id)); base != chunk_bases_.end()) {
+        if (encryption) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "encrypted chunk has a delta base", to_string(id)));
+        }
+        auto base_bytes = co_await load_chunk(base->second, std::nullopt, depth + 1);
+        if (!base_bytes) {
+            co_return std::unexpected(base_bytes.error());
+        }
+        dictionary_bytes = std::move(*base_bytes);
+        dictionary = delta_dictionary{base->second, std::span<const std::byte>{*dictionary_bytes}};
+    }
     auto raw = co_await read_pack_entry(persistence_,
                                         pack_key((*found)->pack_id),
                                         **found,
                                         id,
                                         encryption ? std::optional{encryption->chunk_encryption}
-                                                   : std::nullopt);
+                                                   : std::nullopt,
+                                        std::move(dictionary));
     if (!raw)
         co_return std::unexpected(raw.error());
     const auto actual =
@@ -894,12 +1066,15 @@ store_backend::load_snapshot_object(const stored_object& object,
             co_return std::unexpected(store_error(
                 errc::corrupt, "object references a missing chunk", to_string(object.id)));
         }
-        auto raw = co_await read_pack_entry(persistence_,
-                                            pack_key(location->second.pack_id),
-                                            location->second,
-                                            chunk,
-                                            encryption ? std::optional{encryption->chunk_encryption}
-                                                       : std::nullopt);
+        auto raw =
+            chunk_bases_.contains(to_string(chunk))
+                ? co_await load_chunk(chunk, encryption)
+                : co_await read_pack_entry(persistence_,
+                                           pack_key(location->second.pack_id),
+                                           location->second,
+                                           chunk,
+                                           encryption ? std::optional{encryption->chunk_encryption}
+                                                      : std::nullopt);
         if (!raw)
             co_return std::unexpected(raw.error());
         bytes.insert(bytes.end(), raw->begin(), raw->end());
@@ -978,6 +1153,12 @@ runtime::task<digest> store_backend::put_plain(std::vector<std::byte> input) {
 }
 
 runtime::task<digest> store_backend::put_plain(std::vector<std::byte> input,
+                                               std::string delta_scope) {
+    co_return co_await put_selected(
+        std::move(input), std::nullopt, options_.hash_algorithm, std::move(delta_scope));
+}
+
+runtime::task<digest> store_backend::put_plain(std::vector<std::byte> input,
                                                algorithm hash_algorithm) {
     if (hash_algorithm != algorithm::blake3 && hash_algorithm != algorithm::sha256) {
         co_return std::unexpected(
@@ -1006,7 +1187,8 @@ runtime::task<digest> store_backend::put_encrypted(std::vector<std::byte> input,
 
 runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
                                                   std::optional<std::string> selected_key,
-                                                  algorithm hash_algorithm) {
+                                                  algorithm hash_algorithm,
+                                                  std::string delta_scope) {
     auto [lock_error, guard] = co_await mutation_.scoped_lock();
     if (lock_error)
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put"));
@@ -1102,10 +1284,15 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     for (auto index = std::size_t{}; index < ranges.size(); ++index) {
         const auto part = ranges[index];
         const auto bytes = std::span<const std::byte>(input).subspan(part.offset, part.size);
-        auto stored = co_await store_chunk(
-            object.chunks[index], std::vector<std::byte>(bytes.begin(), bytes.end()), encryption);
+        const auto resemblance = resemblance_hash(bytes);
+        auto stored = co_await store_chunk(object.chunks[index],
+                                           std::vector<std::byte>(bytes.begin(), bytes.end()),
+                                           resemblance,
+                                           encryption,
+                                           delta_scope);
         if (!stored)
             co_return std::unexpected(stored.error());
+        object.chunk_resemblances.push_back(stored->resemblance);
     }
     auto descriptor = encode_chunk_list(object.size, key_id, object.chunks);
     const auto descriptor_id = encryption
@@ -1113,12 +1300,14 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
                                    : hash(algorithm_value, descriptor);
     if (!descriptor_id)
         co_return std::unexpected(descriptor_id.error());
-    auto descriptor_stored =
-        co_await store_chunk(*descriptor_id, std::move(descriptor), encryption);
+    const auto descriptor_resemblance = resemblance_hash(descriptor);
+    auto descriptor_stored = co_await store_chunk(
+        *descriptor_id, std::move(descriptor), descriptor_resemblance, encryption);
     if (!descriptor_stored)
         co_return std::unexpected(descriptor_stored.error());
     object.descriptor = *descriptor_id;
     object.has_descriptor = true;
+    object.descriptor_resemblance = descriptor_stored->resemblance;
     auto saved = co_await add_object(std::move(object));
     if (!saved)
         co_return std::unexpected(saved.error());
@@ -1183,14 +1372,17 @@ store_backend::scan_file(std::filesystem::path source,
                 co_return std::unexpected(id.error());
             }
             const auto chunk_size = chunk.size();
+            auto resemblance = resemblance_hash(chunk);
             if (store_chunks) {
-                auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+                auto stored = co_await store_chunk(*id, std::move(chunk), resemblance, encryption);
                 if (!stored) {
                     co_return std::unexpected(stored.error());
                 }
+                resemblance = stored->resemblance;
             }
             object.chunks.push_back(*id);
             object.chunk_sizes.push_back(chunk_size);
+            object.chunk_resemblances.push_back(resemblance);
         }
         offset += wanted;
     }
@@ -1205,14 +1397,17 @@ store_backend::scan_file(std::filesystem::path source,
             co_return std::unexpected(id.error());
         }
         const auto chunk_size = chunk.size();
+        auto resemblance = resemblance_hash(chunk);
         if (store_chunks) {
-            auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+            auto stored = co_await store_chunk(*id, std::move(chunk), resemblance, encryption);
             if (!stored) {
                 co_return std::unexpected(stored.error());
             }
+            resemblance = stored->resemblance;
         }
         object.chunks.push_back(*id);
         object.chunk_sizes.push_back(chunk_size);
+        object.chunk_resemblances.push_back(resemblance);
     }
     object.id = whole_hasher.finish();
     co_return object;
@@ -1316,13 +1511,16 @@ runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
             for (auto index = std::size_t{}; index < object.chunks.size(); ++index) {
                 const auto size = static_cast<std::size_t>(object.chunk_sizes[index]);
                 const auto chunk = input.subspan(offset, size);
+                const auto resemblance = resemblance_hash(chunk);
                 auto stored =
                     co_await store_chunk(object.chunks[index],
                                          std::vector<std::byte>(chunk.begin(), chunk.end()),
+                                         resemblance,
                                          encryption);
                 if (!stored) {
                     co_return std::unexpected(stored.error());
                 }
+                object.chunk_resemblances[index] = stored->resemblance;
                 offset += size;
             }
         }
@@ -1334,13 +1532,15 @@ runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
         if (!descriptor_id) {
             co_return std::unexpected(descriptor_id.error());
         }
-        auto descriptor_stored =
-            co_await store_chunk(*descriptor_id, std::move(descriptor), encryption);
+        const auto descriptor_resemblance = resemblance_hash(descriptor);
+        auto descriptor_stored = co_await store_chunk(
+            *descriptor_id, std::move(descriptor), descriptor_resemblance, encryption);
         if (!descriptor_stored) {
             co_return std::unexpected(descriptor_stored.error());
         }
         object.descriptor = *descriptor_id;
         object.has_descriptor = true;
+        object.descriptor_resemblance = descriptor_stored->resemblance;
         const auto whole = object.id;
         auto saved = co_await add_object(std::move(object));
         if (!saved) {
@@ -1494,7 +1694,8 @@ store_backend::hydrate_remote_chunk(const blob& value, std::size_t index, std::u
             co_return std::unexpected(
                 store_error(errc::busy, lock_error.message(), "remote chunk hydration"));
         }
-        auto stored = co_await store_chunk(value.chunks[index], bytes);
+        const auto resemblance = resemblance_hash(bytes);
+        auto stored = co_await store_chunk(value.chunks[index], bytes, resemblance);
         if (!stored) {
             co_return std::unexpected(stored.error());
         }

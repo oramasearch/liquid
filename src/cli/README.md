@@ -71,6 +71,8 @@ and includes entry size, kind, and opaque-reader reason.
 
 `retain.cpp` parses `retain explain <digest>`, opens the current repository, and prints the public
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
+`gc.cpp` implements both repository collection and `repack`; repack requests a compaction-only
+delta rebase through the public collection API and reports rewritten packs, deltas, and bytes.
 `verify.cpp` parses action, all, changed, and graph selectors, calls the public verification APIs,
 prints action attestations or graph audit records, names critical query inputs and output
 differences, and returns failure on divergence.

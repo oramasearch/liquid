@@ -34,5 +34,6 @@ private:
 };
 
 std::vector<chunk_range> fastcdc(std::span<const std::byte> input);
+[[nodiscard]] std::uint64_t resemblance_hash(std::span<const std::byte> input) noexcept;
 
 } // namespace liquid::store_detail

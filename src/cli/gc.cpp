@@ -105,4 +105,27 @@ auto garbage_collect(int argc, char** argv) -> int {
     return 0;
 }
 
+auto repack(int argc, char** argv) -> int {
+    if (argc > 1) {
+        return usage("repack accepts at most one repository path");
+    }
+    const auto path = argc == 1 ? std::filesystem::path{argv[0]} : std::filesystem::current_path();
+    auto repository = liquid::runtime::block_on(liquid::repository::open(path));
+    if (!repository) {
+        return fail(repository.error());
+    }
+    auto options = liquid::collection_options{};
+    options.compact_only = true;
+    options.repack = true;
+    auto report = liquid::runtime::block_on(repository->collect(options));
+    if (!report) {
+        return fail(report.error());
+    }
+    std::println("packs_rewritten={} deltas_rebased={} bytes_written={}",
+                 report->packs_compacted,
+                 report->deltas_rebased,
+                 report->bytes_written_by_compaction);
+    return 0;
+}
+
 } // namespace liquid_cli

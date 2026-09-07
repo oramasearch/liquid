@@ -55,6 +55,11 @@ struct store_access {
     }
 
     [[nodiscard]] static runtime::task<digest>
+    put_plain(store& destination, std::vector<std::byte> input, std::string delta_scope) {
+        return destination.put_plain(std::move(input), std::move(delta_scope));
+    }
+
+    [[nodiscard]] static runtime::task<digest>
     put_plain(store& destination, std::vector<std::byte> input, algorithm hash_algorithm) {
         return destination.put_plain(std::move(input), hash_algorithm);
     }

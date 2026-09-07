@@ -28,6 +28,13 @@ struct pack_entry {
     digest id{};
     chunk_location location{};
     std::uint32_t raw_length{};
+    std::optional<digest> base;
+    std::uint64_t resemblance{};
+};
+
+struct delta_dictionary {
+    digest id{};
+    std::span<const std::byte> bytes;
 };
 
 struct pack_contents {
@@ -60,7 +67,8 @@ append_pack_entry(std::shared_ptr<::liquid::store_backend> backend,
                   digest id,
                   std::vector<std::byte> raw,
                   std::optional<crypto_detail::key> encryption_key,
-                  bool durable);
+                  bool durable,
+                  std::vector<delta_dictionary> candidates = {});
 [[nodiscard]] runtime::task<void> seal_pack(std::shared_ptr<::liquid::store_backend> backend,
                                             std::string key,
                                             const pack_contents& contents);
@@ -69,7 +77,8 @@ read_pack_entry(std::shared_ptr<::liquid::store_backend> backend,
                 std::string key,
                 chunk_location location,
                 digest expected,
-                std::optional<crypto_detail::key> encryption_key = std::nullopt);
+                std::optional<crypto_detail::key> encryption_key = std::nullopt,
+                std::optional<delta_dictionary> dictionary = std::nullopt);
 [[nodiscard]] runtime::task<pack_entry>
 append_pack_frame(std::shared_ptr<::liquid::store_backend> backend,
                   std::string destination,

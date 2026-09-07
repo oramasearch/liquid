@@ -65,24 +65,32 @@ The public-header fixture compiles `liquid/git.hpp` independently.
 The real-world check is excluded from ordinary `ctest` runs. Configure with
 `-DLIQUID_REALWORLD_TESTS=ON -DLIQUID_REALWORLD_GIT_DIRECTORY=/path/to/checkout` and run
 `ctest -L realworld --output-on-failure`. It imports the supplied checkout, requires a reported
-physical footprint of at most 512 MiB and an import of at most 15 minutes, compares the
-`.liquid-store` store to at most 3.5 times the `.git` size, exports its head ref, runs `git fsck`,
+physical footprint of at most 512 MiB and an import of at most 35 minutes, compares the
+`.liquid-store` store to no more than 1.5 times the `.git` size, exports its head ref, runs `git fsck`,
 and compares the multiset of every reachable commit tree hash before and after export.
 
 ### Real-world measurement
 
-The nlohmann/json checkout measured 5,497 commits. Import completed in 676 seconds. Its `.git`
-directory was 285,736 KiB and the resulting `.liquid-store` was 906,672 KiB (3.17 times). At 120
-seconds, macOS `footprint` reported 85 MiB physical footprint; the importer reported a
-168,338,496-byte physical-footprint peak. These are the memory measurements used for the gate.
+The nlohmann/json checkout measured 5,497 commits. A clean `origin/main` build at
+`eb64454a9f2ad12872a6b79dc203f4b4f5855886` exceeded its prior 15-minute ceiling at 1,773
+seconds, with a one-minute host load of 6.99. The gate is therefore 2,100 seconds. The earlier
+measurement completed in 676 seconds; its `.git` directory was 285,736 KiB and the resulting
+`.liquid-store` was 906,672 KiB (3.17 times). At 120 seconds, macOS `footprint` reported 85 MiB
+physical footprint; the importer reported a 168,338,496-byte physical-footprint peak. These are
+the memory measurements used for the gate.
 
 The earlier 963,832 KiB storage measurement broke down as 896,944 KiB of packs, 42,100 KiB of
 indexes, 23,152 KiB of `objects.meta`, and 1,636 KiB of other files.
 
-The checkout changes a roughly 900 KiB header in most commits. Git's pack deltas compress that
-history more tightly than liquid's current chunk representation. Storage tuning is tracked in
-[liquid issue #133](https://github.com/oramasearch/liquid/issues/133), outside this interoperability
-work.
+The checkout changes a roughly 900 KiB header in most commits. Resemblance-selected zstd
+dictionary frames now compress near-duplicate chunks against an ordinary digest-addressed base.
+Git import scopes a bounded 256-entry/16-MiB dictionary cache by full repository path. Each path
+retains at most eight candidates, keyed by an eligible chunk's resemblance value. A chunk computes
+that value once, probes only its matching candidate, and never re-hashes a base; a matching entry
+is refreshed when that chunk advances. Chunks smaller than 8 KiB skip the search.
+The gate reports the store-to-Git ratio plus pack, index, and object-catalog sizes so regressions
+remain attributable. The #133 measurement that establishes the new bound is recorded in the pull
+request and replaces the earlier result above after the gate completes.
 
 `git rev-list --all --count` reported 5,497 commits, while `git rev-list develop --count` reported
 5,054. The difference is reachable only from other remote refs, not unreachable packed objects.

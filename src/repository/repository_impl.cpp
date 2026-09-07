@@ -7054,10 +7054,12 @@ runtime::task<change_id> repository::record_from_tree(change_input input, digest
 }
 
 runtime::task<digest> repository_detail::git_access::put_blob(repository& destination,
+                                                              std::string delta_scope,
                                                               std::vector<std::byte> contents) {
     if (!destination.impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
-    auto content = co_await destination.impl_->objects.put(std::move(contents));
+    auto content = co_await repository_detail::store_access::put_plain(
+        destination.impl_->objects, std::move(contents), std::move(delta_scope));
     if (!content)
         co_return std::unexpected(content.error());
     auto value = repository_detail::store_access::blob_for(destination.impl_->objects, *content);

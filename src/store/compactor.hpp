@@ -14,8 +14,10 @@ public:
     run(collection_options options, collection_manifest manifest, collection_report& report);
 
 private:
-    [[nodiscard]] runtime::task<void>
-    compact(std::uint32_t old_pack_id, collection_manifest& manifest, collection_report& report);
+    [[nodiscard]] runtime::task<void> compact(std::uint32_t old_pack_id,
+                                              collection_manifest& manifest,
+                                              collection_report& report,
+                                              bool rebase_deltas);
     void describe(const collection_manifest& manifest, collection_report& report) const;
 
     store_backend& store_;

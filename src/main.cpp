@@ -47,6 +47,7 @@ auto sign(int argc, char** argv) -> int;
 auto vfs_mount(int argc, char** argv) -> int;
 auto vfs_materialise(int argc, char** argv) -> int;
 auto garbage_collect(int argc, char** argv) -> int;
+auto repack(int argc, char** argv) -> int;
 auto retain(int argc, char** argv) -> int;
 auto attestation(int argc, char** argv) -> int;
 auto verify(int argc, char** argv) -> int;
@@ -500,6 +501,16 @@ constexpr auto commands = std::to_array<command>({
      "fails, and 2 for invalid usage.",
      argument_policy::ordinary,
      liquid_cli::clone},
+    {"repack",
+     "repack [repository]",
+     "rebase stored chunk deltas",
+     "available",
+     {},
+     "Rewrite packs containing delta chunks so each delta names its oldest useful base.",
+     "liquid repack .",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::repack},
     {"status",
      "status [--json]",
      "show repository status",

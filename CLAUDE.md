@@ -22,7 +22,8 @@ liquid #111's identity-key rotation and chain verification, liquid #81's softwar
 identity backends, TPM-sealed KEK custody, and threshold release approval, signed drips and changes, liquid #7's
 trust-domain encrypted objects, liquid #51's pluggable local, recipient, cloud KMS, lake transit,
 and threshold-share KEK custody, liquid #53's versioned data-key rotation, revocation, and repository
-readability reports, liquid #8's leased-root garbage collection with pack compaction, and liquid #55's
+readability reports, liquid #8's leased-root garbage collection with pack compaction, liquid #133's
+resemblance-selected chunk deltas and repacking, and liquid #55's
 deterministic crash simulator, liquid #116's bounded-memory file, repository, and tree-import streaming, liquid
 #5's local capture, liquid #50's inline secret scanning, liquid #62's registered TAAP attestations,
 verified redaction, liquid #52's JSON/`.env` leaf encryption with structural key diff, and liquid

@@ -16,8 +16,15 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
+#include "repository/store_access.hpp"
 
 namespace {
+
+auto put_scoped(liquid::store& store, std::vector<std::byte> input)
+    -> liquid::result<liquid::digest> {
+    return liquid::runtime::block_on(
+        liquid::repository_detail::store_access::put_plain(store, std::move(input), "fixture"));
+}
 
 class temporary_store {
 public:
@@ -340,6 +347,63 @@ TEST(GarbageCollection, RebuiltIndexHonorsCommittedTombstones) {
     EXPECT_TRUE(liquid::runtime::block_on(store.contains(*live)).value_or(false));
     EXPECT_FALSE(liquid::runtime::block_on(store.contains(*dead)).value_or(true));
     EXPECT_TRUE(liquid::runtime::block_on(store.get(*live)).has_value());
+}
+
+TEST(GarbageCollection, DeltaBasesStayLiveWithTheirRetainedTargets) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    const auto base = bytes(32U * 1024U, 4100);
+    auto target = base;
+    for (auto index = std::size_t{1500}; index != 1540; ++index) {
+        target[index] ^= std::byte{0x6d};
+    }
+    const auto base_id = put_scoped(store, base);
+    const auto target_id = put_scoped(store, target);
+    ASSERT_TRUE(base_id.has_value()) << base_id.error().message;
+    ASSERT_TRUE(target_id.has_value()) << target_id.error().message;
+    auto root = liquid::runtime::block_on(store.lease_root(*target_id, std::chrono::hours{1}));
+    ASSERT_TRUE(root.has_value()) << root.error().message;
+    auto options = liquid::collection_options{};
+    options.compact_below = 0.0;
+    const auto report = liquid::runtime::block_on(store.collect(options));
+    ASSERT_TRUE(report.has_value()) << report.error().message;
+    EXPECT_GE(report->live_chunks, 3U);
+
+    store = {};
+    std::filesystem::remove_all(temporary.path() / "index");
+    store = open_store(temporary.path());
+    const auto restored = liquid::runtime::block_on(store.get(*target_id));
+    ASSERT_TRUE(restored.has_value()) << restored.error().message;
+    EXPECT_EQ(*restored, target);
+}
+
+TEST(GarbageCollection, RepackRebasesDeltaChainsAndSurvivesReopen) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    auto contents = bytes(32U * 1024U, 4200);
+    std::vector<liquid::digest> ids;
+    for (auto version = std::size_t{}; version != 4; ++version) {
+        if (version != 0) {
+            contents[1000 + version] ^= std::byte{static_cast<unsigned char>(version)};
+        }
+        const auto id = put_scoped(store, contents);
+        ASSERT_TRUE(id.has_value()) << id.error().message;
+        ids.push_back(*id);
+    }
+    auto options = liquid::collection_options{};
+    options.compact_only = true;
+    options.repack = true;
+    const auto report = liquid::runtime::block_on(store.collect(options));
+    ASSERT_TRUE(report.has_value()) << report.error().message;
+    EXPECT_GT(report->deltas_rebased, 0U);
+    EXPECT_GT(report->packs_compacted, 0U);
+
+    store = {};
+    std::filesystem::remove_all(temporary.path() / "index");
+    store = open_store(temporary.path());
+    const auto restored = liquid::runtime::block_on(store.get(ids.back()));
+    ASSERT_TRUE(restored.has_value()) << restored.error().message;
+    EXPECT_EQ(*restored, contents);
 }
 
 TEST(GarbageCollection, CompactsThirtyPercentLivePackWithoutChangingFrames) {
