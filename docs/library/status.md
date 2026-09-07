@@ -322,10 +322,13 @@ entries are retained as deduplicated blobs beside the verbatim container. Uncomp
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
 reasons ([`formats.md`](formats.md)).
 
-**Projection.** Tier A package and image projection is implemented. One checked install tree
+**Projection.** Tier A package and image projection and Debian-only Tier B source projection are
+implemented. One checked install tree
 projects to deterministic `.deb`, `.rpm`, `.apk`, Homebrew bottles, Arch recipes, OCI image
 layouts, digest-pinned Helm charts, pinned-runtime AppImages, Flatpak build directories, and
-Snaps. Binary readers derive package relationships; incompatible ABI and relocation verdicts
+Snaps. A recorded change or producing result projects to an unsigned `.dsc`, deterministic source
+archives, and generated Debian policy files. Binary readers derive package relationships;
+incompatible ABI and relocation verdicts
 refuse by default; and signed `projection/1`, source provenance, and SBOM statements accompany
 every artifact
 ([`projection.md`](projection.md)).

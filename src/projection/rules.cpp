@@ -93,6 +93,7 @@ std::vector<std::string> dependencies(const prepared_projection& prepared,
     for (const auto& soname : prepared.needed) {
         switch (target) {
         case projection_target::deb:
+        case projection_target::debian_source:
             output.push_back(deb_dependency(soname));
             break;
         case projection_target::rpm:
@@ -119,6 +120,7 @@ std::vector<std::string> provides(const prepared_projection& prepared, projectio
     for (const auto& soname : prepared.sonames) {
         switch (target) {
         case projection_target::deb:
+        case projection_target::debian_source:
             output.push_back(lower(soname));
             break;
         case projection_target::rpm:

@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib/x86_64-linux-gnu
+includedir=${prefix}/include
+
+Name: liquid-source-fixture
+Description: Liquid Debian source projection fixture
+Version: 1.2.3
+Libs: -L${libdir} -lliquid-source-fixture
+Cflags: -I${includedir}

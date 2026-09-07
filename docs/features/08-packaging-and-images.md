@@ -10,7 +10,8 @@
 > `archive-z2` and `bare-user` OSTree commits plus bootc OCI encapsulation from a digest-pinned base
 > tree and overlays. Issue #80 adds declarative install intent, generated maintainer scripts,
 > file-owner conflict detection, derived replacement relationships, and generation-based
-> install/rollback. Tier B remains #79.
+> install/rollback. Issue #79 implements Tier B for Debian source packages; other distribution
+> source-policy formats remain deferred.
 
 ## Projection, not translation
 
@@ -30,14 +31,16 @@ that install, upgrade and remove cleanly. This is what FPM and nfpm users actual
 want, and it is broadly useful. liquid ships this.
 
 **Tier B — distro-policy-compliant packages.** Lintian-clean, policy-conformant
-source packages a Debian maintainer would sponsor. Enormously more work, genuinely
-valuable, and a later goal.
+source packages a Debian maintainer would sponsor. Debian is implemented. A distribution qualifies
+for another Tier B target only when liquid can run both its reproducible source-build tool and its
+policy linter in a pinned peer environment.
 
 ## Targets
 
 | Target | Notes |
 |---|---|
 | **`.deb` / apt** | `ar` + `control.tar` + `data.tar`. Full relationship field support — `Depends`, `Pre-Depends`, `Recommends`, `Conflicts`, `Breaks`, `Replaces`, `Provides`. `Breaks` vs `Conflicts` reflects dpkg's two-phase install; `Provides` is virtual packages. |
+| **Debian source** | Implemented Tier B output: unsigned `.dsc`, deterministic orig and Debian tarballs, generated `debian/` policy files, `sbuild`, and `lintian -EvIL +pedantic` peer acceptance. |
 | **`.rpm` / dnf** | Spec generation, `%files` with ownership and permissions, automatic `SONAME`-derived dependencies. |
 | **Alpine `apk`** | The simplest correct target; the natural first implementation. |
 | **Arch `PKGBUILD`** | Implemented as a deterministic binary-package source archive, `PKGBUILD`, and `.SRCINFO`, with derived ELF dependencies. |
@@ -145,10 +148,20 @@ Archive formats are the easy part. These are not:
   `current` selection.
 - **Cross-compilation and sysroots** — first-class, because the toolchain is an input.
 
+## Tier B decision
+
+Liquid emits source packages for Debian only in Phase 5. Debian is the distribution named by this
+specification, `sbuild` supplies a reproducible mechanical build, and lintian supplies a concrete
+policy bar. The acceptance target is an unsigned package tree a Debian maintainer could review and
+sponsor. OpenPGP signing remains the sponsor's `debsign` step; liquid does not add another signing
+framework.
+
+RPM `.spec` output remains an ordinary Tier A byproduct and is labelled not policy-reviewed.
+Fedora, openSUSE, Arch, and every other distribution source-policy format are deferred. They can
+qualify later only with a reproducible source-build tool and policy linter runnable in a pinned
+peer environment.
+
 ## Open questions
 
-- **How far to pursue Tier B**, and for which distributions first.
-- **Whether to emit source packages** (`.dsc`, `debian/rules`, spec files) or only
-  binary packages. Source packages are what distributions actually maintain.
 - **Signing key custody per platform** — Authenticode and notarisation have
   incompatible trust models.

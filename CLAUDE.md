@@ -108,6 +108,9 @@ Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
+Liquid #79 adds Debian-only Tier B source projection: generated policy files, deterministic source
+archives and unsigned `.dsc` output, derived build dependencies, source-history changelogs, DEP-5
+licence reporting, detached attestations, and a strict `debuild`/`sbuild`/lintian peer.
 Liquid #70 adds Tier 2 registry views for linked binaries, PDF objects, Jupyter cells, OOXML and
 ODF XML parts, package payloads, wheels, JARs, safetensors tensors, and non-executing pickle
 opcodes.
@@ -536,6 +539,12 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
     libfido2, OpenSC, or tpm2-tss. Design: [`docs/library/identity.md`](docs/library/identity.md),
     [`docs/library/encryption.md`](docs/library/encryption.md), and
     [`docs/library/release-approval.md`](docs/library/release-approval.md).
+14. **Tier B source packaging is Debian-only in Phase 5** (liquid #79, 2026-09-06). A
+    distribution qualifies only when liquid can run its reproducible source-build tool and policy
+    linter in a pinned peer environment. Debian qualifies through `sbuild` and lintian, and its
+    concrete bar is an unsigned package a maintainer could sponsor. RPM `.spec` output remains a
+    Tier A byproduct labelled not policy-reviewed. Fedora, openSUSE, Arch, and other source-policy
+    formats are deferred. OpenPGP signing remains the sponsor's `debsign` step.
 
 **Still open:**
 

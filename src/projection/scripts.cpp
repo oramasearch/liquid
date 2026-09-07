@@ -130,6 +130,7 @@ auto post_install(const install_intent& intent) -> std::string {
 auto removal_test(projection_target target) -> std::string {
     switch (target) {
     case projection_target::deb:
+    case projection_target::debian_source:
         return "[ \"${1:-}\" = 'remove' ]";
     case projection_target::rpm:
         return "[ \"${1:-0}\" = '0' ]";
@@ -197,7 +198,7 @@ auto post_remove(projection_target target, const install_intent& intent) -> std:
 result<generated_maintainer_scripts> generate_maintainer_scripts(projection_target target,
                                                                  const install_intent& intent) {
     if (target != projection_target::deb && target != projection_target::rpm &&
-        target != projection_target::apk) {
+        target != projection_target::apk && target != projection_target::debian_source) {
         return std::unexpected(error{errc::invalid_argument,
                                      "maintainer scripts require a package target",
                                      std::string{to_string(target)}});

@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap|dsc> <result|change|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--distribution <suite>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
 
-Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or bundled-runtime artifact.
+Project a recorded result, change, or tree into a package, source package, image, Helm chart, OSTree commit, or bundled-runtime artifact.
 
 ## Options
 
@@ -27,6 +27,7 @@ Project a recorded result or tree into a package, image, Helm chart, OSTree comm
 | `--ref` | `<name>` | Set the OSTree ref. | required for OS targets |
 | `--overlay` | `[path=]<tree>` | Overlay a tree at an optional relative path; repeatable. | none |
 | `--mode` | `<archive-z2\|bare-user>` | Select the OSTree repository mode. | archive-z2 |
+| `--distribution` | `<suite>` | Set the Debian source distribution. | unstable |
 | `--compat-gzip` | — | Use gzip-compatible package compression. | false |
 | `--allow-abi-break` | — | Permit an incompatible ABI projection. | false |
 | `--json` | — | Write stable JSON instead of text. | false |
@@ -38,7 +39,7 @@ available
 ## Examples
 
 ```sh
-liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json
+liquid project dsc blake3:<change-or-install-tree> --name example --version 1.0.0 --distribution unstable --out projection
 ```
 
 ## Exit status

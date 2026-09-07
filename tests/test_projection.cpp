@@ -147,6 +147,31 @@ public:
         return root_;
     }
 
+    auto debian_source_request(std::string output) -> liquid::projection_request {
+        const auto tree =
+            import_tree(std::filesystem::path{LIQUID_PROJECTION_FIXTURES} / "debian-source");
+        auto change = liquid::change_input{
+            .author = liquid::actor{"mailto:maintainers@orama.com"},
+            .at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'000}},
+            .message = "Release the Debian source fixture.",
+            .ref = "debian-source-fixture"};
+        auto recorded = liquid::runtime::block_on(repository_.record(std::move(change)));
+        EXPECT_TRUE(recorded) << recorded.error().message;
+        return {.sources = {{.value = tree, .change = *recorded}},
+                .metadata = {.name = "liquid-source-fixture",
+                             .version = "1.2.3",
+                             .release = "4",
+                             .description = "Liquid Debian source projection fixture",
+                             .maintainer = "Liquid maintainers <maintainers@orama.com>",
+                             .licence = "Apache-2.0",
+                             .homepage = "https://github.com/oramasearch/liquid",
+                             .copyright = "2026 OramaSearch contributors"},
+                .target = liquid::projection_target::debian_source,
+                .options = {.output_directory = path_ / std::move(output),
+                            .source_date_epoch = 1'700'000'000,
+                            .distribution = "unstable"}};
+    }
+
     auto incompatible_result() -> liquid::result_id {
         auto statement =
             liquid::attestation{.subject = root_,
@@ -274,6 +299,83 @@ TEST(Projection, package_writers_round_trip_and_are_byte_identical) {
         EXPECT_TRUE(
             std::ranges::contains(unpacked->entries, expected_path, &liquid::format_entry::path));
     }
+}
+
+TEST(Projection, debian_source_is_deterministic_and_matches_policy_goldens) {
+    auto fixture = projection_fixture{};
+    auto first = fixture.project(fixture.debian_source_request("debian-source-first"));
+    auto second = fixture.project(fixture.debian_source_request("debian-source-second"));
+
+    ASSERT_EQ(first.artifacts.size(), 4U);
+    ASSERT_EQ(second.artifacts.size(), 4U);
+    EXPECT_EQ(first.artifacts[0].path.filename(), "liquid-source-fixture_1.2.3-4.dsc");
+    EXPECT_EQ(first.artifacts[1].path.filename(), "liquid-source-fixture_1.2.3.orig.tar.gz");
+    EXPECT_EQ(first.artifacts[2].path.filename(), "liquid-source-fixture_1.2.3-4.debian.tar.gz");
+    EXPECT_EQ(first.artifacts[3].path.filename(),
+              "liquid-source-fixture_1.2.3-4.dsc.attestations.json");
+    EXPECT_EQ(liquid::to_string(first.artifacts[0].digest),
+              liquid::to_string(second.artifacts[0].digest));
+    EXPECT_EQ(liquid::to_string(first.artifacts[1].digest),
+              liquid::to_string(second.artifacts[1].digest));
+    EXPECT_EQ(liquid::to_string(first.artifacts[2].digest),
+              liquid::to_string(second.artifacts[2].digest));
+    EXPECT_EQ(liquid::to_string(first.artifacts[0].digest),
+              "sha256:95cb55b55e6c68bf6ab40ba7f528c69efa69c8c671d5ee1d165909fa2b0bbb9a");
+
+    const auto dsc = read_text(first.artifacts[0].path);
+    EXPECT_NE(dsc.find("Checksums-Sha256:\n"), std::string::npos);
+    EXPECT_NE(dsc.find(liquid::to_string(first.artifacts[1].digest).substr(7)), std::string::npos);
+    EXPECT_NE(dsc.find(liquid::to_string(first.artifacts[2].digest).substr(7)), std::string::npos);
+
+    const auto tree = first.artifacts[0].path.parent_path() / "liquid-source-fixture-1.2.3";
+    const auto golden = std::filesystem::path{LIQUID_PROJECTION_FIXTURES} / "debian-source-golden";
+    for (const auto name : {"control", "rules", "changelog", "copyright"}) {
+        EXPECT_EQ(read_text(tree / "debian" / name), read_text(golden / name)) << name;
+    }
+    EXPECT_EQ(read_text(tree / "debian/source/format"), "3.0 (quilt)\n");
+    EXPECT_TRUE(std::filesystem::exists(tree / "debian/liquid-source-fixture.postinst"));
+    EXPECT_TRUE(first.diagnostics.empty());
+}
+
+TEST(Projection, debian_source_reports_unknown_licence_data) {
+    auto fixture = projection_fixture{};
+    auto request = fixture.debian_source_request("debian-source-unknown");
+    request.metadata.licence = "NOASSERTION";
+    request.metadata.copyright.clear();
+    auto report = fixture.project(std::move(request));
+
+    EXPECT_EQ(report.diagnostics,
+              (std::vector<std::string>{"unknown licence: *", "unknown copyright: *"}));
+    const auto tree = report.artifacts[0].path.parent_path() / "liquid-source-fixture-1.2.3";
+    const auto copyright = read_text(tree / "debian/copyright");
+    EXPECT_NE(copyright.find("Copyright: UNKNOWN"), std::string::npos);
+    EXPECT_NE(copyright.find("License: UNKNOWN"), std::string::npos);
+}
+
+TEST(Projection, debian_source_refuses_shell_command_targets) {
+    auto fixture = projection_fixture{};
+    auto request = fixture.debian_source_request("debian-source-shell");
+    const auto configuration =
+        std::string{"build package {\n"
+                    "  command: [\"sh\", \"-c\", \"make all\"]\n"
+                    "  toolchain: "
+                    "blake3:0000000000000000000000000000000000000000000000000000000000000000\n"
+                    "  outputs: [path \"bin/liquid-source-fixture\"]\n"
+                    "}\n"};
+    auto bytes = std::vector<std::byte>{
+        reinterpret_cast<const std::byte*>(configuration.data()),
+        reinterpret_cast<const std::byte*>(configuration.data() + configuration.size())};
+    auto written =
+        liquid::runtime::block_on(fixture.repository().write("liquid.liquid", std::move(bytes)));
+    ASSERT_TRUE(written) << written.error().message;
+    auto tree = liquid::runtime::block_on(fixture.repository().root_digest());
+    ASSERT_TRUE(tree) << tree.error().message;
+    request.sources = {{*tree}};
+
+    auto report = liquid::runtime::block_on(liquid::project(fixture.repository(), request));
+    ASSERT_FALSE(report);
+    EXPECT_EQ(report.error().code, liquid::errc::invalid_argument);
+    EXPECT_EQ(report.error().context, "sh");
 }
 
 TEST(Projection, one_intent_has_golden_scripts_for_all_package_formats) {
@@ -1134,6 +1236,19 @@ TEST(Projection, emit_peer_artifacts_when_requested) {
         std::cout << liquid::to_string(target) << '=' << report.artifacts.front().path << ' '
                   << liquid::to_string(report.artifacts.front().digest) << '\n';
     }
+}
+
+TEST(Projection, emit_debian_source_peer_when_requested) {
+    const auto* output = std::getenv("LIQUID_DEBIAN_SOURCE_PEER_OUT");
+    if (output == nullptr) {
+        GTEST_SKIP() << "LIQUID_DEBIAN_SOURCE_PEER_OUT is not set";
+    }
+    auto fixture = projection_fixture{};
+    auto request = fixture.debian_source_request(output);
+    auto report = fixture.project(std::move(request));
+    ASSERT_EQ(report.artifacts.size(), 4U);
+    std::cout << "dsc=" << report.artifacts[0].path << ' '
+              << liquid::to_string(report.artifacts[0].digest) << '\n';
 }
 
 TEST(Projection, emit_native_homebrew_peer_when_requested) {

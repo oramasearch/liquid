@@ -43,6 +43,15 @@ endif()
 project(liquid VERSION 0.0.1 LANGUAGES C CXX
         DESCRIPTION "liquid — version control, build, packages, artifacts and runtime in one program")
 
+file(READ
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/projection/fixtures/debian-bookworm-path-packages.tsv"
+  LIQUID_DEBIAN_PATH_PACKAGES)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/projection/debian_path_packages.hpp.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/debian_path_packages.hpp"
+  @ONLY)
+
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -544,6 +553,7 @@ add_library(libliquid
   src/projection/bundled.cpp
   ${LIQUID_APPIMAGE_RUNTIME_SOURCE}
   src/projection/bootc.cpp
+  src/projection/debian_source.cpp
   src/projection/oci.cpp
   src/projection/ostree.cpp
   src/projection/package.cpp
@@ -625,6 +635,7 @@ target_include_directories(libliquid PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_BINARY_DIR}/generated
           ${blake3_source_SOURCE_DIR}/c
           ${monocypher_source_SOURCE_DIR}/src
           ${monocypher_source_SOURCE_DIR}/src/optional

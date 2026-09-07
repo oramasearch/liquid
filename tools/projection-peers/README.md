@@ -1,5 +1,14 @@
 # Projection interoperability peers
 
+`run-debian-source-interop.sh <liquid-tests> <output-directory>` emits the source-package fixture,
+checks the unpacked tree with `debuild -S`, builds the unsigned `.dsc` in a configured Debian
+bookworm `sbuild` chroot, and runs `lintian -EvIL +pedantic`. Any lintian error or warning fails the
+peer. It then installs the produced binary `.deb` and runs `liquid-source-fixture`. The peer must
+provide `debuild`, `sbuild`, `lintian`, and `dpkg`; the script does not create or alter the chroot.
+
+`refresh-debian-path-packages.sh <output-tsv>` runs inside the pinned Debian bookworm peer to
+refresh the committed `dpkg-query -S` evidence used for derived `Build-Depends`.
+
 `run-projection-interop.sh <build-directory>` asks the focused projection test to emit the
 committed fixture as Debian, RPM, Alpine, OCI, Helm, Homebrew, Arch, AppImage, Flatpak, and Snap
 outputs. It then proves:

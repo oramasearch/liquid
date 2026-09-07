@@ -81,7 +81,7 @@ for what is implemented today.
 | [`library/grammars.md`](library/grammars.md) | The digest-pinned tree-sitter runtime and 49-grammar lock, trust decision, build controls, inventory, update procedure, and measurements. |
 | [`library/search.md`](library/search.md) | Issues #22, #67, and #29's BM25F, positional-trigram, and mapped-scan executors; archive entries; cost model; atomic publication; explanations; public APIs; CLI; and crossover measurements. |
 | [`library/formats.md`](library/formats.md) | Issue #29's format registry and C ABI, fidelity tiers, launch codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
-| [`library/projection.md`](library/projection.md) | Issues #28 and #80's Tier A package, OCI image, and Helm projection; install intent and generated scripts; ownership conflicts; atomic generations; derived dependencies; deterministic compression; attestations; and peer proof. |
+| [`library/projection.md`](library/projection.md) | Issues #28, #77, #78, #79, and #80's Tier A artifacts, Debian Tier B source packages, install intent, ownership, deterministic writers, attestations, and peer proof. |
 | [`library/projection.md`](library/projection.md) | Issues #28 and #78: Tier A packages, OCI and Helm artifacts, owned OSTree object encoding, bootc encapsulation, deterministic layers, attestations, and peer proof. |
 | [`library/support-tiers.md`](library/support-tiers.md) | Issue #71's registry-derived language, format, and platform support matrix and strongest-frontend selection. |
 | [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
@@ -119,7 +119,7 @@ for what is implemented today.
 | Page | What it contains |
 |---|---|
 | [`library/formats.md`](library/formats.md) | Issue #29's format registry and C ABI, fidelity tiers, launch codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
-| [`library/projection.md`](library/projection.md) | Issues #28 and #77's native packages, Homebrew, PKGBUILD, OCI, Helm, AppImage, Flatpak, and Snap projection; deterministic writers, runtime pins, attestations, and peer proof. |
+| [`library/projection.md`](library/projection.md) | Issues #28, #77, #78, #79, and #80's native packages, ecosystem artifacts, OSTree and bootc outputs, Debian source packages, deterministic writers, attestations, and peer proof. |
 | [`library/formats.md`](library/formats.md) | Issues #29 and #70's format registry and C ABI, fidelity tiers, codec subsets, limits, nested path notation, diff/search/storage integration, and deduplication measurement. |
 | [`library/projection.md`](library/projection.md) | Issue #28's Tier A package, OCI image, and Helm projection; derived dependencies, deterministic compression, layer selection, attestations, and peer proof. |
 | [`library/resolution.md`](library/resolution.md) | Package and concretised records, spec grammar, universe layout, solver model, explanations, optimisation, and scale measurements. |

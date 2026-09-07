@@ -17,7 +17,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`search`](search.md) | search paths and contents | available |
 | [`resolve`](resolve.md) | concretise package specifications | available |
 | [`config`](config.md) | check, lower, or format .liquid configuration | available |
-| [`project`](project.md) | project a build into an installable package, commit, image, or chart | available |
+| [`project`](project.md) | project content into packages, commits, images, or charts | available |
 | [`install`](install.md) | install or list atomic generations | available |
 | [`rollback`](rollback.md) | select the previous installed generation | available |
 | [`log`](log.md) | show or verify change, signed drip, timestamp, or transparency-log history | available |

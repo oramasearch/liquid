@@ -15,3 +15,12 @@ exits; an argument keeps it alive for the k0s pod proof.
 `scripts/` contains the exact four lifecycle scripts generated from the shared install-intent
 fixture for Debian, RPM, and Alpine. The projection tests compare every byte, including guards and
 quoting.
+
+`debian-source/` is the Tier B fixture: a small C static library, public header, pkg-config file,
+manual page, and CLI. Its `.liquid` target supplies the argv and canonical outputs from which
+`debian/rules` and the install manifest are generated. The zero toolchain digest is replaced by a
+stored fixture-tree digest only when the configured-target test executes it; source projection
+itself does not dereference a declared toolchain.
+
+`debian-source-golden/` pins the generated policy metadata byte for byte. The projection test
+separately pins the unsigned `.dsc` digest.
