@@ -127,7 +127,10 @@ public:
 
     auto project(liquid::projection_request request) -> liquid::projection_report {
         auto report = liquid::runtime::block_on(liquid::project(repository_, std::move(request)));
-        EXPECT_TRUE(report) << report.error().message << ": " << report.error().context;
+        if (!report) {
+            ADD_FAILURE() << report.error().message << ": " << report.error().context;
+            return {};
+        }
         return std::move(*report);
     }
 
@@ -145,6 +148,31 @@ public:
 
     auto root() const -> liquid::digest {
         return root_;
+    }
+
+    auto debian_source_request(std::string output) -> liquid::projection_request {
+        const auto tree =
+            import_tree(std::filesystem::path{LIQUID_PROJECTION_FIXTURES} / "debian-source");
+        auto change = liquid::change_input{
+            .author = liquid::actor{"mailto:maintainers@orama.com"},
+            .at = std::chrono::sys_seconds{std::chrono::seconds{1'700'000'000}},
+            .message = "Release the Debian source fixture.",
+            .ref = "debian-source-fixture"};
+        auto recorded = liquid::runtime::block_on(repository_.record(std::move(change)));
+        EXPECT_TRUE(recorded) << recorded.error().message;
+        return {.sources = {{.value = tree, .change = *recorded}},
+                .metadata = {.name = "liquid-source-fixture",
+                             .version = "1.2.3",
+                             .release = "4",
+                             .description = "Liquid Debian source projection fixture",
+                             .maintainer = "Liquid maintainers <maintainers@orama.com>",
+                             .licence = "Apache-2.0",
+                             .homepage = "https://github.com/oramasearch/liquid",
+                             .copyright = "2026 OramaSearch contributors"},
+                .target = liquid::projection_target::debian_source,
+                .options = {.output_directory = path_ / std::move(output),
+                            .source_date_epoch = 1'700'000'000,
+                            .distribution = "unstable"}};
     }
 
     auto incompatible_result() -> liquid::result_id {
@@ -274,6 +302,83 @@ TEST(Projection, package_writers_round_trip_and_are_byte_identical) {
         EXPECT_TRUE(
             std::ranges::contains(unpacked->entries, expected_path, &liquid::format_entry::path));
     }
+}
+
+TEST(Projection, debian_source_is_deterministic_and_matches_policy_goldens) {
+    auto fixture = projection_fixture{};
+    auto first = fixture.project(fixture.debian_source_request("debian-source-first"));
+    auto second = fixture.project(fixture.debian_source_request("debian-source-second"));
+
+    ASSERT_EQ(first.artifacts.size(), 4U);
+    ASSERT_EQ(second.artifacts.size(), 4U);
+    EXPECT_EQ(first.artifacts[0].path.filename(), "liquid-source-fixture_1.2.3-4.dsc");
+    EXPECT_EQ(first.artifacts[1].path.filename(), "liquid-source-fixture_1.2.3.orig.tar.gz");
+    EXPECT_EQ(first.artifacts[2].path.filename(), "liquid-source-fixture_1.2.3-4.debian.tar.gz");
+    EXPECT_EQ(first.artifacts[3].path.filename(),
+              "liquid-source-fixture_1.2.3-4.dsc.attestations.json");
+    EXPECT_EQ(liquid::to_string(first.artifacts[0].digest),
+              liquid::to_string(second.artifacts[0].digest));
+    EXPECT_EQ(liquid::to_string(first.artifacts[1].digest),
+              liquid::to_string(second.artifacts[1].digest));
+    EXPECT_EQ(liquid::to_string(first.artifacts[2].digest),
+              liquid::to_string(second.artifacts[2].digest));
+    EXPECT_EQ(liquid::to_string(first.artifacts[0].digest),
+              "sha256:95cb55b55e6c68bf6ab40ba7f528c69efa69c8c671d5ee1d165909fa2b0bbb9a");
+
+    const auto dsc = read_text(first.artifacts[0].path);
+    EXPECT_NE(dsc.find("Checksums-Sha256:\n"), std::string::npos);
+    EXPECT_NE(dsc.find(liquid::to_string(first.artifacts[1].digest).substr(7)), std::string::npos);
+    EXPECT_NE(dsc.find(liquid::to_string(first.artifacts[2].digest).substr(7)), std::string::npos);
+
+    const auto tree = first.artifacts[0].path.parent_path() / "liquid-source-fixture-1.2.3";
+    const auto golden = std::filesystem::path{LIQUID_PROJECTION_FIXTURES} / "debian-source-golden";
+    for (const auto name : {"control", "rules", "changelog", "copyright"}) {
+        EXPECT_EQ(read_text(tree / "debian" / name), read_text(golden / name)) << name;
+    }
+    EXPECT_EQ(read_text(tree / "debian/source/format"), "3.0 (quilt)\n");
+    EXPECT_TRUE(std::filesystem::exists(tree / "debian/liquid-source-fixture.postinst"));
+    EXPECT_TRUE(first.diagnostics.empty());
+}
+
+TEST(Projection, debian_source_reports_unknown_licence_data) {
+    auto fixture = projection_fixture{};
+    auto request = fixture.debian_source_request("debian-source-unknown");
+    request.metadata.licence = "NOASSERTION";
+    request.metadata.copyright.clear();
+    auto report = fixture.project(std::move(request));
+
+    EXPECT_EQ(report.diagnostics,
+              (std::vector<std::string>{"unknown licence: *", "unknown copyright: *"}));
+    const auto tree = report.artifacts[0].path.parent_path() / "liquid-source-fixture-1.2.3";
+    const auto copyright = read_text(tree / "debian/copyright");
+    EXPECT_NE(copyright.find("Copyright: UNKNOWN"), std::string::npos);
+    EXPECT_NE(copyright.find("License: UNKNOWN"), std::string::npos);
+}
+
+TEST(Projection, debian_source_refuses_shell_command_targets) {
+    auto fixture = projection_fixture{};
+    auto request = fixture.debian_source_request("debian-source-shell");
+    const auto configuration =
+        std::string{"build package {\n"
+                    "  command: [\"sh\", \"-c\", \"make all\"]\n"
+                    "  toolchain: "
+                    "blake3:0000000000000000000000000000000000000000000000000000000000000000\n"
+                    "  outputs: [path \"bin/liquid-source-fixture\"]\n"
+                    "}\n"};
+    auto bytes = std::vector<std::byte>{
+        reinterpret_cast<const std::byte*>(configuration.data()),
+        reinterpret_cast<const std::byte*>(configuration.data() + configuration.size())};
+    auto written =
+        liquid::runtime::block_on(fixture.repository().write("liquid.liquid", std::move(bytes)));
+    ASSERT_TRUE(written) << written.error().message;
+    auto tree = liquid::runtime::block_on(fixture.repository().root_digest());
+    ASSERT_TRUE(tree) << tree.error().message;
+    request.sources = {{*tree}};
+
+    auto report = liquid::runtime::block_on(liquid::project(fixture.repository(), request));
+    ASSERT_FALSE(report);
+    EXPECT_EQ(report.error().code, liquid::errc::invalid_argument);
+    EXPECT_EQ(report.error().context, "sh");
 }
 
 TEST(Projection, one_intent_has_golden_scripts_for_all_package_formats) {
@@ -606,6 +711,151 @@ TEST(Projection, dependency_capabilities_follow_each_package_ecosystem) {
     EXPECT_EQ(liquid::projection_detail::provides(prepared, liquid::projection_target::rpm),
               (std::vector<std::string>{"libfixture.so.1()(64bit)"}));
 }
+
+TEST(Projection, appx_manifest_is_pinned) {
+    const auto metadata = liquid::package_metadata{.name = "liquid-fixture",
+                                                   .version = "1.2.3",
+                                                   .architecture = "x86_64",
+                                                   .description = "Liquid & fixture",
+                                                   .identifier = "dev.liquid.fixture",
+                                                   .publisher = "CN=Liquid Test",
+                                                   .display_name = "Liquid Fixture",
+                                                   .executable = "bin/liquid-fixture.exe"};
+    auto manifest = liquid::projection_detail::appx_manifest(metadata);
+    ASSERT_TRUE(manifest) << manifest.error().message;
+    EXPECT_EQ(*manifest,
+              "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n"
+              "<Package xmlns=\"http://schemas.microsoft.com/appx/manifest/foundation/windows10\" "
+              "xmlns:uap=\"http://schemas.microsoft.com/appx/manifest/uap/windows10\" "
+              "xmlns:rescap=\"http://schemas.microsoft.com/appx/manifest/foundation/windows10/"
+              "restrictedcapabilities\" IgnorableNamespaces=\"uap rescap\">\r\n"
+              "  <Identity Name=\"dev.liquid.fixture\" Publisher=\"CN=Liquid Test\" "
+              "Version=\"1.2.3.0\" ProcessorArchitecture=\"x64\" />\r\n"
+              "  <Properties>\r\n"
+              "    <DisplayName>Liquid Fixture</DisplayName>\r\n"
+              "    <PublisherDisplayName>Liquid Fixture</PublisherDisplayName>\r\n"
+              "    <Description>Liquid &amp; fixture</Description>\r\n"
+              "    <Logo>Assets\\StoreLogo.png</Logo>\r\n"
+              "  </Properties>\r\n"
+              "  <Resources><Resource Language=\"en-us\" /></Resources>\r\n"
+              "  <Dependencies><TargetDeviceFamily Name=\"Windows.Desktop\" "
+              "MinVersion=\"10.0.17763.0\" MaxVersionTested=\"10.0.26100.0\" />"
+              "</Dependencies>\r\n"
+              "  <Applications>\r\n"
+              "    <Application Id=\"App\" Executable=\"bin\\liquid-fixture.exe\" "
+              "EntryPoint=\"Windows.FullTrustApplication\">\r\n"
+              "      <uap:VisualElements DisplayName=\"Liquid Fixture\" Description=\"Liquid &amp; "
+              "fixture\" BackgroundColor=\"transparent\" "
+              "Square150x150Logo=\"Assets\\Square150x150Logo.png\" "
+              "Square44x44Logo=\"Assets\\Square44x44Logo.png\" />\r\n"
+              "    </Application>\r\n"
+              "  </Applications>\r\n"
+              "  <Capabilities><rescap:Capability Name=\"runFullTrust\" /></Capabilities>\r\n"
+              "</Package>\r\n");
+}
+
+TEST(Projection, winget_yaml_is_pinned) {
+    const auto metadata = liquid::package_metadata{.name = "liquid-fixture",
+                                                   .version = "1.2.3",
+                                                   .architecture = "x86_64",
+                                                   .description = "Liquid fixture",
+                                                   .identifier = "OramaSearch.Liquid",
+                                                   .display_name = "Liquid"};
+    auto installer = liquid::digest{liquid::algorithm::sha256, {}};
+    installer.bytes.front() = std::byte{0xab};
+    auto manifests = liquid::projection_detail::winget_manifests(
+        metadata, "https://example.invalid/liquid.msix", installer);
+    ASSERT_TRUE(manifests) << manifests.error().message;
+    ASSERT_EQ(manifests->size(), 3U);
+    EXPECT_EQ(manifests->at("OramaSearch.Liquid.yaml"),
+              "PackageIdentifier: \"OramaSearch.Liquid\"\n"
+              "PackageVersion: \"1.2.3\"\n"
+              "DefaultLocale: en-US\n"
+              "ManifestType: version\n"
+              "ManifestVersion: 1.9.0\n");
+    EXPECT_EQ(manifests->at("OramaSearch.Liquid.installer.yaml"),
+              "PackageIdentifier: \"OramaSearch.Liquid\"\n"
+              "PackageVersion: \"1.2.3\"\n"
+              "InstallerType: msix\n"
+              "Installers:\n"
+              "  - Architecture: x64\n"
+              "    InstallerUrl: \"https://example.invalid/liquid.msix\"\n"
+              "    InstallerSha256: "
+              "AB00000000000000000000000000000000000000000000000000000000000000\n"
+              "ManifestType: installer\n"
+              "ManifestVersion: 1.9.0\n");
+    EXPECT_EQ(manifests->at("OramaSearch.Liquid.locale.en-US.yaml"),
+              "PackageIdentifier: \"OramaSearch.Liquid\"\n"
+              "PackageVersion: \"1.2.3\"\n"
+              "PackageLocale: en-US\n"
+              "Publisher: \"Liquid\"\n"
+              "PackageName: \"Liquid\"\n"
+              "ShortDescription: \"Liquid fixture\"\n"
+              "ManifestType: defaultLocale\n"
+              "ManifestVersion: 1.9.0\n");
+
+    auto unsafe = metadata;
+    unsafe.identifier = "../../outside";
+    auto refused = liquid::projection_detail::winget_manifests(
+        unsafe, "https://example.invalid/liquid.msix", installer);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    auto insecure = liquid::projection_detail::winget_manifests(
+        metadata, "http://example.invalid/liquid.msix", installer);
+    ASSERT_FALSE(insecure);
+    EXPECT_EQ(insecure.error().code, liquid::errc::invalid_argument);
+}
+
+#if defined(__APPLE__)
+TEST(Projection, macos_pkg_is_reproducible_and_emits_a_signing_request) {
+    auto fixture = projection_fixture{};
+    const auto source = fixture.result_with_evidence();
+    auto first_request = fixture.request(liquid::projection_target::macos_pkg, "pkg");
+    auto second_request = fixture.request(liquid::projection_target::macos_pkg, "pkg-again");
+    first_request.sources = {{source}};
+    first_request.metadata.architecture.clear();
+    second_request.sources = {{source}};
+    second_request.metadata.architecture.clear();
+    auto first = fixture.project(std::move(first_request));
+    auto second = fixture.project(std::move(second_request));
+    ASSERT_EQ(first.artifacts.size(), 1U);
+    ASSERT_EQ(second.artifacts.size(), 1U);
+    EXPECT_TRUE(first.artifacts.front().reproducible);
+    EXPECT_EQ(read_bytes(first.artifacts.front().path), read_bytes(second.artifacts.front().path));
+    EXPECT_EQ(liquid::to_string(first.artifacts.front().digest),
+              liquid::to_string(second.artifacts.front().digest));
+    EXPECT_EQ(liquid::to_string(first.artifacts.front().digest),
+              "sha256:6afcd2966bc11e57f0137ecdb49c71967b369a934c7960f6a14e9fb3481eebff");
+    EXPECT_EQ(first.attestations.size(), 4U);
+    ASSERT_EQ(first.signing_requests.size(), 1U);
+    EXPECT_EQ(liquid::to_string(first.signing_requests.front().unsigned_digest),
+              liquid::to_string(first.artifacts.front().digest));
+    EXPECT_TRUE(std::filesystem::is_regular_file(first.signing_requests.front().path));
+    auto refused = liquid::runtime::block_on(liquid::sign_platform(
+        fixture.repository(),
+        first.artifacts.front().path,
+        {.identity = "keychain:test", .output = first.artifacts.front().path, .notarize = false}));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    auto unchanged =
+        liquid::hash(liquid::algorithm::sha256, read_bytes(first.artifacts.front().path));
+    ASSERT_TRUE(unchanged) << unchanged.error().message;
+    EXPECT_EQ(liquid::to_string(*unchanged), liquid::to_string(first.artifacts.front().digest));
+}
+
+TEST(Projection, macos_dmg_reports_that_it_is_not_reproducible) {
+    auto fixture = projection_fixture{};
+    auto report = fixture.project(fixture.request(liquid::projection_target::macos_dmg, "dmg"));
+    ASSERT_EQ(report.artifacts.size(), 1U);
+    EXPECT_FALSE(report.artifacts.front().reproducible);
+    EXPECT_EQ(report.artifacts.front().path.extension(), ".dmg");
+    ASSERT_EQ(report.signing_requests.size(), 1U);
+    auto encoded = liquid::projection_report_json(report);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    EXPECT_NE(encoded->find("\"reproducible\":false"), std::string::npos);
+    EXPECT_NE(encoded->find("\"platform\":\"macos\""), std::string::npos);
+}
+#endif
 
 TEST(Projection, build_trace_distance_selects_stability_layers_deterministically) {
     auto digest = [](std::uint8_t value) {
@@ -1134,6 +1384,19 @@ TEST(Projection, emit_peer_artifacts_when_requested) {
         std::cout << liquid::to_string(target) << '=' << report.artifacts.front().path << ' '
                   << liquid::to_string(report.artifacts.front().digest) << '\n';
     }
+}
+
+TEST(Projection, emit_debian_source_peer_when_requested) {
+    const auto* output = std::getenv("LIQUID_DEBIAN_SOURCE_PEER_OUT");
+    if (output == nullptr) {
+        GTEST_SKIP() << "LIQUID_DEBIAN_SOURCE_PEER_OUT is not set";
+    }
+    auto fixture = projection_fixture{};
+    auto request = fixture.debian_source_request(output);
+    auto report = fixture.project(std::move(request));
+    ASSERT_EQ(report.artifacts.size(), 4U);
+    std::cout << "dsc=" << report.artifacts[0].path << ' '
+              << liquid::to_string(report.artifacts[0].digest) << '\n';
 }
 
 TEST(Projection, emit_native_homebrew_peer_when_requested) {

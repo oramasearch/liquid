@@ -34,3 +34,6 @@ actions and local blobs keep their version 1 canonical bytes.
 
 Change version 2 appends the cut's refs, lock paths, nested-repository pointers, and per-directory
 CRDT heads. Version 1 remains byte-compatible for decoding and signature verification.
+Change version 3 replaces legacy inline conflict inputs with path-to-conflict-digest references and
+adds conflict-to-selected-value resolution references. Canonical `conflict/1` records retain the
+base, both sides, exactly one path range, merge kind, and explanation.

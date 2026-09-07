@@ -688,7 +688,194 @@ auto admission_router(std::shared_ptr<service_state> state) -> http1::router {
 }
 
 auto openapi() -> std::string {
-    return R"({"openapi":"3.1.0","info":{"title":"liquid admission","version":"v1"},"paths":{"/admit/{policy}":{"post":{"parameters":[{"name":"policy","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"AdmissionReview response with structured decisions"},"404":{"description":"unknown policy"}}}},"/admission/review":{"post":{"deprecated":true,"responses":{"200":{"description":"default-policy AdmissionReview response"}}}},"/healthz":{"get":{"responses":{"200":{"description":"healthy"}}}},"/readyz":{"get":{"responses":{"200":{"description":"ready"},"503":{"description":"not ready"}}}},"/metrics":{"get":{"responses":{"200":{"description":"Prometheus metrics"}}}},"/v1":{"get":{"responses":{"200":{"description":"capabilities"}}}},"/v1/policies":{"get":{"responses":{"200":{"description":"policy names and reload status"}}}},"/v1/policy":{"get":{"parameters":[{"name":"name","in":"query","schema":{"type":"string","default":"default"}}],"responses":{"200":{"description":"effective named policy"}}}},"/v1/policy/reload":{"post":{"responses":{"200":{"description":"policy sets atomically reloaded"},"400":{"description":"invalid policy; previous sets retained"}}}},"/v1/verify":{"get":{"responses":{"200":{"description":"image decision"}}}},"/v1/decisions":{"get":{"responses":{"200":{"description":"server-sent decision stream with bounded replay"}}}},"/v1/openapi.json":{"get":{"responses":{"200":{"description":"OpenAPI document"}}}},"/mcp":{"post":{"responses":{"200":{"description":"MCP JSON-RPC response"}}}}}})";
+    return R"({
+  "openapi": "3.1.0",
+  "info": {"title": "liquid admission", "version": "v1"},
+  "paths": {
+    "/admit/{policy}": {
+      "post": {
+        "parameters": [
+          {"name": "policy", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "AdmissionReview response with structured decisions"},
+          "404": {"description": "unknown policy"}
+        }
+      }
+    },
+    "/admission/review": {
+      "post": {
+        "deprecated": true,
+        "responses": {"200": {"description": "default-policy AdmissionReview response"}}
+      }
+    },
+    "/healthz": {"get": {"responses": {"200": {"description": "healthy"}}}},
+    "/readyz": {
+      "get": {
+        "responses": {
+          "200": {"description": "ready"},
+          "503": {"description": "not ready"}
+        }
+      }
+    },
+    "/metrics": {"get": {"responses": {"200": {"description": "Prometheus metrics"}}}},
+    "/v1": {"get": {"responses": {"200": {"description": "capabilities"}}}},
+    "/v1/policies": {
+      "get": {"responses": {"200": {"description": "policy names and reload status"}}}
+    },
+    "/v1/policy": {
+      "get": {
+        "parameters": [
+          {"name": "name", "in": "query", "schema": {"type": "string", "default": "default"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "effective named policy",
+            "content": {
+              "application/json": {"schema": {"$ref": "#/components/schemas/AdmissionPolicy"}}
+            }
+          }
+        }
+      }
+    },
+    "/v1/policy/reload": {
+      "post": {
+        "responses": {
+          "200": {"description": "policy sets atomically reloaded"},
+          "400": {"description": "invalid policy; previous sets retained"}
+        }
+      }
+    },
+    "/v1/verify": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "image decision with transparency verification outcome",
+            "content": {
+              "application/json": {"schema": {"$ref": "#/components/schemas/AdmissionDecision"}}
+            }
+          }
+        }
+      }
+    },
+    "/v1/decisions": {
+      "get": {
+        "responses": {"200": {"description": "server-sent decision stream with bounded replay"}}
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {"responses": {"200": {"description": "OpenAPI document"}}}
+    },
+    "/mcp": {"post": {"responses": {"200": {"description": "MCP JSON-RPC response"}}}}
+  },
+  "components": {
+    "schemas": {
+      "LogIdentity": {
+        "type": "object",
+        "properties": {
+          "taap_id": {"type": "string", "pattern": "^taap:1:ed25519:"},
+          "public_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "required": ["taap_id", "public_key"]
+      },
+      "LogWitness": {
+        "type": "object",
+        "properties": {
+          "endpoint": {"type": "string"},
+          "public_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "required": ["endpoint", "public_key"]
+      },
+      "LogTrust": {
+        "type": "object",
+        "properties": {
+          "identity": {"$ref": "#/components/schemas/LogIdentity"},
+          "witness_threshold": {"type": "integer", "minimum": 0},
+          "witnesses": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/LogWitness"}
+          }
+        },
+        "required": ["identity", "witness_threshold", "witnesses"]
+      },
+      "AdmissionLogPolicy": {
+        "type": "object",
+        "properties": {
+          "mode": {"type": "string", "enum": ["deny", "verify"]},
+          "lake": {"type": "string"},
+          "trust": {"$ref": "#/components/schemas/LogTrust"},
+          "max_checkpoint_age_seconds": {"type": "integer", "minimum": 0}
+        },
+        "required": ["mode", "lake", "trust", "max_checkpoint_age_seconds"]
+      },
+      "AdmissionPolicy": {
+        "type": "object",
+        "properties": {
+          "v": {"const": 1},
+          "mode": {"type": "string", "enum": ["off", "attestation", "attestation+log"]},
+          "issuers": {"type": "array", "items": {"type": "string"}},
+          "profiles": {"type": "array", "items": {"type": "string"}},
+          "exempt": {"type": "array", "items": {"type": "string"}},
+          "exempt_namespaces": {"type": "array", "items": {"type": "string"}},
+          "attestation_source": {"type": "string"},
+          "log": {"$ref": "#/components/schemas/AdmissionLogPolicy"}
+        },
+        "required": [
+          "v",
+          "mode",
+          "issuers",
+          "profiles",
+          "exempt",
+          "exempt_namespaces",
+          "attestation_source",
+          "log"
+        ]
+      },
+      "LogVerification": {
+        "type": ["object", "null"],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": ["included", "not_included", "unavailable", "denied"]
+          },
+          "checkpoint": {"type": ["string", "null"]},
+          "checkpoint_sequence": {"type": "integer", "minimum": 0},
+          "tree_size": {"type": "integer", "minimum": 0},
+          "reason": {"type": "string"}
+        },
+        "required": ["outcome", "checkpoint", "checkpoint_sequence", "tree_size", "reason"]
+      },
+      "Evidence": {
+        "type": "object",
+        "properties": {
+          "attestation": {"type": "string"},
+          "profile": {"type": "string"},
+          "issuer": {"type": "string"},
+          "verified": {"type": "boolean"},
+          "rule_id": {"type": "string"},
+          "reason": {"type": "string"},
+          "log": {"$ref": "#/components/schemas/LogVerification"}
+        },
+        "required": ["attestation", "profile", "issuer", "verified", "rule_id", "reason", "log"]
+      },
+      "AdmissionDecision": {
+        "type": "object",
+        "properties": {
+          "v": {"const": 1},
+          "kind": {"const": "admission-decision"},
+          "sequence": {"type": "integer", "minimum": 0},
+          "policy": {"type": "string"},
+          "subject": {"type": ["string", "null"]},
+          "image": {"type": "string"},
+          "outcome": {"type": "string", "enum": ["allowed", "denied"]},
+          "reasons": {"type": "array", "items": {"type": "object"}},
+          "evidence": {"type": "array", "items": {"$ref": "#/components/schemas/Evidence"}}
+        },
+        "required": ["v", "kind", "sequence", "policy", "subject", "image", "outcome", "reasons", "evidence"]
+      }
+    }
+  }
+})";
 }
 
 auto mcp_id(const json::value& request) -> json::value {
@@ -1027,9 +1214,16 @@ auto control_router(std::shared_ptr<service_state> state) -> http1::router {
                              }},
                              json::value{json::value::object{
                                  {"name", json::value{std::string{"admission_verify"}}},
+                                 {"description",
+                                  json::value{std::string{
+                                      "Verify an image; evidence.log reports checkpoint, tile, "
+                                      "and inclusion verification."}}},
                              }},
                              json::value{json::value::object{
                                  {"name", json::value{std::string{"admission_decisions"}}},
+                                 {"description",
+                                  json::value{std::string{
+                                      "List retained decisions including transparency outcomes."}}},
                              }},
                          }}},
                     }});

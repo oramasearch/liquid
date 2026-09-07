@@ -43,6 +43,15 @@ endif()
 project(liquid VERSION 0.0.1 LANGUAGES C CXX
         DESCRIPTION "liquid — version control, build, packages, artifacts and runtime in one program")
 
+file(READ
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/projection/fixtures/debian-bookworm-path-packages.tsv"
+  LIQUID_DEBIAN_PATH_PACKAGES)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/projection/debian_path_packages.hpp.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/debian_path_packages.hpp"
+  @ONLY)
+
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -544,10 +553,14 @@ add_library(libliquid
   src/projection/bundled.cpp
   ${LIQUID_APPIMAGE_RUNTIME_SOURCE}
   src/projection/bootc.cpp
+  src/projection/debian_source.cpp
   src/projection/oci.cpp
   src/projection/ostree.cpp
   src/projection/package.cpp
+  src/projection/platform.cpp
+  src/projection/platform_tools.cpp
   src/projection/projection.cpp
+  src/projection/signing.cpp
   src/projection/rules.cpp
   src/projection/scripts.cpp
   src/reapi/conversion.cpp
@@ -626,6 +639,7 @@ target_include_directories(libliquid PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_BINARY_DIR}/generated
           ${blake3_source_SOURCE_DIR}/c
           ${monocypher_source_SOURCE_DIR}/src
           ${monocypher_source_SOURCE_DIR}/src/optional
@@ -737,6 +751,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/tier.cpp
     src/cli/tiers.cpp
     src/cli/repo.cpp
+    src/cli/conflict.cpp
     src/cli/registry.cpp
     src/cli/review.cpp
     src/cli/release.cpp
@@ -889,6 +904,9 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/liquidConfig.cmake
 # Tests: GoogleTest via FetchContent + CTest, matching Zetta.
 # -----------------------------------------------------------------------------
 if(LIQUID_BUILD_TESTS)
+  add_executable(liquid-platform-installer-fixture tests/platform/installer_fixture.cpp)
+  target_link_libraries(liquid-platform-installer-fixture PRIVATE liquid::liquid)
+  add_executable(liquid-platform-installer-program tests/platform/installer_program.cpp)
   FetchContent_Declare(googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG        v1.17.0)

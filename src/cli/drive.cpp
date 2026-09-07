@@ -91,7 +91,7 @@ auto print_status(const liquid::drive_status& status) -> void {
                      path.reason);
     }
     for (const auto& conflict : status.conflicts) {
-        std::println("conflict={} values={}", conflict.path, conflict.refs.size());
+        std::println("conflict={} id={}", conflict.region.path, liquid::to_string(conflict.id));
     }
     for (const auto& reference : status.references) {
         const auto outcome =

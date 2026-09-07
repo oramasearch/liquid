@@ -98,6 +98,9 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #76 adds reproducible unsigned macOS packages, explicitly non-reproducible disk images,
+deterministic MSIX and winget manifests, custody-selected platform signing, native verification,
+and the `platform_signature/1` chain. The credentialed Apple notarisation run remains pending.
 Liquid #80 adds canonical declarative install intents, fixed Debian/RPM/Alpine lifecycle-script
 generation, script SBOM and projection binding, batch and installed-inventory file conflict
 detection, derived replacement relationships, and atomic projected-tree generations with install,
@@ -108,6 +111,9 @@ Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
+Liquid #79 adds Debian-only Tier B source projection: generated policy files, deterministic source
+archives and unsigned `.dsc` output, derived build dependencies, source-history changelogs, DEP-5
+licence reporting, detached attestations, and a `debuild`/`sbuild`/lintian peer gate when available.
 Liquid #70 adds Tier 2 registry views for linked binaries, PDF objects, Jupyter cells, OOXML and
 ODF XML parts, package payloads, wheels, JARs, safetensors tensors, and non-executing pickle
 opcodes.
@@ -143,7 +149,9 @@ Liquid #42 adds configured exclusive checkout path patterns, holder/time/reason 
 holder-aware write refusal and release, signed offline reconciliation through conflict values,
 connected lake authorization callbacks, daemon lock snapshots, and `liquid lock`/`unlock`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
-journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+journal are implemented. Liquid #40 adds canonical first-class conflict records, conflict tree
+entries, version-3 change resolution references, status and CLI handling, sync reachability, and
+conflict-aware build materialisation. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
 exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
 transient presence, compaction epochs, and delegation-attributed publication. Directory
@@ -187,8 +195,9 @@ benchmarks live under `bench/` and are excluded unless their build option is ena
 Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and the fail-closed
 `liquid serve admission` Kubernetes webhook. Its TLS admission and independent control listeners
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
-metrics, REST, OpenAPI, and MCP are implemented. The shared #83 transparency verifier is complete;
-the admission lake adapter remains fail-closed until it calls that verifier.
+metrics, REST, OpenAPI, and MCP are implemented. Liquid #268 connects log-mode admission to the
+shared #83 verifier with policy-pinned log identity and witness trust, complete parent-tile and
+inclusion verification, and recorded outcomes.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
@@ -539,6 +548,12 @@ These were the Phase 0 gates. Most are now decided; the rest are narrowed.
     libfido2, OpenSC, or tpm2-tss. Design: [`docs/library/identity.md`](docs/library/identity.md),
     [`docs/library/encryption.md`](docs/library/encryption.md), and
     [`docs/library/release-approval.md`](docs/library/release-approval.md).
+14. **Tier B source packaging is Debian-only in Phase 5** (liquid #79, 2026-09-06). A
+    distribution qualifies only when liquid can run its reproducible source-build tool and policy
+    linter in a pinned peer environment. Debian qualifies through `sbuild` and lintian, and its
+    concrete bar is an unsigned package a maintainer could sponsor. RPM `.spec` output remains a
+    Tier A byproduct labelled not policy-reviewed. Fedora, openSUSE, Arch, and other source-policy
+    formats are deferred. OpenPGP signing remains the sponsor's `debsign` step.
 
 **Still open:**
 

@@ -1,0 +1,13 @@
+# derived-by: dpkg-query -S in debian:bookworm@sha256:6ebd97fa83deb272194a2cf015b3d26a4d538e9ad3a7a79d544c8af5b0a01443
+# path	package	policy	dpkg-query-output
+/usr/bin/ar	binutils	implicit	binutils: /usr/bin/ar
+/usr/bin/autoconf	autoconf	explicit	autoconf: /usr/bin/autoconf
+/usr/bin/automake	automake	explicit	automake: /usr/bin/automake
+/usr/bin/cmake	cmake	explicit	cmake: /usr/bin/cmake
+/usr/bin/g++	g++	implicit	g++: /usr/bin/g++
+/usr/bin/gcc	gcc	implicit	gcc: /usr/bin/gcc
+/usr/bin/make	make	implicit	make: /usr/bin/make
+/usr/bin/ninja	ninja-build	explicit	ninja-build: /usr/bin/ninja
+/usr/bin/pkg-config	pkgconf	explicit	pkgconf:amd64: /usr/bin/pkg-config
+/usr/bin/python3	python3-minimal	explicit	python3-minimal: /usr/bin/python3
+/usr/bin/ranlib	binutils	implicit	binutils: /usr/bin/ranlib

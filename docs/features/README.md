@@ -93,7 +93,7 @@ specifies it.
   ([04](04-build-engine.md), [05](05-caching.md)).
 - Resolve dependencies at Spack's level of expressiveness
   ([07](07-dependency-resolution.md)).
-- Produce `.deb`, `.rpm`, `.apk`, OCI images and Helm charts from one build
+- Produce Tier A packages and images plus Debian Tier B source packages from one build
   ([08](08-packaging-and-images.md)).
 - Serve builds, with a transparency log and signed provenance
   ([09](09-artifact-service.md), [10](10-supply-chain.md)).
@@ -133,7 +133,7 @@ specifies it.
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
-| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and Helm, with generated install scripts, ownership conflict checks, atomic generations, and ABI gates. |
+| [08](08-packaging-and-images.md) | Packaging and images | Tier A package and image projection plus Debian Tier B source packages, generated install scripts, ownership conflict checks, atomic generations, and ABI gates. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage, Flatpak, and Snap, with ABI and relocation gates. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Typed package rules and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented; a pinned Spack export seeds the package universe with explicit losses. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
@@ -153,7 +153,7 @@ specifies it.
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 | [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
 | [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Write flow control, private replicas, presence, leases, epochs, and per-line attribution are implemented; suspicious-region detection remains. |
-| [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, and the append-only log with optional public anchoring. |
+| [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, the append-only log with optional public anchoring, and policy-pinned admission verification. |
 
 ## Status
 

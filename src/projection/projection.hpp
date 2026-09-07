@@ -22,6 +22,10 @@ struct prepared_projection {
     std::optional<install_intent> install;
     std::optional<generated_maintainer_scripts> scripts;
     std::vector<projection_replacement> replacements;
+    std::optional<action_input> build_action;
+    std::vector<observed_input> build_manifest;
+    std::vector<std::string> build_toolchain_paths;
+    std::vector<change> source_changes;
     std::map<std::string, std::uint32_t> directory_modes;
     std::map<std::string, std::string> components;
     std::string base_source;
@@ -58,6 +62,8 @@ struct prepared_projection {
 [[nodiscard]] auto
 project_package(repository& source, projection_target target, prepared_projection prepared)
     -> runtime::task<projection_report>;
+[[nodiscard]] auto project_debian_source(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
 [[nodiscard]] auto project_homebrew(repository& source, prepared_projection prepared)
     -> runtime::task<projection_report>;
 [[nodiscard]] auto project_pkgbuild(repository& source, prepared_projection prepared)
@@ -78,5 +84,17 @@ project_package(repository& source, projection_target target, prepared_projectio
                                 prepared_projection prepared,
                                 std::span<const projection_service> services)
     -> runtime::task<projection_report>;
+[[nodiscard]] auto project_macos(repository& source,
+                                 projection_target target,
+                                 prepared_projection prepared) -> runtime::task<projection_report>;
+[[nodiscard]] auto project_msix(repository& source, prepared_projection prepared)
+    -> runtime::task<projection_report>;
+[[nodiscard]] auto project_winget(repository& source, const projection_request& request)
+    -> runtime::task<projection_report>;
+[[nodiscard]] LIQUID_EXPORT auto appx_manifest(const package_metadata& metadata)
+    -> result<std::string>;
+[[nodiscard]] LIQUID_EXPORT auto
+winget_manifests(const package_metadata& metadata, std::string_view installer_url, digest installer)
+    -> result<std::map<std::string, std::string>>;
 
 } // namespace liquid::projection_detail

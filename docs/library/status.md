@@ -109,7 +109,10 @@ may accept them; `liquid registry trust` pins or displays the out-of-band root
 **Admission.** `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and
 control listeners, atomically reloaded named policy sets at `/admit/<policy>`, structured
 CBOR/JSON decisions in AdmissionReview status, a bounded local decision stream, local or
-node-store evidence lookup, metrics, REST, OpenAPI, and MCP ([`admission.md`](admission.md),
+node-store evidence lookup, and policy-pinned transparency verification through the shared
+checkpoint, parent-tile, and inclusion verifier. Each decision records the log outcome and exact
+failure reason. Metrics, REST, OpenAPI, and MCP expose the same record
+([`admission.md`](admission.md),
 [`../api/admission.md`](../api/admission.md)).
 
 **Search.** Repository-local BM25F, substring, and regex search over the working tree or named refs
@@ -322,10 +325,13 @@ entries are retained as deduplicated blobs beside the verbatim container. Uncomp
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
 reasons ([`formats.md`](formats.md)).
 
-**Projection.** Tier A package and image projection is implemented. One checked install tree
+**Projection.** Tier A package and image projection and Debian-only Tier B source projection are
+implemented. One checked install tree
 projects to deterministic `.deb`, `.rpm`, `.apk`, Homebrew bottles, Arch recipes, OCI image
 layouts, digest-pinned Helm charts, pinned-runtime AppImages, Flatpak build directories, and
-Snaps. Binary readers derive package relationships; incompatible ABI and relocation verdicts
+Snaps. A recorded change or producing result projects to an unsigned `.dsc`, deterministic source
+archives, and generated Debian policy files. Binary readers derive package relationships;
+incompatible ABI and relocation verdicts
 refuse by default; and signed `projection/1`, source provenance, and SBOM statements accompany
 every artifact
 ([`projection.md`](projection.md)).

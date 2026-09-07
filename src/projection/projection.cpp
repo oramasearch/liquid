@@ -6,10 +6,13 @@
 #include <fstream>
 #include <map>
 #include <ranges>
+#include <set>
 
 #include "build/relocation.hpp"
 #include "build/repository_access.hpp"
+#include "formats/json.hpp"
 #include "liquid/abi.hpp"
+#include "liquid/configuration.hpp"
 #include "liquid/version.hpp"
 #include "objects/records.hpp"
 
@@ -84,6 +87,28 @@ auto collect_tree(repository& source,
         }
         files.insert_or_assign(path, std::move(value));
         components.insert_or_assign(path, component);
+    }
+    co_return result<void>{};
+}
+
+auto collect_tree_paths(repository& source,
+                        digest root,
+                        std::string prefix,
+                        std::vector<std::string>& paths) -> runtime::task<void> {
+    auto tree = co_await source.tree(root);
+    if (!tree) {
+        co_return std::unexpected(tree.error());
+    }
+    for (const auto& entry : tree->entries) {
+        const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
+        if (entry.kind == node_kind::tree) {
+            auto collected = co_await collect_tree_paths(source, entry.ref, path, paths);
+            if (!collected) {
+                co_return std::unexpected(collected.error());
+            }
+        } else if (entry.kind == node_kind::blob) {
+            paths.push_back("/" + path);
+        }
     }
     co_return result<void>{};
 }
@@ -227,6 +252,94 @@ auto unique_digests(std::vector<digest> values) -> std::vector<digest> {
     return values;
 }
 
+auto collect_text_claims(const formats::json::value& value,
+                         std::string_view field,
+                         std::set<std::string>& output) -> void {
+    if (const auto* object = std::get_if<formats::json::value::object>(&value.data)) {
+        for (const auto& [name, child] : *object) {
+            if (name == field) {
+                if (const auto* text = std::get_if<std::string>(&child.data);
+                    text != nullptr && *text != "NOASSERTION" && *text != "NONE" &&
+                    *text != "UNKNOWN") {
+                    output.insert(*text);
+                }
+            }
+            collect_text_claims(child, field, output);
+        }
+    } else if (const auto* array = std::get_if<formats::json::value::array>(&value.data)) {
+        for (const auto& child : *array) {
+            collect_text_claims(child, field, output);
+        }
+    }
+}
+
+auto apply_sbom_metadata(repository& source, result_id result_value, package_metadata& metadata)
+    -> runtime::task<void> {
+    auto licences = std::set<std::string>{};
+    auto copyrights = std::set<std::string>{};
+    auto options = record_page_options{};
+    while (true) {
+        auto page = co_await source.sboms(result_value, options);
+        if (!page) {
+            co_return std::unexpected(page.error());
+        }
+        for (const auto& report : page->records) {
+            if (!report.verified) {
+                continue;
+            }
+            auto document = formats::json::parse(report.document);
+            if (!document) {
+                co_return std::unexpected(document.error());
+            }
+            collect_text_claims(*document, "licenseConcluded", licences);
+            collect_text_claims(*document, "licenseDeclared", licences);
+            collect_text_claims(*document, "copyrightText", copyrights);
+        }
+        if (page->done || !page->next) {
+            break;
+        }
+        options.cursor = page->next;
+    }
+    if ((metadata.licence.empty() || metadata.licence == "NOASSERTION") && licences.size() == 1) {
+        metadata.licence = *licences.begin();
+    }
+    if ((metadata.copyright.empty() || metadata.copyright == "NOASSERTION") &&
+        copyrights.size() == 1) {
+        metadata.copyright = *copyrights.begin();
+    }
+    co_return result<void>{};
+}
+
+auto collect_configured_toolchain(repository& source, prepared_projection& prepared)
+    -> runtime::task<void> {
+    auto targets = std::vector<target>{};
+    for (const auto& file : prepared.files) {
+        if (!file.path.ends_with(".liquid") || file.path.find('/') != std::string::npos) {
+            continue;
+        }
+        const auto text =
+            std::string{reinterpret_cast<const char*>(file.bytes.data()), file.bytes.size()};
+        auto parsed = parse_configuration(text, file.path);
+        if (!parsed) {
+            co_return std::unexpected(parsed.error());
+        }
+        auto lowered = lower(*parsed);
+        if (!lowered) {
+            co_return std::unexpected(lowered.error());
+        }
+        targets.insert(targets.end(), lowered->targets.begin(), lowered->targets.end());
+    }
+    if (targets.size() != 1 || !targets.front().toolchain) {
+        co_return result<void>{};
+    }
+    const auto& toolchain = *targets.front().toolchain;
+    if (std::ranges::none_of(toolchain.bytes,
+                             [](std::byte value) { return value != std::byte{}; })) {
+        co_return result<void>{};
+    }
+    co_return co_await collect_tree_paths(source, toolchain, {}, prepared.build_toolchain_paths);
+}
+
 auto script_values(const prepared_projection& prepared, projection_target target)
     -> std::vector<std::pair<std::string, std::string>> {
     if (!prepared.scripts) {
@@ -284,7 +397,9 @@ auto metadata_is_safe(const package_metadata& metadata) -> bool {
     };
     if (!safe(metadata.name) || !safe(metadata.version) || !safe(metadata.release) ||
         !safe(metadata.architecture) || !safe(metadata.description) || !safe(metadata.maintainer) ||
-        !safe(metadata.licence) || !safe(metadata.homepage)) {
+        !safe(metadata.licence) || !safe(metadata.homepage) || !safe(metadata.identifier) ||
+        !safe(metadata.publisher) || !safe(metadata.display_name) || !safe(metadata.executable) ||
+        !safe(metadata.copyright)) {
         return false;
     }
     for (const auto* values : {&metadata.declared_dependencies,
@@ -323,6 +438,10 @@ auto options_are_safe(const projection_options& options) -> bool {
         if (!std::ranges::all_of(*values, safe)) {
             return false;
         }
+    }
+    if (options.entitlements.string().find_first_of("\r\n\0") != std::string::npos ||
+        !safe(options.installer_url) || !safe(options.distribution)) {
+        return false;
     }
     return std::ranges::all_of(options.conffiles, [](const auto& path) {
         const auto value = std::filesystem::path{path};
@@ -364,6 +483,7 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
     }
     const auto os_target = request.target == projection_target::ostree_commit ||
                            request.target == projection_target::bootc_image;
+    const auto source_target = request.target == projection_target::debian_source;
     if (!os_target && (request.metadata.name.empty() || request.metadata.version.empty())) {
         co_return std::unexpected(
             failure(errc::invalid_argument, "projection requires package name and version"));
@@ -448,15 +568,42 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
             for (auto& [path, layer] : *layers) {
                 output.stability_layers.insert_or_assign(std::move(path), layer);
             }
-            tree = *result->output_tree;
+            tree = source_target ? action->inputs : *result->output_tree;
+            if (source_target) {
+                output.build_action = *action;
+                output.build_manifest = result->manifest;
+                auto toolchain_paths = co_await collect_tree_paths(
+                    source, action->toolchain, {}, output.build_toolchain_paths);
+                if (!toolchain_paths) {
+                    co_return std::unexpected(toolchain_paths.error());
+                }
+            }
             output.source_results.push_back(*result_id);
             if (result->provenance) {
                 output.source_attestations.push_back(*result->provenance);
             }
             output.source_attestations.insert(
                 output.source_attestations.end(), result->sboms.begin(), result->sboms.end());
+            if (source_target) {
+                auto metadata = co_await apply_sbom_metadata(source, *result_id, output.metadata);
+                if (!metadata) {
+                    co_return std::unexpected(metadata.error());
+                }
+            }
         } else {
             tree = std::get<digest>(source_value.value);
+        }
+        if (source_value.change) {
+            auto changes = co_await source.log({.from = source_value.change, .first_parent = true});
+            if (!changes) {
+                co_return std::unexpected(changes.error());
+            }
+            if (changes->empty() || !same_digest(changes->front().root, tree)) {
+                co_return std::unexpected(failure(errc::conflict,
+                                                  "projection change does not name the source tree",
+                                                  to_string(source_value.change->value)));
+            }
+            output.source_changes = std::move(*changes);
         }
         const auto source_id =
             os_target ? to_string(tree)
@@ -500,22 +647,61 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
         if (!valid) {
             co_return std::unexpected(valid.error());
         }
-        auto added = add_install_files(output.metadata, *request.install, files);
-        if (!added) {
-            co_return std::unexpected(added.error());
+        if (!source_target) {
+            auto added = add_install_files(output.metadata, *request.install, files);
+            if (!added) {
+                co_return std::unexpected(added.error());
+            }
         }
         output.install = request.install;
         if (request.target == projection_target::deb || request.target == projection_target::rpm ||
-            request.target == projection_target::apk) {
-            auto scripts = generate_maintainer_scripts(request.target, *request.install);
+            request.target == projection_target::apk || source_target) {
+            const auto script_target = source_target ? projection_target::deb : request.target;
+            auto scripts = generate_maintainer_scripts(script_target, *request.install);
             if (!scripts) {
                 co_return std::unexpected(scripts.error());
             }
             output.scripts = std::move(*scripts);
         }
     }
+    if (request.build_evidence) {
+        auto result = co_await build::result(source, *request.build_evidence);
+        if (!result) {
+            co_return std::unexpected(result.error());
+        }
+        auto action = co_await source.action(result->action);
+        if (!action) {
+            co_return std::unexpected(action.error());
+        }
+        if (to_string(action->inputs) != output.base_source) {
+            co_return std::unexpected(failure(errc::conflict,
+                                              "build evidence uses a different source tree",
+                                              to_string(action->inputs)));
+        }
+        output.build_action = *action;
+        output.build_manifest = result->manifest;
+        output.source_results.push_back(*request.build_evidence);
+        if (result->provenance) {
+            output.source_attestations.push_back(*result->provenance);
+        }
+        output.source_attestations.insert(
+            output.source_attestations.end(), result->sboms.begin(), result->sboms.end());
+        if (source_target) {
+            auto metadata =
+                co_await apply_sbom_metadata(source, *request.build_evidence, output.metadata);
+            if (!metadata) {
+                co_return std::unexpected(metadata.error());
+            }
+        }
+        output.build_toolchain_paths.clear();
+        auto toolchain_paths = co_await collect_tree_paths(
+            source, action->toolchain, {}, output.build_toolchain_paths);
+        if (!toolchain_paths) {
+            co_return std::unexpected(toolchain_paths.error());
+        }
+    }
     if (output.metadata.architecture.empty() &&
-        request.target != projection_target::ostree_commit) {
+        request.target != projection_target::ostree_commit && !source_target) {
         co_return std::unexpected(failure(
             errc::invalid_argument, "tree-digest projection requires an architecture", "--arch"));
     }
@@ -527,7 +713,8 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
         output.metadata.description = output.metadata.name;
     }
     if (output.metadata.maintainer.empty()) {
-        output.metadata.maintainer = "unknown";
+        output.metadata.maintainer =
+            source_target ? "Liquid package maintainers <maintainers@orama.com>" : "unknown";
     }
     if (output.metadata.licence.empty()) {
         output.metadata.licence = "NOASSERTION";
@@ -535,7 +722,13 @@ runtime::task<prepared_projection> prepare(repository& source, const projection_
     for (auto& [path, file] : files) {
         output.files.push_back(std::move(file));
     }
-    if (os_target) {
+    if (source_target && !output.build_action) {
+        auto toolchain = co_await collect_configured_toolchain(source, output);
+        if (!toolchain) {
+            co_return std::unexpected(toolchain.error());
+        }
+    }
+    if (os_target || source_target) {
         output.source_attestations = unique_digests(std::move(output.source_attestations));
         co_return output;
     }
@@ -673,7 +866,9 @@ runtime::task<digest> store_script_sbom(repository& source,
 
 result<void> write_file(std::filesystem::path path, std::span<const std::byte> bytes) {
     auto code = std::error_code{};
-    std::filesystem::create_directories(path.parent_path(), code);
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), code);
+    }
     if (code) {
         return std::unexpected(failure(errc::io, code.message(), path.parent_path().string()));
     }
@@ -721,6 +916,8 @@ auto project_prepared(repository& source,
         co_return co_await projection_detail::project_flatpak(source, std::move(prepared));
     case projection_target::snap:
         co_return co_await projection_detail::project_snap(source, std::move(prepared));
+    case projection_target::debian_source:
+        co_return co_await projection_detail::project_debian_source(source, std::move(prepared));
     }
     co_return std::unexpected(error{errc::unsupported, "unknown projection target", "project"});
 }
@@ -743,6 +940,14 @@ std::string_view to_string(projection_target target) noexcept {
         return "apk";
     case projection_target::helm_chart:
         return "helm";
+    case projection_target::macos_pkg:
+        return "macos-pkg";
+    case projection_target::macos_dmg:
+        return "macos-dmg";
+    case projection_target::msix:
+        return "msix";
+    case projection_target::winget_manifest:
+        return "winget";
     case projection_target::homebrew:
         return "homebrew";
     case projection_target::pkgbuild:
@@ -753,6 +958,8 @@ std::string_view to_string(projection_target target) noexcept {
         return "flatpak";
     case projection_target::snap:
         return "snap";
+    case projection_target::debian_source:
+        return "dsc";
     }
     return "oci";
 }
@@ -768,6 +975,9 @@ std::string_view to_string(ostree_repository_mode mode) noexcept {
 }
 
 runtime::task<projection_report> project(repository& source, projection_request request) {
+    if (request.target == projection_target::winget_manifest) {
+        co_return co_await projection_detail::project_winget(source, request);
+    }
     auto prepared = co_await projection_detail::prepare(source, request);
     if (!prepared) {
         co_return std::unexpected(prepared.error());
@@ -794,6 +1004,14 @@ runtime::task<projection_report> project(repository& source, projection_request 
     case projection_target::helm_chart:
         co_return co_await projection_detail::project_helm(
             source, std::move(*prepared), request.services);
+    case projection_target::macos_pkg:
+    case projection_target::macos_dmg:
+        co_return co_await projection_detail::project_macos(
+            source, request.target, std::move(*prepared));
+    case projection_target::msix:
+        co_return co_await projection_detail::project_msix(source, std::move(*prepared));
+    case projection_target::winget_manifest:
+        break;
     case projection_target::homebrew:
         co_return co_await projection_detail::project_homebrew(source, std::move(*prepared));
     case projection_target::pkgbuild:
@@ -804,6 +1022,8 @@ runtime::task<projection_report> project(repository& source, projection_request 
         co_return co_await projection_detail::project_flatpak(source, std::move(*prepared));
     case projection_target::snap:
         co_return co_await projection_detail::project_snap(source, std::move(*prepared));
+    case projection_target::debian_source:
+        co_return co_await projection_detail::project_debian_source(source, std::move(*prepared));
     }
     co_return co_await project_prepared(
         source, request.target, std::move(*prepared), request.services);
@@ -902,7 +1122,19 @@ result<std::string> projection_report_json(const projection_report& report) {
         const auto& artifact = report.artifacts[index];
         output += "{\"path\":" + quote(artifact.path.generic_string()) +
                   ",\"digest\":" + quote(to_string(artifact.digest)) +
-                  ",\"media_type\":" + quote(artifact.media_type) + "}";
+                  ",\"media_type\":" + quote(artifact.media_type) +
+                  ",\"reproducible\":" + (artifact.reproducible ? "true" : "false") + "}";
+    }
+    output += "],\"signing_requests\":[";
+    for (auto index = std::size_t{}; index < report.signing_requests.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        const auto& request = report.signing_requests[index];
+        output += "{\"path\":" + quote(request.path.generic_string()) +
+                  ",\"artifact\":" + quote(request.artifact.generic_string()) +
+                  ",\"unsigned_digest\":" + quote(to_string(request.unsigned_digest)) +
+                  ",\"platform\":" + quote(to_string(request.platform)) + "}";
     }
     output += "],\"attestations\":[";
     for (auto index = std::size_t{}; index < report.attestations.size(); ++index) {
@@ -941,12 +1173,29 @@ result<std::string> projection_report_json(const projection_report& report) {
         }
         output += "]}";
     }
+    output += "],\"diagnostics\":[";
+    for (auto index = std::size_t{}; index < report.diagnostics.size(); ++index) {
+        if (index != 0) {
+            output.push_back(',');
+        }
+        output += quote(report.diagnostics[index]);
+    }
     output += "],\"abi_break_allowed\":";
     output += report.abi_break_allowed ? "true" : "false";
     output += ",\"ostree_commit\":";
     output += report.ostree_commit ? quote(to_string(*report.ostree_commit)) : "null";
     output.push_back('}');
     return output;
+}
+
+std::string_view to_string(platform_signing_system platform) noexcept {
+    switch (platform) {
+    case platform_signing_system::macos:
+        return "macos";
+    case platform_signing_system::windows:
+        return "windows";
+    }
+    return "unknown";
 }
 
 } // namespace liquid

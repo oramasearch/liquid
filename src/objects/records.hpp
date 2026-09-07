@@ -57,6 +57,7 @@ struct sbom_record {
 
 [[nodiscard]] auto encode(const blob& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const tree& value) -> result<std::vector<std::byte>>;
+[[nodiscard]] auto encode(const conflict& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const change& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode_change_body(const change& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto encode(const repo_record& value) -> result<std::vector<std::byte>>;
@@ -78,6 +79,9 @@ struct sbom_record {
 
 [[nodiscard]] auto decode_blob(std::span<const std::byte> bytes) -> result<blob>;
 [[nodiscard]] auto decode_tree(std::span<const std::byte> bytes) -> result<tree>;
+[[nodiscard]] auto decode_conflict(std::span<const std::byte> bytes,
+                                   std::optional<algorithm> hash_algorithm = std::nullopt)
+    -> result<conflict>;
 [[nodiscard]] auto decode_change(std::span<const std::byte> bytes,
                                  std::optional<algorithm> hash_algorithm = std::nullopt)
     -> result<change>;

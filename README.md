@@ -28,7 +28,8 @@ Phase 2 build wrapper, cache, verification and provenance, the Phase 3
 remote blobs, replay and delta delivery, the Phase 4 query graph, daemon, search and structural
 edits, and the Phase 5 formats, projection, resolution and `.liquid` configuration are implemented
 as recorded in [`docs/library/status.md`](docs/library/status.md), which also lists the known
-limits. Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
+limits. Phase 5 projection includes Debian-only Tier B source packages as well as Tier A outputs.
+Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
 files. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client of
 it.
 
@@ -66,8 +67,9 @@ it.
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
 > atomically reloaded named policy sets at `/admit/<policy>`, structured CBOR/JSON decisions in
 > AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
-> metrics, REST, OpenAPI, and MCP. The shared transparency client now provides complete inclusion
-> verification; the admission lake adapter remains fail-closed until it calls that verifier.
+> metrics, REST, OpenAPI, and MCP. Log-mode policy sets select fail-closed denial or verification
+> against pinned log identity and witness trust; verification uses the shared checkpoint,
+> parent-tile, and inclusion path and records its outcome in each decision.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
 > per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the
@@ -77,6 +79,9 @@ it.
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, historical document state, composition,
+> canonical first-class conflict objects with status, inspection, resolution, sync, and build
+> handling, operation- and session-scoped local-intent undo, advisory
+> locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
 > conflict values, operation- and session-scoped local-intent undo, advisory
 > locks, private speculative agent sessions, semantic file/symbol/range leases, transient presence,
 > conflict values, operation- and session-scoped local-intent undo, configured exclusive checkout
@@ -277,9 +282,16 @@ it.
 > Uncompressed tar has a deterministic writer, while hard or unsupported format surfaces retain
 > honest tiers and opaque reasons.
 > **Phase 5 now includes Tier A package and image projection.** One checked install tree projects
-> to deterministic `.deb`, `.rpm`, `.apk`, OCI image layouts, and digest-pinned Helm charts.
+> to deterministic `.deb`, `.rpm`, `.apk`, OCI image layouts, digest-pinned Helm charts, macOS
+> packages, MSIX, and winget manifests; disk images are explicitly non-reproducible. Platform
+> signing is a separate native operation whose `platform_signature/1` binds the unsigned and shipped
+> digests, signing identity, and notarisation or timestamp evidence. The first credentialed Apple
+> notarisation run remains pending.
 > Binary readers derive package relationships, incompatible ABI verdicts refuse by default, and
 > signed `projection/1`, source provenance, and SBOM statements accompany OCI artifacts.
+> **Phase 5 now includes Debian Tier B source projection.** Recorded changes and producing results
+> project to unsigned `.dsc` files, deterministic source archives, generated Debian policy files,
+> and adjacent provenance. Other distribution source-policy formats remain deferred.
 > **Phase 5 dependency resolution is implemented.** Canonical
 > `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
 > concrete dependencies, compiler and target constraints, conflicts, and patches. The public
@@ -318,6 +330,7 @@ and Zetta's.
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
+- [`docs/library/conflicts.md`](docs/library/conflicts.md) — canonical conflict objects, producers, resolution changes, transfer, and build behavior.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — Lake transparency-log checkpoints, tiles, proofs, scans, RFC 3161 timestamps, RFC 4998 evidence, and trust policy.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.
@@ -351,6 +364,7 @@ and Zetta's.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, derived dependencies, byte identity, and attached attestations.
 - [`docs/library/structural-diff.md`](docs/library/structural-diff.md) — graph-owned source parses, syntax-tree matching, public structural edits, fallback tiers, CLI output, coverage, and measurement.
+- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, platform installers, signing custody, byte identity, and attached attestations.
 - [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/distribution.md`](docs/library/distribution.md) — remote blob records, lazy output hydration, REAPI interoperability, liquid's scheduler and workers, explicit local replay, attested delta delivery, and the remaining Phase 3 design.

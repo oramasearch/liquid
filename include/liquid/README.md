@@ -4,6 +4,10 @@ Installed C++ headers in this directory define libliquid's supported API. `liqui
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.
 
+`object.hpp` defines the canonical conflict record, byte and node regions, conflict references,
+and change-resolution references. `repository.hpp` exposes unresolved inspection, producer
+recording, and resolution operations; all waiting operations remain coroutine-native.
+
 `frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
 descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
 errors, progress, and cancellation types while registering queries, commands, and panels.
@@ -44,14 +48,15 @@ lookup remains asynchronous in `repository.hpp`, and wrapper compatibility event
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
 `build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
 install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
-`projection.hpp` exposes deterministic package, OCI, Helm, OSTree, and bootc targets. OSTree and
-bootc sources carry optional relative mount paths, options select the ref and repository mode, and
-the report returns the OSTree commit independently of an OCI image digest.
+`projection.hpp` exposes deterministic binary package, Debian source package, OCI, Helm, OSTree,
+and bootc targets. Debian source requests can carry a change and observed build evidence; OSTree
+and bootc sources carry optional relative mount paths, options select the ref and repository mode,
+and the report returns the OSTree commit independently of an OCI image digest.
 
 `admission.hpp` defines the versioned image-admission policy and CBOR/JSON decision record,
-rule-attributed review results, injected attestation-source and transparency-log interfaces, the
-one-image review operation, named policy-directory options, bounded replay, and the long-running
-admission server.
+rule-attributed review results, per-policy log mode and trust anchors, detailed transparency
+outcomes, injected attestation-source and transparency-log interfaces, the one-image review
+operation, named policy-directory options, bounded replay, and the long-running admission server.
 `identity.hpp` exposes algorithm- and custody-tagged actors, software and hardware key rotation,
 and TPM-capable key custody without exposing transport types. `release.hpp` exposes signed release
 policy and approval values plus distinct-identity threshold verification.

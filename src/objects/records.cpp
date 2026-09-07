@@ -783,9 +783,39 @@ auto encode(const tree& value) -> result<std::vector<std::byte>> {
                              {"entries", cbor::value{std::move(output)}}}));
 }
 
+auto encode(const conflict& value) -> result<std::vector<std::byte>> {
+    if (value.region.path.empty() || value.explanation.empty() ||
+        value.region.bytes.has_value() == value.region.nodes.has_value()) {
+        return std::unexpected(error{errc::invalid_argument,
+                                     "conflict requires a path, explanation, and one region range",
+                                     "conflict"});
+    }
+    auto region = cbor::value::map{{"path", cbor::value{value.region.path}}};
+    if (value.region.bytes) {
+        region.emplace_back("bytes",
+                            map({{"offset", cbor::value{value.region.bytes->offset}},
+                                 {"length", cbor::value{value.region.bytes->length}}}));
+    } else {
+        region.emplace_back("nodes",
+                            map({{"first", encode_node_id(value.region.nodes->first)},
+                                 {"last", encode_node_id(value.region.nodes->last)}}));
+    }
+    const auto kind = value.kind == conflict_kind::text         ? "text"
+                      : value.kind == conflict_kind::structural ? "structural"
+                                                                : "crdt-suspicious";
+    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+                             {"kind", "conflict"},
+                             {"base", encode_digest(value.base)},
+                             {"left", encode_digest(value.left)},
+                             {"right", encode_digest(value.right)},
+                             {"region", cbor::value{std::move(region)}},
+                             {"merge_kind", cbor::value{kind}},
+                             {"explanation", cbor::value{value.explanation}}}));
+}
+
 auto encode_change_body_value(const change& value, bool include_signature)
     -> result<std::vector<std::byte>> {
-    if (value.record_version < 1 || value.record_version > 2) {
+    if (value.record_version < 1 || value.record_version > 3) {
         return std::unexpected(corrupt("unsupported change record version"));
     }
     auto parents = cbor::value::array{};
@@ -796,10 +826,21 @@ auto encode_change_body_value(const change& value, bool include_signature)
         metadata.emplace_back(cbor::value{key}, cbor::value{value});
     auto conflicts = cbor::value::array{};
     for (const auto& item : value.conflicts) {
-        auto refs = cbor::value::array{};
-        for (const auto& reference : item.refs)
-            refs.push_back(encode_digest(reference));
-        conflicts.push_back(map({{"path", cbor::value{item.path}}, {"refs", std::move(refs)}}));
+        if (value.record_version < 3) {
+            auto refs = cbor::value::array{};
+            for (const auto& reference : item.legacy_refs) {
+                refs.push_back(encode_digest(reference));
+            }
+            conflicts.push_back(map({{"path", cbor::value{item.path}}, {"refs", std::move(refs)}}));
+        } else {
+            conflicts.push_back(
+                map({{"path", cbor::value{item.path}}, {"id", encode_digest(item.id)}}));
+        }
+    }
+    auto resolutions = cbor::value::array{};
+    for (const auto& resolution : value.resolutions) {
+        resolutions.push_back(map({{"conflict", encode_digest(resolution.conflict)},
+                                   {"value", encode_digest(resolution.value)}}));
     }
     auto fields = cbor::value::map{
         {"v", cbor::value{value.record_version}},
@@ -815,6 +856,9 @@ auto encode_change_body_value(const change& value, bool include_signature)
     if (value.record_version >= 2) {
         fields.emplace_back("document", encode_document_state(value.document));
         fields.emplace_back("heads", encode_document_heads(value.heads));
+    }
+    if (value.record_version >= 3) {
+        fields.emplace_back("resolutions", std::move(resolutions));
     }
     if (include_signature) {
         fields.emplace_back("sig", cbor::value{value.sig});
@@ -1275,7 +1319,7 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
         const auto* bits = mode ? std::get_if<std::uint64_t>(&mode->data) : nullptr;
         const auto* type = kind ? std::get_if<std::uint64_t>(&kind->data) : nullptr;
         if (!text || !bits || !type || *bits > std::numeric_limits<std::uint32_t>::max() ||
-            *type > static_cast<std::uint64_t>(node_kind::repo))
+            *type > static_cast<std::uint64_t>(node_kind::conflict))
             return std::unexpected(corrupt("invalid tree entry"));
         auto object =
             id ? decode_digest(*id) : result<digest>{std::unexpected(corrupt("tree id missing"))};
@@ -1305,9 +1349,88 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
     return output;
 }
 
+auto decode_conflict(std::span<const std::byte> bytes, std::optional<algorithm> hash_algorithm)
+    -> result<conflict> {
+    auto source = decode(bytes, "conflict");
+    if (!source) {
+        return std::unexpected(source.error());
+    }
+    const auto* base_value = find(*source, "base");
+    const auto* left_value = find(*source, "left");
+    const auto* right_value = find(*source, "right");
+    const auto* region_value = find(*source, "region");
+    const auto* merge_kind_value = find(*source, "merge_kind");
+    const auto* explanation_value = find(*source, "explanation");
+    auto base = base_value ? decode_digest(*base_value)
+                           : result<digest>{std::unexpected(corrupt("conflict base missing"))};
+    auto left = left_value ? decode_digest(*left_value)
+                           : result<digest>{std::unexpected(corrupt("conflict left missing"))};
+    auto right = right_value ? decode_digest(*right_value)
+                             : result<digest>{std::unexpected(corrupt("conflict right missing"))};
+    const auto* path_value = region_value ? find(*region_value, "path") : nullptr;
+    const auto* bytes_value = region_value ? find(*region_value, "bytes") : nullptr;
+    const auto* nodes_value = region_value ? find(*region_value, "nodes") : nullptr;
+    const auto* path = path_value ? std::get_if<std::string>(&path_value->data) : nullptr;
+    const auto* merge_kind =
+        merge_kind_value ? std::get_if<std::string>(&merge_kind_value->data) : nullptr;
+    const auto* explanation =
+        explanation_value ? std::get_if<std::string>(&explanation_value->data) : nullptr;
+    if (!base || !left || !right || !path || path->empty() || !merge_kind || !explanation ||
+        explanation->empty() || (bytes_value != nullptr) == (nodes_value != nullptr)) {
+        return std::unexpected(corrupt("invalid conflict record"));
+    }
+    auto output = conflict{.base = *base,
+                           .left = *left,
+                           .right = *right,
+                           .region = {.path = *path},
+                           .explanation = *explanation};
+    if (*merge_kind == "text") {
+        output.kind = conflict_kind::text;
+    } else if (*merge_kind == "structural") {
+        output.kind = conflict_kind::structural;
+    } else if (*merge_kind == "crdt-suspicious") {
+        output.kind = conflict_kind::crdt_suspicious;
+    } else {
+        return std::unexpected(corrupt("invalid conflict merge kind"));
+    }
+    if (bytes_value) {
+        const auto* offset_value = find(*bytes_value, "offset");
+        const auto* length_value = find(*bytes_value, "length");
+        const auto* offset =
+            offset_value ? std::get_if<std::uint64_t>(&offset_value->data) : nullptr;
+        const auto* length =
+            length_value ? std::get_if<std::uint64_t>(&length_value->data) : nullptr;
+        if (!offset || !length) {
+            return std::unexpected(corrupt("invalid conflict byte range"));
+        }
+        output.region.bytes = conflict_byte_range{*offset, *length};
+    } else {
+        const auto* first_value = find(*nodes_value, "first");
+        const auto* last_value = find(*nodes_value, "last");
+        auto first = first_value
+                         ? decode_node_id(*first_value)
+                         : result<node_id>{std::unexpected(corrupt("conflict first node missing"))};
+        auto last = last_value
+                        ? decode_node_id(*last_value)
+                        : result<node_id>{std::unexpected(corrupt("conflict last node missing"))};
+        if (!first || !last) {
+            return std::unexpected(corrupt("invalid conflict node range"));
+        }
+        output.region.nodes = conflict_node_range{*first, *last};
+    }
+    if (hash_algorithm) {
+        auto id = digest_of(*hash_algorithm, bytes);
+        if (!id) {
+            return std::unexpected(id.error());
+        }
+        output.id = *id;
+    }
+    return output;
+}
+
 auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> hash_algorithm)
     -> result<change> {
-    auto source = decode_versioned(bytes, "change", 2);
+    auto source = decode_versioned(bytes, "change", 3);
     if (!source)
         return std::unexpected(source.error());
     const auto* parents = find(*source, "parents");
@@ -1333,20 +1456,12 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
     if (!root_digest)
         return std::unexpected(root_digest.error());
     const auto seconds = signed_when ? *signed_when : static_cast<std::int64_t>(*unsigned_when);
-    change output{{},
-                  {},
-                  actor{*who},
-                  *title,
-                  std::chrono::sys_seconds{std::chrono::seconds{seconds}},
-                  *root_digest,
-                  {},
-                  {},
-                  {},
-                  std::nullopt,
-                  {},
-                  {},
-                  {},
-                  *version};
+    auto output = change{};
+    output.author = actor{*who};
+    output.message = *title;
+    output.at = std::chrono::sys_seconds{std::chrono::seconds{seconds}};
+    output.root = *root_digest;
+    output.record_version = *version;
     for (const auto& item : *parent_values) {
         auto parent = decode_change_ref(item);
         if (!parent)
@@ -1373,20 +1488,58 @@ auto decode_change(std::span<const std::byte> bytes, std::optional<algorithm> ha
         return std::unexpected(corrupt("invalid change extensions"));
     for (const auto& item : *values) {
         const auto* path = find(item, "path");
-        const auto* references = find(item, "refs");
         const auto* name = path ? std::get_if<std::string>(&path->data) : nullptr;
-        const auto* refs =
-            references ? std::get_if<cbor::value::array>(&references->data) : nullptr;
-        if (!name || !refs)
-            return std::unexpected(corrupt("invalid conflict value"));
-        conflict value{*name, {}};
-        for (const auto& reference : *refs) {
-            auto decoded = decode_digest(reference);
-            if (!decoded)
-                return std::unexpected(decoded.error());
-            value.refs.push_back(*decoded);
+        if (!name) {
+            return std::unexpected(corrupt("invalid conflict reference"));
+        }
+        auto value = conflict_reference{.path = *name};
+        if (*version < 3) {
+            const auto* references = find(item, "refs");
+            const auto* refs =
+                references ? std::get_if<cbor::value::array>(&references->data) : nullptr;
+            if (!refs) {
+                return std::unexpected(corrupt("invalid legacy conflict value"));
+            }
+            for (const auto& reference : *refs) {
+                auto decoded = decode_digest(reference);
+                if (!decoded) {
+                    return std::unexpected(decoded.error());
+                }
+                value.legacy_refs.push_back(*decoded);
+            }
+        } else {
+            const auto* id_value = find(item, "id");
+            auto id = id_value ? decode_digest(*id_value)
+                               : result<digest>{std::unexpected(corrupt("conflict id missing"))};
+            if (!id) {
+                return std::unexpected(id.error());
+            }
+            value.id = *id;
         }
         output.conflicts.push_back(std::move(value));
+    }
+    if (*version >= 3) {
+        const auto* resolutions_value = find(*source, "resolutions");
+        const auto* resolutions =
+            resolutions_value ? std::get_if<cbor::value::array>(&resolutions_value->data) : nullptr;
+        if (!resolutions) {
+            return std::unexpected(corrupt("invalid conflict resolutions"));
+        }
+        for (const auto& item : *resolutions) {
+            const auto* conflict_value = find(item, "conflict");
+            const auto* value_value = find(item, "value");
+            auto conflict_id =
+                conflict_value
+                    ? decode_digest(*conflict_value)
+                    : result<digest>{std::unexpected(corrupt("resolution conflict missing"))};
+            auto resolved_value =
+                value_value ? decode_digest(*value_value)
+                            : result<digest>{std::unexpected(corrupt("resolution value missing"))};
+            if (!conflict_id || !resolved_value) {
+                return std::unexpected(conflict_id ? resolved_value.error() : conflict_id.error());
+            }
+            output.resolutions.push_back({*conflict_id, *resolved_value});
+        }
     }
     if (!std::holds_alternative<cbor::null>(symbols->data)) {
         auto symbol = decode_digest(*symbols);

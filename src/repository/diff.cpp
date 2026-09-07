@@ -289,17 +289,19 @@ auto changed_entry(const flat_tree_entry& old_entry, const flat_tree_entry& new_
     return output.changes.empty() ? std::nullopt : std::optional<tree_diff_entry>{output};
 }
 
-auto conflict_map(std::span<const conflict> values) -> std::map<std::string, std::vector<digest>> {
+auto conflict_map(std::span<const conflict_reference> values)
+    -> std::map<std::string, std::vector<digest>> {
     auto output = std::map<std::string, std::vector<digest>>{};
     for (const auto& value : values) {
-        output[value.path] = value.refs;
+        output[value.path] =
+            value.id.alg == algorithm{} ? value.legacy_refs : std::vector<digest>{value.id};
     }
     return output;
 }
 
 void apply_conflicts(std::vector<tree_diff_entry>& entries,
-                     std::span<const conflict> old_conflicts,
-                     std::span<const conflict> new_conflicts) {
+                     std::span<const conflict_reference> old_conflicts,
+                     std::span<const conflict_reference> new_conflicts) {
     const auto old_values = conflict_map(old_conflicts);
     const auto new_values = conflict_map(new_conflicts);
     auto paths = std::set<std::string>{};
