@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -123,6 +124,47 @@ TEST(ChunkIndex, CompactionPreservesRandomKeysAndMisses) {
     ASSERT_TRUE(sha_found.has_value());
     EXPECT_TRUE(*sha_found);
     ASSERT_TRUE(block_on(index.close()).has_value());
+}
+
+// Repeated flushes drive compaction while `state.runs` grows. The merge must not depend on the
+// vector's storage staying put: it used to hold raw pointers into it across every write (issue
+// #271). This test covers the interleaving; it does not by itself reproduce the multi-threaded
+// crash lake saw.
+TEST(ChunkIndex, CompactionSurvivesAConcurrentFlush) {
+    temporary_directory directory;
+    chunk_index index(directory.path(), chunk_index_options{16, 2});
+    ASSERT_TRUE(block_on(index.open()).has_value());
+    std::vector<index_entry> entries;
+    std::mt19937_64 random(1471);
+    for (std::uint64_t i = 0; i != 512; ++i) {
+        auto id = make_digest(random());
+        entries.push_back({id, {static_cast<std::uint32_t>(i), i * 23, 71}});
+    }
+    // Every flush appends a run and triggers compaction; interleaving inserts with flushes drives
+    // the merge while the vector behind it grows.
+    ASSERT_TRUE(block_on([&]() -> task<void> {
+                    for (std::size_t batch = 0; batch != entries.size(); batch += 16) {
+                        const auto last = std::min(batch + 16, entries.size());
+                        for (std::size_t i = batch; i != last; ++i) {
+                            auto inserted = index.insert(entries[i]);
+                            if (!inserted) {
+                                co_return std::unexpected(inserted.error());
+                            }
+                        }
+                        auto flushed = co_await index.flush();
+                        if (!flushed) {
+                            co_return std::unexpected(flushed.error());
+                        }
+                    }
+                    co_return liquid::result<void>{};
+                }())
+                    .has_value());
+    ASSERT_TRUE(block_on(check_all(index, entries)).has_value());
+    ASSERT_TRUE(block_on(index.close()).has_value());
+    chunk_index reopened(directory.path(), chunk_index_options{16, 2});
+    ASSERT_TRUE(block_on(reopened.open()).has_value());
+    ASSERT_TRUE(block_on(check_all(reopened, entries)).has_value());
+    ASSERT_TRUE(block_on(reopened.close()).has_value());
 }
 
 } // namespace

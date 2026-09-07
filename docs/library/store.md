@@ -383,3 +383,8 @@ The default tests cover deterministic boundaries, range reads, deduplication, co
 unknown versions, index reconstruction, run corruption, compaction, and separate SHA-256 run-set
 lookup. The `large` label contains the 256 MiB streaming round trip; `large-40g` is the labelled
 Phase 1 exit test.
+
+The chunk index's compaction merges runs across suspension points. Nothing in that merge may point
+into `algorithm_state::runs`: a flush that lands while it is suspended appends a run and reallocates
+that vector. The merge copies each input's sequence, record count, record offset and mapped bytes
+before it starts, and selects the runs it replaces by sequence rather than by index (issue #271).
