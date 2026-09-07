@@ -105,8 +105,9 @@ scheme tags.
 
 ### Near-duplicate chunk compression
 
-Plaintext chunks also receive a 64-bit resemblance hash: the minimum mixed value of their rolling
-32-byte buzhash windows. Importers that know a source path pass it as the candidate scope;
+Plaintext chunks also receive a 64-bit resemblance hash: the minimum mixed value of four evenly
+spaced 32-byte buzhash samples. This scans at most 128 bytes once per chunk, rather than making
+the write path proportional to chunk size. Importers that know a source path pass it as the candidate scope;
 unscoped store writes keep no candidates, preserving their independent retention lifecycle. The
 store retains at most 256 recent candidates and 16 MiB of candidate bytes across all scopes. Before
 writing a different chunk with the same value in that scope, it compares ordinary zstd against zstd

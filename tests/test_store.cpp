@@ -735,6 +735,16 @@ TEST(Store, SimilarChunksRoundTripThroughDeltaFramesAndReopen) {
     EXPECT_EQ(*restored, target);
 }
 
+TEST(Store, ResemblanceHashKeepsAnUnchangedSampleForAnInteriorEdit) {
+    const auto base = bytes(4096, 7003);
+    auto edited = base;
+    for (auto index = std::size_t{1000}; index != 1040; ++index) {
+        edited[index] ^= std::byte{0x3c};
+    }
+    EXPECT_EQ(liquid::store_detail::resemblance_hash(base),
+              liquid::store_detail::resemblance_hash(edited));
+}
+
 TEST(Store, InterruptedDeltaAppendRecoversAsAValidatedOrphan) {
     temporary_store temporary;
     auto store = open_store(temporary.path());

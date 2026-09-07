@@ -3,6 +3,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <limits>
 
 namespace liquid::store_detail {
 namespace {
@@ -23,6 +24,7 @@ constexpr auto gear = make_gear();
 constexpr std::uint64_t small_mask = (std::uint64_t{1} << 15U) - 1U;
 constexpr std::uint64_t large_mask = (std::uint64_t{1} << 17U) - 1U;
 constexpr std::size_t resemblance_window = 32;
+constexpr std::size_t resemblance_samples = 4;
 
 std::uint64_t mix(std::uint64_t value) {
     value ^= value >> 30U;
@@ -111,18 +113,16 @@ std::uint64_t resemblance_hash(std::span<const std::byte> input) noexcept {
         return 1;
     }
     const auto window = std::min(input.size(), resemblance_window);
-    auto rolling = std::uint64_t{};
-    for (auto index = std::size_t{}; index < window; ++index) {
-        rolling ^= std::rotl(gear[std::to_integer<unsigned char>(input[index])],
-                             static_cast<int>(window - index - 1));
-    }
-    auto best = mix(rolling);
-    for (auto index = window; index < input.size(); ++index) {
-        rolling = std::rotl(rolling, 1) ^
-                  std::rotl(gear[std::to_integer<unsigned char>(input[index - window])],
-                            static_cast<int>(window)) ^
-                  gear[std::to_integer<unsigned char>(input[index])];
-        best = std::min(best, mix(rolling));
+    auto best = std::numeric_limits<std::uint64_t>::max();
+    const auto final_offset = input.size() - window;
+    for (auto sample = std::size_t{}; sample < resemblance_samples; ++sample) {
+        const auto offset = final_offset * sample / (resemblance_samples - 1);
+        auto fingerprint = std::uint64_t{};
+        for (auto index = std::size_t{}; index < window; ++index) {
+            fingerprint ^= std::rotl(gear[std::to_integer<unsigned char>(input[offset + index])],
+                                     static_cast<int>(window - index - 1));
+        }
+        best = std::min(best, mix(fingerprint));
     }
     return best;
 }
