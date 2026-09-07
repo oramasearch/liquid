@@ -458,6 +458,36 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
                                               candidates = std::move(candidates),
                                               encryption_key]() mutable {
         const auto bound = ZSTD_compressBound(raw.size());
+        if (!encryption_key && !candidates.empty()) {
+            auto* context = ZSTD_createCCtx();
+            if (!context) {
+                throw std::runtime_error("zstd compression context allocation failed");
+            }
+            for (const auto& candidate : candidates) {
+                auto compressed = std::vector<std::byte>(bound);
+                const auto compressed_size = ZSTD_compress_usingDict(context,
+                                                                     compressed.data(),
+                                                                     compressed.size(),
+                                                                     raw.data(),
+                                                                     raw.size(),
+                                                                     candidate.bytes.data(),
+                                                                     candidate.bytes.size(),
+                                                                     3);
+                if (ZSTD_isError(compressed_size) ||
+                    delta_base_size + compressed_size + minimum_delta_saving >= raw.size() / 2) {
+                    continue;
+                }
+                ZSTD_freeCCtx(context);
+                compressed.resize(compressed_size);
+                auto framed = std::vector<std::byte>{};
+                framed.reserve(delta_base_size + compressed.size());
+                framed.push_back(std::byte{static_cast<unsigned char>(candidate.id.alg)});
+                framed.insert(framed.end(), candidate.id.bytes.begin(), candidate.id.bytes.end());
+                framed.insert(framed.end(), compressed.begin(), compressed.end());
+                return encoded_payload{std::move(framed), candidate.id};
+            }
+            ZSTD_freeCCtx(context);
+        }
         auto regular = std::vector<std::byte>(bound);
         const auto regular_size =
             ZSTD_compress(regular.data(), regular.size(), raw.data(), raw.size(), 3);
@@ -465,41 +495,7 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
             throw std::runtime_error("zstd compression failed");
         }
         regular.resize(regular_size);
-        auto output = encoded_payload{std::move(regular), std::nullopt};
-        if (encryption_key) {
-            return output;
-        }
-        auto* context = ZSTD_createCCtx();
-        if (!context) {
-            throw std::runtime_error("zstd compression context allocation failed");
-        }
-        for (const auto& candidate : candidates) {
-            auto compressed = std::vector<std::byte>(bound);
-            const auto compressed_size = ZSTD_compress_usingDict(context,
-                                                                 compressed.data(),
-                                                                 compressed.size(),
-                                                                 raw.data(),
-                                                                 raw.size(),
-                                                                 candidate.bytes.data(),
-                                                                 candidate.bytes.size(),
-                                                                 3);
-            if (!ZSTD_isError(compressed_size) &&
-                delta_base_size + compressed_size + minimum_delta_saving < output.bytes.size()) {
-                compressed.resize(compressed_size);
-                output.bytes = std::move(compressed);
-                output.base = candidate.id;
-            }
-        }
-        ZSTD_freeCCtx(context);
-        if (output.base) {
-            auto framed = std::vector<std::byte>{};
-            framed.reserve(delta_base_size + output.bytes.size());
-            framed.push_back(std::byte{static_cast<unsigned char>(output.base->alg)});
-            framed.insert(framed.end(), output.base->bytes.begin(), output.base->bytes.end());
-            framed.insert(framed.end(), output.bytes.begin(), output.bytes.end());
-            output.bytes = std::move(framed);
-        }
-        return output;
+        return encoded_payload{std::move(regular), std::nullopt};
     });
     if (!encoded) {
         co_return std::unexpected(encoded.error());
