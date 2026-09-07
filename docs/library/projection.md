@@ -441,7 +441,8 @@ pin the unsigned `.dsc` SHA-256, compare both compressed archives across repeate
 verify generated maintainer scripts, and cover `UNKNOWN` diagnostics and shell-command refusal.
 `tools/projection-peers/run-debian-source-interop.sh` requires `debuild -S`, a successful `sbuild`,
 zero errors and warnings from `lintian -EvIL +pedantic`, binary `.deb` installation, and execution
-of the installed CLI. The runner fails if any of those conditions is absent.
+of the installed CLI. The runner fails if any of those conditions is absent. This macOS host does
+not provide `sbuild` or lintian, so this policy-tool execution is deferred to the pinned Debian peer.
 
 `tools/projection-peers/run-homebrew-interop.sh` creates a temporary tap, serves the bottle over
 HTTP through `HOMEBREW_BOTTLE_DOMAIN`, pours it, and runs `brew test`. The broader peer runner adds

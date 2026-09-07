@@ -113,7 +113,7 @@ digest-pinned base and overlay trees, owned GVariant encoding, and component-lay
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
 Liquid #79 adds Debian-only Tier B source projection: generated policy files, deterministic source
 archives and unsigned `.dsc` output, derived build dependencies, source-history changelogs, DEP-5
-licence reporting, detached attestations, and a strict `debuild`/`sbuild`/lintian peer.
+licence reporting, detached attestations, and a `debuild`/`sbuild`/lintian peer gate when available.
 Liquid #70 adds Tier 2 registry views for linked binaries, PDF objects, Jupyter cells, OOXML and
 ODF XML parts, package payloads, wheels, JARs, safetensors tensors, and non-executing pickle
 opcodes.

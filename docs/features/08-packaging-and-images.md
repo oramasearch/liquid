@@ -32,8 +32,8 @@ Blurring these is how cross-format packagers disappoint people.
 that install, upgrade and remove cleanly. This is what FPM and nfpm users actually
 want, and it is broadly useful. liquid ships this.
 
-**Tier B — distro-policy-compliant packages.** Lintian-clean, policy-conformant
-source packages a Debian maintainer would sponsor. Debian is implemented. A distribution qualifies
+**Tier B — distro-policy-compliant packages.** Policy-checked, source packages a Debian maintainer
+would sponsor. Debian source generation is implemented. A distribution qualifies
 for another Tier B target only when liquid can run both its reproducible source-build tool and its
 policy linter in a pinned peer environment.
 
@@ -42,7 +42,7 @@ policy linter in a pinned peer environment.
 | Target | Notes |
 |---|---|
 | **`.deb` / apt** | `ar` + `control.tar` + `data.tar`. Full relationship field support — `Depends`, `Pre-Depends`, `Recommends`, `Conflicts`, `Breaks`, `Replaces`, `Provides`. `Breaks` vs `Conflicts` reflects dpkg's two-phase install; `Provides` is virtual packages. |
-| **Debian source** | Implemented Tier B output: unsigned `.dsc`, deterministic orig and Debian tarballs, generated `debian/` policy files, `sbuild`, and `lintian -EvIL +pedantic` peer acceptance. |
+| **Debian source** | Implemented Tier B output: unsigned `.dsc`, deterministic orig and Debian tarballs, and generated `debian/` policy files. The pinned peer checks it with `sbuild` and `lintian -EvIL +pedantic`; policy-tool execution is deferred when that peer is unavailable. |
 | **`.rpm` / dnf** | Spec generation, `%files` with ownership and permissions, automatic `SONAME`-derived dependencies. |
 | **Alpine `apk`** | The simplest correct target; the natural first implementation. |
 | **Arch `PKGBUILD`** | Implemented as a deterministic binary-package source archive, `PKGBUILD`, and `.SRCINFO`, with derived ELF dependencies. |
