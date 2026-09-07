@@ -161,6 +161,10 @@ The implemented Phase 1 chunk store selects a coroutine-native persistence backe
 reference implementation, and the deterministic simulator also runs against an in-memory test
 implementation with injected latency and failures.
 
+The installed library target also supports repository create/open, persisted file write/read, and
+consumer-defined coroutines through `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid`;
+the relocated consumer gate verifies that dependency closure ([library guide](../library/libliquid.md)).
+
 This tree is the specification. Each document states implementation status where code has landed;
 unimplemented behavior remains explicit, and open decisions stay in each document's final section.
 The consolidated record of what is implemented, by phase, is
