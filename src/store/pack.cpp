@@ -472,7 +472,7 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
                                                                      raw.size(),
                                                                      candidate.bytes.data(),
                                                                      candidate.bytes.size(),
-                                                                     3);
+                                                                     1);
                 if (ZSTD_isError(compressed_size) ||
                     delta_base_size + compressed_size + minimum_delta_saving >= raw.size() / 2) {
                     continue;

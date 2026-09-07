@@ -110,9 +110,9 @@ spaced 32-byte buzhash samples. This scans at most 128 bytes once per chunk, rat
 the write path proportional to chunk size. Importers that know a source path pass it as the candidate scope;
 unscoped store writes keep no candidates, preserving their independent retention lifecycle. The
 store retains at most 256 recent candidates and 16 MiB of candidate bytes across all scopes. Before
-writing a different chunk with the same value in that scope, it tries zstd with those retained bytes
+writing a different chunk with the same value in that scope, it tries zstd level 1 with those retained bytes
 as a dictionary. It does not read, decode, or re-hash a base on the write path, and it does not also
-encode a regular frame first. It writes a delta only when the result, including the 33-byte base
+encode a regular level-3 frame first. It writes a delta only when the result, including the 33-byte base
 identity, is at least 64 bytes smaller than half the raw chunk. Encrypted chunks do not participate because cross-object plaintext comparison would
 cross the trust-domain boundary. Delta chains are bounded at eight links.
 
