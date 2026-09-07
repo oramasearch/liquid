@@ -20,3 +20,5 @@ store.
 overlay tree digests in addition to its target, source, normalisation, and tool fields.
 `delegation/1` validates attenuation-only scoped agent authority for session publication and lease
 claims.
+`platform_signature/1` binds a projected unsigned digest to the signed installer digest,
+certificate fingerprint, native verification, and optional notarisation or timestamp evidence.

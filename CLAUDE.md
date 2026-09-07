@@ -98,6 +98,9 @@ content-addressed retention of decoded Tier 1 and Tier 2 entries.
 Liquid #28 adds deterministic Tier A `.deb`, `.rpm`, `.apk`, OCI image, and Helm chart projection;
 binary-derived dependencies; ABI refusal; the signed `projection/1` profile; subject-bound OCI
 attestation artifacts; and the `liquid project` command.
+Liquid #76 adds reproducible unsigned macOS packages, explicitly non-reproducible disk images,
+deterministic MSIX and winget manifests, custody-selected platform signing, native verification,
+and the `platform_signature/1` chain. The credentialed Apple notarisation run remains pending.
 Liquid #80 adds canonical declarative install intents, fixed Debian/RPM/Alpine lifecycle-script
 generation, script SBOM and projection binding, batch and installed-inventory file conflict
 detection, derived replacement relationships, and atomic projected-tree generations with install,

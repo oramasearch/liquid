@@ -5,16 +5,21 @@
 ## Synopsis
 
 ```text
-liquid sign <drip|change|artifact> <digest>
+liquid sign <drip|change|artifact> <digest> | sign <macos|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize] | sign verify <artifact>
 ```
 
 ## Description
 
-Sign the canonical digest value with the current software, FIDO2, or PIV identity key.
+Sign a canonical digest with the identity key, or sign and verify a platform installer outside the projection sandbox with a platform_signature/1 sidecar.
 
 ## Options
 
-This command has no command-specific options.
+| Flag | Argument | Description | Default |
+|---|---|---|---|
+| `--identity` | `<custody-uri>` | Select the platform signing identity. | required |
+| `--timestamp-server` | `<url>` | Select the Authenticode RFC 3161 server. | none |
+| `--out` | `<path>` | Write the signed artifact to this path. | -signed artifact |
+| `--no-notarize` | — | Do not submit a macOS artifact for notarisation. | false |
 
 ## Availability
 
@@ -23,7 +28,7 @@ available
 ## Examples
 
 ```sh
-liquid sign artifact blake3:<artifact-digest>
+liquid sign macos projection/example.pkg --identity keychain:Developer-ID
 ```
 
 ## Exit status
