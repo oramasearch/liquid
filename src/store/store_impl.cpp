@@ -804,8 +804,8 @@ void store_backend::remember_delta_candidate(std::string_view scope,
         return;
     }
     auto& candidates = delta_candidates_[std::string{scope}];
-    if (const auto existing = candidates.find(resemblance); existing != candidates.end()) {
-        delta_candidate_bytes_ -= existing->second.bytes.size();
+    if (!candidates.empty()) {
+        return;
     }
     candidates.insert_or_assign(
         resemblance, delta_candidate{id, std::vector<std::byte>{bytes.begin(), bytes.end()}});

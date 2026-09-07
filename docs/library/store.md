@@ -110,10 +110,11 @@ spaced 32-byte buzhash samples. This scans at most 128 bytes once per chunk, rat
 the write path proportional to chunk size. The value is computed once and carried through the
 chunk write and object metadata paths. Importers that know a source path pass it as the candidate
 scope; unscoped store writes keep no candidates, preserving their independent retention lifecycle.
-Only chunks of at least FastCDC's 8 KiB minimum may enter the delta candidate cache. The store
-retains at most 256 recent candidates and 16 MiB of candidate bytes across all scopes. Before
-writing a different eligible chunk with the same value in that scope, it tries zstd level 1 with
-those retained bytes as a dictionary through `runtime::offload`. It does not read, decode, or
+Only chunks of at least FastCDC's 8 KiB minimum may enter the delta candidate cache. The cache
+keeps one candidate for each path scope, at most 256 candidates and 16 MiB of candidate
+bytes across all scopes. Before writing a different eligible chunk with the same value in that
+scope, it tries zstd level 1 with those retained bytes as a dictionary through `runtime::offload`.
+It does not read, decode, or
 re-hash a base on the write path. Chunks without a matching candidate retain the established direct
 zstd level-3 compression path. It writes a delta only when the result, including the 33-byte base
 identity, is at least 64 bytes smaller than half the raw chunk. Encrypted chunks do not participate
