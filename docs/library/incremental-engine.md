@@ -250,6 +250,11 @@ toolchain compiler to produce one action per definition and assembles the result
 relocatable translation-unit object. The module is replaceable and lives outside libliquid's core
 under `modules/frontends/`, so its parser and compiler dependencies never enter libliquid.
 
+Liquid #68 adds the `parse_tree` query keyed by language and blob digest. Build-unit discovery,
+symbols, and structural source diff consume its one canonical value. The frontend derives unit and
+symbol sidecars while the tree-sitter tree is live, so a build followed by a diff does not create a
+second parse for the same blob.
+
 Unit fingerprints cover kind, name, and source while excluding the absolute range. Definition
 action queries record quoted-header reads and assembly queries depend on their ordered action
 outputs. A body edit therefore creates one action key and reassembles; a header edit invalidates the

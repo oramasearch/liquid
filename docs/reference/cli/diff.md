@@ -18,6 +18,7 @@ Compare two changes, optionally limit the result to a path, and inspect supporte
 |---|---|---|---|
 | `--text` | — | Include textual line-difference details. | false |
 | `--formats` | — | Inspect supported structured container formats. | false |
+| `--structural` | — | Compare source files through their registered syntax grammar. | false |
 | `--json` | — | Write stable JSON instead of text. | false |
 
 ## Availability

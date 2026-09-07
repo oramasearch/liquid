@@ -240,9 +240,40 @@ struct LIQUID_EXPORT container_diff {
     bool truncated{};
 };
 
+enum class structural_edit_kind : std::uint8_t {
+    added,
+    removed,
+    modified,
+    moved,
+    comment_changed,
+};
+
+struct LIQUID_EXPORT structural_diff_edit {
+    structural_edit_kind kind{structural_edit_kind::modified};
+    std::string node_kind;
+    std::optional<std::string> name;
+    std::optional<frontend_source_range> old_range;
+    std::optional<frontend_source_range> new_range;
+};
+
+struct LIQUID_EXPORT structural_diff {
+    std::string language;
+    std::string grammar;
+    bool formatting_only{};
+    std::vector<structural_diff_edit> edits;
+};
+
+enum class diff_tier : std::uint8_t {
+    structural,
+    text,
+    binary,
+};
+
 struct LIQUID_EXPORT tree_diff_options {
     bool text{};
     bool formats{};
+    bool structural{};
+    frontend_graph* frontend{};
 };
 
 struct LIQUID_EXPORT tree_diff_entry {
@@ -257,6 +288,9 @@ struct LIQUID_EXPORT tree_diff_entry {
     std::optional<digest> new_blob;
     std::optional<std::vector<line_change>> line_hunks;
     std::optional<container_diff> container;
+    std::optional<structural_diff> structural;
+    diff_tier tier{diff_tier::binary};
+    std::string tier_reason;
     std::vector<digest> old_conflicts;
     std::vector<digest> new_conflicts;
 };

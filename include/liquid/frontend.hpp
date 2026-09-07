@@ -88,8 +88,28 @@ struct LIQUID_EXPORT syntax_tree {
     syntax_node root;
 };
 
+struct LIQUID_EXPORT parse_node {
+    std::uint32_t kind{};
+    std::optional<std::string> field;
+    frontend_source_range range;
+    bool error{};
+    bool missing{};
+    std::vector<parse_node> children;
+};
+
+struct LIQUID_EXPORT parse_tree {
+    std::string language;
+    std::string grammar;
+    std::string node_types;
+    std::vector<std::string> node_kinds;
+    parse_node root;
+    std::vector<frontend_unit> units;
+};
+
 [[nodiscard]] LIQUID_EXPORT auto decode_syntax_tree(std::span<const std::byte> value)
     -> result<syntax_tree>;
+[[nodiscard]] LIQUID_EXPORT auto decode_parse_tree(std::span<const std::byte> value)
+    -> result<parse_tree>;
 
 struct LIQUID_EXPORT frontend_callbacks {
     std::function<void(std::string_view, std::uint64_t, std::uint64_t)> progress;
@@ -187,6 +207,11 @@ public:
                               std::span<const std::byte> blob,
                               std::span<const std::byte> context_cbor = {},
                               frontend_callbacks callbacks = {}) const -> result<syntax_tree>;
+    [[nodiscard]] auto parse(std::string_view language,
+                             std::span<const std::byte> blob,
+                             std::span<const std::byte> context_cbor = {},
+                             frontend_callbacks callbacks = {}) const
+        -> result<std::vector<std::byte>>;
 
 private:
     struct impl;
@@ -223,6 +248,12 @@ struct LIQUID_EXPORT frontend_build_request {
     std::string compile_action;
 };
 
+struct LIQUID_EXPORT frontend_parse_request {
+    std::string language;
+    digest blob;
+    std::vector<std::byte> source;
+};
+
 struct LIQUID_EXPORT frontend_unit_output {
     frontend_unit unit;
     std::vector<std::byte> action;
@@ -256,6 +287,9 @@ public:
                      frontend_action_executor execute) -> runtime::task<frontend_graph>;
     auto build(frontend_build_request request) -> runtime::task<frontend_build_report>;
     auto symbols(frontend_build_request request) -> runtime::task<symbol_record>;
+    auto parse(frontend_parse_request request) -> runtime::task<parse_tree>;
+    [[nodiscard]] auto language_for_path(std::string_view path) const -> result<frontend_language>;
+    [[nodiscard]] auto parse_count() const -> std::uint64_t;
     auto mark_changed(std::string path, durability tier = durability::low) -> result<std::uint64_t>;
     [[nodiscard]] auto statistics() const -> graph_statistics;
 

@@ -127,6 +127,9 @@ Liquid #72 replaces tag-selected tree-sitter inputs with one canonical lock for 
 public grammars. Configure-time archives and every compiled parser/scanner and tag query are pinned
 by SHA-256; the generated registry, public language metadata, syntax fallback, and grammar-set
 provenance all derive from that lock.
+Liquid #68 adds the graph-owned canonical parse shared by build units, symbols, and source diff;
+GumTree-style matching and ordered structural edits; formatting-only and comment reporting;
+explicit structural, text, and binary tiers; and `liquid diff --structural` with labelled fallback.
 Liquid #71 adds a pure public support matrix projected from the process-global frontend registry,
 the live format registry, and declared platform wrapper backends. Duplicate language registrations
 select the stronger compiler frontend while preserving grammar extensions. `liquid tiers` renders

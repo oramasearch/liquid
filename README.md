@@ -138,6 +138,10 @@ it.
 > `liquid symbols <path>`; syntactic records and `liquid version --json` carry the grammar-lock
 > digest. The distribution decision and inventory are in
 > [`docs/library/grammars.md`](docs/library/grammars.md).
+> Liquid #68 adds the graph-owned canonical parse shared by builds, symbols, and source diff;
+> GumTree-style matching with explicit move, semantic edit, formatting-only, and comment results;
+> public structural/text/binary tier labels; and `liquid diff --structural` with a labelled text
+> fallback for paths without a grammar.
 > Public build handles now stream queued, started, hit, done, failed, critical-path, and finished
 > events through the library and daemon. CMake test registrations become discoverable cached
 > actions, with `liquid build --events` providing JSON Lines and `liquid test` reporting results.
@@ -358,6 +362,8 @@ and Zetta's.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
+- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, derived dependencies, byte identity, and attached attestations.
+- [`docs/library/structural-diff.md`](docs/library/structural-diff.md) — graph-owned source parses, syntax-tree matching, public structural edits, fallback tiers, CLI output, coverage, and measurement.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, platform installers, signing custody, byte identity, and attached attestations.
 - [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.

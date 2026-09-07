@@ -16,5 +16,8 @@ compiler module from tree-sitter syntax fallback; the record is in
 The optional ABI v1 `syntax` operation returns the complete concrete tree as canonical CBOR.
 Tree-sitter implements it for every configured grammar; Clang leaves its descriptor pointer null.
 Shared encoding and traversal live in `common/syntax.cpp`.
+The later optional `parse` tail returns a compact named-node tree plus unit and symbol sidecars.
+Both bundled modules implement it, and their unit and symbol operations consume the supplied parse
+sidecar so graph consumers do not invoke the parser again.
 Grammar distribution, trust, subset/mirror controls, and maintenance are documented in
 [`docs/library/grammars.md`](../../docs/library/grammars.md).

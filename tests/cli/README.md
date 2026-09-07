@@ -42,6 +42,10 @@ It also parses `search --explain` as JSON and pins the scan choice, literal clas
 freshness input, and three-alternative shape for the small imported working set.
 
 `format-diff.cmake` creates two changes through the public repository API and proves that
+`diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and tier.
+`structural-diff.cmake` proves function-move and formatting-only output, the labelled text
+fallback, and the stable structural JSON fields. Its fixture can also record two liquid source
+trees for the documented own-source measurement.
 `diff --formats` prints a ZIP member change and an HDF5 dataset change, including codec and the
 shared tier line. It also pins Tier 0 text fallback, the JSON tier object, and a Tier 3 opaque
 archive-search result.

@@ -116,6 +116,7 @@ constexpr auto flags_tiers = std::to_array<flag>({
 constexpr auto flags_diff = std::to_array<flag>({
     {"--text", {}, "Include textual line-difference details.", "false"},
     {"--formats", {}, "Inspect supported structured container formats.", "false"},
+    {"--structural", {}, "Compare source files through their registered syntax grammar.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
 constexpr auto flags_write = std::to_array<flag>({
@@ -555,6 +556,17 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::search},
+    {"diff",
+     "diff <a> <b> [path] [--text] [--formats] [--structural] [--json]",
+     "compare changes, containers, and source syntax",
+     "available",
+     flags_diff,
+     "Compare two changes, optionally limit the result to a path, inspect supported formats, or "
+     "compare source syntax through a registered grammar.",
+     "liquid diff main feature --structural --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::diff},
     {"resolve",
      "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
      "<package> <spec>... [--universe <path>] [--reuse] [--json]",

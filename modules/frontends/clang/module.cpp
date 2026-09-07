@@ -24,6 +24,17 @@ auto bytes_value(liquid_frontend_bytes_v1 value) -> std::span<const std::uint8_t
     return {value.data, value.size};
 }
 
+auto parse_from_context(liquid_frontend_bytes_v1 context)
+    -> std::optional<std::vector<std::uint8_t>> {
+    if (context.size == 0) {
+        return std::nullopt;
+    }
+    const auto decoded = liquid_frontend::cbor_decode(bytes_value(context));
+    const auto* value = decoded ? liquid_frontend::cbor_find(*decoded, "parse") : nullptr;
+    const auto* bytes = value ? std::get_if<cbor_value::bytes>(&value->data) : nullptr;
+    return bytes ? std::optional<std::vector<std::uint8_t>>{*bytes} : std::nullopt;
+}
+
 auto text_field(const cbor_value& value, std::string_view name) -> const std::string* {
     const auto* child = liquid_frontend::cbor_find(value, name);
     return child ? std::get_if<std::string>(&child->data) : nullptr;
@@ -81,9 +92,10 @@ auto quoted_includes(std::span<const std::uint8_t> source) -> std::vector<std::s
 
 auto source_for_unit(std::span<const std::uint8_t> source,
                      std::uint64_t target_start,
-                     std::uint64_t target_end) -> std::vector<std::uint8_t> {
+                     std::uint64_t target_end,
+                     std::span<const liquid_frontend::syntax_unit> units)
+    -> std::vector<std::uint8_t> {
     auto output = std::vector<std::uint8_t>{source.begin(), source.end()};
-    auto units = liquid_frontend::parse_units(liquid_frontend::syntax_language::cpp, source);
     auto replacements = std::vector<std::pair<std::size_t, std::size_t>>{};
     for (const auto& unit : units) {
         if (unit.kind != 2 || (unit.start.byte == target_start && unit.end.byte == target_end)) {
@@ -333,7 +345,7 @@ auto symbols_from_ast(std::span<const std::uint8_t> source,
 auto units(void*,
            const char* language,
            liquid_frontend_bytes_v1 blob,
-           liquid_frontend_bytes_v1,
+           liquid_frontend_bytes_v1 context,
            const liquid_frontend_callbacks_v1* callbacks,
            liquid_frontend_owned_bytes_v1* output,
            liquid_frontend_error_v1* error) -> int {
@@ -347,10 +359,21 @@ auto units(void*,
             error, LIQUID_FRONTEND_STATUS_CANCELLED, "unit discovery was cancelled");
     }
     liquid_frontend::progress(callbacks, "units", 0, 1);
-    const auto found =
-        liquid_frontend::parse_units(liquid_frontend::syntax_language::cpp, {blob.data, blob.size});
+    auto parsed = parse_from_context(context);
+    if (!parsed) {
+        auto encoded = liquid_frontend::encode_parse_tree("c++", {blob.data, blob.size});
+        if (!encoded) {
+            return liquid_frontend::fail(
+                error, LIQUID_FRONTEND_STATUS_INTERNAL, encoded.error().message);
+        }
+        parsed = std::move(*encoded);
+    }
+    auto found = liquid_frontend::parse_units_bytes_from_value(*parsed);
+    if (!found) {
+        return liquid_frontend::fail(error, LIQUID_FRONTEND_STATUS_INTERNAL, found.error().message);
+    }
     liquid_frontend::progress(callbacks, "units", 1, 1);
-    return liquid_frontend::return_bytes(liquid_frontend::encode_units(found), output);
+    return liquid_frontend::return_bytes(std::move(*found), output);
 }
 
 auto compile_unit(void*,
@@ -394,6 +417,23 @@ auto compile_unit(void*,
     for (auto& read : quoted_includes(*source)) {
         reads.emplace_back(std::move(read));
     }
+    const auto* parse_value = bytes_field(*context, "parse");
+    auto parsed = std::vector<std::uint8_t>{};
+    if (parse_value) {
+        parsed = *parse_value;
+    } else {
+        auto encoded = liquid_frontend::encode_parse_tree("c++", *source);
+        if (!encoded) {
+            return liquid_frontend::fail(
+                error, LIQUID_FRONTEND_STATUS_INTERNAL, encoded.error().message);
+        }
+        parsed = std::move(*encoded);
+    }
+    auto parsed_units = liquid_frontend::parse_units_from_value(parsed);
+    if (!parsed_units) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT, parsed_units.error().message);
+    }
     if (const auto* value = liquid_frontend::cbor_find(*context, "reads")) {
         if (const auto* supplied = std::get_if<cbor_value::array>(&value->data)) {
             reads.insert(reads.end(), supplied->begin(), supplied->end());
@@ -407,7 +447,7 @@ auto compile_unit(void*,
         {"compiler", *compiler},
         {"arguments", std::move(arguments)},
         {"reads", std::move(reads)},
-        {"source", source_for_unit(*source, *start, *end)},
+        {"source", source_for_unit(*source, *start, *end, *parsed_units)},
     };
     liquid_frontend::progress(callbacks, "compile_unit", 1, 1);
     return liquid_frontend::return_bytes(
@@ -587,6 +627,32 @@ auto symbols_from_output(void*,
         output);
 }
 
+auto parse(void*,
+           const char* language,
+           liquid_frontend_bytes_v1 blob,
+           liquid_frontend_bytes_v1,
+           const liquid_frontend_callbacks_v1* callbacks,
+           liquid_frontend_owned_bytes_v1* output,
+           liquid_frontend_error_v1* error) -> int {
+    if (!language || std::string_view{language} != "c++" || !output ||
+        (!blob.data && blob.size != 0)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INVALID_ARGUMENT, "clang frontend requires C++ source");
+    }
+    if (liquid_frontend::cancelled(callbacks)) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_CANCELLED, "parse was cancelled");
+    }
+    liquid_frontend::progress(callbacks, "parse", 0, 1);
+    auto encoded = liquid_frontend::encode_parse_tree("c++", {blob.data, blob.size});
+    if (!encoded) {
+        return liquid_frontend::fail(
+            error, LIQUID_FRONTEND_STATUS_INTERNAL, encoded.error().message);
+    }
+    liquid_frontend::progress(callbacks, "parse", 1, 1);
+    return liquid_frontend::return_bytes(std::move(*encoded), output);
+}
+
 constexpr const char* cpp_extensions[] = {".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx"};
 constexpr liquid_frontend_language_v1 languages[] = {{"c++", cpp_extensions, 6}};
 
@@ -606,6 +672,7 @@ const liquid_frontend_module_v1 module = {
     nullptr,
     0,
     nullptr,
+    parse,
 };
 
 } // namespace

@@ -11,6 +11,9 @@ recording, and resolution operations; all waiting operations remain coroutine-na
 `frontend_abi.h` defines both language frontend modules and the versioned native liquify plugin
 descriptor. Editor plugins reuse the frontend boundary's canonical-CBOR bytes, owned results,
 errors, progress, and cancellation types while registering queries, commands, and panels.
+Its optional `parse` tail returns the compact canonical syntax value shared by build, symbol, and
+source-diff queries. `frontend.hpp` exposes that value and its digest-keyed graph query;
+`repository.hpp` exposes structural edits and explicit structural, text, or binary diff tiers.
 `tiers.hpp` defines the pure support matrix projected from the process-global frontend registry,
 the built-in format registry, and the declared platform backends.
 errors, progress, and cancellation types while registering queries, commands, panels, and a

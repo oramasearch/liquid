@@ -16,6 +16,7 @@ Each command page is generated from the same metadata used to validate flags and
 | [`write`](write.md) | write a file from a stated base | available |
 | [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
 | [`search`](search.md) | search paths and contents | available |
+| [`diff`](diff.md) | compare changes, containers, and source syntax | available |
 | [`resolve`](resolve.md) | concretise package specifications | available |
 | [`config`](config.md) | check, lower, or format .liquid configuration | available |
 | [`project`](project.md) | project content into packages, commits, images, or charts | available |

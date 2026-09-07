@@ -335,6 +335,52 @@ auto frontend_module::syntax(std::string_view language,
     return decode_syntax_tree(*copied);
 }
 
+auto frontend_module::parse(std::string_view language,
+                            std::span<const std::byte> blob,
+                            std::span<const std::byte> context_cbor,
+                            frontend_callbacks callbacks) const -> result<std::vector<std::byte>> {
+    constexpr auto parse_size =
+        offsetof(liquid_frontend_module_v1, parse) + sizeof(liquid_frontend_module_v1::parse);
+    if (!impl_ || !supports(language) || impl_->descriptor->struct_size < parse_size ||
+        !impl_->descriptor->parse) {
+        return std::unexpected(frontend_error(errc::unsupported,
+                                              "frontend does not expose a canonical parse",
+                                              std::string{language}));
+    }
+    auto valid_context = validate_input(context_cbor, "frontend parse context");
+    if (!valid_context) {
+        return std::unexpected(valid_context.error());
+    }
+    auto bridge = callback_bridge{};
+    auto abi = abi_callbacks(callbacks, bridge);
+    auto output = liquid_frontend_owned_bytes_v1{};
+    auto abi_error = liquid_frontend_error_v1{};
+    const auto language_text = std::string{language};
+    const auto status = impl_->descriptor->parse(
+        impl_->descriptor->module_context,
+        language_text.c_str(),
+        {reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size()},
+        {reinterpret_cast<const std::uint8_t*>(context_cbor.data()), context_cbor.size()},
+        &abi,
+        &output,
+        &abi_error);
+    if (status != LIQUID_FRONTEND_STATUS_OK) {
+        return std::unexpected(
+            frontend_error(status_code(status),
+                           abi_error.message ? abi_error.message : "frontend parse failed",
+                           std::string{name()}));
+    }
+    auto copied = copy_output(output, name());
+    if (!copied) {
+        return std::unexpected(copied.error());
+    }
+    auto valid = decode_parse_tree(*copied);
+    if (!valid) {
+        return std::unexpected(valid.error());
+    }
+    return copied;
+}
+
 auto frontend_module::load(std::filesystem::path shared_object) -> result<frontend_module> {
     void* library{};
 #if defined(_WIN32)

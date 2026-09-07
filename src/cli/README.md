@@ -54,6 +54,9 @@ repository storage or file contents.
 
 `diff.cpp` resolves each operand as a ref or change digest and calls public repository diff.
 `--text` opts into line hunks, `--formats` prints codec-tier container trees, an optional path
+filters the result, and `--json` emits the same nested values for tools. `--structural` opens the
+tree-sitter frontend graph and prints syntax moves and edits, formatting-only results, or an
+explicit text fallback reason.
 filters the result, and `--json` emits the same nested values for tools.
 `tier.cpp` owns the shared `tier: <n> (<mechanism>)` text line and JSON object used by commands that
 degrade. `tiers.cpp` loads installed frontend modules, calls the pure public support-matrix API,

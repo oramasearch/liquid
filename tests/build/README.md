@@ -54,7 +54,8 @@ query hook.
 
 `test_frontend.cpp` loads the Clang frontend dynamically, registers its descriptor statically,
 checks that its shared object exports only the ABI v1 entry point, and asks the tree-sitter fallback
-for a C definition. Its copied CMake fixture uses `VALUE` from a quoted header and compiles two
+for a C definition. It also checks the optional parse tail and proves that a build followed by a
+structural diff parses each distinct blob once. Its copied CMake fixture uses `VALUE` from a quoted header and compiles two
 definition objects with the configured compiler. A one-body edit executes one action and assembly,
 while a changed quoted header executes both recorded readers and assembly.
 `frontend-one-function-measure` is a registered macOS/Linux
@@ -65,6 +66,9 @@ node, runs tag queries for Python, Go, Rust, JavaScript, TypeScript, Java, and R
 unsupported behavior when no tag query exists, rejects a descriptor with a mismatched grammar ABI,
 and checks public registry metadata. `liquid-grammar-measure` reports mean nanoseconds over 100
 parses of each fixture.
+`test_structural_diff.cpp` exercises handwritten move, formatting, and semantic edits for the ten
+primary languages, mechanically reindents every other locked sample, and checks comment handling
+and public repository tiers.
 
 `test_edit.cpp` covers concrete syntax, compiler-record rename across two translation units,
 collision refusal, extract, move, node fingerprint refusal, exact after digests, whole-operation

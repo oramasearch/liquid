@@ -22,6 +22,10 @@ Public tree comparison flattens immutable tree records into repository-relative 
 entries by `node_id`, and reports moves independently from mode and content changes. Change-level
 comparison also attaches the conflict values stored on each change. Text hunk generation reads
 blob contents only when the caller opts in.
+Structural source comparison asks the supplied frontend graph for one canonical parse per blob,
+matches syntax nodes through unit anchors, subtree hashes, containers, and order, and publishes
+explicit structural, text, or binary tiers. Whitespace-only changes remain visible as
+`formatting_only`, while comments have their own edit kind.
 
 Unresolved text, composition, drive, and CRDT outcomes use one canonical conflict record. A cut
 places its digest in the tree and version-3 change while the repository checkpoint retains the

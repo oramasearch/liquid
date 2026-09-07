@@ -262,6 +262,57 @@ auto syntax_node_value(TSNode node, const char* field) -> cbor_value {
     return cbor_value{std::move(fields)};
 }
 
+auto parse_range_value(TSNode node) -> cbor_value {
+    const auto start = point(ts_node_start_byte(node), ts_node_start_point(node));
+    const auto end = point(ts_node_end_byte(node), ts_node_end_point(node));
+    return cbor_value::array{start.byte, start.line, start.column, end.byte, end.line, end.column};
+}
+
+auto field_name_for_node(TSNode parent, TSNode child) -> const char* {
+    const auto count = ts_node_child_count(parent);
+    for (auto index = std::uint32_t{}; index < count; ++index) {
+        const auto candidate = ts_node_child(parent, index);
+        if (ts_node_eq(candidate, child)) {
+            return ts_node_field_name_for_child(parent, index);
+        }
+    }
+    return nullptr;
+}
+
+auto parse_node_value(TSNode node, const char* field, std::uint32_t symbol_count) -> cbor_value {
+    auto children = cbor_value::array{};
+    const auto count = ts_node_named_child_count(node);
+    children.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto child = ts_node_named_child(node, index);
+        children.push_back(parse_node_value(child, field_name_for_node(node, child), symbol_count));
+    }
+    const auto symbol = static_cast<std::uint32_t>(ts_node_symbol(node));
+    auto fields = cbor_value::map{
+        {"k", static_cast<std::uint64_t>(symbol < symbol_count ? symbol : symbol_count)},
+        {"r", parse_range_value(node)},
+        {"e", ts_node_is_error(node)},
+        {"m", ts_node_is_missing(node)},
+        {"c", std::move(children)},
+    };
+    if (field) {
+        fields.emplace_back("f", std::string{field});
+    }
+    return cbor_value{std::move(fields)};
+}
+
+auto node_kind_table(const TSLanguage* language) -> cbor_value::array {
+    auto output = cbor_value::array{};
+    const auto count = ts_language_symbol_count(language);
+    output.reserve(count);
+    for (auto index = std::uint32_t{}; index < count; ++index) {
+        const auto* name = ts_language_symbol_name(language, static_cast<TSSymbol>(index));
+        output.emplace_back(name ? name : "");
+    }
+    output.emplace_back("ERROR");
+    return output;
+}
+
 auto identifier_range(TSNode node) -> source_point {
     return point(ts_node_end_byte(node), ts_node_end_point(node));
 }
@@ -621,7 +672,7 @@ auto encode_units(const std::vector<syntax_unit>& units) -> std::vector<std::uin
     auto values = cbor_value::array{};
     values.reserve(units.size());
     for (const auto& unit : units) {
-        values.emplace_back(cbor_value::map{
+        auto fields = cbor_value::map{
             {"kind", unit.kind},
             {"name", unit.name},
             {"range",
@@ -630,7 +681,11 @@ auto encode_units(const std::vector<syntax_unit>& units) -> std::vector<std::uin
                  {"end", position_value(unit.end)},
              }},
             {"source", unit.source},
-        });
+        };
+        if (unit.body_start < unit.body_end) {
+            fields.emplace_back("body", cbor_value::array{unit.body_start, unit.body_end});
+        }
+        values.emplace_back(std::move(fields));
     }
     return cbor_encode(cbor_value{std::move(values)});
 }
@@ -726,6 +781,156 @@ auto encode_syntax_tree(std::string_view language, std::span<const std::uint8_t>
         {"language", std::string{grammar->language}},
         {"root", syntax_node_value(tree->root(), nullptr)},
     }});
+}
+
+auto encode_parse_tree(std::string_view language, std::span<const std::uint8_t> source)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error> {
+    const auto* grammar = find_grammar(language);
+    if (!grammar) {
+        return std::unexpected(syntax_error{
+            syntax_error_code::unsupported,
+            "language is not in the configured grammar set",
+        });
+    }
+    auto tree = parse(*grammar, source);
+    if (!tree) {
+        return std::unexpected(tree.error());
+    }
+    const auto symbol_count = ts_language_symbol_count(grammar->language_function());
+    auto fields = cbor_value::map{
+        {"v", std::uint64_t{1}},
+        {"language", std::string{grammar->language}},
+        {"grammar", std::string{grammar_lock_digest()}},
+        {"node_types", std::string{grammar->node_types_digest}},
+        {"kinds", node_kind_table(grammar->language_function())},
+        {"root", parse_node_value(tree->root(), nullptr, symbol_count)},
+    };
+    auto units = std::expected<std::vector<syntax_unit>, syntax_error>{};
+    auto symbols = std::expected<std::vector<syntax_symbol>, syntax_error>{};
+    if (language == "c" || language == "c++") {
+        auto found_units = std::vector<syntax_unit>{};
+        visit(tree->root(), source, found_units, false);
+        std::ranges::sort(found_units, {}, [](const auto& unit) { return unit.start.byte; });
+        units = std::move(found_units);
+        const auto syntax = language == "c" ? syntax_language::c : syntax_language::cpp;
+        auto found_symbols = std::vector<syntax_symbol>{};
+        visit_symbols(tree->root(), syntax, source, {}, found_symbols);
+        std::ranges::sort(found_symbols, {}, [](const auto& value) { return value.start.byte; });
+        symbols = std::move(found_symbols);
+    } else {
+        units = tagged_units(*grammar, tree->root(), source);
+        symbols = tagged_symbols(*grammar, tree->root(), source);
+    }
+    if (units) {
+        fields.emplace_back("units", encode_units(*units));
+    } else {
+        fields.emplace_back("units_error", units.error().message);
+    }
+    if (symbols) {
+        fields.emplace_back("symbols",
+                            encode_symbols(language, "syntactic", grammar_lock_digest(), *symbols));
+    } else {
+        fields.emplace_back("symbols_error", symbols.error().message);
+    }
+    return cbor_encode(cbor_value{std::move(fields)});
+}
+
+auto parse_sidecar(std::span<const std::uint8_t> value, std::string_view name)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error> {
+    const auto decoded = cbor_decode(value);
+    const auto* sidecar = decoded ? cbor_find(*decoded, name) : nullptr;
+    const auto* bytes = sidecar ? std::get_if<cbor_value::bytes>(&sidecar->data) : nullptr;
+    if (bytes) {
+        return *bytes;
+    }
+    const auto error_name = std::string{name} + "_error";
+    const auto* error_value = decoded ? cbor_find(*decoded, error_name) : nullptr;
+    const auto* message = error_value ? std::get_if<std::string>(&error_value->data) : nullptr;
+    return std::unexpected(syntax_error{
+        syntax_error_code::unsupported,
+        message ? *message : "canonical parse is missing the requested sidecar",
+    });
+}
+
+auto parse_units_bytes_from_value(std::span<const std::uint8_t> value)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error> {
+    return parse_sidecar(value, "units");
+}
+
+auto parse_symbols_bytes_from_value(std::span<const std::uint8_t> value)
+    -> std::expected<std::vector<std::uint8_t>, syntax_error> {
+    return parse_sidecar(value, "symbols");
+}
+
+auto parse_units_from_value(std::span<const std::uint8_t> value)
+    -> std::expected<std::vector<syntax_unit>, syntax_error> {
+    auto encoded = parse_units_bytes_from_value(value);
+    if (!encoded) {
+        return std::unexpected(encoded.error());
+    }
+    const auto decoded = cbor_decode(*encoded);
+    const auto* array = decoded ? std::get_if<cbor_value::array>(&decoded->data) : nullptr;
+    if (!array) {
+        return std::unexpected(
+            syntax_error{syntax_error_code::parse_failed, "parse units sidecar is invalid"});
+    }
+    auto output = std::vector<syntax_unit>{};
+    output.reserve(array->size());
+    for (const auto& item : *array) {
+        const auto* kind_value = cbor_find(item, "kind");
+        const auto* name_value = cbor_find(item, "name");
+        const auto* range_value = cbor_find(item, "range");
+        const auto* source_value = cbor_find(item, "source");
+        const auto* kind = kind_value ? std::get_if<std::uint64_t>(&kind_value->data) : nullptr;
+        const auto* name = name_value ? std::get_if<std::string>(&name_value->data) : nullptr;
+        const auto* source_bytes =
+            source_value ? std::get_if<cbor_value::bytes>(&source_value->data) : nullptr;
+        const auto* start_value = range_value ? cbor_find(*range_value, "start") : nullptr;
+        const auto* end_value = range_value ? cbor_find(*range_value, "end") : nullptr;
+        const auto* start_byte_value = start_value ? cbor_find(*start_value, "byte") : nullptr;
+        const auto* start_line_value = start_value ? cbor_find(*start_value, "line") : nullptr;
+        const auto* start_column_value = start_value ? cbor_find(*start_value, "column") : nullptr;
+        const auto* end_byte_value = end_value ? cbor_find(*end_value, "byte") : nullptr;
+        const auto* end_line_value = end_value ? cbor_find(*end_value, "line") : nullptr;
+        const auto* end_column_value = end_value ? cbor_find(*end_value, "column") : nullptr;
+        const auto* start_byte =
+            start_byte_value ? std::get_if<std::uint64_t>(&start_byte_value->data) : nullptr;
+        const auto* start_line =
+            start_line_value ? std::get_if<std::uint64_t>(&start_line_value->data) : nullptr;
+        const auto* start_column =
+            start_column_value ? std::get_if<std::uint64_t>(&start_column_value->data) : nullptr;
+        const auto* end_byte =
+            end_byte_value ? std::get_if<std::uint64_t>(&end_byte_value->data) : nullptr;
+        const auto* end_line =
+            end_line_value ? std::get_if<std::uint64_t>(&end_line_value->data) : nullptr;
+        const auto* end_column =
+            end_column_value ? std::get_if<std::uint64_t>(&end_column_value->data) : nullptr;
+        if (!kind || !name || !source_bytes || !start_byte || !start_line || !start_column ||
+            !end_byte || !end_line || !end_column) {
+            return std::unexpected(
+                syntax_error{syntax_error_code::parse_failed, "parse unit is invalid"});
+        }
+        auto unit = syntax_unit{
+            .kind = *kind,
+            .name = *name,
+            .start = {*start_byte, *start_line, *start_column},
+            .end = {*end_byte, *end_line, *end_column},
+            .source = *source_bytes,
+        };
+        if (const auto* body_value = cbor_find(item, "body")) {
+            const auto* body = std::get_if<cbor_value::array>(&body_value->data);
+            if (body && body->size() == 2) {
+                const auto* start = std::get_if<std::uint64_t>(&body->at(0).data);
+                const auto* end = std::get_if<std::uint64_t>(&body->at(1).data);
+                if (start && end) {
+                    unit.body_start = *start;
+                    unit.body_end = *end;
+                }
+            }
+        }
+        output.push_back(std::move(unit));
+    }
+    return output;
 }
 
 } // namespace liquid_frontend
