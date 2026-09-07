@@ -859,7 +859,7 @@ store_backend::store_chunk(digest id,
         const auto scoped = delta_candidates_.find(std::string{delta_scope});
         if (scoped != delta_candidates_.end()) {
             const auto candidate = scoped->second.find(resemblance);
-            if (candidate != scoped->second.end() &&
+            if (candidate != scoped->second.end() && !candidate->second.compression_attempted &&
                 (candidate->second.id.alg != id.alg || candidate->second.id.bytes != id.bytes)) {
                 auto depth = std::size_t{};
                 auto current = candidate->second.id;
@@ -875,6 +875,7 @@ store_backend::store_chunk(digest id,
                     }
                 }
                 if (depth < maximum_delta_depth) {
+                    candidate->second.compression_attempted = true;
                     candidates.push_back({candidate->second.id, candidate->second.bytes});
                 }
             }

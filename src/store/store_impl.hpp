@@ -133,6 +133,7 @@ private:
     struct delta_candidate {
         digest id{};
         std::vector<std::byte> bytes;
+        bool compression_attempted{};
     };
     struct delta_candidate_key {
         std::string scope;
