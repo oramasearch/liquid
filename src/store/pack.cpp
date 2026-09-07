@@ -1,5 +1,7 @@
 #include "pack.hpp"
 
+#include "backend.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -60,8 +62,8 @@ constexpr std::size_t footer_size = 32;
 error io_error(std::string message, std::string context) {
     return {errc::io, std::move(message), std::move(context)};
 }
-error corrupt_error(std::string message, const std::filesystem::path& path) {
-    return {errc::corrupt, std::move(message), path.string()};
+error corrupt_error(std::string message, std::string context) {
+    return {errc::corrupt, std::move(message), std::move(context)};
 }
 
 void put_u32(std::vector<std::byte>& out, std::uint32_t value) {
@@ -313,17 +315,18 @@ std::uint64_t file_write_counter() noexcept {
     return file_written_bytes.load(std::memory_order_relaxed);
 }
 
-runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t id) {
-    auto file = co_await read_file(path);
+runtime::task<pack_contents>
+read_pack(std::shared_ptr<::liquid::store_backend> backend, std::string key, std::uint32_t id) {
+    auto file = co_await read_backend_object(backend, key);
     if (!file)
         co_return std::unexpected(file.error());
     const auto bytes = std::span<const std::byte>(*file);
     if (bytes.size() < pack_header_size ||
         !std::equal(pack_magic.begin(), pack_magic.end(), bytes.begin())) {
-        co_return std::unexpected(corrupt_error("invalid pack header", path));
+        co_return std::unexpected(corrupt_error("invalid pack header", key));
     }
     if (get_u32(bytes, 8) != id)
-        co_return std::unexpected(corrupt_error("pack id does not match filename", path));
+        co_return std::unexpected(corrupt_error("pack id does not match filename", key));
     pack_contents result{id, {}, pack_header_size};
     if (bytes.size() == pack_header_size)
         co_return result;
@@ -343,7 +346,7 @@ runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t
                 const auto alg = std::to_integer<unsigned char>(bytes[at]);
                 if (!valid_algorithm(alg))
                     co_return std::unexpected(
-                        corrupt_error("unknown digest algorithm in pack table", path));
+                        corrupt_error("unknown digest algorithm in pack table", key));
                 pack_entry entry{};
                 entry.id.alg = static_cast<algorithm>(alg);
                 std::copy_n(bytes.begin() + at + 1, entry.id.bytes.size(), entry.id.bytes.begin());
@@ -354,7 +357,7 @@ runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t
                     entry.location.offset + physical_header_size + entry.location.length >
                         table_at) {
                     co_return std::unexpected(
-                        corrupt_error("pack table location is outside data", path));
+                        corrupt_error("pack table location is outside data", key));
                 }
                 result.entries.push_back(entry);
             }
@@ -381,27 +384,36 @@ runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t
     co_return result;
 }
 
-runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
+runtime::task<pack_entry> append_pack_entry(std::shared_ptr<::liquid::store_backend> backend,
+                                            std::string key,
                                             pack_contents contents,
                                             digest id,
                                             std::vector<std::byte> raw,
                                             std::optional<crypto_detail::key> encryption_key,
                                             bool durable) {
     if (contents.data_end < pack_header_size) {
-        co_return std::unexpected(
-            error{errc::internal, "invalid pack write position", path.string()});
+        co_return std::unexpected(error{errc::internal, "invalid pack write position", key});
     }
     if (!contents.appendable) {
-        co_return std::unexpected(
-            error{errc::internal, "attempted to append sealed pack", path.string()});
+        co_return std::unexpected(error{errc::internal, "attempted to append sealed pack", key});
     }
-    if (!std::filesystem::exists(path)) {
+    auto exists = co_await backend_exists(backend, key);
+    if (!exists) {
+        co_return std::unexpected(exists.error());
+    }
+    if (!*exists) {
         std::vector<std::byte> header(pack_magic.begin(), pack_magic.end());
         put_u32(header, contents.id);
         put_u32(header, 0);
-        auto created = co_await write_at(path, 0, std::move(header), true, durable);
+        auto created = co_await backend->put(key, std::move(header));
         if (!created)
             co_return std::unexpected(created.error());
+        if (durable) {
+            auto synchronized = co_await backend->barrier();
+            if (!synchronized) {
+                co_return std::unexpected(synchronized.error());
+            }
+        }
     }
     const auto bound = ZSTD_compressBound(raw.size());
     std::vector<std::byte> compressed(bound);
@@ -410,7 +422,7 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
     if (ZSTD_isError(compressed_size) ||
         compressed_size > std::numeric_limits<std::uint32_t>::max() ||
         raw.size() > std::numeric_limits<std::uint32_t>::max()) {
-        co_return std::unexpected(error{errc::internal, "zstd compression failed", path.string()});
+        co_return std::unexpected(error{errc::internal, "zstd compression failed", key});
     }
     compressed.resize(compressed_size);
     if (encryption_key) {
@@ -421,8 +433,7 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
         compressed = std::move(*boxed);
     }
     if (compressed.size() > std::numeric_limits<std::uint32_t>::max()) {
-        co_return std::unexpected(
-            error{errc::internal, "encrypted chunk is too large", path.string()});
+        co_return std::unexpected(error{errc::internal, "encrypted chunk is too large", key});
     }
     pack_entry entry{
         id,
@@ -437,38 +448,48 @@ runtime::task<pack_entry> append_pack_entry(std::filesystem::path path,
     physical.push_back(std::byte{static_cast<unsigned char>(id.alg)});
     physical.insert(physical.end(), id.bytes.begin(), id.bytes.end());
     physical.insert(physical.end(), compressed.begin(), compressed.end());
-    auto data_written =
-        co_await write_at(path, contents.data_end, std::move(physical), false, durable);
+    auto data_written = co_await backend->put_range(key, contents.data_end, std::move(physical));
     if (!data_written)
         co_return std::unexpected(data_written.error());
+    if (durable) {
+        auto synchronized = co_await backend->barrier();
+        if (!synchronized) {
+            co_return std::unexpected(synchronized.error());
+        }
+    }
 
     co_return entry;
 }
 
-runtime::task<pack_entry> append_pack_frame(std::filesystem::path destination,
+runtime::task<pack_entry> append_pack_frame(std::shared_ptr<::liquid::store_backend> backend,
+                                            std::string destination,
                                             pack_contents contents,
-                                            std::filesystem::path source,
+                                            std::string source,
                                             pack_entry entry,
                                             bool durable) {
     if (contents.data_end < pack_header_size) {
         co_return std::unexpected(
-            error{errc::internal, "invalid pack write position", destination.string()});
+            error{errc::internal, "invalid pack write position", destination});
     }
     if (!contents.appendable) {
         co_return std::unexpected(
-            error{errc::internal, "attempted to append sealed pack", destination.string()});
+            error{errc::internal, "attempted to append sealed pack", destination});
     }
-    if (!std::filesystem::exists(destination)) {
+    auto exists = co_await backend_exists(backend, destination);
+    if (!exists) {
+        co_return std::unexpected(exists.error());
+    }
+    if (!*exists) {
         std::vector<std::byte> header(pack_magic.begin(), pack_magic.end());
         put_u32(header, contents.id);
         put_u32(header, 0);
-        auto created = co_await write_at(destination, 0, std::move(header), true, durable);
+        auto created = co_await backend->put(destination, std::move(header));
         if (!created) {
             co_return std::unexpected(created.error());
         }
     }
     const auto frame_size = physical_header_size + static_cast<std::size_t>(entry.location.length);
-    auto frame = co_await read_file_range(source, entry.location.offset, frame_size);
+    auto frame = co_await backend->get_range(source, entry.location.offset, frame_size);
     if (!frame) {
         co_return std::unexpected(frame.error());
     }
@@ -481,42 +502,47 @@ runtime::task<pack_entry> append_pack_frame(std::filesystem::path destination,
         !std::equal(entry.id.bytes.begin(), entry.id.bytes.end(), frame->begin() + 17)) {
         co_return std::unexpected(corrupt_error("source frame differs from pack table", source));
     }
-    auto copied =
-        co_await write_at(destination, contents.data_end, std::move(*frame), false, durable);
+    auto copied = co_await backend->put_range(destination, contents.data_end, std::move(*frame));
     if (!copied) {
         co_return std::unexpected(copied.error());
+    }
+    if (durable) {
+        auto synchronized = co_await backend->barrier();
+        if (!synchronized) {
+            co_return std::unexpected(synchronized.error());
+        }
     }
     entry.location.pack_id = contents.id;
     entry.location.offset = contents.data_end;
     co_return entry;
 }
 
-runtime::task<void>
-seal_pack(std::filesystem::path path, const pack_contents& contents, bool durable) {
+runtime::task<void> seal_pack(std::shared_ptr<::liquid::store_backend> backend,
+                              std::string key,
+                              const pack_contents& contents) {
     if (!contents.appendable) {
-        co_return std::unexpected(
-            error{errc::internal, "attempted to seal closed pack", path.string()});
+        co_return std::unexpected(error{errc::internal, "attempted to seal closed pack", key});
     }
     const auto table = encode_table(contents);
-    auto table_written = co_await write_at(path, contents.data_end, table, false, durable);
+    auto table_written = co_await backend->put_range(key, contents.data_end, table);
     if (!table_written)
         co_return std::unexpected(table_written.error());
-    auto footer_written = co_await write_at(path,
-                                            contents.data_end + table.size(),
-                                            encode_footer(contents.data_end, table.size(), table),
-                                            false,
-                                            durable);
+    auto footer_written =
+        co_await backend->put_range(key,
+                                    contents.data_end + table.size(),
+                                    encode_footer(contents.data_end, table.size(), table));
     if (!footer_written)
         co_return std::unexpected(footer_written.error());
-    co_return result<void>{};
+    co_return co_await backend->barrier();
 }
 
 runtime::task<std::vector<std::byte>>
-read_pack_entry(std::filesystem::path path,
+read_pack_entry(std::shared_ptr<::liquid::store_backend> backend,
+                std::string key,
                 chunk_location location,
                 digest expected,
                 std::optional<crypto_detail::key> encryption_key) {
-    auto header = co_await read_file_range(path, location.offset, physical_header_size);
+    auto header = co_await backend->get_range(key, location.offset, physical_header_size);
     if (!header)
         co_return std::unexpected(header.error());
     const auto bytes = std::span<const std::byte>(*header);
@@ -531,19 +557,19 @@ read_pack_entry(std::filesystem::path path,
     if (std::to_integer<unsigned char>(bytes[algorithm_offset]) !=
             static_cast<unsigned char>(expected.alg) ||
         !std::equal(expected.bytes.begin(), expected.bytes.end(), bytes.begin() + digest_offset)) {
-        co_return std::unexpected(corrupt_error("chunk header digest differs from index", path));
+        co_return std::unexpected(corrupt_error("chunk header digest differs from index", key));
     }
     const auto raw_size = get_u32(bytes, raw_length_offset);
     const auto compressed_size = get_u32(bytes, compressed_length_offset);
     if (compressed_size != location.length)
-        co_return std::unexpected(corrupt_error("chunk length differs from index", path));
+        co_return std::unexpected(corrupt_error("chunk length differs from index", key));
     auto compressed =
-        co_await read_file_range(path, location.offset + physical_header_size, compressed_size);
+        co_await backend->get_range(key, location.offset + physical_header_size, compressed_size);
     if (!compressed)
         co_return std::unexpected(compressed.error());
     const auto flags = current_frame ? (encrypted_framed ? 1U : 0U) : get_u64(bytes, 41);
     if (flags > 1) {
-        co_return std::unexpected(corrupt_error("unknown encrypted chunk flags", path));
+        co_return std::unexpected(corrupt_error("unknown encrypted chunk flags", key));
     }
     if (flags == 1) {
         if (!encryption_key) {
@@ -553,7 +579,7 @@ read_pack_entry(std::filesystem::path path,
         const auto ad = chunk_ad(expected);
         auto opened = crypto_detail::open(*encryption_key, ad, *compressed);
         if (!opened) {
-            co_return std::unexpected(corrupt_error("authenticated chunk decryption failed", path));
+            co_return std::unexpected(corrupt_error("authenticated chunk decryption failed", key));
         }
         compressed = std::move(*opened);
     }
@@ -561,7 +587,7 @@ read_pack_entry(std::filesystem::path path,
     const auto produced =
         ZSTD_decompress(raw.data(), raw.size(), compressed->data(), compressed->size());
     if (ZSTD_isError(produced) || produced != raw.size())
-        co_return std::unexpected(corrupt_error("chunk decompression failed", path));
+        co_return std::unexpected(corrupt_error("chunk decompression failed", key));
     co_return raw;
 }
 

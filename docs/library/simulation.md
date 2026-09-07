@@ -1,13 +1,14 @@
 # Deterministic store simulation
 
-**Status: implemented for the Phase 1 chunk store (liquid #55).** The simulator is the first
+**Status: implemented for the Phase 1 chunk store on disk and in memory (liquid #55, #278).** The simulator is the first
 subject of a reusable test harness. Sync and reconciliation state machines join it when their
 implementations land.
 
 ## What and why
 
-`tests/sim/` runs a seeded schedule against a real local store, interrupts one selected disk
-operation, destroys the store object without a close, and opens the directory again. It exercises
+`tests/sim/` runs each seeded schedule against the disk reference backend and the in-memory test
+backend, interrupts one selected backend operation, destroys the store object without a close, and
+opens the same backend again. It exercises
 rooted puts, orphan puts, gets, range reads, lease renewals, collections, and explicit reopens.
 Input sizes range from 40 bytes to 4 MiB; previously
 generated inputs are deliberately reused to exercise deduplication.
@@ -46,8 +47,10 @@ the same operation sequence and fault point on every platform.
 
 `src/store/faults.{hpp,cpp}` is private test instrumentation. The normal process-global injector
 pointer is null, so a point costs one atomic load and branch. Tests can install an injector that
-throws before or after every logical file write, manifest rename, and collected-pack removal. The store translates that
-exception into its ordinary error result; the simulator then drops the store object to model an
+throws before or after disk writes, atomic complete-object renames, and collected-pack removal. The store translates that
+exception into its ordinary error result; the in-memory implementation exposes equivalent write
+and remove points while also supporting injected latency and one-shot liquid errors. The simulator
+then drops the store object to model an
 abrupt process stop.
 
 Packs recover independently of the index. Open packs consist only of append-only verified frames.

@@ -96,7 +96,7 @@ owning issue in `error::context`.
 | `liquid/edit.hpp` | #205 | implemented | canonical structural-edit requests, targets, previews, refusals, attribution, file/text changes, results, and codecs |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/import.hpp` | #75 | implemented | Spack import loss and report values, stable report codecs, offline patch bytes, target toolchain binding, and the coroutine import operation |
-| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199, #278 | implemented | coroutine-native persistence backend contract and disk factory; `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/node_store.hpp` | #202 | implemented | per-node shared chunk store, metadata-only image receipt, reference-counted read-only image mounts, hydration/reuse counters, logical byte budget and remote-content eviction, local snapshotter API, and TCP control surfaces |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/data.hpp` | #87 | implemented for PostgreSQL template copies; reflink capability selection implemented | session identifiers, persisted application-database declarations, branch records, and coroutine-native create/list/discard/promote operations |
@@ -554,6 +554,20 @@ attestation bytes, budget and eviction operations, OpenAPI, metrics, and MCP. Se
 ### `liquid/store.hpp`
 
 ```cpp
+struct store_backend_entry { std::string key; std::uint64_t size; };
+class store_backend {
+ public:
+  virtual runtime::task<void> put(std::string key, std::vector<std::byte>) = 0;
+  virtual runtime::task<void> put_range(
+      std::string key, std::uint64_t offset, std::vector<std::byte>) = 0;
+  virtual runtime::task<std::vector<std::byte>> get_range(
+      std::string key, std::uint64_t offset, std::uint64_t size) = 0;
+  virtual runtime::task<void> remove(std::string key) = 0;
+  virtual runtime::task<std::vector<store_backend_entry>> list(std::string prefix) = 0;
+  virtual runtime::task<void> barrier() = 0;
+};
+std::shared_ptr<store_backend> make_disk_store_backend(
+    std::filesystem::path root, bool durable = false);
 class blob_write_through {
  public:
   virtual runtime::task<void> put(digest content, std::span<const std::byte> bytes,
@@ -574,6 +588,7 @@ struct store_options {
   std::shared_ptr<blob_write_through> write_through;
   hydration_observer on_hydration;
   remote_access_observer on_remote_access;
+  std::shared_ptr<store_backend> backend; // null selects the disk backend at the store path
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -622,6 +637,10 @@ acknowledgement, remote source map, and optional write-through callback. `store:
 `errc::not_remote` unless the whole-content digest has a persisted remote registration. A non-null
 keyring enables trust-domain encrypted objects; see
 [encryption.md](encryption.md).
+`store_backend` is the persistence contract for whole objects, pack ranges, byte-range reads,
+deletion, prefix listing, and durability barriers. Missing keys return `not_found`, invalid stored
+ranges or bytes return `corrupt`, unreachable services return `unavailable`, and rejected backend
+authority returns `unauthorized`; the disk implementation maps local system failures to `io`.
 
 ### `liquid/remote.hpp`
 

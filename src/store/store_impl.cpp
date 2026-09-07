@@ -15,6 +15,7 @@
 #include <boost/capy/ex/this_coro.hpp>
 
 #include "../runtime/net.hpp"
+#include "backend.hpp"
 #include "blake3.h"
 #include "chunker.hpp"
 #include "collector.hpp"
@@ -157,11 +158,19 @@ bool valid_algorithm(unsigned char value) {
            value == static_cast<unsigned char>(algorithm::blake3_keyed);
 }
 
+std::string pack_key(std::uint32_t id) {
+    return "packs/pack-" + std::to_string(id) + ".pack";
+}
+
 } // namespace
 
 store_backend::store_backend(std::filesystem::path root, store_options options)
     : root_(std::move(root)), options_(std::move(options)),
-      remote_sources_(options_.remote_sources), index_(root_ / "index") {}
+      persistence_(options_.backend ? options_.backend
+                                    : make_disk_store_backend(root_, options_.durable)),
+      remote_sources_(options_.remote_sources), index_(persistence_, "index", root_ / "index") {
+    options_.backend = persistence_;
+}
 
 runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesystem::path root,
                                                                   store_options options) {
@@ -171,32 +180,49 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
             co_return std::unexpected(
                 store_error(errc::invalid_argument, "unknown hash algorithm", root.string()));
         }
-        std::filesystem::create_directories(root / "packs");
-        std::filesystem::create_directories(root / "index");
-        std::filesystem::create_directories(root / "leases");
-        std::filesystem::create_directories(root / "gc");
-        std::filesystem::create_directories(root / "tmp");
-        std::error_code ignored;
-        std::filesystem::remove(root / "gc" / "MANIFEST.tmp", ignored);
-        std::filesystem::remove(root / "packs" / "objects.meta.tmp", ignored);
-        std::filesystem::remove(root / "packs" / "remotes.meta.tmp", ignored);
-        const auto marker = root / "LIQUID_STORE";
-        if (std::filesystem::exists(marker)) {
-            auto text = co_await read_file(marker);
+        if (!options.backend) {
+            auto prepared = co_await runtime::offload([root] {
+                std::filesystem::create_directories(root / "packs");
+                std::filesystem::create_directories(root / "index");
+                std::filesystem::create_directories(root / "leases");
+                std::filesystem::create_directories(root / "gc");
+                std::filesystem::create_directories(root / "tmp");
+            });
+            if (!prepared) {
+                co_return std::unexpected(
+                    store_error(errc::io, prepared.error().message, root.string()));
+            }
+        }
+        const auto persistence =
+            options.backend ? options.backend : make_disk_store_backend(root, options.durable);
+        options.backend = persistence;
+        for (const auto& temporary :
+             {"gc/MANIFEST.tmp", "packs/objects.meta.tmp", "packs/remotes.meta.tmp"}) {
+            auto removed = co_await persistence->remove(temporary);
+            if (!removed && removed.error().code != errc::not_found) {
+                co_return std::unexpected(removed.error());
+            }
+        }
+        auto marker_exists = co_await backend_exists(persistence, "LIQUID_STORE");
+        if (!marker_exists) {
+            co_return std::unexpected(marker_exists.error());
+        }
+        if (*marker_exists) {
+            auto text = co_await read_backend_object(persistence, "LIQUID_STORE");
             if (!text)
                 co_return std::unexpected(text.error());
             const std::string expected = "liquid-store 1\n";
             if (text->size() != expected.size() ||
                 std::memcmp(text->data(), expected.data(), expected.size()) != 0) {
                 co_return std::unexpected(
-                    store_error(errc::unsupported, "unknown liquid store format", marker.string()));
+                    store_error(errc::unsupported, "unknown liquid store format", "LIQUID_STORE"));
             }
         } else {
             const std::string text = "liquid-store 1\n";
             std::vector<std::byte> bytes(
                 reinterpret_cast<const std::byte*>(text.data()),
                 reinterpret_cast<const std::byte*>(text.data() + text.size()));
-            auto saved = co_await write_file(marker, std::move(bytes));
+            auto saved = co_await persistence->put("LIQUID_STORE", std::move(bytes));
             if (!saved)
                 co_return std::unexpected(saved.error());
         }
@@ -230,18 +256,21 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         auto remotes = co_await result->load_remotes();
         if (!remotes)
             co_return std::unexpected(remotes.error());
-        auto collection = co_await load_collection_manifest(result->root_);
+        auto collection = co_await load_collection_manifest(result->persistence_, result->root_);
         if (!collection)
             co_return std::unexpected(collection.error());
         auto recovered = co_await result->recover_pending_compactions(*collection);
         if (!recovered)
             co_return std::unexpected(recovered.error());
-        const bool manifest_exists = std::filesystem::exists(result->root_ / "index" / "MANIFEST");
+        auto manifest_exists = co_await backend_exists(result->persistence_, "index/MANIFEST");
+        if (!manifest_exists) {
+            co_return std::unexpected(manifest_exists.error());
+        }
         auto opened = co_await result->index_.open();
         if (!opened && opened.error().code != errc::corrupt)
             co_return std::unexpected(opened.error());
         auto indexed = co_await result->index_packs(
-            !opened || !manifest_exists || result->index_.collection_epoch() != collection->epoch);
+            !opened || !*manifest_exists || result->index_.collection_epoch() != collection->epoch);
         if (!indexed)
             co_return std::unexpected(indexed.error());
         auto subjects = co_await result->rebuild_subject_index();
@@ -261,8 +290,12 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
 runtime::task<void>
 store_backend::recover_pending_compactions(const collection_manifest& manifest) {
     try {
-        for (const auto& entry : std::filesystem::directory_iterator(root_ / "gc")) {
-            const auto name = entry.path().filename().string();
+        auto entries = co_await persistence_->list("gc/compact-");
+        if (!entries) {
+            co_return std::unexpected(entries.error());
+        }
+        for (const auto& entry : *entries) {
+            const auto name = std::filesystem::path(entry.key).filename().string();
             constexpr std::string_view prefix = "compact-";
             constexpr std::string_view suffix = ".pending";
             if (!name.starts_with(prefix) || !name.ends_with(suffix)) {
@@ -292,18 +325,23 @@ store_backend::recover_pending_compactions(const collection_manifest& manifest) 
             if (!valid || value_index != values.size() ||
                 values[1] > std::numeric_limits<std::uint32_t>::max() ||
                 values[2] > std::numeric_limits<std::uint32_t>::max()) {
-                std::error_code ignored;
-                std::filesystem::remove(entry.path(), ignored);
+                auto removed = co_await persistence_->remove(entry.key);
+                if (!removed && removed.error().code != errc::not_found) {
+                    co_return std::unexpected(removed.error());
+                }
                 continue;
             }
             const auto old_pack_id = static_cast<std::uint32_t>(values[1]);
             const auto new_pack_id = static_cast<std::uint32_t>(values[2]);
             const auto remove_id = manifest.epoch >= values[0] ? old_pack_id : new_pack_id;
-            const auto path = root_ / "packs" / ("pack-" + std::to_string(remove_id) + ".pack");
-            visit_fault({fault_operation::remove, fault_phase::before, path});
-            std::filesystem::remove(path);
-            visit_fault({fault_operation::remove, fault_phase::after, path});
-            std::filesystem::remove(entry.path());
+            auto removed = co_await persistence_->remove(pack_key(remove_id));
+            if (!removed && removed.error().code != errc::not_found) {
+                co_return std::unexpected(removed.error());
+            }
+            removed = co_await persistence_->remove(entry.key);
+            if (!removed && removed.error().code != errc::not_found) {
+                co_return std::unexpected(removed.error());
+            }
         }
         co_return result<void>{};
     } catch (const std::system_error& caught) {
@@ -313,9 +351,13 @@ store_backend::recover_pending_compactions(const collection_manifest& manifest) 
 
 runtime::task<void> store_backend::load_objects() {
     const auto path = root_ / "packs" / "objects.meta";
-    if (!std::filesystem::exists(path))
+    auto exists = co_await backend_exists(persistence_, "packs/objects.meta");
+    if (!exists) {
+        co_return std::unexpected(exists.error());
+    }
+    if (!*exists)
         co_return result<void>{};
-    auto raw = co_await read_file(path);
+    auto raw = co_await read_backend_object(persistence_, "packs/objects.meta");
     if (!raw)
         co_return std::unexpected(raw.error());
     const auto bytes = std::span<const std::byte>(*raw);
@@ -445,10 +487,14 @@ runtime::task<void> store_backend::load_objects() {
 
 runtime::task<void> store_backend::load_remotes() {
     const auto path = root_ / "packs" / "remotes.meta";
-    if (!std::filesystem::exists(path)) {
+    auto exists = co_await backend_exists(persistence_, "packs/remotes.meta");
+    if (!exists) {
+        co_return std::unexpected(exists.error());
+    }
+    if (!*exists) {
         co_return result<void>{};
     }
-    auto raw = co_await read_file(path);
+    auto raw = co_await read_backend_object(persistence_, "packs/remotes.meta");
     if (!raw) {
         co_return std::unexpected(raw.error());
     }
@@ -561,18 +607,11 @@ runtime::task<void> store_backend::save_remotes() {
             put_u64(bytes, value.chunk_sizes[index]);
         }
     }
-    const auto temporary = root_ / "packs" / "remotes.meta.tmp";
-    const auto destination = root_ / "packs" / "remotes.meta";
-    auto written = co_await write_file(temporary, std::move(bytes));
+    auto written = co_await persistence_->put("packs/remotes.meta", std::move(bytes));
     if (!written) {
         co_return std::unexpected(written.error());
     }
-    try {
-        std::filesystem::rename(temporary, destination);
-    } catch (const std::system_error& caught) {
-        co_return std::unexpected(store_error(errc::io, caught.what(), destination.string()));
-    }
-    co_return result<void>{};
+    co_return co_await persistence_->barrier();
 }
 
 runtime::task<void> store_backend::rebuild_remote_record_index() {
@@ -684,36 +723,47 @@ runtime::task<void> store_backend::stage_objects() {
             put_u64(bytes, object.chunk_sizes[index]);
         }
     }
-    co_return co_await write_file(root_ / "packs" / "objects.meta.tmp", std::move(bytes));
+    co_return co_await persistence_->put("packs/objects.meta.tmp", std::move(bytes));
 }
 
 runtime::task<void> store_backend::publish_staged_objects() {
-    const auto temporary = root_ / "packs" / "objects.meta.tmp";
-    const auto destination = root_ / "packs" / "objects.meta";
-    try {
-        visit_fault({fault_operation::rename, fault_phase::before, temporary});
-        std::filesystem::rename(temporary, destination);
-        visit_fault({fault_operation::rename, fault_phase::after, destination});
-        co_return result<void>{};
-    } catch (const std::system_error& caught) {
-        co_return std::unexpected(store_error(errc::io, caught.what(), destination.string()));
+    auto synchronized = co_await persistence_->barrier();
+    if (!synchronized) {
+        co_return std::unexpected(synchronized.error());
     }
+    auto bytes = co_await read_backend_object(persistence_, "packs/objects.meta.tmp");
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    auto published = co_await persistence_->put("packs/objects.meta", std::move(*bytes));
+    if (!published) {
+        co_return std::unexpected(published.error());
+    }
+    auto removed = co_await persistence_->remove("packs/objects.meta.tmp");
+    if (!removed && removed.error().code != errc::not_found) {
+        co_return std::unexpected(removed.error());
+    }
+    co_return co_await persistence_->barrier();
 }
 
 runtime::task<void> store_backend::index_packs(bool rebuild) {
-    auto collection = co_await load_collection_manifest(root_);
+    auto collection = co_await load_collection_manifest(persistence_, root_);
     if (!collection)
         co_return std::unexpected(collection.error());
     std::vector<index_entry> all;
     std::uint32_t highest = index_.highest_pack_id();
     try {
-        for (const auto& file : std::filesystem::directory_iterator(root_ / "packs")) {
-            const auto name = file.path().filename().string();
-            if (!file.is_regular_file() || !name.starts_with("pack-") || !name.ends_with(".pack"))
+        auto files = co_await persistence_->list("packs/pack-");
+        if (!files) {
+            co_return std::unexpected(files.error());
+        }
+        for (const auto& file : *files) {
+            const auto name = std::filesystem::path(file.key).filename().string();
+            if (!name.starts_with("pack-") || !name.ends_with(".pack"))
                 continue;
             const auto digits = name.substr(5, name.size() - 10);
             const auto id = static_cast<std::uint32_t>(std::stoul(digits));
-            auto pack = co_await read_pack(file.path(), id);
+            auto pack = co_await read_pack(persistence_, file.key, id);
             if (!pack)
                 co_return std::unexpected(pack.error());
             highest = std::max(highest, id);
@@ -763,7 +813,8 @@ runtime::task<pack_entry> store_backend::store_chunk(
     const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
     auto& destination = packs_.at(current_pack_);
     auto written = co_await append_pack_entry(
-        root_ / "packs" / ("pack-" + std::to_string(current_pack_) + ".pack"),
+        persistence_,
+        pack_key(current_pack_),
         destination,
         id,
         std::move(raw),
@@ -782,10 +833,7 @@ runtime::task<pack_entry> store_backend::store_chunk(
             co_return std::unexpected(flushed.error());
     }
     if (destination.data_end >= limit) {
-        auto sealed = co_await seal_pack(root_ / "packs" /
-                                             ("pack-" + std::to_string(current_pack_) + ".pack"),
-                                         destination,
-                                         options_.durable);
+        auto sealed = co_await seal_pack(persistence_, pack_key(current_pack_), destination);
         if (!sealed)
             co_return std::unexpected(sealed.error());
         destination.appendable = false;
@@ -803,11 +851,12 @@ store_backend::load_chunk(digest id, std::optional<crypto_detail::domain_keys> e
     if (!*found)
         co_return std::unexpected(
             store_error(errc::not_found, "chunk is not present", to_string(id)));
-    auto raw = co_await read_pack_entry(
-        root_ / "packs" / ("pack-" + std::to_string((*found)->pack_id) + ".pack"),
-        **found,
-        id,
-        encryption ? std::optional{encryption->chunk_encryption} : std::nullopt);
+    auto raw = co_await read_pack_entry(persistence_,
+                                        pack_key((*found)->pack_id),
+                                        **found,
+                                        id,
+                                        encryption ? std::optional{encryption->chunk_encryption}
+                                                   : std::nullopt);
     if (!raw)
         co_return std::unexpected(raw.error());
     const auto actual =
@@ -845,11 +894,12 @@ store_backend::load_snapshot_object(const stored_object& object,
             co_return std::unexpected(store_error(
                 errc::corrupt, "object references a missing chunk", to_string(object.id)));
         }
-        auto raw = co_await read_pack_entry(
-            root_ / "packs" / ("pack-" + std::to_string(location->second.pack_id) + ".pack"),
-            location->second,
-            chunk,
-            encryption ? std::optional{encryption->chunk_encryption} : std::nullopt);
+        auto raw = co_await read_pack_entry(persistence_,
+                                            pack_key(location->second.pack_id),
+                                            location->second,
+                                            chunk,
+                                            encryption ? std::optional{encryption->chunk_encryption}
+                                                       : std::nullopt);
         if (!raw)
             co_return std::unexpected(raw.error());
         bytes.insert(bytes.end(), raw->begin(), raw->end());
@@ -872,6 +922,10 @@ runtime::task<void> store_backend::add_object(stored_object object) {
     objects_dirty_ = true;
     if (object_batch_depth_ != 0) {
         co_return result<void>{};
+    }
+    auto durable = co_await persistence_->barrier();
+    if (!durable) {
+        co_return std::unexpected(durable.error());
     }
     objects_dirty_ = false;
     co_return co_await save_objects();
@@ -1862,7 +1916,8 @@ store_backend::lease_root(digest id, std::chrono::seconds ttl, std::string owner
         co_return std::unexpected(
             store_error(errc::invalid_argument, "lease ttl is invalid", "store::lease_root"));
     }
-    co_return co_await create_lease_until(root_ / "leases", id, now + ttl, std::move(owner));
+    co_return co_await create_lease_until(
+        persistence_, root_ / "leases", id, now + ttl, std::move(owner));
 }
 
 const std::filesystem::path& store_backend::root_path() const noexcept {

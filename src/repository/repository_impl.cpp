@@ -146,8 +146,8 @@ void collect_format_entry_bytes(const format_tree& tree,
     }
 }
 
-auto unpack_format_entries(std::span<const std::byte> contents, std::string path)
-    -> result<std::vector<std::vector<std::byte>>> {
+auto unpack_format_entries(std::span<const std::byte> contents,
+                           std::string path) -> result<std::vector<std::vector<std::byte>>> {
     auto tree = format_registry::global().unpack(contents, path);
     if (!tree) {
         if (tree.error().code == errc::not_found) {
@@ -160,8 +160,9 @@ auto unpack_format_entries(std::span<const std::byte> contents, std::string path
     return output;
 }
 
-auto store_format_entries(store& objects, std::span<const std::byte> contents, std::string path)
-    -> runtime::task<std::vector<digest>> {
+auto store_format_entries(store& objects,
+                          std::span<const std::byte> contents,
+                          std::string path) -> runtime::task<std::vector<digest>> {
     auto unpacked = co_await runtime::offload(
         [contents, path = std::move(path)] { return unpack_format_entries(contents, path); });
     if (!unpacked) {
@@ -186,8 +187,8 @@ auto store_format_entries(store& objects, std::span<const std::byte> contents, s
     co_return output;
 }
 
-auto format_file_candidate(std::string_view repository_path, const std::filesystem::path& source)
-    -> bool {
+auto format_file_candidate(std::string_view repository_path,
+                           const std::filesystem::path& source) -> bool {
     auto& registry = format_registry::global();
     if (!registry.find_by_extension(repository_path).empty()) {
         return true;
@@ -2094,8 +2095,8 @@ auto lookup(working_entry& root, const std::vector<std::string>& path) -> workin
     }
     return current;
 }
-auto lookup(const working_entry& root, const std::vector<std::string>& path)
-    -> const working_entry* {
+auto lookup(const working_entry& root,
+            const std::vector<std::string>& path) -> const working_entry* {
     const working_entry* current = &root;
     for (const auto& part : path) {
         const auto found = current->entries.find(part);
@@ -2168,16 +2169,16 @@ auto same_digest(const digest& left, const digest& right) -> bool {
     return left.alg == right.alg && left.bytes == right.bytes;
 }
 
-auto same_change(const std::optional<change_id>& left, const std::optional<change_id>& right)
-    -> bool {
+auto same_change(const std::optional<change_id>& left,
+                 const std::optional<change_id>& right) -> bool {
     if (!left || !right) {
         return !left && !right;
     }
     return same_digest(left->value, right->value);
 }
 
-auto same_nested(const std::optional<repo_ref>& left, const std::optional<repo_ref>& right)
-    -> bool {
+auto same_nested(const std::optional<repo_ref>& left,
+                 const std::optional<repo_ref>& right) -> bool {
     if (!left || !right) {
         return !left && !right;
     }
@@ -2199,8 +2200,8 @@ auto same_entry(const working_entry& left, const working_entry& right) -> bool {
     return true;
 }
 
-auto same_entry(const working_entry* current, const std::optional<working_entry>& expected)
-    -> bool {
+auto same_entry(const working_entry* current,
+                const std::optional<working_entry>& expected) -> bool {
     if (!current || !expected) {
         return !current && !expected;
     }
@@ -2267,8 +2268,8 @@ auto replace_entry(working_entry& root,
     return {};
 }
 
-auto optional_ref(const std::map<std::string, change_id>& refs, std::string_view name)
-    -> std::optional<change_id> {
+auto optional_ref(const std::map<std::string, change_id>& refs,
+                  std::string_view name) -> std::optional<change_id> {
     const auto found = refs.find(std::string{name});
     if (found == refs.end()) {
         return std::nullopt;
@@ -2600,8 +2601,8 @@ auto decode_repository_drip(std::span<const std::byte> input) -> result<decoded_
     return output;
 }
 
-auto entry_parent(const working_entry& root, const std::vector<std::string>& path)
-    -> const working_entry* {
+auto entry_parent(const working_entry& root,
+                  const std::vector<std::string>& path) -> const working_entry* {
     const working_entry* current = &root;
     for (std::size_t index = 0; index + 1 < path.size(); ++index) {
         const auto found = current->entries.find(path[index]);
@@ -3480,8 +3481,8 @@ auto validate_hot_update_config(const hot_update_config& config) -> result<void>
     return {};
 }
 
-auto encryption_rule_for(const repository_document& document, std::string_view path)
-    -> const encryption_path_rule* {
+auto encryption_rule_for(const repository_document& document,
+                         std::string_view path) -> const encryption_path_rule* {
     for (const auto& rule : document.encryption_rules) {
         if (glob_matches(rule.path, path)) {
             return &rule;
@@ -3505,8 +3506,8 @@ auto string_bytes(std::string_view input) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(input.data() + input.size())};
 }
 
-auto identifier_path(store& objects, const std::filesystem::path& identifier)
-    -> result<std::filesystem::path> {
+auto identifier_path(store& objects,
+                     const std::filesystem::path& identifier) -> result<std::filesystem::path> {
     const auto text = identifier.generic_string();
     if (text.empty()) {
         return std::unexpected(
@@ -3948,8 +3949,17 @@ struct repository::impl {
             co_return std::unexpected(store_root.error());
         }
         const auto directory = *store_root / "leases";
+        auto store_configuration = repository_detail::store_access::configuration(objects);
+        if (!store_configuration) {
+            co_return std::unexpected(store_configuration.error());
+        }
+        const auto backend = store_configuration->backend;
+        if (!backend) {
+            co_return std::unexpected(
+                failure(errc::not_configured, "store backend is unavailable", directory.string()));
+        }
         const auto scoped_prefix = lease_owner(owner_prefix);
-        auto existing = co_await store_detail::load_leases(directory);
+        auto existing = co_await store_detail::load_leases(backend, directory);
         if (!existing) {
             co_return std::unexpected(existing.error());
         }
@@ -3966,7 +3976,7 @@ struct repository::impl {
                 continue;
             }
             auto created = co_await store_detail::create_lease_until(
-                directory, desired.root, desired.expiry, desired.owner);
+                backend, directory, desired.root, desired.expiry, desired.owner);
             if (!created) {
                 co_return std::unexpected(created.error());
             }
@@ -3976,7 +3986,7 @@ struct repository::impl {
                 continue;
             }
             auto state = std::make_shared<store_detail::lease_state>();
-            state->directory = directory;
+            state->backend = backend;
             state->record = record;
             auto released = co_await store_detail::release_lease(std::move(state));
             if (!released) {
@@ -4805,8 +4815,8 @@ struct repository::impl {
         });
         return found == current.leases.end() ? nullptr : &*found;
     }
-    auto validate_lease_write(std::string_view path, const write_options& options) const
-        -> result<void> {
+    auto validate_lease_write(std::string_view path,
+                              const write_options& options) const -> result<void> {
         auto requested = lease_claim{.path = std::string{path},
                                      .kind = options.symbol  ? lease_kind::symbol
                                              : options.range ? lease_kind::range
@@ -7414,8 +7424,9 @@ auto apply_attribution_hunks(std::span<const line_attribution> previous,
     return output;
 }
 
-auto snapshot_entry(repository& source, liquid::tree current, std::span<const std::string> path)
-    -> runtime::task<tree_entry> {
+auto snapshot_entry(repository& source,
+                    liquid::tree current,
+                    std::span<const std::string> path) -> runtime::task<tree_entry> {
     for (auto index = std::size_t{}; index < path.size(); ++index) {
         const auto found = std::ranges::find(current.entries, path[index], &tree_entry::name);
         if (found == current.entries.end()) {
@@ -7623,8 +7634,8 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
                           .base_cursor = journal_cursor{*cursor}};
 }
 
-auto delegation_attribute(const attestation& value, std::string_view name)
-    -> const attestation_value* {
+auto delegation_attribute(const attestation& value,
+                          std::string_view name) -> const attestation_value* {
     const auto found = std::ranges::find(value.attributes, name, &attestation_attribute::name);
     return found == value.attributes.end() ? nullptr : &found->value;
 }

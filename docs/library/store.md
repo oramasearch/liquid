@@ -1,7 +1,8 @@
 # Content-defined chunk store
 
-**Status: implemented for single-process stores with local chunks, registered remote blobs,
-pre-pack write-through, and local eviction (liquid #1, #7, #8, #17, #46, #116, #199, #208).**
+**Status: implemented for single-process stores with an injected persistence backend, local chunks,
+registered remote blobs, pre-pack write-through, and local eviction (liquid #1, #7, #8, #17, #46,
+#116, #199, #208, #278).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -13,6 +14,35 @@ The store accepts bytes and returns a BLAKE3 digest for the complete input. It s
 with FastCDC, stores raw chunks once, and records the input's ordered chunk list. Reading verifies
 each chunk's digest after decompression. The layout lets source, build output, and large binaries
 share chunks without a file-per-object bottleneck.
+
+## Store backend interface
+
+`store_options::backend` selects the persistence implementation. A null value selects the disk
+reference implementation rooted at the path passed to `store::open`; callers can also construct it
+with `make_disk_store_backend`. The public `store_backend` contract has only the operations the
+store needs:
+
+- `put(key, bytes)` atomically replaces one complete object;
+- `put_range(key, offset, bytes)` creates or extends a pack-like object at an exact byte offset;
+- `get_range(key, offset, size)` returns exactly that byte range;
+- `remove(key)` deletes one complete object;
+- `list(prefix)` returns matching keys and sizes; and
+- `barrier()` completes the backend's configured durability level for all successful operations
+  before later publication.
+
+Keys use `/` as a logical separator and are relative to the backend root. `LIQUID_STORE`,
+`packs/`, `index/`, `leases/`, and `gc/` are backend keys, not paths exposed to store code. A
+complete-object `put` must be atomic for readers. A range outside an existing object's bytes is
+`errc::corrupt`; a missing key is `errc::not_found`. Network implementations map an unreachable
+service to `errc::unavailable` and rejected credentials or permissions to `errc::unauthorized`.
+Malformed or truncated stored bytes are `errc::corrupt`. The disk implementation additionally
+uses `errc::io` for local operating-system failures. Every error carries the logical key or local
+path in `error::context`.
+
+The disk implementation retains mapped index runs and Corosio range I/O. The in-memory
+implementation under `tests/sim/` stores only byte vectors, supports coroutine latency and a
+one-shot injected `error`, and survives store reopen while its shared backend handle remains alive.
+The same seeded crash schedule runs against both implementations.
 
 ## Layout and pack format
 
@@ -31,7 +61,7 @@ share chunks without a file-per-object bottleneck.
 <root>/tmp/
 ```
 
-`open` creates missing directories and refuses a marker other than format 1 with
+The disk backend's `open` creates missing directories and refuses a marker other than format 1 with
 `errc::unsupported`. A pack begins with its id. Every following chunk is one append-only frame:
 an eight-byte frame magic, raw and compressed lengths (`u32` each), an algorithm byte, the 32-byte
 digest, and an individually zstd-compressed payload. A sealed pack ends with a sorted chunk table
@@ -98,9 +128,9 @@ mismatch returns `errc::corrupt` with the digest in `error::context`. See
 scheme tags.
 
 `read` loads only the chunk headers and compressed byte ranges that overlap the caller's range.
-Pack file reads and writes use Corosio `random_access_file`; synchronous directory creation and
-atomic manifest rename are limited to filesystem metadata operations. Corosio open failures are
-converted to `errc::io` at the private boundary.
+Disk-backend pack reads and writes use Corosio `random_access_file`; synchronous directory creation
+and atomic complete-object renames are limited to filesystem metadata operations and use
+`runtime::offload`. Corosio open failures are converted to `errc::io` at the private boundary.
 
 ## Remote blob availability
 
@@ -133,6 +163,22 @@ the first chunk or descriptor reaches a pack. A successful callback permits the 
 write. An error is returned unchanged; no pack frame, index run, index manifest, object map, or
 collection manifest is modified, and a previously unknown digest remains `absent`. A duplicate
 whole-content identity that is already present returns without another callback.
+
+The callback and the persistence backend are separate contracts. After a successful callback, pack
+frames and the chunk-list descriptor are written through the selected backend. A durability barrier
+completes before the object map can publish the object, and run-set and collection manifests use the
+same data-before-metadata ordering. A successful `store::put` therefore means the selected backend
+has accepted every byte needed to recover the object at its configured durability level. The disk
+backend preserves the existing `store_options::durable` per-range synchronization behavior while
+publication barriers order metadata in both durability modes. With `durable == false`, a process
+crash remains recoverable but power-loss guarantees still depend on the operating system cache.
+
+An unreachable write-through target returns `errc::unavailable` before the local disk store is
+changed. Existing local objects, registered-local chunks, and repository state remain readable
+offline; hydration fails only when the requested bytes are absent locally. A store explicitly
+configured with an unreachable remote persistence backend also returns `errc::unavailable` and has
+no implicit disk fallback. Offline operation uses the disk backend, with remote publication kept in
+the optional write-through callback.
 
 The callback is a lazy Capy coroutine running on the caller's runtime executor. It performs its own
 I/O with Corosio or `runtime::offload`; it must not block the executor or call `runtime::block_on`.
@@ -317,12 +363,12 @@ For each selected pack, the collector holds its mutation lock, records a pending
 marker, then copies each non-tombstoned physical frame into a new sealed pack. A copied frame is
 its original header and compressed (or encrypted) payload byte-for-byte: compaction never
 decompresses, recompresses, or recalculates its identity. The new locations are inserted into a
-newest index run. The replacement pack and run are only preparation; the collection manifest
-rename is the commit point. That manifest replaces the old pack's partial bitmap with an all-dead
-bitmap. Only after the rename does the index manifest publish the new run and does the collector
+newest index run. The replacement pack and run are only preparation; the atomic
+collection-manifest put is the commit point. That manifest replaces the old pack's partial bitmap
+with an all-dead bitmap. Only after that put does the index manifest publish the new run and does the collector
 remove the old pack and its pending marker.
 
-Recovery reads a pending marker before opening the index. Before the collection manifest rename,
+Recovery reads a pending marker before opening the index. Before the collection manifest put,
 it removes the replacement pack; after it, it removes the old pack. A crash between the collection
 manifest and index-manifest updates rebuilds the index from packs and the committed tombstones.
 Thus an uncommitted replacement never survives the next open and a committed replacement is found
@@ -345,9 +391,10 @@ that limit or when its pack seals. The run header carries the algorithm, record 
 two-byte (65,536-bucket) fanout table of u32 cumulative counts, a 10-bit-per-key bloom filter,
 and a checksum.
 
-`MANIFEST` lists live runs with their algorithm and the highest indexed pack id. `open` maps each
-immutable run read-only through the private cross-platform mapping helper; it does not read record
-bytes. Lookups check the algorithm's memtable, then mapped runs newest first. A bloom hit selects
+`MANIFEST` lists live runs with their algorithm and the highest indexed pack id. On the disk
+backend, `open` maps each immutable run read-only through the private cross-platform mapping helper;
+other backends load the run into owned memory. Lookups check the algorithm's memtable, then runs
+newest first. A bloom hit selects
 the two-byte fanout slice, and `std::lower_bound` searches the mapped 48-byte records directly.
 The index therefore issues no file I/O on its lookup path. Mapping keeps per-run process memory
 bounded by the 256 KiB fanout header plus the bloom filter; mapped record pages remain managed by
@@ -355,9 +402,10 @@ the operating system.
 
 Runs are size-tiered by record count. When more than four runs share a tier, compaction performs a
 streaming k-way merge by iterating mapped input records and incrementally writing the replacement
-with Corosio through bounded 4 MiB buffers. It does not load input runs into memory. The replacement is synchronized and
+with backend range operations through bounded 4 MiB buffers. It does not load all input runs into
+memory. The replacement is synchronized and
 recorded in the manifest before the old runs are unmapped and removed. The manifest itself is
-written to a temporary file, synchronized, and atomically renamed.
+published with an atomic complete-object put after the replacement run's durability barrier.
 
 If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
 tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.

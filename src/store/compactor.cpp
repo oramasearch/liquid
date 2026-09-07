@@ -6,6 +6,7 @@
 #include <system_error>
 #include <utility>
 
+#include "backend.hpp"
 #include "faults.hpp"
 #include "pack.hpp"
 #include "store_impl.hpp"
@@ -15,17 +16,13 @@ namespace {
 
 constexpr std::uint64_t frame_header_size = 49;
 
-std::filesystem::path pack_path(const std::filesystem::path& root, std::uint32_t id) {
-    return root / "packs" / ("pack-" + std::to_string(id) + ".pack");
+std::string pack_key(std::uint32_t id) {
+    return "packs/pack-" + std::to_string(id) + ".pack";
 }
 
-std::filesystem::path pending_path(const std::filesystem::path& root,
-                                   std::uint64_t epoch,
-                                   std::uint32_t old_pack_id,
-                                   std::uint32_t new_pack_id) {
-    return root / "gc" /
-           ("compact-" + std::to_string(epoch) + "-" + std::to_string(old_pack_id) + "-" +
-            std::to_string(new_pack_id) + ".pending");
+std::string pending_key(std::uint64_t epoch, std::uint32_t old_pack_id, std::uint32_t new_pack_id) {
+    return "gc/compact-" + std::to_string(epoch) + "-" + std::to_string(old_pack_id) + "-" +
+           std::to_string(new_pack_id) + ".pending";
 }
 
 error compaction_error(errc code, std::string message, const std::filesystem::path& path) {
@@ -116,8 +113,7 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
     }
 
     if (old_pack_id == store_.current_pack_ && old_pack.appendable) {
-        auto sealed = co_await seal_pack(
-            pack_path(store_.root_, old_pack_id), old_pack, store_.options_.durable);
+        auto sealed = co_await seal_pack(store_.persistence_, pack_key(old_pack_id), old_pack);
         if (!sealed) {
             co_return std::unexpected(sealed.error());
         }
@@ -125,8 +121,8 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
     }
 
     const auto next_epoch = manifest.epoch + 1;
-    const auto marker = pending_path(store_.root_, next_epoch, old_pack_id, new_pack_id);
-    auto marker_written = co_await write_file(marker, {});
+    const auto marker = pending_key(next_epoch, old_pack_id, new_pack_id);
+    auto marker_written = co_await store_.persistence_->put(marker, {});
     if (!marker_written) {
         co_return std::unexpected(marker_written.error());
     }
@@ -136,9 +132,10 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
         if (manifest.dead(old_pack_id, frame)) {
             continue;
         }
-        auto copied = co_await append_pack_frame(pack_path(store_.root_, new_pack_id),
+        auto copied = co_await append_pack_frame(store_.persistence_,
+                                                 pack_key(new_pack_id),
                                                  replacement,
-                                                 pack_path(store_.root_, old_pack_id),
+                                                 pack_key(old_pack_id),
                                                  old_pack.entries[frame],
                                                  store_.options_.durable);
         if (!copied) {
@@ -148,8 +145,7 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
         replacement.data_end += frame_header_size + copied->location.length;
         moved.push_back({copied->id, copied->location});
     }
-    auto sealed = co_await seal_pack(
-        pack_path(store_.root_, new_pack_id), replacement, store_.options_.durable);
+    auto sealed = co_await seal_pack(store_.persistence_, pack_key(new_pack_id), replacement);
     if (!sealed) {
         co_return std::unexpected(sealed.error());
     }
@@ -158,7 +154,7 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
     collection_manifest committed = manifest;
     committed.epoch = next_epoch;
     mark_all(committed.tombstones[old_pack_id], old_pack.entries.size());
-    auto saved = co_await save_collection_manifest(store_.root_, committed);
+    auto saved = co_await save_collection_manifest(store_.persistence_, committed);
     if (!saved) {
         co_return std::unexpected(saved.error());
     }
@@ -175,17 +171,14 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
         co_return std::unexpected(indexed.error());
     }
 
-    const auto old_path = pack_path(store_.root_, old_pack_id);
-    std::error_code old_size_error;
-    const auto old_bytes = std::filesystem::file_size(old_path, old_size_error);
-    try {
-        visit_fault({fault_operation::remove, fault_phase::before, old_path});
-        std::filesystem::remove(old_path);
-        visit_fault({fault_operation::remove, fault_phase::after, old_path});
-        std::error_code ignored;
-        std::filesystem::remove(marker, ignored);
-    } catch (const std::system_error& caught) {
-        co_return std::unexpected(compaction_error(errc::io, caught.what(), old_path));
+    auto old_bytes = co_await backend_size(store_.persistence_, pack_key(old_pack_id));
+    auto removed = co_await store_.persistence_->remove(pack_key(old_pack_id));
+    if (!removed && removed.error().code != errc::not_found) {
+        co_return std::unexpected(removed.error());
+    }
+    removed = co_await store_.persistence_->remove(marker);
+    if (!removed && removed.error().code != errc::not_found) {
+        co_return std::unexpected(removed.error());
     }
     store_.packs_.erase(old_pack_id);
     store_.packs_.emplace(new_pack_id, std::move(replacement));
@@ -193,13 +186,11 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
         store_.current_pack_ = new_pack_id + 1;
         store_.packs_.emplace(store_.current_pack_, pack_contents{store_.current_pack_, {}, 16});
     }
-    std::error_code size_error;
-    const auto replacement_bytes =
-        std::filesystem::file_size(pack_path(store_.root_, new_pack_id), size_error);
-    if (!size_error) {
-        report.bytes_written_by_compaction += replacement_bytes;
-        if (!old_size_error && old_bytes > replacement_bytes) {
-            report.bytes_reclaimed_by_compaction += old_bytes - replacement_bytes;
+    auto replacement_bytes = co_await backend_size(store_.persistence_, pack_key(new_pack_id));
+    if (replacement_bytes) {
+        report.bytes_written_by_compaction += *replacement_bytes;
+        if (old_bytes && *old_bytes > *replacement_bytes) {
+            report.bytes_reclaimed_by_compaction += *old_bytes - *replacement_bytes;
         }
     }
     ++report.packs_compacted;
