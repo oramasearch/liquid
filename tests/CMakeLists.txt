@@ -46,6 +46,7 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
   test_repository.cpp
+  test_structural_merge.cpp
   test_collaboration.cpp
   test_stale_reasoning.cpp
   test_runtime.cpp

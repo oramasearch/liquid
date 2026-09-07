@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]
+liquid resolve <spec>... [package options] | resolve <conflict-id> --accept|--left|--right|--from <file>
 ```
 
 ## Description
 
-Resolve package constraints against an available candidate universe.
+Resolve package constraints or commit an explicit conflict resolution.
 
 ## Options
 
@@ -21,6 +21,10 @@ Resolve package constraints against an available candidate universe.
 | `--explain` | — | Show the selected candidates and rejected constraints. | false |
 | `--json` | — | Write stable JSON instead of text. | false |
 | `--why` | `<package>` | Explain the constraints selecting a package. | none |
+| `--accept` | — | Accept a suspicious structural merge proposal. | false |
+| `--left` | — | Resolve a conflict with its left value. | false |
+| `--right` | — | Resolve a conflict with its right value. | false |
+| `--from` | `<file>` | Resolve a conflict with content from this file. | none |
 
 ## Availability
 

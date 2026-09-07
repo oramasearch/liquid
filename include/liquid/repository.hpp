@@ -406,6 +406,19 @@ struct LIQUID_EXPORT operation_record {
     actor by;
     std::chrono::sys_seconds at;
     session_id session;
+    std::map<std::string, std::string> metadata;
+};
+
+enum class conflict_resolution_kind : std::uint8_t {
+    accept_proposal,
+    left,
+    right,
+    blob,
+};
+
+struct LIQUID_EXPORT conflict_resolution_request {
+    conflict_resolution_kind kind{conflict_resolution_kind::accept_proposal};
+    std::vector<std::byte> blob;
 };
 
 struct LIQUID_EXPORT undo_skip {
@@ -569,6 +582,8 @@ public:
     [[nodiscard]] runtime::task<conflict> conflict_at(std::string path);
     [[nodiscard]] runtime::task<digest> record_conflict(conflict value);
     [[nodiscard]] runtime::task<change_id> resolve_conflict(std::string path);
+    [[nodiscard]] runtime::task<change_id> resolve_conflict(digest conflict_id,
+                                                            conflict_resolution_request resolution);
     [[nodiscard]] runtime::task<std::vector<operation_record>> operations(log_options options = {});
     [[nodiscard]] runtime::task<undo_report> undo(op_id operation);
     [[nodiscard]] runtime::task<undo_report> undo_session(session_id session,

@@ -44,6 +44,10 @@
 #include "store/pack.hpp"
 #include "vfs/repository_access.hpp"
 
+#if defined(LIQUID_HAS_BUILTIN_FRONTEND)
+extern "C" const liquid_frontend_module_v1* liquid_builtin_tree_sitter_module_v1(void);
+#endif
+
 namespace liquid {
 namespace {
 namespace cbor = encoding::cbor;
@@ -87,6 +91,7 @@ struct stored_operation {
     actor by;
     std::chrono::sys_seconds at;
     bool agent{};
+    std::map<std::string, std::string> metadata;
 };
 struct persisted_drip {
     actor author;
@@ -576,6 +581,10 @@ auto encode_repository_document(const repository_document& value)
                                  {"before", cbor::value{effect.before}},
                                  {"after", cbor::value{effect.after}}}));
         }
+        auto operation_metadata = cbor::value::map{};
+        for (const auto& [name, value] : operation.metadata) {
+            operation_metadata.emplace_back(name, value);
+        }
         ops.push_back(
             map({{"id", digest_value(operation.id.value)},
                  {"kind", cbor::value{operation.kind}},
@@ -596,7 +605,8 @@ auto encode_repository_document(const repository_document& value)
                                         : cbor::value{cbor::null{}}},
                  {"head_after",
                   operation.head_after ? digest_value(operation.head_after->value)
-                                       : cbor::value{cbor::null{}}}}));
+                                       : cbor::value{cbor::null{}}},
+                 {"metadata", cbor::value{std::move(operation_metadata)}}}));
     }
     auto locks = cbor::value::array{};
     for (const auto& lock : value.locks) {
@@ -1021,6 +1031,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         const auto* lock_effects = find(item, "locks");
         const auto* head_before = find(item, "head_before");
         const auto* head_after = find(item, "head_after");
+        const auto* operation_metadata = find(item, "metadata");
         const auto* kind_text =
             operation_kind ? std::get_if<std::string>(&operation_kind->data) : nullptr;
         const auto* from_text = from ? std::get_if<std::string>(&from->data) : nullptr;
@@ -1097,6 +1108,21 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     failure(errc::corrupt, "invalid operation session", "repository document"));
             }
             std::ranges::copy(*raw, decoded_operation.session.bytes.begin());
+        }
+        if (operation_metadata) {
+            const auto* values = std::get_if<cbor::value::map>(&operation_metadata->data);
+            if (!values) {
+                return std::unexpected(failure(
+                    errc::corrupt, "invalid operation metadata fields", "repository document"));
+            }
+            for (const auto& [key, value] : *values) {
+                const auto* name = std::get_if<std::string>(&key.data);
+                const auto* text = std::get_if<std::string>(&value.data);
+                if (!name || !text || !decoded_operation.metadata.emplace(*name, *text).second) {
+                    return std::unexpected(failure(
+                        errc::corrupt, "invalid operation metadata fields", "repository document"));
+                }
+            }
         }
         const auto decode_entry_effect =
             [&](const cbor::value& effect) -> result<stored_entry_effect> {
@@ -2693,7 +2719,8 @@ auto merge_operation(const repository_document& before,
                      algorithm hash_algorithm,
                      session_id session,
                      const actor& actor,
-                     std::size_t item_count) -> result<stored_operation> {
+                     std::size_t item_count,
+                     std::map<std::string, std::string> metadata = {}) -> result<stored_operation> {
     auto id = random_operation_id(hash_algorithm);
     if (!id) {
         return std::unexpected(id.error());
@@ -2706,6 +2733,7 @@ auto merge_operation(const repository_document& before,
     output.session = session;
     output.by = actor;
     output.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    output.metadata = std::move(metadata);
     append_entry_effects(before.root, after.root, {}, output.entries);
     auto ref_names = std::set<std::string>{};
     for (const auto& [name, id_value] : before.refs) {
@@ -3048,6 +3076,499 @@ auto import_synced_directory(const node_id& repository,
         return std::unexpected(acknowledgement.error());
     }
     return {};
+}
+
+struct historical_merge_file {
+    std::string path;
+    digest reference;
+};
+
+struct working_merge_file {
+    std::string path;
+    std::string name;
+    node_id parent{};
+    working_entry* entry{};
+};
+
+void collect_working_merge_files(working_entry& directory,
+                                 std::string prefix,
+                                 std::map<node_id, working_merge_file>& output) {
+    for (auto& [name, entry] : directory.entries) {
+        const auto path = prefix.empty() ? name : prefix + "/" + name;
+        if (entry.kind == entry_kind::file) {
+            output[entry.node] = {path, name, directory.node, &entry};
+        } else if (entry.kind == entry_kind::directory) {
+            collect_working_merge_files(entry, path, output);
+        }
+    }
+}
+
+void collect_const_working_merge_files(const working_entry& directory,
+                                       std::string prefix,
+                                       std::map<node_id, historical_merge_file>& output) {
+    for (const auto& [name, entry] : directory.entries) {
+        const auto path = prefix.empty() ? name : prefix + "/" + name;
+        if (entry.kind == entry_kind::file) {
+            output[entry.node] = {path, entry.object};
+        } else if (entry.kind == entry_kind::directory) {
+            collect_const_working_merge_files(entry, path, output);
+        }
+    }
+}
+
+runtime::task<std::map<node_id, historical_merge_file>> files_at_change(store& objects,
+                                                                        change_id revision) {
+    auto encoded = co_await objects.get(revision.value);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto change = objects::decode_change(*encoded);
+    if (!change) {
+        co_return std::unexpected(change.error());
+    }
+    auto pending = std::vector<std::pair<digest, std::string>>{{change->root, {}}};
+    auto output = std::map<node_id, historical_merge_file>{};
+    while (!pending.empty()) {
+        auto [tree_id, prefix] = std::move(pending.back());
+        pending.pop_back();
+        auto tree_bytes = co_await objects.get(tree_id);
+        if (!tree_bytes) {
+            co_return std::unexpected(tree_bytes.error());
+        }
+        auto tree = objects::decode_tree(*tree_bytes);
+        if (!tree) {
+            co_return std::unexpected(tree.error());
+        }
+        for (const auto& entry : tree->entries) {
+            const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
+            if (entry.kind == node_kind::blob) {
+                output[entry.node] = {path, entry.ref};
+            } else if (entry.kind == node_kind::tree) {
+                pending.emplace_back(entry.ref, path);
+            }
+        }
+    }
+    co_return output;
+}
+
+runtime::task<std::optional<change_id>>
+common_change_ancestor(store& objects, const node_id& repository, change_id left, change_id right) {
+    auto left_distances = std::map<std::string, std::size_t>{};
+    auto pending = std::vector<std::pair<change_id, std::size_t>>{{left, 0}};
+    for (auto cursor = std::size_t{}; cursor < pending.size(); ++cursor) {
+        const auto [current, distance] = pending[cursor];
+        const auto key = to_string(current.value);
+        if (!left_distances.emplace(key, distance).second) {
+            continue;
+        }
+        auto bytes = co_await objects.get(current.value);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto value = objects::decode_change(*bytes);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        for (const auto& parent : value->parents) {
+            if (parent.repo_id == repository) {
+                pending.emplace_back(parent.id, distance + 1);
+            }
+        }
+    }
+    pending = {{right, 0}};
+    auto visited = std::set<std::string>{};
+    auto best = std::optional<change_id>{};
+    auto best_score =
+        std::pair{std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()};
+    for (auto cursor = std::size_t{}; cursor < pending.size(); ++cursor) {
+        const auto [current, distance] = pending[cursor];
+        const auto key = to_string(current.value);
+        if (!visited.insert(key).second) {
+            continue;
+        }
+        if (const auto found = left_distances.find(key); found != left_distances.end()) {
+            const auto score =
+                std::pair{std::max(found->second, distance), found->second + distance};
+            if (score < best_score) {
+                best = current;
+                best_score = score;
+            }
+        }
+        auto bytes = co_await objects.get(current.value);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto value = objects::decode_change(*bytes);
+        if (!value) {
+            co_return std::unexpected(value.error());
+        }
+        for (const auto& parent : value->parents) {
+            if (parent.repo_id == repository) {
+                pending.emplace_back(parent.id, distance + 1);
+            }
+        }
+    }
+    co_return best;
+}
+
+runtime::task<digest> store_merge_blob(store& objects, std::vector<std::byte> contents) {
+    auto content = co_await objects.put(std::move(contents));
+    if (!content) {
+        co_return std::unexpected(content.error());
+    }
+    auto record = repository_detail::store_access::blob_for(objects, *content);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    record->content = {};
+    auto encoded = objects::encode(*record);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    co_return co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+}
+
+runtime::task<std::vector<std::byte>>
+load_merge_blob(store& objects, digest reference, std::string path) {
+    auto encoded = co_await objects.get(reference);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto record = objects::decode_blob(*encoded);
+    if (!record) {
+        co_return std::unexpected(record.error());
+    }
+    if (record->content.alg == algorithm::blake3 || record->content.alg == algorithm::sha256 ||
+        record->content.alg == algorithm::blake3_keyed) {
+        co_return co_await objects.get(record->content);
+    }
+    auto output = std::vector<std::byte>{};
+    output.reserve(static_cast<std::size_t>(record->size));
+    for (const auto& chunk : record->chunks) {
+        auto content = co_await objects.get(chunk);
+        if (!content) {
+            co_return std::unexpected(content.error());
+        }
+        output.insert(output.end(), content->begin(), content->end());
+    }
+    if (output.size() != record->size) {
+        co_return std::unexpected(
+            failure(errc::corrupt, "blob size does not match content", std::move(path)));
+    }
+    co_return output;
+}
+
+runtime::task<digest> store_merge_conflict(store& objects,
+                                           repository_document& candidate,
+                                           working_merge_file& selected,
+                                           conflict value) {
+    auto encoded = objects::encode(value);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto stored = co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    std::erase_if(candidate.conflict_values, [&](const conflict_reference& existing) {
+        return existing.path == selected.path;
+    });
+    candidate.conflict_values.push_back({.path = selected.path,
+                                         .id = *stored,
+                                         .selected = selected.entry->object,
+                                         .selected_kind = node_kind::blob});
+    co_return *stored;
+}
+
+auto structural_fallback(const error& value) -> bool {
+    return value.code == errc::unsupported || value.code == errc::not_found;
+}
+
+runtime::task<void> store_text_merge_conflict(store& objects,
+                                              repository_document& candidate,
+                                              working_merge_file& selected,
+                                              conflict value,
+                                              std::string explanation,
+                                              std::string node) {
+    value.kind = conflict_kind::text;
+    value.explanation = std::move(explanation);
+    value.reasons = {value.explanation};
+    value.node = std::move(node);
+    auto stored = co_await store_merge_conflict(objects, candidate, selected, std::move(value));
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    co_return result<void>{};
+}
+
+runtime::task<void>
+update_merged_entry(working_merge_file& selected,
+                    digest reference,
+                    std::map<node_id, crdt::directory_document>& candidate_documents) {
+    const auto document = candidate_documents.find(selected.parent);
+    if (document == candidate_documents.end()) {
+        co_return std::unexpected(
+            failure(errc::corrupt, "merged file parent document is absent", selected.path));
+    }
+    const auto now =
+        std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now());
+    auto recorded = document->second.put_entry(
+        selected.name,
+        {"blob", selected.entry->node, selected.entry->mode, to_string(reference)},
+        crdt::commit_options{.message = "structural merge",
+                             .time = now.time_since_epoch().count()});
+    if (!recorded) {
+        co_return std::unexpected(recorded.error());
+    }
+    selected.entry->object = reference;
+    co_return result<void>{};
+}
+
+runtime::task<void>
+apply_structural_merges(store& objects,
+                        const repository_document& before,
+                        repository_document& candidate,
+                        std::map<node_id, crdt::directory_document>& candidate_documents,
+                        const std::map<node_id, digest>& remote_writes,
+                        std::optional<change_id> remote_head,
+                        frontend_graph* graph,
+                        std::map<std::string, std::string>& operation_metadata) {
+    if (!before.head || !remote_head || remote_writes.empty()) {
+        co_return result<void>{};
+    }
+    auto ancestor =
+        co_await common_change_ancestor(objects, before.repository, *before.head, *remote_head);
+    if (!ancestor) {
+        co_return std::unexpected(ancestor.error());
+    }
+    auto local_files = std::map<node_id, historical_merge_file>{};
+    collect_const_working_merge_files(before.root, {}, local_files);
+    auto selected_files = std::map<node_id, working_merge_file>{};
+    collect_working_merge_files(candidate.root, {}, selected_files);
+    if (!*ancestor) {
+        for (const auto& [node, remote_reference] : remote_writes) {
+            const auto local = local_files.find(node);
+            auto selected = selected_files.find(node);
+            if (local == local_files.end() || selected == selected_files.end() ||
+                same_digest(local->second.reference, remote_reference)) {
+                continue;
+            }
+            auto value = repository_detail::entry_conflict(
+                selected->second.path, local->second.reference, remote_reference, node, node);
+            if (value) {
+                auto stored = co_await store_merge_conflict(
+                    objects, candidate, selected->second, std::move(*value));
+                if (!stored) {
+                    co_return std::unexpected(stored.error());
+                }
+            }
+        }
+        co_return result<void>{};
+    }
+    auto base_files = co_await files_at_change(objects, **ancestor);
+    if (!base_files) {
+        co_return std::unexpected(base_files.error());
+    }
+    auto merge_index = std::size_t{};
+    for (const auto& [node, remote_reference] : remote_writes) {
+        const auto base = base_files->find(node);
+        const auto local = local_files.find(node);
+        auto selected = selected_files.find(node);
+        if (base == base_files->end() || local == local_files.end() ||
+            selected == selected_files.end() ||
+            same_digest(base->second.reference, local->second.reference) ||
+            same_digest(base->second.reference, remote_reference) ||
+            same_digest(local->second.reference, remote_reference)) {
+            continue;
+        }
+        auto base_bytes =
+            co_await load_merge_blob(objects, base->second.reference, selected->second.path);
+        auto left_bytes =
+            co_await load_merge_blob(objects, local->second.reference, selected->second.path);
+        auto right_bytes =
+            co_await load_merge_blob(objects, remote_reference, selected->second.path);
+        if (!base_bytes || !left_bytes || !right_bytes) {
+            co_return std::unexpected(!base_bytes   ? base_bytes.error()
+                                      : !left_bytes ? left_bytes.error()
+                                                    : right_bytes.error());
+        }
+        auto value = conflict{
+            .base = base->second.reference,
+            .left = local->second.reference,
+            .right = remote_reference,
+            .region = {.path = selected->second.path, .nodes = conflict_node_range{node, node}}};
+        const auto record_metadata = [&](std::string algorithm, std::string grammar) {
+            const auto prefix =
+                merge_index == 0 ? std::string{} : "merge." + std::to_string(merge_index) + ".";
+            operation_metadata[prefix + "algorithm"] = std::move(algorithm);
+            operation_metadata[prefix + "grammar"] = std::move(grammar);
+            operation_metadata[prefix + "base"] = to_string(base->second.reference);
+            operation_metadata[prefix + "left"] = to_string(local->second.reference);
+            operation_metadata[prefix + "right"] = to_string(remote_reference);
+            operation_metadata[prefix + "path"] = selected->second.path;
+            ++merge_index;
+        };
+        auto language = graph ? graph->language_for_path(selected->second.path)
+                              : result<frontend_language>{std::unexpected(failure(
+                                    errc::not_found, "structural frontend is unavailable"))};
+        if (!language) {
+            auto stored = co_await store_text_merge_conflict(
+                objects,
+                candidate,
+                selected->second,
+                std::move(value),
+                "text file has no grammar; both sides changed node " + node_text(node),
+                node_text(node));
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+            record_metadata("entry-three-way-v1", "text");
+            continue;
+        }
+        auto base_digest = hash(algorithm::blake3, *base_bytes);
+        auto left_digest = hash(algorithm::blake3, *left_bytes);
+        auto right_digest = hash(algorithm::blake3, *right_bytes);
+        if (!base_digest || !left_digest || !right_digest) {
+            co_return std::unexpected(!base_digest   ? base_digest.error()
+                                      : !left_digest ? left_digest.error()
+                                                     : right_digest.error());
+        }
+        auto base_tree = co_await graph->parse(
+            {.language = language->language, .blob = *base_digest, .source = *base_bytes});
+        auto left_tree = co_await graph->parse(
+            {.language = language->language, .blob = *left_digest, .source = *left_bytes});
+        auto right_tree = co_await graph->parse(
+            {.language = language->language, .blob = *right_digest, .source = *right_bytes});
+        if (!base_tree || !left_tree || !right_tree) {
+            const auto& parse_error = !base_tree   ? base_tree.error()
+                                      : !left_tree ? left_tree.error()
+                                                   : right_tree.error();
+            if (structural_fallback(parse_error)) {
+                auto stored = co_await store_text_merge_conflict(
+                    objects,
+                    candidate,
+                    selected->second,
+                    std::move(value),
+                    "text structural merge fallback for " + language->language + ": " +
+                        parse_error.message,
+                    node_text(node));
+                if (!stored) {
+                    co_return std::unexpected(stored.error());
+                }
+                record_metadata("entry-three-way-v1", "text:" + language->language);
+                continue;
+            }
+            co_return std::unexpected(!base_tree   ? base_tree.error()
+                                      : !left_tree ? left_tree.error()
+                                                   : right_tree.error());
+        }
+        auto symbol_request = [&](const std::vector<std::byte>& source) {
+            return frontend_build_request{.language = language->language,
+                                          .source_path = selected->second.path,
+                                          .source = source};
+        };
+        auto base_symbols = co_await graph->symbols(symbol_request(*base_bytes));
+        auto left_symbols = co_await graph->symbols(symbol_request(*left_bytes));
+        auto right_symbols = co_await graph->symbols(symbol_request(*right_bytes));
+        if (!base_symbols || !left_symbols || !right_symbols) {
+            const auto& symbol_error = !base_symbols   ? base_symbols.error()
+                                       : !left_symbols ? left_symbols.error()
+                                                       : right_symbols.error();
+            if (structural_fallback(symbol_error)) {
+                auto stored = co_await store_text_merge_conflict(
+                    objects,
+                    candidate,
+                    selected->second,
+                    std::move(value),
+                    "text structural merge fallback for " + language->language + ": " +
+                        symbol_error.message,
+                    node_text(node));
+                if (!stored) {
+                    co_return std::unexpected(stored.error());
+                }
+                record_metadata("entry-three-way-v1", "text:" + language->language);
+                continue;
+            }
+            co_return std::unexpected(!base_symbols   ? base_symbols.error()
+                                      : !left_symbols ? left_symbols.error()
+                                                      : right_symbols.error());
+        }
+        auto offloaded = co_await runtime::offload([base_tree = std::move(*base_tree),
+                                                    left_tree = std::move(*left_tree),
+                                                    right_tree = std::move(*right_tree),
+                                                    base_symbols = std::move(*base_symbols),
+                                                    left_symbols = std::move(*left_symbols),
+                                                    right_symbols = std::move(*right_symbols),
+                                                    base_bytes = *base_bytes,
+                                                    left_bytes = *left_bytes,
+                                                    right_bytes = *right_bytes]() mutable {
+            return repository_detail::merge_structural(base_tree,
+                                                       left_tree,
+                                                       right_tree,
+                                                       base_bytes,
+                                                       left_bytes,
+                                                       right_bytes,
+                                                       &base_symbols,
+                                                       &left_symbols,
+                                                       &right_symbols);
+        });
+        if (!offloaded) {
+            co_return std::unexpected(offloaded.error());
+        }
+        auto merged = std::move(*offloaded);
+        if (!merged) {
+            co_return std::unexpected(merged.error());
+        }
+        if (merged->outcome != repository_detail::structural_merge_outcome::conflict) {
+            auto proposal_digest = hash(algorithm::blake3, merged->proposal);
+            if (!proposal_digest) {
+                co_return std::unexpected(proposal_digest.error());
+            }
+            auto proposal_tree = co_await graph->parse({.language = language->language,
+                                                        .blob = *proposal_digest,
+                                                        .source = merged->proposal});
+            if (!proposal_tree) {
+                co_return std::unexpected(proposal_tree.error());
+            }
+            if (repository_detail::has_recovery_node(proposal_tree->root)) {
+                merged->outcome = repository_detail::structural_merge_outcome::suspicious;
+                merged->reasons.push_back("merged syntax contains ERROR or MISSING nodes");
+            }
+        }
+        if (merged->outcome == repository_detail::structural_merge_outcome::clean) {
+            auto stored = co_await store_merge_blob(objects, std::move(merged->proposal));
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+            auto updated =
+                co_await update_merged_entry(selected->second, *stored, candidate_documents);
+            if (!updated) {
+                co_return std::unexpected(updated.error());
+            }
+        } else {
+            value.kind = merged->outcome == repository_detail::structural_merge_outcome::suspicious
+                             ? conflict_kind::suspicious_merge
+                             : conflict_kind::structural;
+            value.reasons = merged->reasons;
+            value.explanation =
+                value.reasons.empty() ? "structural edits overlap" : value.reasons.front();
+            value.node = merged->node.value_or(node_text(node));
+            if (value.kind == conflict_kind::suspicious_merge) {
+                auto proposal = co_await store_merge_blob(objects, std::move(merged->proposal));
+                if (!proposal) {
+                    co_return std::unexpected(proposal.error());
+                }
+                value.proposal = *proposal;
+            }
+            auto stored = co_await store_merge_conflict(
+                objects, candidate, selected->second, std::move(value));
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+        }
+        record_metadata(merged->algorithm, merged->grammar);
+    }
+    co_return result<void>{};
 }
 
 struct sync_import_state {
@@ -7250,6 +7771,72 @@ runtime::task<change_id> repository::resolve_conflict(std::string path) {
     }
     co_return *resolved;
 }
+runtime::task<change_id> repository::resolve_conflict(digest conflict_id,
+                                                      conflict_resolution_request resolution) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    if (impl_->current.root_is_paged) {
+        auto loaded = co_await impl_->load_paged_root();
+        if (!loaded) {
+            co_return std::unexpected(loaded.error());
+        }
+    }
+    const auto found =
+        std::ranges::find_if(impl_->current.conflict_values, [&](const conflict_reference& value) {
+            return same_digest(value.id, conflict_id);
+        });
+    if (found == impl_->current.conflict_values.end()) {
+        co_return std::unexpected(
+            failure(errc::not_found, "conflict does not exist", to_string(conflict_id)));
+    }
+    auto encoded = co_await impl_->objects.get(found->id);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto value = objects::decode_conflict(*encoded);
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    auto contents = std::vector<std::byte>{};
+    if (resolution.kind == conflict_resolution_kind::blob) {
+        contents = std::move(resolution.blob);
+    } else {
+        auto reference = std::optional<digest>{};
+        if (resolution.kind == conflict_resolution_kind::accept_proposal) {
+            reference = value->proposal;
+            if (!reference) {
+                co_return std::unexpected(
+                    failure(errc::invalid_argument, "conflict has no merge proposal", found->path));
+            }
+        } else if (resolution.kind == conflict_resolution_kind::left) {
+            reference = value->left;
+        } else if (resolution.kind == conflict_resolution_kind::right) {
+            reference = value->right;
+        } else {
+            co_return std::unexpected(
+                failure(errc::invalid_argument, "unknown conflict resolution", found->path));
+        }
+        auto loaded = co_await impl_->blob_contents(*reference, found->path);
+        if (!loaded) {
+            co_return std::unexpected(loaded.error());
+        }
+        contents = std::move(*loaded);
+    }
+    auto parts = split_path(found->path);
+    const auto* entry = parts ? lookup(impl_->current.root, *parts) : nullptr;
+    if (!parts || !entry || entry->kind != entry_kind::file) {
+        co_return std::unexpected(
+            parts ? failure(errc::not_found, "conflict file is absent", found->path)
+                  : parts.error());
+    }
+    const auto path = found->path;
+    auto written = co_await write(path, std::move(contents), {.mode = entry->mode});
+    if (!written) {
+        co_return std::unexpected(written.error());
+    }
+    co_return co_await resolve_conflict(path);
+}
 runtime::task<std::vector<operation_record>> repository::operations(log_options) {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -7264,7 +7851,8 @@ runtime::task<std::vector<operation_record>> repository::operations(log_options)
                           operation->to,
                           operation->by,
                           operation->at,
-                          operation->session});
+                          operation->session,
+                          operation->metadata});
     }
     co_return output;
 }
@@ -9143,6 +9731,7 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
     auto directory_states = std::map<node_id, std::unique_ptr<crdt::sync_state>>{};
     auto imported_drips = std::vector<persisted_drip>{};
     auto imported_refs = std::vector<std::pair<std::string, change_id>>{};
+    auto remote_writes = std::map<node_id, digest>{};
     repository_detail::store_access::begin_object_batch(impl_->objects);
     auto abort = [&] { repository_detail::store_access::abort_object_batch(impl_->objects); };
     auto import_state = sync_import_state{*candidate,
@@ -9167,6 +9756,28 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
             candidate_documents.emplace(node, std::move(received));
             continue;
         }
+        auto local_operations = candidate->second.operations();
+        auto remote_operations = received.operations();
+        if (!local_operations || !remote_operations) {
+            abort();
+            co_return std::unexpected(!local_operations ? local_operations.error()
+                                                        : remote_operations.error());
+        }
+        auto local_ids = std::set<node_id>{};
+        for (const auto& operation : *local_operations) {
+            local_ids.insert(operation.id);
+        }
+        for (const auto& operation : *remote_operations) {
+            if (operation.kind != crdt::operation_kind::write || local_ids.contains(operation.id)) {
+                continue;
+            }
+            auto reference = parse_digest(operation.ref);
+            if (!reference) {
+                abort();
+                co_return std::unexpected(reference.error());
+            }
+            remote_writes[operation.entry_id] = *reference;
+        }
         auto merged = candidate->second.merge(received);
         if (!merged) {
             abort();
@@ -9184,6 +9795,49 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
         abort();
         co_return std::unexpected(refs_applied.error());
     }
+    auto remote_head = std::optional<change_id>{};
+    for (const auto& [name, reference] : imported_refs) {
+        if (name == "main") {
+            remote_head = reference;
+        }
+    }
+    auto merge_metadata = std::map<std::string, std::string>{};
+    auto graph = std::optional<frontend_graph>{};
+#if defined(LIQUID_HAS_BUILTIN_FRONTEND)
+    if (!remote_writes.empty()) {
+        auto linked = frontend_module::linked(liquid_builtin_tree_sitter_module_v1());
+        if (!linked) {
+            abort();
+            co_return std::unexpected(linked.error());
+        }
+        auto module = std::make_shared<frontend_module>(std::move(*linked));
+        auto opened = co_await frontend_graph::open(
+            impl_->root_path / "STRUCTURAL_MERGE_GRAPH",
+            impl_->root_path,
+            std::move(module),
+            [](std::vector<std::byte>) -> runtime::task<std::vector<std::byte>> {
+                co_return std::unexpected(failure(
+                    errc::unsupported, "structural merge does not execute compiler actions"));
+            });
+        if (!opened) {
+            abort();
+            co_return std::unexpected(opened.error());
+        }
+        graph = std::move(*opened);
+    }
+#endif
+    auto structurally_merged = co_await apply_structural_merges(impl_->objects,
+                                                                impl_->current,
+                                                                *candidate,
+                                                                candidate_documents,
+                                                                remote_writes,
+                                                                remote_head,
+                                                                graph ? &*graph : nullptr,
+                                                                merge_metadata);
+    if (!structurally_merged) {
+        abort();
+        co_return std::unexpected(structurally_merged.error());
+    }
     auto locks_applied = co_await reconcile_lock_drips(*candidate, imported_drips, impl_->objects);
     if (!locks_applied) {
         abort();
@@ -9196,7 +9850,8 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
                                  impl_->hash_algorithm,
                                  impl_->session,
                                  impl_->signing_key.identity(),
-                                 input.size());
+                                 input.size(),
+                                 std::move(merge_metadata));
     if (!merge) {
         abort();
         co_return std::unexpected(merge.error());

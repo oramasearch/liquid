@@ -118,7 +118,11 @@ std::vector<digest> extract_conflict(std::span<const std::byte> bytes) {
     if (!conflict) {
         return {};
     }
-    return {conflict->base, conflict->left, conflict->right};
+    auto output = std::vector<digest>{conflict->base, conflict->left, conflict->right};
+    if (conflict->proposal) {
+        append_once(output, *conflict->proposal);
+    }
+    return output;
 }
 
 std::vector<digest> extract_blob(std::span<const std::byte> bytes) {

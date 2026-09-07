@@ -90,6 +90,7 @@ auto rollback(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
 auto conflict(int argc, char** argv) -> int;
+auto conflicts(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
 auto tiers(int argc, char** argv) -> int;
@@ -147,6 +148,10 @@ constexpr auto flags_resolve = std::to_array<flag>({
     {"--explain", {}, "Show the selected candidates and rejected constraints.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
     {"--why", "<package>", "Explain the constraints selecting a package.", "none"},
+    {"--accept", {}, "Accept a suspicious structural merge proposal.", "false"},
+    {"--left", {}, "Resolve a conflict with its left value.", "false"},
+    {"--right", {}, "Resolve a conflict with its right value.", "false"},
+    {"--from", "<file>", "Resolve a conflict with content from this file.", "none"},
 });
 constexpr auto flags_log = std::to_array<flag>({
     {"--ops", {}, "Show signed drips and operation metadata.", "false"},
@@ -515,6 +520,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::conflict},
+    {"conflicts",
+     "conflicts [--json]",
+     "list unresolved conflicts",
+     "available",
+     flag_json,
+     "List conflict identifiers, kinds, paths, reasons, and structural nodes.",
+     "liquid conflicts --json",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::conflicts},
     {"data",
      "data branch <database> [--session <id>] | data list [--json] | data <discard|promote> <id>",
      "manage session database branches",
@@ -568,12 +583,12 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::diff},
     {"resolve",
-     "resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json] | resolve --why "
-     "<package> <spec>... [--universe <path>] [--reuse] [--json]",
-     "concretise package specifications",
+     "resolve <spec>... [package options] | resolve <conflict-id> "
+     "--accept|--left|--right|--from <file>",
+     "concretise packages or resolve a conflict",
      "available",
      flags_resolve,
-     "Resolve package constraints against an available candidate universe.",
+     "Resolve package constraints or commit an explicit conflict resolution.",
      "liquid resolve example@^1.0 --universe packages",
      normal_exit,
      argument_policy::ordinary,

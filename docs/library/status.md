@@ -317,6 +317,11 @@ path ([`data-branching.md`](data-branching.md)).
 
 ## Phase 5: formats, projection, resolution, and configuration
 
+**Structural merge.** Issue #69 structurally merges concurrently changed source blobs after CRDT
+convergence. Disjoint definition edits combine, suspicious proposals remain conflict values, and
+the public resolution API and `conflicts`/`resolve` commands preserve explicit review. See
+[`structural-merge.md`](structural-merge.md).
+
 **Format registry.** Phase 5 includes the format registry and dependency-free ZIP, tar, HDF5,
 Parquet, SQLite, linked-binary, PDF, notebook, office-document, package, wheel, JAR, safetensors,
 and non-executing pickle codecs through a versioned C module ABI. Format trees drive opt-in
