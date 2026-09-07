@@ -81,6 +81,7 @@ constexpr std::array<std::byte, 8> remotes_magic_v1{std::byte{'L'},
 constexpr std::size_t file_window_size = 8U * 1024U * 1024U;
 constexpr std::size_t maximum_delta_depth = 8;
 constexpr std::size_t maximum_delta_candidates = 256;
+constexpr std::size_t maximum_delta_candidates_per_scope = 8;
 constexpr std::size_t maximum_delta_candidate_bytes = 16U * 1024U * 1024U;
 constexpr std::size_t maximum_delta_attempted_scopes = 256;
 constexpr std::size_t minimum_delta_chunk_bytes = 8U * 1024U;
@@ -842,8 +843,15 @@ void store_backend::remember_delta_candidate(std::string_view scope,
         return;
     }
     auto& candidates = delta_candidates_[std::string{scope}];
-    if (!candidates.empty()) {
+    const auto existing = candidates.find(resemblance);
+    if (existing == candidates.end() && candidates.size() >= maximum_delta_candidates_per_scope) {
         return;
+    }
+    if (existing != candidates.end()) {
+        delta_candidate_bytes_ -= existing->second.bytes.size();
+        std::erase_if(delta_candidate_order_, [scope, resemblance](const delta_candidate_key& key) {
+            return key.scope == scope && key.resemblance == resemblance;
+        });
     }
     candidates.insert_or_assign(
         resemblance, delta_candidate{id, std::vector<std::byte>{bytes.begin(), bytes.end()}});
@@ -898,10 +906,8 @@ store_backend::store_chunk(digest id,
     }
     auto candidates = std::vector<delta_dictionary>{};
     if (delta_eligible) {
-        const auto can_attempt = !delta_attempted_scopes_.contains(scope) &&
-                                 delta_attempted_scopes_.size() < maximum_delta_attempted_scopes;
         const auto scoped = delta_candidates_.find(scope);
-        if (can_attempt && scoped != delta_candidates_.end()) {
+        if (scoped != delta_candidates_.end()) {
             const auto candidate = scoped->second.find(resemblance);
             if (candidate != scoped->second.end() &&
                 (candidate->second.id.alg != id.alg || candidate->second.id.bytes != id.bytes)) {
@@ -919,7 +925,6 @@ store_backend::store_chunk(digest id,
                     }
                 }
                 if (depth < maximum_delta_depth) {
-                    delta_attempted_scopes_.insert(scope);
                     candidates.push_back({candidate->second.id, candidate->second.bytes});
                 }
             }
@@ -928,7 +933,7 @@ store_backend::store_chunk(digest id,
     const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
     auto& destination = packs_.at(current_pack_);
     auto candidate_bytes = std::vector<std::byte>{};
-    if (delta_eligible && !delta_candidates_.contains(scope)) {
+    if (delta_eligible) {
         candidate_bytes = raw;
     }
     auto written = co_await append_pack_entry(
