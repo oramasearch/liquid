@@ -4,7 +4,8 @@
 libliquid's TAAP verifier directly. A Pod is admitted only when every image in `containers`,
 `initContainers`, and `ephemeralContainers` is pinned by SHA-256 and has at least one completely
 verified attestation from an accepted issuer under an accepted profile. In `attestation+log` mode,
-that attestation must also have a positive transparency inclusion verdict.
+that attestation must also pass the shared checkpoint, parent-tile, and inclusion verifier against
+the policy set's pinned log identity and witnesses.
 
 ## Named policy sets
 
@@ -19,14 +20,32 @@ Each file uses this strict versioned JSON form:
 ```json
 {
   "v": 1,
-  "mode": "attestation",
+  "mode": "attestation+log",
   "issuers": ["taap:1:ed25519:example"],
   "profiles": ["image_provenance/1"],
   "exempt": ["registry.example/bootstrap/*"],
   "exempt_namespaces": ["kube-system"],
   "attestation_source": "/var/lib/liquid-admission/store",
   "log": {
+    "mode": "verify",
     "lake": "https://lake.example",
+    "trust": {
+      "identity": {
+        "taap_id": "taap:1:ed25519:lake-production",
+        "public_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "witness_threshold": 2,
+      "witnesses": [
+        {
+          "endpoint": "https://witness-1.example/checkpoint",
+          "public_key": "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+        },
+        {
+          "endpoint": "https://witness-2.example/checkpoint",
+          "public_key": "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
+        }
+      ]
+    },
     "max_checkpoint_age_seconds": 300
   }
 }
@@ -37,6 +56,14 @@ admits but still emits decisions. Exempt image patterns use `*` and `?` globs. A
 permits the whole Pod; otherwise every image must verify or match an exemption. `--store` or
 `--attestation-source` overrides the source in every set, with command-line flags taking precedence
 over the documented environment variables.
+
+Within `log`, `mode` is `deny` or `verify`. `deny` is the explicit fail-closed selection: every
+otherwise-valid attestation is refused with `transparency.policy_denied`. `verify` requires a
+valid HTTP or HTTPS Lake URL, one Ed25519 log identity key, and a
+witness threshold no larger than the configured witness list. Identity and witness keys are
+32-byte lowercase hexadecimal values. The checkpoint signer must equal the configured TAAP id;
+Lake's `/v1/identity` and `/v1/transparency_log_configuration` responses are not trust anchors for
+admission.
 
 The server reads policy files through `runtime::offload` and checks their contents from a Capy
 reload coroutine. A changed directory is prepared in full and swapped as one map only after every
@@ -70,14 +97,20 @@ The internal `attestation_source` contract is one coroutine operation,
 implementation calls a node store at `GET /v1/attestations?subject=<digest>` and expects a JSON
 `attestations` array containing hex-encoded canonical attestation records. This is not a sync route.
 
-The `log_verifier` contract returns `included`, `not_included`, or `unavailable`. The shared
-transparency client now performs #83's complete parent-tile walk, cache reauthentication, and
-checkpoint-bound inclusion verification. The admission lake adapter still reads only
-`GET /v1/transparency_checkpoint`, writes the last response to `--log-cache`, and returns
-`unavailable`; wiring that adapter to the shared client remains separate work. Consequently
-`attestation+log` currently refuses with `log verifier unavailable`. Offline operation reads the
-cache and its configured age but refuses anything it cannot prove; it never treats cached presence
-as inclusion.
+The `log_verifier` contract receives the exact canonical attestation bytes and returns an outcome,
+checkpoint identity, checkpoint sequence, tree size, and reason. The Lake adapter uses
+`transparency::http_log_source` and `transparency::log_client` directly. It verifies the checkpoint
+signature and witness threshold against the policy trust, authenticates every full or partial
+entry and parent tile through the selected checkpoint, locates the exact attestation bytes, and
+verifies the checkpoint-bound inclusion proof. `--log-cache` records the canonical body of the
+last successfully verified checkpoint for inspection; it is never sufficient for offline
+admission, and a network failure remains `unavailable`.
+
+Cryptographic, trust, malformed-response, tile, and proof failures are `not_included` with the
+shared verifier's exact reason. Missing or forged tiles therefore retain their level, index, and
+width in both the decision reason and the considered-evidence record. Transport failures are
+`unavailable`. The adapter caches immutable tile bytes in memory, but the shared verifier decodes
+and authenticates the complete path on every decision.
 
 ## Decision record and stream
 
@@ -95,13 +128,30 @@ same fields:
   "image": "registry.example/app@sha256:...",
   "outcome": "denied",
   "reasons": [{"rule_id": "attestation.missing", "message": "no attestation"}],
-  "evidence": []
+  "evidence": [
+    {
+      "attestation": "blake3:...",
+      "profile": "image_provenance/1",
+      "issuer": "taap:1:ed25519:builder",
+      "verified": true,
+      "rule_id": "attestation.verified",
+      "reason": "attestation accepted",
+      "log": {
+        "outcome": "included",
+        "checkpoint": "sha256:...",
+        "checkpoint_sequence": 7,
+        "tree_size": 1024,
+        "reason": "included in verified log"
+      }
+    }
+  ]
 }
 ```
 
 `subject` is null only when the request supplied no valid SHA-256 image digest. Evidence entries
-name the attestation digest, profile, issuer, verification result, rule id, and reason for every
-attestation considered. The AdmissionReview response always places all per-image records in
+name the attestation digest, profile, issuer, verification result, rule id, reason, and nullable
+log result for every attestation considered. Log outcomes are `included`, `not_included`,
+`unavailable`, or `denied`. The AdmissionReview response always places all per-image records in
 `response.status.decisions`; status code 200 means every record allowed the Pod and 403 means at
 least one denied it.
 
@@ -109,10 +159,12 @@ The stable rule ids are `policy.audit_only`, `policy.image_exempt`,
 `policy.namespace_exempt`, `image.digest_required`, `attestation.source_unavailable`,
 `attestation.missing`, `attestation.subject_mismatch`, `attestation.issuer_rejected`,
 `attestation.profile_rejected`, `attestation.signature_invalid`, `attestation.verified`,
-`transparency.verifier_unavailable`, and `transparency.not_included`. The stable human reason
+`transparency.policy_denied`, `transparency.verifier_unavailable`, and
+`transparency.not_included`. The stable human reason
 vocabulary remains `no attestation`, `issuer not accepted`, `profile not accepted`,
 `signature invalid`, `image not pinned by digest`, `not in log`, `checkpoint stale`,
-`log verifier unavailable`, `attestation source unavailable`, and `exempt`.
+`log verifier unavailable`, `log verification denied by policy`, `attestation source unavailable`,
+and `exempt`; detailed verifier failures retain their original messages.
 
 The control listener publishes the same records at `GET /v1/decisions` as server-sent events.
 Event ids are process-local increasing sequence numbers. `?after=<sequence>` replays newer retained
@@ -144,5 +196,4 @@ or mount a liquid store directory. A `liquid serve sync` double cannot satisfy t
 
 The webhook configuration, CRD, serving-certificate issuance, event adapter, and deployment
 ownership remain in oramasearch/k0s#15. Image projection and automatic statement emission remain in
-#28. Admission still needs to connect its checkpoint-only lake adapter to #83's shared verifier. It
-does not add runtime enforcement after a Pod has started and does not change lake.
+#28. Admission does not add runtime enforcement after a Pod has started and does not change lake.

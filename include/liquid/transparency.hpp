@@ -209,7 +209,10 @@ public:
     log_client& operator=(const log_client&) = delete;
 
     [[nodiscard]] runtime::task<checkpoint> current_checkpoint();
+    [[nodiscard]] runtime::task<checkpoint> current_checkpoint(const log_trust& trust);
     [[nodiscard]] runtime::task<void> verify_tiles(checkpoint value);
+    [[nodiscard]] runtime::task<checkpoint> verify_inclusion(std::vector<std::byte> attestation,
+                                                             const log_trust& trust);
     [[nodiscard]] runtime::task<checkpoint_trust>
     verify_inclusion(repository& destination,
                      std::vector<std::byte> attestation,

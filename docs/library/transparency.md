@@ -106,6 +106,14 @@ add newly received tiles to the cache. A successful walk replaces the cache with
 for that checkpoint, which drops superseded partial widths instead of retaining one version per log
 append.
 
+Callers that already hold trust anchors can pass `log_trust` to `current_checkpoint` or the
+repository-independent `verify_inclusion` overload. That path never consults the source's identity
+or witness-configuration endpoints: it verifies the selected checkpoint against the supplied
+identity and witnesses, then performs the same complete tile walk and checkpoint-bound inclusion
+proof. Admission policy sets use this overload so network responses cannot redefine cluster trust.
+The repository-backed overload retains its existing trusted-checkpoint persistence for CLI and
+repository workflows.
+
 An inclusion proof must bind the supplied exact canonical TAAP bytes, leaf index, tree size, root,
 and checkpoint. Before a consistency proof is requested or a bootstrap checkpoint is stored, the
 same complete tile walk authenticates the selected checkpoint. The consistency proof then binds

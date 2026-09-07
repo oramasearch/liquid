@@ -64,7 +64,7 @@ for what is implemented today.
 | [`library/forge-client.md`](library/forge-client.md) | Lake review records, coroutine calls, anchor advancement, polling events, error mapping, and the installable forge double. |
 | [`library/transparency.md`](library/transparency.md) | Lake checkpoint, tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 evidence verification; trust bootstrap and policy, CLI, failures, implementation notes, and fixture regeneration. |
 | [`library/tuf.md`](library/tuf.md) | TUF root bootstrap, ordered metadata verification, rollback state, target acceptance gate, and fixture provenance. |
-| [`library/admission.md`](library/admission.md) | Image provenance statements, atomically reloaded named policy sets, fail-closed evaluation, evidence sources, transparency behavior, TLS serving, structured decisions, and bounded replay. |
+| [`library/admission.md`](library/admission.md) | Image provenance statements, atomically reloaded named policy sets, fail-closed evaluation, policy-pinned transparency verification, TLS serving, structured decisions, and bounded replay. |
 | [`library/deploy.md`](library/deploy.md) | Operator control-plane deployment client, digest-pinned interim images, rollback, status, and the provisional OpenAPI contract. |
 
 ### Build engine and distribution

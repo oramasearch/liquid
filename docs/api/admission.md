@@ -51,7 +51,23 @@ An allowed one-image response has this shape:
           "reasons": [
             {"rule_id": "attestation.verified", "message": "attestation accepted"}
           ],
-          "evidence": []
+          "evidence": [
+            {
+              "attestation": "blake3:...",
+              "profile": "image_provenance/1",
+              "issuer": "taap:1:ed25519:builder",
+              "verified": true,
+              "rule_id": "attestation.verified",
+              "reason": "attestation accepted",
+              "log": {
+                "outcome": "included",
+                "checkpoint": "sha256:...",
+                "checkpoint_sequence": 7,
+                "tree_size": 1024,
+                "reason": "included in verified log"
+              }
+            }
+          ]
         }
       ]
     }
@@ -61,6 +77,12 @@ An allowed one-image response has this shape:
 
 A denied response changes `allowed` to false and status code to 403. Its message identifies the
 first denied image, while `decisions` still contains the record for every image evaluated.
+`evidence[].log` is null when log verification was not requested. Otherwise its `outcome` is
+`included`, `not_included`, `unavailable`, or `denied`; failure reasons preserve the shared
+verifier's tile coordinate where applicable. OpenAPI describes policy log mode and trust with
+`AdmissionLogPolicy` and `LogTrust`; `AdmissionDecision`, `Evidence`, and `LogVerification`
+describe the same record returned by `admission_verify` and retained by `admission_decisions` over
+MCP.
 
 `/v1/decisions` uses `id: <sequence>`, `event: decision`, and one or more `data:` lines containing
 the decision JSON. The in-memory replay bound defaults to 256. Sequence numbers and retained

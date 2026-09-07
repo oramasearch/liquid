@@ -189,8 +189,9 @@ benchmarks live under `bench/` and are excluded unless their build option is ena
 Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and the fail-closed
 `liquid serve admission` Kubernetes webhook. Its TLS admission and independent control listeners
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
-metrics, REST, OpenAPI, and MCP are implemented. The shared #83 transparency verifier is complete;
-the admission lake adapter remains fail-closed until it calls that verifier.
+metrics, REST, OpenAPI, and MCP are implemented. Liquid #268 connects log-mode admission to the
+shared #83 verifier with policy-pinned log identity and witness trust, complete parent-tile and
+inclusion verification, and recorded outcomes.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
