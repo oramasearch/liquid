@@ -67,7 +67,9 @@ fallback, a pinned 560-package Spack export, digest-less patch pinning, and the 
 subset.
 `merge_measure.cpp` imports Git merge histories, reconstructs every changed path across base,
 parents, and human result, and classifies the structural proposal. Its CTest fixture is a committed
-fast-import history with disjoint function additions.
+fast-import history with disjoint function additions. Its merge hooks and the structural
+convergence fixture's exported-object transfer remain covered through libliquid in both static and
+shared builds.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered

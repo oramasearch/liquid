@@ -34,16 +34,16 @@ struct structural_merge_result {
     std::string grammar;
 };
 
-[[nodiscard]] auto merge_structural(const parse_tree& base_tree,
-                                    const parse_tree& left_tree,
-                                    const parse_tree& right_tree,
-                                    std::span<const std::byte> base_source,
-                                    std::span<const std::byte> left_source,
-                                    std::span<const std::byte> right_source,
-                                    const symbol_record* base_symbols = nullptr,
-                                    const symbol_record* left_symbols = nullptr,
-                                    const symbol_record* right_symbols = nullptr)
+[[nodiscard]] LIQUID_EXPORT auto merge_structural(const parse_tree& base_tree,
+                                                  const parse_tree& left_tree,
+                                                  const parse_tree& right_tree,
+                                                  std::span<const std::byte> base_source,
+                                                  std::span<const std::byte> left_source,
+                                                  std::span<const std::byte> right_source,
+                                                  const symbol_record* base_symbols = nullptr,
+                                                  const symbol_record* left_symbols = nullptr,
+                                                  const symbol_record* right_symbols = nullptr)
     -> result<structural_merge_result>;
-[[nodiscard]] auto has_recovery_node(const parse_node& node) -> bool;
+[[nodiscard]] LIQUID_EXPORT auto has_recovery_node(const parse_node& node) -> bool;
 
 } // namespace liquid::repository_detail
