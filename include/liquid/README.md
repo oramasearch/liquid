@@ -45,9 +45,10 @@ lookup remains asynchronous in `repository.hpp`, and wrapper compatibility event
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
 `build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
 install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
-`projection.hpp` exposes deterministic package, OCI, Helm, OSTree, and bootc targets. OSTree and
-bootc sources carry optional relative mount paths, options select the ref and repository mode, and
-the report returns the OSTree commit independently of an OCI image digest.
+`projection.hpp` exposes deterministic binary package, Debian source package, OCI, Helm, OSTree,
+and bootc targets. Debian source requests can carry a change and observed build evidence; OSTree
+and bootc sources carry optional relative mount paths, options select the ref and repository mode,
+and the report returns the OSTree commit independently of an OCI image digest.
 
 `admission.hpp` defines the versioned image-admission policy and CBOR/JSON decision record,
 rule-attributed review results, per-policy log mode and trust anchors, detailed transparency

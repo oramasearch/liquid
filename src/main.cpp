@@ -191,6 +191,7 @@ constexpr auto flags_project = std::to_array<flag>({
      "Overlay a tree at an optional relative path; repeatable.",
      "none"},
     {"--mode", "<archive-z2|bare-user>", "Select the OSTree repository mode.", "archive-z2"},
+    {"--distribution", "<suite>", "Set the Debian source distribution.", "unstable"},
     {"--compat-gzip", {}, "Use gzip-compatible package compression.", "false"},
     {"--allow-abi-break", {}, "Permit an incompatible ABI projection.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
@@ -577,20 +578,22 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::config},
     {"project",
-     "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
-     "<result|tree|installer> [--overlay [path=]<tree>] "
+     "project <oci|ostree|bootc|deb|rpm|apk|helm|macos-pkg|macos-dmg|msix|winget|homebrew|pkgbuild|"
+     "appimage|flatpak|snap|dsc> <result|change|tree|installer> [--overlay [path=]<tree>] "
      "[--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] "
      "[--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] "
      "[--replaces <package>] [--service <value>] [--identifier <id>] "
      "[--publisher <subject>] [--display-name <name>] [--executable <path>] "
      "[--entitlements <path>] [--installer-url <url>] "
+     "[--distribution <suite>] "
      "[--compat-gzip] [--allow-abi-break] [--json]",
-     "project a build into an installable package, commit, image, or chart",
+     "project content into packages, commits, images, or charts",
      "available",
      flags_project,
-     "Project a recorded result or tree into a package, image, Helm chart, OSTree commit, or "
-     "bundled-runtime artifact.",
-     "liquid project oci blake3:<result-digest> --name example --version 1.0.0 --json",
+     "Project a recorded result, change, tree, or installer into a package, source package, image, "
+     "Helm chart, OSTree commit, or bundled-runtime artifact.",
+     "liquid project dsc blake3:<change-or-install-tree> --name example --version 1.0.0 "
+     "--distribution unstable --out projection",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::project},

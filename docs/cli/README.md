@@ -111,13 +111,12 @@ built binary under the build directory before CTest compares it with the committ
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
+| `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap\|dsc> <result\|change\|tree> [--name <name>] [--version <version>] [--distribution <suite>] [target options]` | Project checked content into Tier A artifacts or a Debian Tier B source package. | available |
 | `project` | `project <oci\|deb\|rpm\|apk\|helm\|macos-pkg\|macos-dmg\|msix\|winget> <result\|install-tree\|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--json]` | Project a checked tree into a package or image, or an MSIX into winget manifests. Platform installers are unsigned and include a signing request. | available on the target platform; winget is portable |
 | `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
 | `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart, with optional ownership checking. | available |
 | `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
 | `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
-| `project` | `project <oci\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into a native package, image, ecosystem recipe, or bundled-runtime format. | available |
-| `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm> <result\|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2\|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked tree into packages, OCI or bootc images, an OSTree commit, or a Helm chart. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
 | `cache` | `cache stats [--json]` | Show build-cache statistics. | available |
@@ -520,12 +519,6 @@ Recorded remote inputs and expected outputs hydrate through the repository's con
 a produced path opens that project's persistent cache. It verifies the result and attestation before
 writing JSON. `--dsse` writes an in-toto Statement v1 inside a DSSE-compatible envelope, projected
 from the same canonical TAAP record.
-`project` accepts a result ID or install-tree digest. A bare tree also requires `--arch`; a result
-uses its action platform and refuses a conflicting override. Repeatable `--depends` values are
-additive to reader-derived dependencies. `--against` accepts a package directory, dpkg status
-inventory, or RPM package/path dump and refuses every overlapping owned path. `--replaces` names an
-allowed owner, derives the format's conflict/replacement metadata, and includes the package and
-paths in JSON `replacements`. Helm services use
 `project` accepts a result ID or tree digest. Package, OCI, and bootc projections from a bare tree
 also require `--arch`; a result uses its action platform and refuses a conflicting override.
 Repeatable `--depends` values are additive to reader-derived dependencies. Helm services use
@@ -536,6 +529,13 @@ dependency labels, and the ABI override bit. Homebrew and PKGBUILD emit ecosyste
 their payload archives; AppImage, Flatpak, and Snap emit bundled-runtime layouts. Formats without
 an attachment mechanism place DSSE evidence in `<artifact>.attestations.json`. See
 [projection.md](../library/projection.md).
+
+`project dsc <change|install-tree> --name <name> --version <version> --distribution unstable
+--out <dir>` selects Debian Tier B source output. A change uses its recorded source tree, history,
+and matching build evidence when present; an install tree resolves to its producing result. The
+command writes the unpacked source tree, deterministic orig and Debian tarballs, an unsigned
+`.dsc`, and an adjacent attestation collection. Unknown licence or copyright data is printed as a
+diagnostic and written as `UNKNOWN`, never inferred. OpenPGP signing is a later sponsor action.
 
 `install` accepts a liquid-projected `.deb`, `.rpm`, `.apk`, or an install-tree directory. It
 stages the next generation below `<root>/.liquid/generations`, applies embedded declarative intent,

@@ -1,17 +1,21 @@
 # Package and image projection
 
-Issues #28, #76, #77, #78, and #80 implement projection from a result's checked install tree, or
-from an explicit install-tree digest, into `.deb`, `.rpm`, `.apk`, OCI image layouts, Helm charts,
-macOS packages and disk images, Windows MSIX and winget manifests, Homebrew bottles, Arch recipes,
-AppImages, Flatpak build directories, Snaps, OSTree commits, and bootc images. Projection does not
-convert one ecosystem package into another: every writer consumes the same canonical
-content-addressed file tree and explicit metadata request.
+Issues #28, #76, #77, #78, #79, and #80 implement projection from a result's checked install tree,
+or from an explicit install-tree digest, into `.deb`, `.rpm`, `.apk`, Debian source packages, OCI
+image layouts, Helm charts, macOS packages and disk images, Windows MSIX and winget manifests,
+Homebrew bottles, Arch recipes, AppImages, Flatpak build directories, Snaps, OSTree commits, and
+bootc images. Projection does not convert one ecosystem package into another: every writer consumes
+the same canonical content-addressed file tree and explicit metadata request.
+
+Issue #79 adds Debian-only Tier B source projection from a recorded change or the result that
+produced an install tree. Other source-policy formats are not claimed.
 
 ## Public contract
 
 `liquid/projection.hpp` defines `projection_request`, `package_metadata`, service values, target
 options (including OCI entrypoint and command vectors), and
-`project(repository&, projection_request)`. Sources are result IDs or tree digests. Package, OCI,
+`project(repository&, projection_request)`. Sources are result IDs or tree digests; a source can
+also retain its `change_id` so generated changelog entries use recorded messages and dates. Package, OCI,
 and bootc targets require an architecture because no producing action exists to supply one for a
 bare tree. A result supplies its action platform, output tree, source attestations, completion
 epoch, and ABI verdicts.
@@ -24,7 +28,8 @@ the commit checksum separately from the projected artifact digest.
 
 The report returns artifact paths and SHA-256 digests, all source and projection attestation
 digests, immutable image pins, derived and declared dependency labels, derived replacement
-relationships and their paths, and whether an incompatible ABI was explicitly allowed. Projection
+relationships and their paths, diagnostics such as unknown source licence data, and whether an
+incompatible ABI was explicitly allowed. Projection
 artifacts are ordinary files or OCI-layout directories;
 publication to a registry is outside this library operation.
 Package identity fields must be safe single path components; relationship fields, target options,
@@ -49,6 +54,43 @@ the built-in format registry:
   than an embedded OpenPGP signature.
 - Alpine output is a deterministic pair of gzip members. Its `.PKGINFO` carries the SHA-256
   `datahash`, relationship fields, and `so:` dependencies.
+
+## Debian Tier B source packages
+
+`projection_target::debian_source`, exposed as `liquid project dsc`, writes an unpacked
+`<name>-<version>/` tree, `<name>_<version>.orig.tar.gz`,
+`<name>_<version>-<release>.debian.tar.gz`, and an unsigned `.dsc`. The existing sorted tar writer
+and owned raw-DEFLATE gzip encoder produce both archives. The `.dsc` records MD5, SHA-1, and
+SHA-256 checksums and is the subject of the adjacent `projection/1`, source-provenance, and SBOM
+collection. OpenPGP signing is deliberately absent: a sponsor applies `debsign` after review.
+
+Generated policy files have one documented input each:
+
+| File | Derived from |
+|---|---|
+| `debian/control` | package metadata plus build executables and observed manifest/toolchain paths mapped by the committed Debian peer table |
+| `debian/rules` | the lowered target's argv, working directory, and environment, quoted as data in `dh` overrides |
+| `debian/changelog` | liquid change messages and recorded UTC dates, falling back to `SOURCE_DATE_EPOCH` when no change is attached |
+| `debian/copyright` | SBOM/package licence and copyright fields in DEP-5 form |
+| `debian/<package>.install` | canonical target output paths translated to Debian staging paths |
+| maintainer scripts | the closed `install_intent/1` vocabulary and fixed issue #80 templates |
+
+The source tree also contains `debian/source/format` with `3.0 (quilt)` and
+`debian/upstream/metadata`. Existing upstream `debian/` files are excluded, so request data cannot
+replace generated policy. Shell interpreters are refused as build commands; arbitrary shell text
+does not pass through to `debian/rules`.
+
+`src/projection/fixtures/debian-bookworm-path-packages.tsv` is derived once in the pinned Debian
+bookworm peer with `dpkg-query -S`. The exact query output remains beside each normalized package
+name. Rows marked `implicit` belong to Debian's required build environment and are not repeated in
+`Build-Depends`; mapped `explicit` rows are emitted. Unknown paths are never converted to guessed
+package names. `tools/projection-peers/refresh-debian-path-packages.sh` is the reviewable refresh
+path.
+
+Missing or `NOASSERTION` licence and copyright fields become the literal value `UNKNOWN` and are
+returned in `projection_report::diagnostics`; liquid does not invent a claim. A maintainer must
+still judge the package description, section, dependency-table coverage, licence completeness,
+upstream metadata, release suitability, and whether to sponsor and sign it.
 
 ## Install intent and generated scripts
 
@@ -392,6 +434,15 @@ and replacement derivation. Installer tests send `SIGKILL` after every staged fi
 current-generation switch, prove the previous generation remains selected, and complete the retry.
 The macOS and Windows workflow steps add native projection, temporary-certificate signing,
 installation, launch, and platform verification.
+
+The Debian source fixture is a C static library, CLI, pkg-config file, and manual page built by a
+lowered target. Portable tests pin `control`, `rules`, `changelog`, and `copyright` byte for byte,
+pin the unsigned `.dsc` SHA-256, compare both compressed archives across repeated projections,
+verify generated maintainer scripts, and cover `UNKNOWN` diagnostics and shell-command refusal.
+`tools/projection-peers/run-debian-source-interop.sh` requires `debuild -S`, a successful `sbuild`,
+zero errors and warnings from `lintian -EvIL +pedantic`, binary `.deb` installation, and execution
+of the installed CLI. The runner fails if any of those conditions is absent. This macOS host does
+not provide `sbuild` or lintian, so this policy-tool execution is deferred to the pinned Debian peer.
 
 `tools/projection-peers/run-homebrew-interop.sh` creates a temporary tap, serves the bottle over
 HTTP through `HOMEBREW_BOTTLE_DOMAIN`, pours it, and runs `brew test`. The broader peer runner adds

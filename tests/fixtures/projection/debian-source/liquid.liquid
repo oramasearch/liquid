@@ -1,0 +1,14 @@
+build package {
+  command: ["cmake", "-E", "env", "make", "all"]
+  toolchain: blake3:0000000000000000000000000000000000000000000000000000000000000000
+  outputs: [
+    path "bin/liquid-source-fixture",
+    path "include/liquid-source-fixture.h",
+    path "lib/libliquid-source-fixture.a",
+    path "lib/pkgconfig/liquid-source-fixture.pc",
+    path "share/man/man1/liquid-source-fixture.1"
+  ]
+  install {
+    cache ldconfig {}
+  }
+}

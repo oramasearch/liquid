@@ -1,0 +1,14 @@
+Source: liquid-source-fixture
+Section: devel
+Priority: optional
+Maintainer: Liquid maintainers <maintainers@orama.com>
+Build-Depends: cmake, debhelper-compat (= 13)
+Standards-Version: 4.6.2.0
+Rules-Requires-Root: no
+Homepage: https://github.com/oramasearch/liquid
+
+Package: liquid-source-fixture
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Liquid Debian source projection fixture
+ This package is built reproducibly from a digest-pinned liquid source tree.

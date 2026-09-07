@@ -12,6 +12,7 @@
 #include "liquid/export.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/install.hpp"
+#include "liquid/object.hpp"
 #include "liquid/runtime.hpp"
 
 namespace liquid {
@@ -35,6 +36,7 @@ enum class projection_target : std::uint8_t {
     appimage,
     flatpak,
     snap,
+    debian_source,
 };
 
 enum class platform_signing_system : std::uint8_t {
@@ -64,11 +66,13 @@ struct LIQUID_EXPORT package_metadata {
     std::vector<std::string> provides;
     std::vector<std::string> conflicts;
     std::vector<std::string> replaces;
+    std::string copyright;
 };
 
 struct LIQUID_EXPORT projection_source {
     std::variant<result_id, digest> value;
     std::filesystem::path path;
+    std::optional<change_id> change;
 };
 
 struct LIQUID_EXPORT projection_service {
@@ -96,6 +100,7 @@ struct LIQUID_EXPORT projection_options {
     std::string installer_url;
     std::string ostree_ref;
     ostree_repository_mode ostree_mode{ostree_repository_mode::archive_z2};
+    std::string distribution{"unstable"};
 };
 
 struct LIQUID_EXPORT projection_request {
@@ -105,6 +110,7 @@ struct LIQUID_EXPORT projection_request {
     projection_options options;
     std::vector<projection_service> services;
     std::optional<install_intent> install;
+    std::optional<result_id> build_evidence;
 };
 
 struct LIQUID_EXPORT generated_maintainer_scripts {
@@ -155,6 +161,7 @@ struct LIQUID_EXPORT projection_report {
     std::vector<projection_replacement> replacements;
     std::optional<digest> ostree_commit;
     bool abi_break_allowed{};
+    std::vector<std::string> diagnostics;
 };
 
 struct LIQUID_EXPORT platform_signing_options {

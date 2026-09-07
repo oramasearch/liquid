@@ -266,8 +266,10 @@ case verifies the sandboxed restart-hook arguments where a FUSE backend is insta
 package round trips, registry recognition, deterministic compression and output, OCI layers and
 attestation referrers, signed `projection/1`, digest-only Helm values, Homebrew bottles, Arch
 recipes, AppImage, Flatpak, Snap, adjacent DSSE collections, relocation refusal, and native Helm
-lint when the tool is installed. It round-trips the owned SquashFS through `unsquashfs` when that
-tool is installed. The pinned target digests are the macOS/Linux byte-identity contract.
+lint when the tool is installed. Debian source coverage pins the control, rules, changelog,
+copyright, and `.dsc` digest, and emits the peer fixture for `sbuild`, `lintian`, and `debuild`.
+It round-trips the owned SquashFS through `unsquashfs` when that tool is installed. The pinned
+target digests are the macOS/Linux byte-identity contract.
 attestation referrers, signed `projection/1`, digest-only Helm values, and native Helm lint when
 the tool is installed. It also pins twelve generated lifecycle scripts, quoting/refusal behavior,
 script attestation and SBOM binding, batch and installed-inventory ownership conflicts, and derived

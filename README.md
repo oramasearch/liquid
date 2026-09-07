@@ -28,7 +28,8 @@ Phase 2 build wrapper, cache, verification and provenance, the Phase 3
 remote blobs, replay and delta delivery, the Phase 4 query graph, daemon, search and structural
 edits, and the Phase 5 formats, projection, resolution and `.liquid` configuration are implemented
 as recorded in [`docs/library/status.md`](docs/library/status.md), which also lists the known
-limits. Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
+limits. Phase 5 projection includes Debian-only Tier B source packages as well as Tier A outputs.
+Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
 files. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client of
 it.
 
@@ -284,6 +285,9 @@ it.
 > notarisation run remains pending.
 > Binary readers derive package relationships, incompatible ABI verdicts refuse by default, and
 > signed `projection/1`, source provenance, and SBOM statements accompany OCI artifacts.
+> **Phase 5 now includes Debian Tier B source projection.** Recorded changes and producing results
+> project to unsigned `.dsc` files, deterministic source archives, generated Debian policy files,
+> and adjacent provenance. Other distribution source-policy formats remain deferred.
 > **Phase 5 dependency resolution is implemented.** Canonical
 > `package/1` and fully bound `concretised_spec/1` records carry versions, variants, virtual and
 > concrete dependencies, compiler and target constraints, conflicts, and patches. The public

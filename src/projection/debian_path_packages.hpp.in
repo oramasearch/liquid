@@ -1,0 +1,10 @@
+#pragma once
+
+#include <string_view>
+
+namespace liquid::projection_detail {
+
+inline constexpr auto debian_path_packages = std::string_view{R"liquid(
+@LIQUID_DEBIAN_PATH_PACKAGES@)liquid"};
+
+} // namespace liquid::projection_detail

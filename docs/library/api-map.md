@@ -80,6 +80,7 @@ owning issue in `error::context`.
 | `liquid/format.hpp` | #29 | implemented | fidelity tiers, descriptors, entries, trees and diffs; checked shared/static codec loading; the built-in global registry and resource limits |
 | `liquid/tiers.hpp` | #71 | implemented | pure registry-derived language, format, and platform support matrix values and `support_matrix()` |
 | `liquid/frontend_abi.h` | #65, #66, #205, liquify #3 | implemented | versioned C frontend and liquify plugin descriptors, language/query/command/panel registration, owned bytes, progress/cancellation callbacks, and the `units`, `compile_unit`, `assemble`, `symbols`, and optional concrete `syntax` operations |
+| `liquid/projection.hpp` | #28, #77, #78, #79, #80 | implemented | Tier A package/image and Debian Tier B source targets; result, change, tree, and install-tree sources; install intent; source distribution and licence metadata; generated scripts; batch and inventory conflict detection; replacement and diagnostic reports; coroutine projection; artifact and attestation reports; stable JSON output |
 | `liquid/projection.hpp` | #28, #76 | implemented | package, image, macOS, MSIX, and winget targets; result, install-tree, or installer sources; reproducibility and signing requests; external platform signing and native verification; artifact and attestation reports; and stable JSON output |
 | `liquid/projection.hpp` | #28, #80 | implemented | package/image targets, result or install-tree sources, install intent, generated scripts, package and service metadata, batch and inventory conflict detection, replacement reports, coroutine projection, artifact and attestation reports, and stable JSON output |
 | `liquid/install.hpp` | #80 | implemented | canonical `install_intent/1`, strict validation, lifecycle-script inputs, atomic generation install/list/rollback tasks, and generation reports |
@@ -1331,6 +1332,12 @@ work on the runtime blocking boundary. Completed trees live below `.liquid/gener
 single request against package files or an installed-package inventory. An allowed replacement is
 returned as `projection_report::replacements`. `generate_maintainer_scripts` exposes the exact
 four-script result used by each package writer. See [projection.md](projection.md).
+
+`projection_target::debian_source` selects Debian Tier B output. A `projection_source` may retain
+the `change_id` used for changelog history, while `projection_request::build_evidence` identifies
+the producing result for observed command, manifest, toolchain, provenance, and SBOM evidence.
+`projection_options::distribution` defaults to `unstable`; `package_metadata::copyright` and
+licence data feed DEP-5 output, and `projection_report::diagnostics` reports unknown claims.
 
 ### `liquid/configuration.hpp`
 
