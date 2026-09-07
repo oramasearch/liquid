@@ -590,6 +590,7 @@ add_library(libliquid
   src/search/repository.cpp
   src/secret/sealed_secret.cpp
   src/store.cpp
+  src/store/backend.cpp
   src/store/chunker.cpp
   src/store/collector.cpp
   src/store/compactor.cpp

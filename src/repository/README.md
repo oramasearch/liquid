@@ -5,6 +5,8 @@ or caller-owned shared store. A shared-store path argument is hashed into a repo
 state directory; the handle borrows the store, and repository, directory, ref, and result lease
 owners carry the repository identity. Redaction persists the caller's replacement and a signed marker before targeted store
 tombstoning, pack compaction, and the required `not_found` verification.
+Repository retention lease restoration uses the caller-owned store's selected persistence backend,
+so shared-store lease generations follow the same durability contract as pack and index metadata.
 
 Issue #86 validates caller-stated write bases before blob registration, content storage, or CRDT
 mutation. Persisted `config.agents` selects the TAAP actors that must supply a base. Version 2

@@ -19,7 +19,8 @@ action plan.
 
 ## Status
 
-The Phase 1 store exit criterion is met: the chunk store, repositories, capture, identity,
+The Phase 1 store exit criterion is met: the chunk store has an injected persistence backend with
+disk and in-memory implementations, and repositories, capture, identity,
 encryption, Git import and export, sync, clone, drive and the macOS/Linux checkout daemon are implemented
 inside libliquid. The Phase 2 build wrapper, cache, verification and provenance, the Phase 3
 encryption, Git import and export, sync, drive and the macOS/Linux checkout daemon are implemented

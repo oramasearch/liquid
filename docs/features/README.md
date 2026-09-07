@@ -157,6 +157,10 @@ specifies it.
 
 ## Status
 
+The implemented Phase 1 chunk store selects a coroutine-native persistence backend. Disk is the
+reference implementation, and the deterministic simulator also runs against an in-memory test
+implementation with injected latency and failures.
+
 This tree is the specification. Each document states implementation status where code has landed;
 unimplemented behavior remains explicit, and open decisions stay in each document's final section.
 The consolidated record of what is implemented, by phase, is

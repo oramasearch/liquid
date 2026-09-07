@@ -28,8 +28,10 @@ used by drive clients to import metadata before an on-demand read.
 pending-upload status, and the pin, unpin, configuration, and status operations.
 `vfs.hpp` accepts an optional bearer token so a drive mount can hydrate through its persisted
 remote endpoint.
-`store.hpp` exposes runtime remote-source registration, hydration and remote-access observation,
-and live local-byte accounting for long-running node stores.
+`store.hpp` exposes the coroutine-native persistence backend contract and disk factory, runtime
+remote-source registration, hydration and remote-access observation, and live local-byte
+accounting for long-running node stores. `store_options::backend` selects a caller-owned
+implementation; null preserves the disk-backed behavior at the store path.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
