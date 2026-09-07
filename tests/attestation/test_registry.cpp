@@ -98,6 +98,13 @@ auto example(std::string_view profile) -> liquid::attestation {
                             {"source_result", std::vector<std::string>{"blake3:result"}},
                             {"normalisation", "epoch,uid=0,gid=0,modes,sorted"},
                             {"tool", "liquid/test"}};
+    } else if (profile == "platform_signature/1") {
+        value.attributes = {{"platform", "macos"},
+                            {"unsigned_digest", "sha256:unsigned"},
+                            {"signed_digest", "sha256:signed"},
+                            {"signing_identity", "SHA256:fingerprint"},
+                            {"verification", "accepted"},
+                            {"notarization_ticket", "ticket-id"}};
     } else if (profile == "release_policy/1") {
         value.subject_kind = liquid::attestation_subject_kind::repository;
         value.attributes = {{"role", "targets"},
@@ -140,7 +147,7 @@ auto sign_unknown_profile(liquid::attestation value) -> liquid::attestation {
 
 TEST(AttestationRegistry, all_profiles_accept_examples_and_reject_missing_required_fields) {
     const auto& registry = liquid::attestation_profile_registry::global();
-    ASSERT_EQ(registry.profiles().size(), 16U);
+    ASSERT_EQ(registry.profiles().size(), 17U);
     for (const auto& profile : registry.profiles()) {
         auto accepted = registry.validate(example(profile.name));
         ASSERT_TRUE(accepted) << profile.name << ": " << accepted.error().message;

@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]
+liquid project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> <result|tree|installer> [--overlay [path=]<tree>] [--ref <name>] [--mode <archive-z2|bare-user>] [--name <name>] [--version <version>] [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--compat-gzip] [--allow-abi-break] [--json]
 ```
 
 ## Description
@@ -24,6 +24,12 @@ Project a recorded result or tree into a package, image, Helm chart, OSTree comm
 | `--against` | `<path>` | Check file ownership against packages or an installed database. | none |
 | `--replaces` | `<package>` | Permit owned paths by deriving replacement relationships. | none |
 | `--service` | `<value>` | Add a Helm service declaration; repeatable. | none |
+| `--identifier` | `<id>` | Set the platform package identifier. | derived from name |
+| `--publisher` | `<subject>` | Set the MSIX certificate subject. | development subject |
+| `--display-name` | `<name>` | Set the platform display name. | package name |
+| `--executable` | `<path>` | Set the packaged application executable. | derived from name |
+| `--entitlements` | `<path>` | Record macOS signing entitlements. | none |
+| `--installer-url` | `<url>` | Set the winget installer URL. | required for winget |
 | `--ref` | `<name>` | Set the OSTree ref. | required for OS targets |
 | `--overlay` | `[path=]<tree>` | Overlay a tree at an optional relative path; repeatable. | none |
 | `--mode` | `<archive-z2\|bare-user>` | Select the OSTree repository mode. | archive-z2 |

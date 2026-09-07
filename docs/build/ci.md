@@ -2,10 +2,11 @@
 
 GitHub Actions runs [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) for every push
 and pull request. Checkout recursively initializes the public Capy plus the private Corosio,
-automerge-cpp, HTTP, and oramacore-cpp submodules using `ORAMA_SUBMODULES_TOKEN`. The repository secret must exist
-and grant read access to `oramasearch/corosio`, `oramasearch/automerge-cpp`, and
-`oramasearch/http`, and `oramasearch/oramacore-cpp`; checkout fails before the build when it is
-absent. Local clones should use
+automerge-cpp, HTTP, and oramacore-cpp submodules using `ORAMA_SUBMODULES_TOKEN` when that secret
+is available, otherwise the job token. The preferred repository secret grants read access to
+`oramasearch/corosio`, `oramasearch/automerge-cpp`, `oramasearch/http`, and
+`oramasearch/oramacore-cpp`; a job token without that access fails during submodule checkout.
+Local clones should use
 `git clone --recurse-submodules`. Each job
 then builds without a dependency cache, runs CTest with failure output, and runs `liquid version`
 on each desktop platform.
@@ -26,8 +27,8 @@ the site job packages the committed tree.
 | Job | Runner | Compiler and build tools | Verification |
 |---|---|---|---|
 | Linux | `ubuntu-24.04` | Clang 19 and clang-format 19 from apt.llvm.org, `libstdc++-14-dev`, OpenSSL, zlib, libfuse3, SquashFS tools, PostgreSQL server/client, Autoconf, Automake, GNU `time`, CMake 3.28 or newer, Ninja | Configure, build, CTest including the FUSE mount, SquashFS round trip, and PostgreSQL data-branch scenarios; run the AppImage extraction peer; `liquid version` |
-| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario; pour and test a projected bottle from a temporary tap; `liquid version` |
-| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, current CMake and Ninja | Configure, build, CTest, `liquid version` |
+| macOS | `macos-15` | Homebrew LLVM, OpenSSL 3, PostgreSQL 17, Apple installer and signing tools, CMake 3.28 or newer, Ninja | Configure, build, CTest including the PostgreSQL data-branch scenario; pour and test a projected bottle from a temporary tap; byte-identical package projection; temporary-Keychain signing; `pkgutil`, install, launch, and sidecar verification; `liquid version` |
+| Windows | `windows-2022` | The runner's current `clang-cl` with the MSVC STL, Chocolatey OpenSSL, Windows SDK `makeappx` and `signtool`, current CMake and Ninja | Configure, build, CTest; MSIX projection; temporary-certificate Authenticode signing; `Add-AppxPackage`, launch, signature and sidecar verification; `liquid version` |
 | Linux sanitizers | `ubuntu-24.04` | Clang 19 with AddressSanitizer and UndefinedBehaviorSanitizer, OpenSSL, zlib, libfuse3 | Debug configure, build, CTest including the FUSE mount scenario |
 | Linux self-host | `ubuntu-24.04` | Clang 19, CMake, Ninja, libfuse3 | CMake bootstrap, two `liquid wrap` builds, 100% second-run disk hits, byte-identical static library and CLI, shared libliquid build |
 | Offline CLI | `ubuntu-24.04`, `macos-15` | The platform toolchain above | Every `liquid-cli` test inside the platform sandbox with networking denied; explicit push, pull, remote-execution, and remote-cache refusals |
@@ -61,6 +62,17 @@ repository at no cost. Linux arm64 verification is deferred until a suitable run
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
 `-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
 
+The installer steps run after the ordinary suite. macOS projects the same native fixture twice and
+compares the unsigned packages byte for byte. It creates distinct self-signed application and
+installer identities in a temporary Keychain, trusts the installer certificate only for the job,
+signs without notarisation, installs to `CurrentUserHomeDirectory`, runs the installed executable,
+and removes the trust entry. Windows discovers the newest installed SDK tools, creates and trusts a
+temporary code-signing certificate, projects and signs an MSIX, checks
+`Get-AuthenticodeSignature`, installs with `Add-AppxPackage`, runs the installed executable, and
+removes the package and certificate. Neither job has release credentials. The first real Apple
+notarisation, ticket, date, and `spctl` result remain the explicit release gate in
+[projection.md](../library/projection.md#macos-package-and-disk-image).
+
 The hot-update demo builds a loadable definition object and drives one `liquid-hot-demo` process
 through `value=1` and `value=2`, proving tier-1 redirection at its Capy resumption boundary on
 macOS arm64 and Linux x86_64. The tier-3 case executes the restart hook through the ordinary build
@@ -73,12 +85,13 @@ The Linux jobs install `libfuse3-dev`, `fuse3`, Autoconf, and Automake. Configur
 pkg-config package on Linux, and the mount test exercises a 64 MiB repository through libfuse3
 when the runner exposes `/dev/fuse`. If the runner cannot provide a FUSE device, the test reports
 that FUSE is unavailable and is skipped rather than silently substituting the materialisation
-path. The private submodule token remains an earlier gate: without `ORAMA_SUBMODULES_TOKEN`, CI
-stops at checkout before any FUSE proof can run.
+path. A job token must have access to every private submodule when `ORAMA_SUBMODULES_TOKEN` is not
+available; otherwise CI stops at checkout before any FUSE proof can run.
 
 ## Local Linux verification
 
-Hosted CI cannot build while the org submodule token is missing, and macOS builds hide two
+Hosted CI cannot build when neither the org submodule token nor the job token can read the private
+submodules, and macOS builds hide two
 classes of Linux difference: libc++ supplies some standard headers transitively where libstdc++
 does not, and `std::int64_t` is `long` on Linux but `long long` on macOS, so a `long long` from
 `std::stoll` matches no `std::int64_t` overload exactly. `tools/linux-ci/Dockerfile` is the same

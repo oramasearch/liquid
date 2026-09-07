@@ -45,6 +45,18 @@ auto target(std::string_view value) -> liquid::result<liquid::projection_target>
     if (value == "helm") {
         return liquid::projection_target::helm_chart;
     }
+    if (value == "macos-pkg") {
+        return liquid::projection_target::macos_pkg;
+    }
+    if (value == "macos-dmg") {
+        return liquid::projection_target::macos_dmg;
+    }
+    if (value == "msix") {
+        return liquid::projection_target::msix;
+    }
+    if (value == "winget") {
+        return liquid::projection_target::winget_manifest;
+    }
     if (value == "homebrew") {
         return liquid::projection_target::homebrew;
     }
@@ -60,11 +72,8 @@ auto target(std::string_view value) -> liquid::result<liquid::projection_target>
     if (value == "snap") {
         return liquid::projection_target::snap;
     }
-    return std::unexpected(
-        liquid::error{liquid::errc::invalid_argument,
-                      "project target must be oci, ostree, bootc, deb, rpm, apk, helm, homebrew, "
-                      "pkgbuild, appimage, flatpak, or snap",
-                      std::string{value}});
+    return std::unexpected(liquid::error{
+        liquid::errc::invalid_argument, "unknown project target", std::string{value}});
 }
 
 auto ostree_mode(std::string_view value) -> liquid::result<liquid::ostree_repository_mode> {
@@ -156,13 +165,19 @@ auto service(std::string_view value) -> liquid::result<liquid::projection_servic
 auto project(int argc, char** argv) -> int {
     if (argc < 2) {
         return usage(
-            "project <oci|ostree|bootc|deb|rpm|apk|helm|homebrew|pkgbuild|appimage|flatpak|snap> "
-            "<result|tree> [target options]");
+            "project <target> <result|tree|installer> --name N --version V [target options]");
     }
     auto selected = target(argv[0]);
-    auto source_id = liquid::parse_digest(argv[1]);
-    if (!selected || !source_id) {
-        return fail(selected ? source_id.error() : selected.error());
+    if (!selected) {
+        return fail(selected.error());
+    }
+    auto sources = std::vector<liquid::projection_source>{};
+    if (*selected != liquid::projection_target::winget_manifest) {
+        auto source_id = liquid::parse_digest(argv[1]);
+        if (!source_id) {
+            return fail(source_id.error());
+        }
+        sources.push_back({.value = *source_id});
     }
     auto epoch = source_epoch();
     if (!epoch) {
@@ -170,7 +185,6 @@ auto project(int argc, char** argv) -> int {
     }
     auto request =
         liquid::projection_request{.target = *selected, .options = {.source_date_epoch = *epoch}};
-    auto sources = std::vector<liquid::projection_source>{{.value = *source_id}};
     auto json = false;
     for (auto index = 2; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
@@ -184,6 +198,9 @@ auto project(int argc, char** argv) -> int {
         };
         if (argument == "--name" || argument == "--version" || argument == "--arch" ||
             argument == "--out" || argument == "--depends" || argument == "--service" ||
+            argument == "--identifier" || argument == "--publisher" ||
+            argument == "--display-name" || argument == "--executable" ||
+            argument == "--entitlements" || argument == "--installer-url" ||
             argument == "--against" || argument == "--replaces" || argument == "--ref" ||
             argument == "--overlay" || argument == "--mode") {
             auto parsed = value(argument);
@@ -200,6 +217,18 @@ auto project(int argc, char** argv) -> int {
                 request.options.output_directory = std::move(*parsed);
             } else if (argument == "--depends") {
                 request.metadata.declared_dependencies.push_back(std::move(*parsed));
+            } else if (argument == "--identifier") {
+                request.metadata.identifier = std::move(*parsed);
+            } else if (argument == "--publisher") {
+                request.metadata.publisher = std::move(*parsed);
+            } else if (argument == "--display-name") {
+                request.metadata.display_name = std::move(*parsed);
+            } else if (argument == "--executable") {
+                request.metadata.executable = std::move(*parsed);
+            } else if (argument == "--entitlements") {
+                request.options.entitlements = std::move(*parsed);
+            } else if (argument == "--installer-url") {
+                request.options.installer_url = std::move(*parsed);
             } else if (argument == "--against") {
                 request.options.against = std::move(*parsed);
             } else if (argument == "--replaces") {
@@ -253,14 +282,18 @@ auto project(int argc, char** argv) -> int {
     if (!repository) {
         return fail(repository.error());
     }
-    for (auto& source : sources) {
-        const auto candidate = std::get<liquid::digest>(source.value);
-        auto result_page =
-            liquid::runtime::block_on(repository->results({.id = liquid::result_id{candidate}}));
-        if (result_page && !result_page->records.empty()) {
-            source.value = liquid::result_id{candidate};
+    if (*selected == liquid::projection_target::winget_manifest) {
+        request.sources.push_back({.path = std::filesystem::path{argv[1]}});
+    } else {
+        for (auto& source : sources) {
+            const auto candidate = std::get<liquid::digest>(source.value);
+            auto result_page = liquid::runtime::block_on(
+                repository->results({.id = liquid::result_id{candidate}}));
+            if (result_page && !result_page->records.empty()) {
+                source.value = liquid::result_id{candidate};
+            }
+            request.sources.push_back(std::move(source));
         }
-        request.sources.push_back(std::move(source));
     }
     auto report = liquid::runtime::block_on(liquid::project(*repository, std::move(request)));
     if (!report) {
@@ -283,6 +316,11 @@ auto project(int argc, char** argv) -> int {
                      artifact.path.string(),
                      liquid::to_string(artifact.digest),
                      artifact.media_type);
+    }
+    for (const auto& request_value : report->signing_requests) {
+        std::println("signing-request: {} {}",
+                     request_value.path.string(),
+                     liquid::to_string(request_value.unsigned_digest));
     }
     for (const auto& attestation : report->attestations) {
         std::println("attestation: {}", liquid::to_string(attestation));
