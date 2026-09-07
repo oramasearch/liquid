@@ -113,7 +113,10 @@ control listeners, atomically reloaded named policy sets at `/admit/<policy>`, s
 CBOR/JSON decisions in AdmissionReview status, a bounded local decision stream, local or
 node-store evidence lookup, and policy-pinned transparency verification through the shared
 checkpoint, parent-tile, and inclusion verifier. Each decision records the log outcome and exact
-failure reason. Metrics, REST, OpenAPI, and MCP expose the same record
+failure reason. Positive checkpoint age bounds use the signed `issued_at`, refuse missing time,
+expiry, and future skew beyond 60 seconds, and apply on every decision; zero is invalid at policy
+load and an omitted bound disables freshness enforcement. The log attests its own clock.
+Metrics, REST, OpenAPI, and MCP expose the same record
 ([`admission.md`](admission.md),
 [`../api/admission.md`](../api/admission.md)).
 
