@@ -841,12 +841,16 @@ store_backend::store_chunk(digest id,
                            std::string_view delta_scope) {
     const auto delta_eligible =
         !encryption && !delta_scope.empty() && raw.size() >= minimum_delta_chunk_bytes;
+    auto scope = std::string{};
+    if (delta_eligible) {
+        scope = delta_scope;
+    }
     auto present = index_.find(id);
     if (!present)
         co_return std::unexpected(present.error());
     if (*present) {
         if (delta_eligible) {
-            remember_delta_candidate(delta_scope, resemblance, id, raw);
+            remember_delta_candidate(scope, resemblance, id, raw);
         }
         auto entry = pack_entry{id, **present, static_cast<std::uint32_t>(raw.size())};
         entry.resemblance = resemblance;
@@ -857,7 +861,6 @@ store_backend::store_chunk(digest id,
     }
     auto candidates = std::vector<delta_dictionary>{};
     if (delta_eligible) {
-        const auto scope = std::string{delta_scope};
         const auto can_attempt = !delta_attempted_scopes_.contains(scope) &&
                                  delta_attempted_scopes_.size() < maximum_delta_attempted_scopes;
         const auto scoped = delta_candidates_.find(scope);
@@ -888,7 +891,7 @@ store_backend::store_chunk(digest id,
     const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
     auto& destination = packs_.at(current_pack_);
     auto candidate_bytes = std::vector<std::byte>{};
-    if (delta_eligible) {
+    if (delta_eligible && !delta_candidates_.contains(scope)) {
         candidate_bytes = raw;
     }
     auto written = co_await append_pack_entry(
@@ -908,7 +911,7 @@ store_backend::store_chunk(digest id,
         chunk_bases_.erase(to_string(id));
     }
     if (delta_eligible) {
-        remember_delta_candidate(delta_scope, resemblance, id, candidate_bytes);
+        remember_delta_candidate(scope, resemblance, id, candidate_bytes);
     }
     destination.entries.push_back(*written);
     destination.data_end += 49 + written->location.length;

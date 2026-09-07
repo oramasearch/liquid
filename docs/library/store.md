@@ -114,7 +114,8 @@ Only chunks of at least FastCDC's 8 KiB minimum may enter the delta candidate ca
 keeps one candidate for each path scope, at most 256 candidates and 16 MiB of candidate
 bytes across all scopes. The open store permits dictionary attempts for at most 256 path scopes;
 the first matching candidate for each permitted scope uses zstd level 1 through
-`runtime::offload`, and later matches retain ordinary compression. It does not read, decode, or
+`runtime::offload`, and later matches retain ordinary compression. Raw bytes are retained only
+when a scope has no candidate. It does not read, decode, or
 re-hash a base on the write path. Chunks without a matching candidate retain the established direct
 zstd level-3 compression path. It writes a delta only when the result, including the 33-byte base
 identity, is at least 64 bytes smaller than half the raw chunk. Encrypted chunks do not participate
