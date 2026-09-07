@@ -81,6 +81,7 @@ constexpr std::size_t file_window_size = 8U * 1024U * 1024U;
 constexpr std::size_t maximum_delta_depth = 8;
 constexpr std::size_t maximum_delta_candidates = 256;
 constexpr std::size_t maximum_delta_candidate_bytes = 16U * 1024U * 1024U;
+constexpr std::size_t maximum_delta_attempted_scopes = 256;
 constexpr std::size_t minimum_delta_chunk_bytes = 8U * 1024U;
 
 class incremental_digest {
@@ -856,10 +857,13 @@ store_backend::store_chunk(digest id,
     }
     auto candidates = std::vector<delta_dictionary>{};
     if (delta_eligible) {
-        const auto scoped = delta_candidates_.find(std::string{delta_scope});
-        if (scoped != delta_candidates_.end()) {
+        const auto scope = std::string{delta_scope};
+        const auto can_attempt = !delta_attempted_scopes_.contains(scope) &&
+                                 delta_attempted_scopes_.size() < maximum_delta_attempted_scopes;
+        const auto scoped = delta_candidates_.find(scope);
+        if (can_attempt && scoped != delta_candidates_.end()) {
             const auto candidate = scoped->second.find(resemblance);
-            if (candidate != scoped->second.end() && !candidate->second.compression_attempted &&
+            if (candidate != scoped->second.end() &&
                 (candidate->second.id.alg != id.alg || candidate->second.id.bytes != id.bytes)) {
                 auto depth = std::size_t{};
                 auto current = candidate->second.id;
@@ -875,7 +879,7 @@ store_backend::store_chunk(digest id,
                     }
                 }
                 if (depth < maximum_delta_depth) {
-                    candidate->second.compression_attempted = true;
+                    delta_attempted_scopes_.insert(scope);
                     candidates.push_back({candidate->second.id, candidate->second.bytes});
                 }
             }

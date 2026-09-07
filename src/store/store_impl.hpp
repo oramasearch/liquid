@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -133,7 +134,6 @@ private:
     struct delta_candidate {
         digest id{};
         std::vector<std::byte> bytes;
-        bool compression_attempted{};
     };
     struct delta_candidate_key {
         std::string scope;
@@ -146,6 +146,7 @@ private:
                                   std::span<const std::byte> bytes);
     std::map<std::string, std::map<std::uint64_t, delta_candidate>> delta_candidates_;
     std::deque<delta_candidate_key> delta_candidate_order_;
+    std::set<std::string, std::less<>> delta_attempted_scopes_;
     std::size_t delta_candidate_bytes_{};
     subject_index subjects_;
     std::uint32_t current_pack_{};
