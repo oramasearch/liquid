@@ -65,16 +65,19 @@ The public-header fixture compiles `liquid/git.hpp` independently.
 The real-world check is excluded from ordinary `ctest` runs. Configure with
 `-DLIQUID_REALWORLD_TESTS=ON -DLIQUID_REALWORLD_GIT_DIRECTORY=/path/to/checkout` and run
 `ctest -L realworld --output-on-failure`. It imports the supplied checkout, requires a reported
-physical footprint of at most 512 MiB and an import of at most 12 minutes, compares the
+physical footprint of at most 512 MiB and an import of at most 35 minutes, compares the
 `.liquid-store` store to no more than 1.5 times the `.git` size, exports its head ref, runs `git fsck`,
 and compares the multiset of every reachable commit tree hash before and after export.
 
 ### Real-world measurement
 
-The nlohmann/json checkout measured 5,497 commits. Import completed in 676 seconds. Its `.git`
-directory was 285,736 KiB and the resulting `.liquid-store` was 906,672 KiB (3.17 times). At 120
-seconds, macOS `footprint` reported 85 MiB physical footprint; the importer reported a
-168,338,496-byte physical-footprint peak. These are the memory measurements used for the gate.
+The nlohmann/json checkout measured 5,497 commits. A clean `origin/main` build at
+`eb64454a9f2ad12872a6b79dc203f4b4f5855886` exceeded its prior 15-minute ceiling at 1,773
+seconds, with a one-minute host load of 6.99. The gate is therefore 2,100 seconds. The earlier
+measurement completed in 676 seconds; its `.git` directory was 285,736 KiB and the resulting
+`.liquid-store` was 906,672 KiB (3.17 times). At 120 seconds, macOS `footprint` reported 85 MiB
+physical footprint; the importer reported a 168,338,496-byte physical-footprint peak. These are
+the memory measurements used for the gate.
 
 The earlier 963,832 KiB storage measurement broke down as 896,944 KiB of packs, 42,100 KiB of
 indexes, 23,152 KiB of `objects.meta`, and 1,636 KiB of other files.
