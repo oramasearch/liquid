@@ -448,6 +448,10 @@ auto directory_document::entries() const -> result<std::vector<named_entry>> {
     return output;
 }
 
+auto directory_document::operations() const -> result<std::vector<operation>> {
+    return document_.operations();
+}
+
 auto directory_document::entry_at(std::string_view name) const -> result<std::optional<entry>> {
     if (name.empty() || name.contains('/'))
         return std::unexpected(

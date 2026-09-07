@@ -12,12 +12,13 @@ Each command page is generated from the same metadata used to validate flags and
 | [`clone`](clone.md) | clone and materialize a repository | available |
 | [`status`](status.md) | show repository status | available |
 | [`conflict`](conflict.md) | inspect or resolve an unresolved conflict | available |
+| [`conflicts`](conflicts.md) | list unresolved conflicts | available |
 | [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |
 | [`write`](write.md) | write a file from a stated base | available |
 | [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
 | [`search`](search.md) | search paths and contents | available |
 | [`diff`](diff.md) | compare changes, containers, and source syntax | available |
-| [`resolve`](resolve.md) | concretise package specifications | available |
+| [`resolve`](resolve.md) | concretise packages or resolve a conflict | available |
 | [`config`](config.md) | check, lower, or format .liquid configuration | available |
 | [`project`](project.md) | project content into packages, commits, images, or charts | available |
 | [`install`](install.md) | install or list atomic generations | available |

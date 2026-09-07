@@ -64,9 +64,38 @@ auto main(int argc, char** argv) -> int {
         .kind = liquid::conflict_kind::crdt_suspicious,
         .explanation = "test double reported a suspicious CRDT merge"};
     auto stored = liquid::runtime::block_on(source.record_conflict(std::move(conflict)));
+    auto proposal_references = std::vector<liquid::digest>{};
+    for (const auto value : {"base", "left", "right", "merged proposal", "right"}) {
+        auto written = liquid::runtime::block_on(source.write("proposal.cpp", bytes(value)));
+        if (!written) {
+            std::cerr << written.error().message << '\n';
+            return 1;
+        }
+        auto reference = entry_reference(source, "proposal.cpp");
+        if (!reference) {
+            std::cerr << reference.error().message << '\n';
+            return 1;
+        }
+        proposal_references.push_back(*reference);
+    }
+    auto suspicious =
+        liquid::conflict{.base = proposal_references[0],
+                         .left = proposal_references[1],
+                         .right = proposal_references[2],
+                         .region = {.path = "proposal.cpp", .nodes = liquid::conflict_node_range{}},
+                         .kind = liquid::conflict_kind::suspicious_merge,
+                         .explanation = "same definition was introduced by both sides",
+                         .proposal = proposal_references[3],
+                         .reasons = {"same definition was introduced by both sides"},
+                         .node = "duplicate"};
+    auto suspicious_stored =
+        liquid::runtime::block_on(source.record_conflict(std::move(suspicious)));
     auto cut = liquid::runtime::block_on(source.cut("record CLI conflict"));
-    if (!stored || !cut) {
-        std::cerr << (stored ? cut.error().message : stored.error().message) << '\n';
+    if (!stored || !suspicious_stored || !cut) {
+        std::cerr << (!stored              ? stored.error().message
+                      : !suspicious_stored ? suspicious_stored.error().message
+                                           : cut.error().message)
+                  << '\n';
         return 1;
     }
     return 0;

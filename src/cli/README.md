@@ -30,9 +30,10 @@ through the public repository API, runs an optional test filter, and prints each
 policy parsing through public repository APIs. Status projects persisted agent policy, and
 `log --ops --json` projects signed drip bases and re-validation results without reading repository
 storage directly.
-Status also lists unresolved path and conflict-digest pairs. `conflict.cpp` implements `show` and
-`resolve` only through the public repository conflict operations and prints the canonical inputs,
-region, kind, explanation, and resulting resolution change.
+Status also lists unresolved path and conflict-digest pairs. `conflict.cpp` implements `show`,
+`conflicts [--json]`, and the legacy path-based resolution through public repository conflict
+operations. `resolve.cpp` also owns digest-based `resolve --accept|--left|--right|--from`; it maps
+the selected source to `repository::resolve_conflict` and never reads repository storage directly.
 
 `repo.cpp` also lowers top-level lock rules before repository initialization. `locks.cpp` attaches
 to the checkout daemon and acquires or releases exclusive checkout through the public daemon API;

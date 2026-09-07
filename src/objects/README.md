@@ -36,4 +36,6 @@ Change version 2 appends the cut's refs, lock paths, nested-repository pointers,
 CRDT heads. Version 1 remains byte-compatible for decoding and signature verification.
 Change version 3 replaces legacy inline conflict inputs with path-to-conflict-digest references and
 adds conflict-to-selected-value resolution references. Canonical `conflict/1` records retain the
-base, both sides, exactly one path range, merge kind, and explanation.
+base, both sides, exactly one path range, merge kind, and explanation. Optional structural-merge
+fields add a conflict kind, proposal blob, ordered reasons, and syntax node without changing the
+record version; their absence decodes as the original entry conflict.

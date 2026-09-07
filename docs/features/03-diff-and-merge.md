@@ -19,8 +19,9 @@ search ([12](12-search.md)). One parse, three consumers.
 
 **Status.** Liquid #72 implements the digest-pinned 49-language grammar registry. Liquid #68
 implements the graph-owned canonical parse, GumTree-style matching, public structural field,
-explicit structural/text/binary tiers, and `liquid diff --structural`. Structural merge remains
-liquid #69 work. Every structural result carries the grammar lock identity.
+explicit structural/text/binary tiers, and `liquid diff --structural`. Liquid #69 implements
+structural merge at CRDT convergence, including suspicious proposals as conflict values. Every
+structural result carries the grammar lock identity.
 
 Text diff remains the fallback for languages without a grammar, and the fallback is
 always available.

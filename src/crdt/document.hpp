@@ -107,6 +107,7 @@ public:
     };
 
     [[nodiscard]] auto entries() const -> result<std::vector<named_entry>>;
+    [[nodiscard]] auto operations() const -> result<std::vector<operation>>;
     [[nodiscard]] auto entry_at(std::string_view name) const -> result<std::optional<entry>>;
     [[nodiscard]] auto put_entry(std::string name, entry value, commit_options options = {})
         -> result<void>;

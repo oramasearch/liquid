@@ -53,6 +53,7 @@ built binary under the build directory before CTest compares it with the committ
 | `clone` | `clone <url\|drive-folder> [<dir>] [--json]` | Clone, configure, and fully materialize a repository. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `conflict` | `conflict <show\|resolve> <path>` | Inspect or resolve an unresolved conflict. | available |
+| `conflicts` | `conflicts [--json]` | List unresolved conflicts with kinds, paths, reasons, and nodes. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
@@ -206,6 +207,10 @@ successful delivery count.
 and explanation. After the selected working path contains the intended result, `conflict resolve
 <path>` cuts an ordinary change that references the conflict and selected value. See
 [`conflicts.md`](../library/conflicts.md).
+`conflicts [--json]` includes structural suspicion reasons and the named node. `resolve
+<conflict-id> --accept|--left|--right|--from <file>` writes an explicit resolution; `--accept` is
+valid only when the conflict carries a proposal. See
+[`structural-merge.md`](../library/structural-merge.md).
 The `hot-update` target also emits `daemon_target_detail=<name> <detail>` after a successful
 delivery. Its detail names the configured build target, `patched` or `restart` outcome, tier, and
 content-addressed record.

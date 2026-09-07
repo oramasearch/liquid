@@ -74,6 +74,7 @@ enum class conflict_kind : std::uint8_t {
     text,
     structural,
     crdt_suspicious,
+    suspicious_merge,
 };
 
 struct LIQUID_EXPORT conflict_byte_range {
@@ -100,6 +101,9 @@ struct LIQUID_EXPORT conflict {
     conflict_region region;
     conflict_kind kind{conflict_kind::text};
     std::string explanation;
+    std::optional<digest> proposal;
+    std::vector<std::string> reasons;
+    std::optional<std::string> node;
 };
 
 struct LIQUID_EXPORT conflict_reference {

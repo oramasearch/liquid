@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <fstream>
 #include <string>
 
+#include "encoding/cbor.hpp"
 #include "objects/records.hpp"
 
 namespace {
@@ -60,12 +62,62 @@ TEST(Records, conflict_records_are_canonical_content_addressed_values) {
     EXPECT_EQ(decoded->region.bytes->length, 9U);
     EXPECT_EQ(decoded->kind, liquid::conflict_kind::text);
     EXPECT_EQ(decoded->explanation, original.explanation);
+    EXPECT_FALSE(decoded->proposal);
+    EXPECT_EQ(decoded->reasons, std::vector<std::string>{original.explanation});
+    EXPECT_FALSE(decoded->node);
     auto reencoded = liquid::objects::encode(*decoded);
     ASSERT_TRUE(reencoded) << reencoded.error().message;
     EXPECT_EQ(*reencoded, *encoded);
     auto digest = liquid::objects::digest_of(liquid::algorithm::blake3, *encoded);
     ASSERT_TRUE(digest);
     EXPECT_EQ(liquid::to_string(decoded->id), liquid::to_string(*digest));
+
+    auto legacy_value = liquid::encoding::cbor::decode(*encoded);
+    ASSERT_TRUE(legacy_value) << legacy_value.error().message;
+    auto* legacy_fields = std::get_if<liquid::encoding::cbor::value::map>(&legacy_value->data);
+    ASSERT_NE(legacy_fields, nullptr);
+    std::erase_if(*legacy_fields, [](const auto& field) {
+        const auto* name = std::get_if<std::string>(&field.first.data);
+        return name && (*name == "proposal" || *name == "reasons" || *name == "node");
+    });
+    auto legacy_encoded = liquid::encoding::cbor::encode(*legacy_value);
+    ASSERT_TRUE(legacy_encoded) << legacy_encoded.error().message;
+    auto legacy = liquid::objects::decode_conflict(*legacy_encoded);
+    ASSERT_TRUE(legacy) << legacy.error().message;
+    EXPECT_FALSE(legacy->proposal);
+    EXPECT_EQ(legacy->reasons, std::vector<std::string>{original.explanation});
+    EXPECT_FALSE(legacy->node);
+}
+
+TEST(Records, suspicious_merge_conflicts_retain_the_proposal_and_reasons) {
+    const auto original =
+        liquid::conflict{.base = example_digest(0x10),
+                         .left = example_digest(0x20),
+                         .right = example_digest(0x30),
+                         .region = {.path = "src/value.cpp",
+                                    .nodes = liquid::conflict_node_range{.first = {}, .last = {}}},
+                         .kind = liquid::conflict_kind::suspicious_merge,
+                         .explanation = "structural proposal requires attention",
+                         .proposal = example_digest(0x40),
+                         .reasons = {"definition introduced by both sides", "parse contains ERROR"},
+                         .node = "function_definition"};
+    auto encoded = liquid::objects::encode(original);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_conflict(*encoded, liquid::algorithm::blake3);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(decoded->kind, liquid::conflict_kind::suspicious_merge);
+    ASSERT_TRUE(decoded->proposal);
+    EXPECT_EQ(liquid::to_string(*decoded->proposal), liquid::to_string(*original.proposal));
+    EXPECT_EQ(decoded->reasons, original.reasons);
+    EXPECT_EQ(decoded->node, original.node);
+    auto reencoded = liquid::objects::encode(*decoded);
+    ASSERT_TRUE(reencoded) << reencoded.error().message;
+    EXPECT_EQ(*reencoded, *encoded);
+    auto invalid = original;
+    invalid.proposal.reset();
+    auto refused = liquid::objects::encode(invalid);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
 }
 
 TEST(Records, conflict_records_require_exactly_one_region_range) {

@@ -18,7 +18,7 @@ checked, transactions roll back, commit metadata and incremental saves exist, re
 return patches, text indices count scalar values, sync uses the upstream wire format, and compact
 checkpoints support both full and shallow loading.
 
-**Status: implemented for liquid #2, #3, #30, #40, #41, #42, #68, #195's history/conflict persistence, and #205.**
+**Status: implemented for liquid #2, #3, #30, #40, #41, #42, #68, #69, #195's history/conflict persistence, and #205.**
 The private automerge-cpp wrapper, canonical CBOR codec, versioned sync framing and drip journal
 are implemented. Repository creation and opening, working-tree reads and writes, recorded moves
 and removals, snapshots and changes, references, composition, persisted conflict values, path
@@ -51,7 +51,8 @@ tree        { v, kind:"tree", entries:[ { name, mode, kind:blob|tree|repo|confli
               id:digest, node:node_id, ref:digest, nested?:repo_ref } … ] }   # sorted by name, bytewise
 conflict/1  { v:1, kind:"conflict", base:digest, left:digest, right:digest,
               region:{path, bytes:{offset,length}|nodes:{first,last}},
-              merge_kind:text|structural|crdt-suspicious, explanation:text }
+              merge_kind:text|structural|crdt-suspicious|suspicious-merge,
+              explanation:text, proposal?:digest, reasons?:[text...], node?:text }
 change/1    { v:1, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
               root:digest(tree), conflicts?:[conflict…], symbols?:digest, sig:bytes }
 change/2    { v:2, kind:"change", parents:[ change_ref… ], author:actor, at:time, message,
@@ -242,7 +243,7 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | cut a change | write the tree snapshot to the store (walk `tree`, emit `tree` records bottom-up), build the `change` record with `parents = heads of the ref`, `heads = document heads`, sign, `store.put`; set the ref. |
 | `at(change_id)` / `document_at(change_id)` | `at` reads the immutable `root` tree. `document_at` loads full-history compact archives, resolves every recorded head through the wrapper's `get_at`, and returns the recorded refs, locks, and nested pointers. Historical reads never touch the active shallow documents. |
 | `log` | walk `parents` from a ref; identity is the digest, so a change transplanted to another branch is recognised as itself. |
-| merge | automerge converges the document; liquid then runs structural merge (Phase 5) or, in Phase 1, a three-way merge on entries by `node_id`: same `node_id` changed on both sides with different `ref` is a **conflict value** appended to the resulting change's `conflicts`, never a broken working tree. |
+| merge | Automerge converges the directory document, then liquid finds the common change and structurally merges base, local, and received blobs for each concurrently changed `node_id`. Disjoint definition edits replace the selected entry. Overlap, grammarless text, and suspicious proposals become conflict values. The operation records the algorithm, grammar digest, path, and three inputs. |
 | `nest(source, path)` | the entry at `path` becomes `kind: repo` with the source's `repo_id` and pinned change; `nested[path]` mirrors it. The nested repository keeps its own document and its own history; its files are visible because `root()` descends into nested repositories through the store. |
 | `split(path, into)` | new `repo` record and document; the subtree's entries move (same `node_id`s) into it; the original keeps `path` as a `repo` entry. History of the subtree is preserved by construction: the old changes still reference the old trees, and the new repository's `root_change` names the change it was split from. |
 | `combine(other, at)` | one change with parents in both repositories (`change_ref` carries `repo_id`); path collisions become conflict values. |

@@ -198,6 +198,10 @@ wrong, with no conflict raised anywhere.
 
 liquid's defences, in order:
 
+Defences 1 and 2 are implemented by liquid #69. Structural convergence records its grammar and
+inputs; recovery syntax, duplicate definitions, same-definition edits, and references to removed
+symbols remain explicit `suspicious_merge` values until resolved.
+
 1. **Structural merge over the CRDT result** ([03](03-diff-and-merge.md)). The CRDT
    guarantees nothing is lost; structural merge decides whether the merged tree is
    meaningful.

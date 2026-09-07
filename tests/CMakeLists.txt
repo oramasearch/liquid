@@ -46,6 +46,7 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
   test_repository.cpp
+  test_structural_merge.cpp
   test_collaboration.cpp
   test_stale_reasoning.cpp
   test_runtime.cpp
@@ -630,6 +631,23 @@ gtest_discover_tests(liquid-vfs-queue-tests DISCOVERY_TIMEOUT 120)
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)
+
+if(LIQUID_BUILD_FRONTENDS)
+  add_executable(liquid-merge-measure merge_measure.cpp)
+  target_include_directories(liquid-merge-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(liquid-merge-measure PRIVATE
+    LIQUID_TREE_SITTER_FRONTEND="$<TARGET_FILE:liquid-frontend-tree-sitter>")
+  target_link_libraries(liquid-merge-measure PRIVATE liquid::liquid)
+  add_dependencies(liquid-merge-measure liquid-frontend-tree-sitter)
+  find_program(LIQUID_GIT_EXECUTABLE git REQUIRED)
+  add_test(NAME structural-merge-measure-fixture
+    COMMAND ${CMAKE_COMMAND}
+      -DGIT_EXECUTABLE=${LIQUID_GIT_EXECUTABLE}
+      -DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/merge-history.fi
+      -DMEASURE=$<TARGET_FILE:liquid-merge-measure>
+      -DROOT=${CMAKE_CURRENT_BINARY_DIR}/merge-measure-fixture
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/run_merge_measure.cmake)
+endif()
 
 add_executable(liquid-graph-measure EXCLUDE_FROM_ALL graph_measure.cpp)
 target_link_libraries(liquid-graph-measure PRIVATE liquid::liquid)
