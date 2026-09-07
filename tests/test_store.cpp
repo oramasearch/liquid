@@ -716,7 +716,7 @@ TEST(Store, PutGetReadDeduplicateAndReopen) {
 TEST(Store, SimilarChunksRoundTripThroughDeltaFramesAndReopen) {
     temporary_store temporary;
     auto store = open_store(temporary.path());
-    const auto base = bytes(4096, 7001);
+    const auto base = bytes(32U * 1024U, 7001);
     auto target = base;
     for (auto index = std::size_t{1000}; index != 1040; ++index) {
         target[index] ^= std::byte{0x5a};
@@ -748,7 +748,7 @@ TEST(Store, ResemblanceHashKeepsAnUnchangedSampleForAnInteriorEdit) {
 TEST(Store, InterruptedDeltaAppendRecoversAsAValidatedOrphan) {
     temporary_store temporary;
     auto store = open_store(temporary.path());
-    const auto base = bytes(4096, 7002);
+    const auto base = bytes(32U * 1024U, 7002);
     auto target = base;
     for (auto index = std::size_t{2000}; index != 2040; ++index) {
         target[index] ^= std::byte{0xa5};

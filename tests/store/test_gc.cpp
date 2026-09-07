@@ -352,7 +352,7 @@ TEST(GarbageCollection, RebuiltIndexHonorsCommittedTombstones) {
 TEST(GarbageCollection, DeltaBasesStayLiveWithTheirRetainedTargets) {
     temporary_store temporary;
     auto store = open_store(temporary.path());
-    const auto base = bytes(4096, 4100);
+    const auto base = bytes(32U * 1024U, 4100);
     auto target = base;
     for (auto index = std::size_t{1500}; index != 1540; ++index) {
         target[index] ^= std::byte{0x6d};
@@ -380,7 +380,7 @@ TEST(GarbageCollection, DeltaBasesStayLiveWithTheirRetainedTargets) {
 TEST(GarbageCollection, RepackRebasesDeltaChainsAndSurvivesReopen) {
     temporary_store temporary;
     auto store = open_store(temporary.path());
-    auto contents = bytes(4096, 4200);
+    auto contents = bytes(32U * 1024U, 4200);
     std::vector<liquid::digest> ids;
     for (auto version = std::size_t{}; version != 4; ++version) {
         if (version != 0) {

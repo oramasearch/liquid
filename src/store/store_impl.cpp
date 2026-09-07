@@ -81,6 +81,7 @@ constexpr std::size_t file_window_size = 8U * 1024U * 1024U;
 constexpr std::size_t maximum_delta_depth = 8;
 constexpr std::size_t maximum_delta_candidates = 256;
 constexpr std::size_t maximum_delta_candidate_bytes = 16U * 1024U * 1024U;
+constexpr std::size_t minimum_delta_chunk_bytes = 8U * 1024U;
 
 class incremental_digest {
 public:
@@ -834,14 +835,16 @@ void store_backend::remember_delta_candidate(std::string_view scope,
 runtime::task<pack_entry>
 store_backend::store_chunk(digest id,
                            std::vector<std::byte> raw,
+                           std::uint64_t resemblance,
                            std::optional<crypto_detail::domain_keys> encryption,
                            std::string_view delta_scope) {
-    const auto resemblance = resemblance_hash(raw);
+    const auto delta_eligible =
+        !encryption && !delta_scope.empty() && raw.size() >= minimum_delta_chunk_bytes;
     auto present = index_.find(id);
     if (!present)
         co_return std::unexpected(present.error());
     if (*present) {
-        if (!encryption && !delta_scope.empty()) {
+        if (delta_eligible) {
             remember_delta_candidate(delta_scope, resemblance, id, raw);
         }
         auto entry = pack_entry{id, **present, static_cast<std::uint32_t>(raw.size())};
@@ -852,7 +855,7 @@ store_backend::store_chunk(digest id,
         co_return entry;
     }
     auto candidates = std::vector<delta_dictionary>{};
-    if (!encryption && !delta_scope.empty()) {
+    if (delta_eligible) {
         const auto scoped = delta_candidates_.find(std::string{delta_scope});
         if (scoped != delta_candidates_.end()) {
             const auto candidate = scoped->second.find(resemblance);
@@ -880,7 +883,7 @@ store_backend::store_chunk(digest id,
     const auto limit = options_.pack_size == 0 ? 64ULL * 1024ULL * 1024ULL : options_.pack_size;
     auto& destination = packs_.at(current_pack_);
     auto candidate_bytes = std::vector<std::byte>{};
-    if (!encryption && !delta_scope.empty()) {
+    if (delta_eligible) {
         candidate_bytes = raw;
     }
     auto written = co_await append_pack_entry(
@@ -899,7 +902,7 @@ store_backend::store_chunk(digest id,
     } else {
         chunk_bases_.erase(to_string(id));
     }
-    if (!encryption && !delta_scope.empty()) {
+    if (delta_eligible) {
         remember_delta_candidate(delta_scope, resemblance, id, candidate_bytes);
     }
     destination.entries.push_back(*written);
@@ -1212,8 +1215,10 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     for (auto index = std::size_t{}; index < ranges.size(); ++index) {
         const auto part = ranges[index];
         const auto bytes = std::span<const std::byte>(input).subspan(part.offset, part.size);
+        const auto resemblance = resemblance_hash(bytes);
         auto stored = co_await store_chunk(object.chunks[index],
                                            std::vector<std::byte>(bytes.begin(), bytes.end()),
+                                           resemblance,
                                            encryption,
                                            delta_scope);
         if (!stored)
@@ -1226,8 +1231,9 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
                                    : hash(algorithm_value, descriptor);
     if (!descriptor_id)
         co_return std::unexpected(descriptor_id.error());
-    auto descriptor_stored =
-        co_await store_chunk(*descriptor_id, std::move(descriptor), encryption, delta_scope);
+    const auto descriptor_resemblance = resemblance_hash(descriptor);
+    auto descriptor_stored = co_await store_chunk(
+        *descriptor_id, std::move(descriptor), descriptor_resemblance, encryption);
     if (!descriptor_stored)
         co_return std::unexpected(descriptor_stored.error());
     object.descriptor = *descriptor_id;
@@ -1299,7 +1305,7 @@ store_backend::scan_file(std::filesystem::path source,
             const auto chunk_size = chunk.size();
             auto resemblance = resemblance_hash(chunk);
             if (store_chunks) {
-                auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+                auto stored = co_await store_chunk(*id, std::move(chunk), resemblance, encryption);
                 if (!stored) {
                     co_return std::unexpected(stored.error());
                 }
@@ -1324,7 +1330,7 @@ store_backend::scan_file(std::filesystem::path source,
         const auto chunk_size = chunk.size();
         auto resemblance = resemblance_hash(chunk);
         if (store_chunks) {
-            auto stored = co_await store_chunk(*id, std::move(chunk), encryption);
+            auto stored = co_await store_chunk(*id, std::move(chunk), resemblance, encryption);
             if (!stored) {
                 co_return std::unexpected(stored.error());
             }
@@ -1436,9 +1442,11 @@ runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
             for (auto index = std::size_t{}; index < object.chunks.size(); ++index) {
                 const auto size = static_cast<std::size_t>(object.chunk_sizes[index]);
                 const auto chunk = input.subspan(offset, size);
+                const auto resemblance = resemblance_hash(chunk);
                 auto stored =
                     co_await store_chunk(object.chunks[index],
                                          std::vector<std::byte>(chunk.begin(), chunk.end()),
+                                         resemblance,
                                          encryption);
                 if (!stored) {
                     co_return std::unexpected(stored.error());
@@ -1454,8 +1462,9 @@ runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
         if (!descriptor_id) {
             co_return std::unexpected(descriptor_id.error());
         }
-        auto descriptor_stored =
-            co_await store_chunk(*descriptor_id, std::move(descriptor), encryption);
+        const auto descriptor_resemblance = resemblance_hash(descriptor);
+        auto descriptor_stored = co_await store_chunk(
+            *descriptor_id, std::move(descriptor), descriptor_resemblance, encryption);
         if (!descriptor_stored) {
             co_return std::unexpected(descriptor_stored.error());
         }
@@ -1615,7 +1624,8 @@ store_backend::hydrate_remote_chunk(const blob& value, std::size_t index, std::u
             co_return std::unexpected(
                 store_error(errc::busy, lock_error.message(), "remote chunk hydration"));
         }
-        auto stored = co_await store_chunk(value.chunks[index], bytes);
+        const auto resemblance = resemblance_hash(bytes);
+        auto stored = co_await store_chunk(value.chunks[index], bytes, resemblance);
         if (!stored) {
             co_return std::unexpected(stored.error());
         }

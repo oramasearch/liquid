@@ -91,6 +91,7 @@ private:
     [[nodiscard]] runtime::task<pack_entry>
     store_chunk(digest id,
                 std::vector<std::byte> raw,
+                std::uint64_t resemblance,
                 std::optional<crypto_detail::domain_keys> encryption = std::nullopt,
                 std::string_view delta_scope = {});
     [[nodiscard]] runtime::task<std::vector<std::byte>>
