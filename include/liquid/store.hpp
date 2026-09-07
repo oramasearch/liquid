@@ -22,6 +22,30 @@
 
 namespace liquid {
 
+struct LIQUID_EXPORT store_backend_entry {
+    std::string key;
+    std::uint64_t size{};
+};
+
+class LIQUID_EXPORT store_backend {
+public:
+    virtual ~store_backend() = default;
+
+    [[nodiscard]] virtual runtime::task<void> put(std::string key,
+                                                  std::vector<std::byte> bytes) = 0;
+    [[nodiscard]] virtual runtime::task<void>
+    put_range(std::string key, std::uint64_t offset, std::vector<std::byte> bytes) = 0;
+    [[nodiscard]] virtual runtime::task<std::vector<std::byte>>
+    get_range(std::string key, std::uint64_t offset, std::uint64_t size) = 0;
+    [[nodiscard]] virtual runtime::task<void> remove(std::string key) = 0;
+    [[nodiscard]] virtual runtime::task<std::vector<store_backend_entry>>
+    list(std::string prefix) = 0;
+    [[nodiscard]] virtual runtime::task<void> barrier() = 0;
+};
+
+[[nodiscard]] LIQUID_EXPORT std::shared_ptr<store_backend>
+make_disk_store_backend(std::filesystem::path root, bool durable = false);
+
 class repository;
 namespace repository_detail {
 struct store_access;
@@ -52,6 +76,7 @@ struct LIQUID_EXPORT store_options {
     std::shared_ptr<blob_write_through> write_through;
     hydration_observer on_hydration;
     remote_access_observer on_remote_access;
+    std::shared_ptr<store_backend> backend;
 };
 
 enum class blob_availability : std::uint8_t { absent, remote, local };

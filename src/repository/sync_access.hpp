@@ -5,7 +5,7 @@
 namespace liquid::repository_detail {
 
 struct sync_access {
-    [[nodiscard]] static auto objects(repository& source) -> store&;
+    [[nodiscard]] LIQUID_EXPORT static auto objects(repository& source) -> store&;
 };
 
 } // namespace liquid::repository_detail

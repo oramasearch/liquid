@@ -4,11 +4,12 @@ Repository configuration encryption uses the private `repository_detail::store_a
 choose a plaintext metadata put or an explicit trust-domain encrypted put for whole-file payload
 chunks; the public store API keeps its existing default-key behavior.
 
-This directory owns FastCDC chunking, append-only packs, the fixed-width index, persisted local
+This directory owns FastCDC chunking, append-only packs, the fixed-width index, persisted backend
 leases, per-kind reference extraction, and epoch collection. `collector.cpp` preserves the
 ordering documented in `docs/library/gc.md`: committed tombstone manifest, index manifest, then
 whole-pack removal. `compactor.cpp` rewrites selected partially dead packs by copying physical
-frames byte-for-byte, with the collection manifest rename as the commit point. The object map also
+frames byte-for-byte, with the atomic collection-manifest put and durability barrier as the commit
+point. The object map also
 provides `store::key_version` with the recorded trust-domain data-key version and verifies whether
 the attached keyring can currently unwrap it; key-id parsing stays in `src/identity/key_version.hpp`.
 
@@ -18,6 +19,11 @@ delta chains at eight. Candidate selection uses retained raw bytes and never per
 or hash on the write path. `pack.cpp` stores dictionary-compressed targets with a digest-addressed
 base while retaining the fixed pack table. The collector marks transitive bases; repack mode
 rewrites old deltas against their oldest useful base through the ordinary compaction transaction.
+`backend.cpp` is the disk reference implementation of the public persistence contract. Store
+metadata, pack appends and sealing, mapped index runs, leases, collection, and compaction use
+logical backend keys. Disk runs retain the mapped-file fast path; non-disk runs are held in owned
+memory after a backend range read. Every blocking filesystem metadata operation uses
+`runtime::offload`.
 
 Targeted redaction removes selected object-map entries, commits tombstones for their unshared
 frames, rebuilds the index, and compacts only affected packs. It is separate from lease-driven
@@ -80,5 +86,6 @@ ABI descriptors are detected as their own canonical kind and retain their subjec
 Compatibility attestations retain their preceding library blobs; both record kinds remain reachable
 through result references and the subject index.
 Conflict records are detected as their own canonical kind and retain the base, left, and right
-objects. Trees and version-3 changes retain conflict digests, while resolution changes retain both
-the prior conflict and selected value.
+objects. Trees and version-3 changes retain conflict digests; conflict traversal retains base,
+left, right, and an optional suspicious-merge proposal; resolution changes retain both the prior
+conflict and selected value.

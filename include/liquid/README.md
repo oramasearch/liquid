@@ -31,6 +31,10 @@ remote endpoint.
 `store.hpp` exposes runtime remote-source registration, hydration and remote-access observation,
 live local-byte accounting for long-running node stores, plus collection repack selection and its
 delta-rebase count.
+`store.hpp` exposes the coroutine-native persistence backend contract and disk factory, runtime
+remote-source registration, hydration and remote-access observation, and live local-byte
+accounting for long-running node stores. `store_options::backend` selects a caller-owned
+implementation; null preserves the disk-backed behavior at the store path.
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease

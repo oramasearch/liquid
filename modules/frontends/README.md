@@ -7,8 +7,9 @@ grammar and discovers syntax units from pinned tag queries without compiling. `c
 outputs. The ABI and ownership rules are documented in
 [`docs/library/frontends.md`](../../docs/library/frontends.md).
 
-Neither module links into libliquid. CMake builds dynamic module targets for runtime loading and a
-Clang static target for applications that register a descriptor at link time.
+The installed modules remain dynamic runtime extensions. CMake also compiles the tree-sitter module
+descriptor into libliquid for convergence-time structural merge, while applications may register
+the Clang static target explicitly.
 
 Both bundled modules implement the `symbols` ABI operation. Their origin label distinguishes the
 compiler module from tree-sitter syntax fallback; the record is in

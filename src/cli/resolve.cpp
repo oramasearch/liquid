@@ -1,8 +1,12 @@
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
+#include <optional>
 #include <print>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -114,9 +118,80 @@ auto load_universe(const std::filesystem::path& path) -> liquid::result<liquid::
     return liquid::runtime::block_on(liquid::load_package_universe(*repository));
 }
 
+auto conflict_resolution(int argc, char** argv) -> int {
+    auto conflict_id = std::optional<liquid::digest>{};
+    auto request = liquid::conflict_resolution_request{};
+    auto selected = false;
+    for (auto index = 0; index != argc; ++index) {
+        const auto argument = std::string_view{argv[index]};
+        if (argument == "--accept" || argument == "--left" || argument == "--right") {
+            if (selected) {
+                return usage("resolve requires exactly one conflict resolution");
+            }
+            selected = true;
+            request.kind = argument == "--accept"
+                               ? liquid::conflict_resolution_kind::accept_proposal
+                           : argument == "--left" ? liquid::conflict_resolution_kind::left
+                                                  : liquid::conflict_resolution_kind::right;
+            continue;
+        }
+        if (argument == "--from") {
+            if (selected || ++index == argc) {
+                return usage("resolve --from requires one file and no other resolution");
+            }
+            selected = true;
+            request.kind = liquid::conflict_resolution_kind::blob;
+            auto input = std::ifstream{argv[index], std::ios::binary};
+            if (!input) {
+                return usage("resolve --from cannot read the named file");
+            }
+            const auto bytes = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+            request.blob.reserve(bytes.size());
+            for (const auto byte : bytes) {
+                request.blob.push_back(std::byte{static_cast<unsigned char>(byte)});
+            }
+            continue;
+        }
+        if (argument.starts_with("--") || conflict_id) {
+            return usage("resolve conflict arguments are invalid");
+        }
+        auto parsed = liquid::parse_digest(argument);
+        if (!parsed) {
+            return fail(parsed.error());
+        }
+        conflict_id = *parsed;
+    }
+    if (!conflict_id || !selected) {
+        return usage("resolve <conflict-id> --accept|--left|--right|--from <file>");
+    }
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
+    if (!repository) {
+        return fail(repository.error());
+    }
+    auto resolved =
+        liquid::runtime::block_on(repository->resolve_conflict(*conflict_id, std::move(request)));
+    if (!resolved) {
+        return fail(resolved.error());
+    }
+    std::println("change={} resolved={}",
+                 liquid::to_string(resolved->value),
+                 liquid::to_string(*conflict_id));
+    return 0;
+}
+
 } // namespace
 
 auto resolve(int argc, char** argv) -> int {
+    const auto resolves_conflict = std::ranges::any_of(
+        std::span{argv, static_cast<std::size_t>(argc)}, [](const auto* argument) {
+            const auto value = std::string_view{argument};
+            return value == "--accept" || value == "--left" || value == "--right" ||
+                   value == "--from";
+        });
+    if (resolves_conflict) {
+        return conflict_resolution(argc, argv);
+    }
     auto universe_path = std::filesystem::current_path();
     auto roots = std::vector<liquid::spec>{};
     auto explain = false;

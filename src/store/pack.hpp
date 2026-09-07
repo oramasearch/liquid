@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -10,6 +11,10 @@
 #include "../crypto/crypto.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/runtime.hpp"
+
+namespace liquid {
+class store_backend;
+}
 
 namespace liquid::store_detail {
 
@@ -53,27 +58,33 @@ void reset_file_read_counter() noexcept;
 void note_file_read(std::size_t bytes) noexcept;
 void reset_file_write_counter() noexcept;
 [[nodiscard]] std::uint64_t file_write_counter() noexcept;
-[[nodiscard]] runtime::task<pack_contents> read_pack(std::filesystem::path path, std::uint32_t id);
+[[nodiscard]] runtime::task<pack_contents>
+read_pack(std::shared_ptr<::liquid::store_backend> backend, std::string key, std::uint32_t id);
 [[nodiscard]] runtime::task<pack_entry>
-append_pack_entry(std::filesystem::path path,
+append_pack_entry(std::shared_ptr<::liquid::store_backend> backend,
+                  std::string key,
                   pack_contents contents,
                   digest id,
                   std::vector<std::byte> raw,
                   std::optional<crypto_detail::key> encryption_key,
                   bool durable,
                   std::vector<delta_dictionary> candidates = {});
-[[nodiscard]] runtime::task<void>
-seal_pack(std::filesystem::path path, const pack_contents& contents, bool durable);
+[[nodiscard]] runtime::task<void> seal_pack(std::shared_ptr<::liquid::store_backend> backend,
+                                            std::string key,
+                                            const pack_contents& contents);
 [[nodiscard]] runtime::task<std::vector<std::byte>>
-read_pack_entry(std::filesystem::path path,
+read_pack_entry(std::shared_ptr<::liquid::store_backend> backend,
+                std::string key,
                 chunk_location location,
                 digest expected,
                 std::optional<crypto_detail::key> encryption_key = std::nullopt,
                 std::optional<delta_dictionary> dictionary = std::nullopt);
-[[nodiscard]] runtime::task<pack_entry> append_pack_frame(std::filesystem::path destination,
-                                                          pack_contents contents,
-                                                          std::filesystem::path source,
-                                                          pack_entry entry,
-                                                          bool durable);
+[[nodiscard]] runtime::task<pack_entry>
+append_pack_frame(std::shared_ptr<::liquid::store_backend> backend,
+                  std::string destination,
+                  pack_contents contents,
+                  std::string source,
+                  pack_entry entry,
+                  bool durable);
 
 } // namespace liquid::store_detail

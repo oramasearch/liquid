@@ -1,6 +1,7 @@
 # Store garbage collection
 
-**Status: implemented for single-process local stores (liquid #8, #46, #58, #133).** Leased roots, epoch
+**Status: implemented for single-process stores through the persistence backend (liquid #8, #46,
+#58, #133, #278).** Leased roots, epoch
 marking, chunk-list reference extraction, whole-pack deletion, sparse-pack compaction, dry runs,
 delta-base retention and rebasing, retained-chunk explanations, rule-driven retention, and
 cost-aware build-result eviction are available through `liquid/store.hpp`. Repositories retain
@@ -22,11 +23,29 @@ handle does nothing: expiry, not process lifetime, decides whether the root is l
 writes the replacement before removing the prior generation, so a crash can extend a lease but
 cannot shorten it.
 
+Lease records are backend objects under `leases/`; they are not assumed to be local files. Renewal
+puts the replacement, crosses a durability barrier, and then removes the prior generation.
+
 This model has deliberate limits. Leases use the local system clock, so a clock jump can extend
 or shorten retention. A holder that stops renewing can lose its root even if its process still
 exists, while a very long TTL delays reclamation after a crash. Callers choose the TTL and renew
 before it expires. `collection_options::min_lease_age` adds a grace interval after expiry. Remote
 lease authority belongs to Phase 6 and is not inferred from local files.
+
+## Backend byte reclamation
+
+Collection and compaction apply the same ordering to disk and remote backend bytes. The collector
+publishes the tombstone manifest, rebuilds and publishes the run set, crosses the required
+durability barriers, and only then removes a wholly dead `packs/pack-<id>.pack` object. Compaction
+writes and seals the replacement pack, publishes its run set and collection manifest, and removes
+the old pack after those objects are durable. A backend failure stops the operation with its liquid
+error; it never advances metadata past bytes the backend has not accepted.
+
+The report's reclaimed-byte counts describe physical pack-object bytes removed from the selected
+backend. With a future remote implementation this is remote object-store capacity; local cache
+eviction and registered remote blob locations remain separate operations. Collection does not
+delete content from a `remote_blob_source` registration or from the independent
+`blob_write_through` destination because neither is owned by the store backend contract.
 
 ## Epoch rule
 
@@ -63,15 +82,15 @@ during marking, and treats a lease created during the epoch as after the high-wa
 sweep. The mutation lock is the store's thread-safe asynchronous mutex; see the mutation mutex
 section of [store.md](store.md).
 
-The durable order is:
+The backend publication order is:
 
-1. write the filtered object map and the new tombstone bitmap to temporary files, then sync them;
-2. rename `gc/MANIFEST` into place as the commit point;
-3. rebuild the chunk index without tombstoned frames and durably replace `index/MANIFEST`;
+1. put the filtered object map and the new tombstone bitmap, then cross a durability barrier;
+2. atomically put `gc/MANIFEST` as the commit point;
+3. rebuild the chunk index without tombstoned frames and publish `index/MANIFEST` after its barrier;
 4. delete packs whose frames are all tombstoned, then remove superseded index runs.
 
-Only the committed tombstone manifest is authoritative. A crash before its rename leaves the
-previous manifest in force and deletes nothing. A crash after the rename may leave old index runs
+Only the committed tombstone manifest is authoritative. A crash before its atomic put leaves the
+previous manifest in force and deletes nothing. A crash after the put may leave old index runs
 or whole packs behind; the next open removes that garbage safely. If `index/` is lost,
 reconstruction treats every frame as live unless the committed tombstone bitmap names that frame.
 Pack ids are never reused after deletion, so a committed tombstone can never identify a later

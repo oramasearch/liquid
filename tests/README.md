@@ -4,7 +4,8 @@ Exclusive checkout coverage spans repository holder/refusal/release and offline-
 configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
 
 The default suite covers the public library surface and the local store. Focused garbage
-collection cases and its CLI flags live in `store/`; deterministic crash schedules live in `sim/`;
+collection cases and its CLI flags live in `store/`; deterministic crash schedules run through
+both the disk and in-memory persistence backends in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
 `test_forge.cpp` covers lake review, comment, state, and branch-protection round trips; every
@@ -61,8 +62,15 @@ Configuration-language coverage lives in `config/`: twenty exact diagnostics, ty
 conditional dependencies, canonical target/source records, generator provenance, digest-verified
 source fetch, and formatter idempotence.
 Spack export/import coverage lives in `import/`: twenty formatter goldens, the exact 500-package
-resolution and conflict workload, a pinned 560-package Spack export, digest-less patch pinning, and
-the opt-in Linux build subset.
+resolution and conflict workload, structural convergence cases for disjoint additions, suspicious
+same-name additions and malformed proposals, explicit proposal acceptance, grammarless text
+fallback, a pinned 560-package Spack export, digest-less patch pinning, and the opt-in Linux build
+subset.
+`merge_measure.cpp` imports Git merge histories, reconstructs every changed path across base,
+parents, and human result, and classifies the structural proposal. Its CTest fixture is a committed
+fast-import history with disjoint function additions. Its merge hooks and the structural
+convergence fixture's exported-object transfer remain covered through libliquid in both static and
+shared builds.
 `test_store.cpp` covers trust-domain data-key rotation, byte-identical packs, reads across held
 versions, exact-version revocation failures, wrong-KEK atomicity, pre-pack coroutine write-through
 success and failure, concurrent independent writes, file-backed callback bytes, remote-registered

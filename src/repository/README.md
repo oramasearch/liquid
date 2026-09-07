@@ -5,6 +5,8 @@ or caller-owned shared store. A shared-store path argument is hashed into a repo
 state directory; the handle borrows the store, and repository, directory, ref, and result lease
 owners carry the repository identity. Redaction persists the caller's replacement and a signed marker before targeted store
 tombstoning, pack compaction, and the required `not_found` verification.
+Repository retention lease restoration uses the caller-owned store's selected persistence backend,
+so shared-store lease generations follow the same durability contract as pack and index metadata.
 
 Issue #86 validates caller-stated write bases before blob registration, content storage, or CRDT
 mutation. Persisted `config.agents` selects the TAAP actors that must supply a base. Version 2
@@ -27,7 +29,10 @@ matches syntax nodes through unit anchors, subtree hashes, containers, and order
 explicit structural, text, or binary tiers. Whitespace-only changes remain visible as
 `formatting_only`, while comments have their own edit kind.
 
-Unresolved text, composition, drive, and CRDT outcomes use one canonical conflict record. A cut
+Unresolved text, structural merge, composition, drive, and CRDT outcomes use one canonical conflict
+record. Structural merge parses base, local, and received blobs for a concurrently changed
+`node_id`; clean disjoint definition edits replace the selected entry, while suspicious proposals
+retain their proposal and reasons in the conflict value. A cut
 places its digest in the tree and version-3 change while the repository checkpoint retains the
 selected working entry for reads and reopen. Resolution cuts a change that binds the conflict
 digest to the selected value. Sync imports rebuild this index from the accepted `main` change.

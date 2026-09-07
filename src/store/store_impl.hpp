@@ -121,6 +121,7 @@ private:
 
     std::filesystem::path root_;
     store_options options_;
+    std::shared_ptr<::liquid::store_backend> persistence_;
     std::map<std::string, std::shared_ptr<remote_blob_source>> remote_sources_;
     chunk_index index_;
     std::map<std::uint32_t, pack_contents> packs_;

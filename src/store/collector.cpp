@@ -13,6 +13,7 @@
 #include <system_error>
 #include <utility>
 
+#include "backend.hpp"
 #include "faults.hpp"
 #include "leases.hpp"
 #include "pack.hpp"
@@ -83,6 +84,10 @@ void mark(std::vector<std::byte>& bitmap, std::size_t frame) {
     bitmap[frame / 8] |= std::byte{static_cast<unsigned char>(1U << (frame % 8))};
 }
 
+std::string pack_key(std::uint32_t id) {
+    return "packs/pack-" + std::to_string(id) + ".pack";
+}
+
 std::vector<std::byte> encode_manifest(const collection_manifest& manifest) {
     std::vector<std::byte> bytes(manifest_magic.begin(), manifest_magic.end());
     put_u64(bytes, manifest.epoch);
@@ -96,22 +101,16 @@ std::vector<std::byte> encode_manifest(const collection_manifest& manifest) {
     return bytes;
 }
 
-runtime::task<void> save_manifest(const std::filesystem::path& root,
+runtime::task<void> save_manifest(std::shared_ptr<::liquid::store_backend> backend,
                                   const collection_manifest& manifest) {
-    const auto directory = root / "gc";
-    const auto temporary = directory / "MANIFEST.tmp";
-    const auto destination = directory / "MANIFEST";
-    auto written = co_await write_file(temporary, encode_manifest(manifest));
+    auto synchronized = co_await backend->barrier();
+    if (!synchronized) {
+        co_return std::unexpected(synchronized.error());
+    }
+    auto written = co_await backend->put("gc/MANIFEST", encode_manifest(manifest));
     if (!written)
         co_return std::unexpected(written.error());
-    try {
-        visit_fault({fault_operation::rename, fault_phase::before, temporary});
-        std::filesystem::rename(temporary, destination);
-        visit_fault({fault_operation::rename, fault_phase::after, destination});
-        co_return result<void>{};
-    } catch (const std::system_error& caught) {
-        co_return std::unexpected(collection_error(errc::io, caught.what(), destination));
-    }
+    co_return co_await backend->barrier();
 }
 
 bool after_high_water(std::uint32_t high_water_pack,
@@ -191,9 +190,9 @@ void retain_delta_bases(const std::map<std::string, digest>& bases,
 
 } // namespace
 
-runtime::task<void> save_collection_manifest(const std::filesystem::path& root,
+runtime::task<void> save_collection_manifest(std::shared_ptr<::liquid::store_backend> backend,
                                              const collection_manifest& manifest) {
-    co_return co_await save_manifest(root, manifest);
+    co_return co_await save_manifest(std::move(backend), manifest);
 }
 
 bool collection_manifest::dead(std::uint32_t pack_id, std::size_t frame) const noexcept {
@@ -201,11 +200,17 @@ bool collection_manifest::dead(std::uint32_t pack_id, std::size_t frame) const n
     return pack != tombstones.end() && marked(pack->second, frame);
 }
 
-runtime::task<collection_manifest> load_collection_manifest(std::filesystem::path root) {
+runtime::task<collection_manifest>
+load_collection_manifest(std::shared_ptr<::liquid::store_backend> backend,
+                         std::filesystem::path root) {
     const auto path = std::move(root) / "gc" / "MANIFEST";
-    if (!std::filesystem::exists(path))
+    auto exists = co_await backend_exists(backend, "gc/MANIFEST");
+    if (!exists) {
+        co_return std::unexpected(exists.error());
+    }
+    if (!*exists)
         co_return collection_manifest{};
-    auto raw = co_await read_file(path);
+    auto raw = co_await read_backend_object(backend, "gc/MANIFEST");
     if (!raw)
         co_return std::unexpected(raw.error());
     const auto bytes = std::span<const std::byte>(*raw);
@@ -257,7 +262,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
             co_return std::unexpected(
                 error{errc::busy, lock_error.message(), "store::collect compaction"});
         }
-        auto committed = co_await load_collection_manifest(store_.root_);
+        auto committed = co_await load_collection_manifest(store_.persistence_, store_.root_);
         if (!committed) {
             co_return std::unexpected(committed.error());
         }
@@ -289,7 +294,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
         high_water_offset = store_.packs_.at(store_.current_pack_).data_end;
     }
 
-    auto leases = co_await load_leases(store_.root_ / "leases");
+    auto leases = co_await load_leases(store_.persistence_, store_.root_ / "leases");
     if (!leases)
         co_return std::unexpected(leases.error());
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
@@ -387,7 +392,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
     auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
     if (lock_error)
         co_return std::unexpected(error{errc::busy, lock_error.message(), "store::collect sweep"});
-    auto latest = co_await load_collection_manifest(store_.root_);
+    auto latest = co_await load_collection_manifest(store_.persistence_, store_.root_);
     if (!latest) {
         co_return std::unexpected(latest.error());
     }
@@ -401,7 +406,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
 
     // A root or object created while marking is conservatively retained. Objects
     // written after the high-water mark are live by the epoch rule.
-    auto current_leases = co_await load_leases(store_.root_ / "leases");
+    auto current_leases = co_await load_leases(store_.persistence_, store_.root_ / "leases");
     if (!current_leases)
         co_return std::unexpected(current_leases.error());
     for (const auto& [unused, pack] : store_.packs_) {
@@ -521,11 +526,10 @@ runtime::task<collection_report> collector::run(collection_options options) {
         }
         if (total_bytes != 0 && live_bytes == 0) {
             delete_packs.push_back(pack_id);
-            std::error_code size_error;
-            const auto physical = std::filesystem::file_size(
-                store_.root_ / "packs" / ("pack-" + std::to_string(pack_id) + ".pack"), size_error);
-            if (!size_error)
-                report.bytes_reclaimed += physical;
+            auto physical = co_await backend_size(store_.persistence_, pack_key(pack_id));
+            if (physical) {
+                report.bytes_reclaimed += *physical;
+            }
         } else if (dead_bytes != 0) {
             report.bytes_reclaimable_in_partially_dead_packs += dead_bytes;
             report.partially_dead_packs.push_back(
@@ -566,7 +570,7 @@ runtime::task<collection_report> collector::run(collection_options options) {
     auto objects_staged = co_await store_.stage_objects();
     if (!objects_staged)
         co_return std::unexpected(objects_staged.error());
-    auto manifest_saved = co_await save_collection_manifest(store_.root_, committed);
+    auto manifest_saved = co_await save_collection_manifest(store_.persistence_, committed);
     if (!manifest_saved)
         co_return std::unexpected(manifest_saved.error());
     auto objects_saved = co_await store_.publish_staged_objects();
@@ -581,15 +585,11 @@ runtime::task<collection_report> collector::run(collection_options options) {
         co_return std::unexpected(rebuilt.error());
 
     for (const auto pack_id : delete_packs) {
-        const auto path = store_.root_ / "packs" / ("pack-" + std::to_string(pack_id) + ".pack");
-        try {
-            visit_fault({fault_operation::remove, fault_phase::before, path});
-            std::filesystem::remove(path);
-            visit_fault({fault_operation::remove, fault_phase::after, path});
-            store_.packs_.erase(pack_id);
-        } catch (const std::system_error& caught) {
-            co_return std::unexpected(collection_error(errc::io, caught.what(), path));
+        auto removed = co_await store_.persistence_->remove(pack_key(pack_id));
+        if (!removed && removed.error().code != errc::not_found) {
+            co_return std::unexpected(removed.error());
         }
+        store_.packs_.erase(pack_id);
     }
     if (current_pack_deleted) {
         store_.current_pack_ = next_pack_id;
@@ -670,7 +670,7 @@ runtime::task<void> collector::remove_local(collection_manifest manifest,
     if (!objects_staged) {
         co_return std::unexpected(objects_staged.error());
     }
-    auto manifest_saved = co_await save_collection_manifest(store_.root_, manifest);
+    auto manifest_saved = co_await save_collection_manifest(store_.persistence_, manifest);
     if (!manifest_saved) {
         co_return std::unexpected(manifest_saved.error());
     }
@@ -706,7 +706,7 @@ runtime::task<void> collector::redact(std::span<const digest> ids) {
     if (lock_error) {
         co_return std::unexpected(error{errc::busy, lock_error.message(), "store::redact"});
     }
-    auto manifest = co_await load_collection_manifest(store_.root_);
+    auto manifest = co_await load_collection_manifest(store_.persistence_, store_.root_);
     if (!manifest) {
         co_return std::unexpected(manifest.error());
     }
@@ -747,7 +747,7 @@ runtime::task<void> collector::evict(digest id) {
     if (lock_error) {
         co_return std::unexpected(error{errc::busy, lock_error.message(), "store::evict"});
     }
-    auto manifest = co_await load_collection_manifest(store_.root_);
+    auto manifest = co_await load_collection_manifest(store_.persistence_, store_.root_);
     if (!manifest) {
         co_return std::unexpected(manifest.error());
     }

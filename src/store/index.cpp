@@ -1,5 +1,6 @@
 #include "index.hpp"
 
+#include "backend.hpp"
 #include "faults.hpp"
 
 #include <algorithm>
@@ -178,9 +179,23 @@ unsigned tier(std::uint64_t records) {
 } // namespace
 
 chunk_index::chunk_index(std::filesystem::path root, chunk_index_options options)
-    : root_(std::move(root)), options_(options) {
+    : root_(std::move(root)), backend_(make_disk_store_backend(root_)), options_(options) {
     options_.memtable_entries = std::max<std::size_t>(1, options_.memtable_entries);
     options_.compaction_runs = std::max<std::size_t>(1, options_.compaction_runs);
+}
+
+chunk_index::chunk_index(std::shared_ptr<::liquid::store_backend> backend,
+                         std::string prefix,
+                         std::filesystem::path context,
+                         chunk_index_options options)
+    : root_(std::move(context)), backend_(std::move(backend)), prefix_(std::move(prefix)),
+      options_(options) {
+    options_.memtable_entries = std::max<std::size_t>(1, options_.memtable_entries);
+    options_.compaction_runs = std::max<std::size_t>(1, options_.compaction_runs);
+}
+
+std::string chunk_index::key(std::string_view name) const {
+    return prefix_.empty() ? std::string(name) : prefix_ + "/" + std::string(name);
 }
 
 std::size_t
@@ -188,15 +203,15 @@ chunk_index::digest_hash::operator()(const std::array<std::byte, 32>& value) con
     return static_cast<std::size_t>(bloom_hash(value));
 }
 
-result<chunk_index::run>
+runtime::task<chunk_index::run>
 chunk_index::map_run(std::uint64_t sequence, algorithm alg, std::uint64_t expected_count) const {
     run output{};
     output.sequence = sequence;
     output.algorithm_value = alg;
-    output.path = root_ / ("run-" + std::to_string(sequence) + ".idx");
-    auto mapped = output.mapping.open(output.path);
+    output.key = key("run-" + std::to_string(sequence) + ".idx");
+    auto mapped = co_await output.mapping.open(backend_, output.key);
     if (!mapped) {
-        return std::unexpected(mapped.error());
+        co_return std::unexpected(mapped.error());
     }
     const auto bytes = output.mapping.bytes();
     if (bytes.size() < run_header_size ||
@@ -204,23 +219,23 @@ chunk_index::map_run(std::uint64_t sequence, algorithm alg, std::uint64_t expect
         std::to_integer<unsigned char>(bytes[8]) != static_cast<unsigned char>(alg) ||
         get_u64(bytes, 16) != expected_count ||
         checksum(bytes.first(run_header_size - 8)) != get_u64(bytes, run_header_size - 8)) {
-        return std::unexpected(index_error(errc::corrupt, "corrupt index run header", output.path));
+        co_return std::unexpected(index_error(errc::corrupt, "corrupt index run header", root_));
     }
     const auto bloom_size = get_u64(bytes, 24);
     if (bloom_size > std::numeric_limits<std::size_t>::max() ||
         bytes.size() != run_header_size + bloom_size + expected_count * record_size) {
-        return std::unexpected(index_error(errc::corrupt, "invalid index run size", output.path));
+        co_return std::unexpected(index_error(errc::corrupt, "invalid index run size", root_));
     }
     output.record_count = expected_count;
     output.fanout = std::span<const std::uint32_t>(
         reinterpret_cast<const std::uint32_t*>(bytes.data() + 32), fanout_count);
     if (output.fanout.front() != 0 || output.fanout.back() != expected_count ||
         !std::is_sorted(output.fanout.begin(), output.fanout.end())) {
-        return std::unexpected(index_error(errc::corrupt, "invalid index fanout", output.path));
+        co_return std::unexpected(index_error(errc::corrupt, "invalid index fanout", root_));
     }
     output.bloom = bytes.subspan(run_header_size, static_cast<std::size_t>(bloom_size));
     output.records_offset = run_header_size + bloom_size;
-    return output;
+    co_return output;
 }
 
 runtime::task<void> chunk_index::open() {
@@ -229,12 +244,15 @@ runtime::task<void> chunk_index::open() {
         next_sequence_ = 1;
         highest_pack_id_ = 0;
         collection_epoch_ = 0;
-        std::filesystem::create_directories(root_);
-        const auto manifest = root_ / "MANIFEST";
-        if (!std::filesystem::exists(manifest)) {
+        const auto manifest_key = key("MANIFEST");
+        auto manifest_exists = co_await backend_exists(backend_, manifest_key);
+        if (!manifest_exists) {
+            co_return std::unexpected(manifest_exists.error());
+        }
+        if (!*manifest_exists) {
             co_return result<void>{};
         }
-        auto raw = co_await read_file(manifest);
+        auto raw = co_await read_backend_object(backend_, manifest_key);
         if (!raw) {
             co_return std::unexpected(raw.error());
         }
@@ -247,7 +265,7 @@ runtime::task<void> chunk_index::open() {
             std::equal(manifest_magic_v2.begin(), manifest_magic_v2.end(), bytes.begin());
         if (!version_one && !version_two) {
             co_return std::unexpected(
-                index_error(errc::corrupt, "invalid index manifest", manifest));
+                index_error(errc::corrupt, "invalid index manifest", root_ / "MANIFEST"));
         }
         const auto count = get_u32(bytes, 8);
         highest_pack_id_ = get_u32(bytes, 12);
@@ -257,16 +275,16 @@ runtime::task<void> chunk_index::open() {
         if (bytes.size() != records_offset + std::size_t(count) * 24 + 8 ||
             checksum(bytes.first(bytes.size() - 8)) != get_u64(bytes, bytes.size() - 8)) {
             co_return std::unexpected(
-                index_error(errc::corrupt, "corrupt index manifest", manifest));
+                index_error(errc::corrupt, "corrupt index manifest", root_ / "MANIFEST"));
         }
         for (std::size_t i = 0, offset = records_offset; i < count; ++i, offset += 24) {
             const auto algorithm_byte = std::to_integer<unsigned char>(bytes[offset]);
             if (!valid_algorithm(algorithm_byte)) {
                 co_return std::unexpected(
-                    index_error(errc::corrupt, "unknown run algorithm", manifest));
+                    index_error(errc::corrupt, "unknown run algorithm", root_ / "MANIFEST"));
             }
             const auto sequence = get_u64(bytes, offset + 8);
-            auto mapped = map_run(
+            auto mapped = co_await map_run(
                 sequence, static_cast<algorithm>(algorithm_byte), get_u64(bytes, offset + 16));
             if (!mapped) {
                 co_return std::unexpected(mapped.error());
@@ -361,12 +379,12 @@ runtime::task<void> chunk_index::flush(algorithm alg) {
         fanout[i] += fanout[i - 1];
     }
     const auto sequence = next_sequence_++;
-    const auto path = root_ / ("run-" + std::to_string(sequence) + ".idx");
-    auto created = co_await write_file(path, make_header(alg, count, bloom_size, fanout));
+    const auto run_key = key("run-" + std::to_string(sequence) + ".idx");
+    auto created = co_await backend_->put(run_key, make_header(alg, count, bloom_size, fanout));
     if (!created) {
         co_return std::unexpected(created.error());
     }
-    auto bloom_written = co_await write_file_range(path, run_header_size, bloom);
+    auto bloom_written = co_await backend_->put_range(run_key, run_header_size, bloom);
     if (!bloom_written) {
         co_return std::unexpected(bloom_written.error());
     }
@@ -377,7 +395,7 @@ runtime::task<void> chunk_index::flush(algorithm alg) {
         append_record(output, entry.id.bytes, entry.location);
         if (output.size() >= write_window_size) {
             const auto size = output.size();
-            auto written = co_await write_file_range(path, offset, std::move(output));
+            auto written = co_await backend_->put_range(run_key, offset, std::move(output));
             if (!written) {
                 co_return std::unexpected(written.error());
             }
@@ -387,13 +405,17 @@ runtime::task<void> chunk_index::flush(algorithm alg) {
         }
     }
     if (!output.empty()) {
-        auto written = co_await write_file_range(path, offset, std::move(output));
+        auto written = co_await backend_->put_range(run_key, offset, std::move(output));
         if (!written) {
             co_return std::unexpected(written.error());
         }
     }
     state.memtable.clear();
-    auto mapped = map_run(sequence, alg, count);
+    auto synchronized = co_await backend_->barrier();
+    if (!synchronized) {
+        co_return std::unexpected(synchronized.error());
+    }
+    auto mapped = co_await map_run(sequence, alg, count);
     if (!mapped) {
         co_return std::unexpected(mapped.error());
     }
@@ -467,13 +489,13 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
     std::array<std::uint32_t, fanout_count> fanout{};
     std::vector<std::byte> bloom(static_cast<std::size_t>(bloom_size));
     const auto sequence = next_sequence_++;
-    const auto path = root_ / ("run-" + std::to_string(sequence) + ".idx");
+    const auto run_key = key("run-" + std::to_string(sequence) + ".idx");
     std::array<std::uint32_t, fanout_count> empty_fanout{};
-    auto created = co_await write_file(path, make_header(alg, 0, bloom_size, empty_fanout));
+    auto created = co_await backend_->put(run_key, make_header(alg, 0, bloom_size, empty_fanout));
     if (!created) {
         co_return std::unexpected(created.error());
     }
-    auto bloom_space = co_await write_file_range(path, run_header_size, bloom);
+    auto bloom_space = co_await backend_->put_range(run_key, run_header_size, bloom);
     if (!bloom_space) {
         co_return std::unexpected(bloom_space.error());
     }
@@ -507,7 +529,7 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
         ++count;
         if (output.size() >= write_window_size) {
             const auto size = output.size();
-            auto written = co_await write_file_range(path, offset, std::move(output));
+            auto written = co_await backend_->put_range(run_key, offset, std::move(output));
             if (!written) {
                 co_return std::unexpected(written.error());
             }
@@ -531,7 +553,7 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
         }
     }
     if (!output.empty()) {
-        auto written = co_await write_file_range(path, offset, std::move(output));
+        auto written = co_await backend_->put_range(run_key, offset, std::move(output));
         if (!written) {
             co_return std::unexpected(written.error());
         }
@@ -540,15 +562,19 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
         fanout[i] += fanout[i - 1];
     }
     auto header_written =
-        co_await write_file_range(path, 0, make_header(alg, count, bloom_size, fanout));
+        co_await backend_->put_range(run_key, 0, make_header(alg, count, bloom_size, fanout));
     if (!header_written) {
         co_return std::unexpected(header_written.error());
     }
-    auto bloom_written = co_await write_file_range(path, run_header_size, bloom);
+    auto bloom_written = co_await backend_->put_range(run_key, run_header_size, bloom);
     if (!bloom_written) {
         co_return std::unexpected(bloom_written.error());
     }
-    auto mapped = map_run(sequence, alg, count);
+    auto synchronized = co_await backend_->barrier();
+    if (!synchronized) {
+        co_return std::unexpected(synchronized.error());
+    }
+    auto mapped = co_await map_run(sequence, alg, count);
     if (!mapped) {
         co_return std::unexpected(mapped.error());
     }
@@ -576,8 +602,10 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
     }
     for (auto& source : old) {
         source.mapping.close();
-        std::error_code ignored;
-        std::filesystem::remove(source.path, ignored);
+        auto removed = co_await backend_->remove(source.key);
+        if (!removed && removed.error().code != errc::not_found) {
+            co_return std::unexpected(removed.error());
+        }
     }
     co_return result<void>{};
 }
@@ -601,19 +629,15 @@ runtime::task<void> chunk_index::write_manifest() {
         }
     }
     put_u64(bytes, checksum(bytes));
-    const auto temporary = root_ / "MANIFEST.tmp";
-    auto written = co_await write_file(temporary, std::move(bytes));
+    auto synchronized = co_await backend_->barrier();
+    if (!synchronized) {
+        co_return std::unexpected(synchronized.error());
+    }
+    auto written = co_await backend_->put(key("MANIFEST"), std::move(bytes));
     if (!written) {
         co_return std::unexpected(written.error());
     }
-    try {
-        visit_fault({fault_operation::rename, fault_phase::before, temporary});
-        std::filesystem::rename(temporary, root_ / "MANIFEST");
-        visit_fault({fault_operation::rename, fault_phase::after, root_ / "MANIFEST"});
-    } catch (const std::exception& exception) {
-        co_return std::unexpected(index_error(errc::io, exception.what(), root_ / "MANIFEST"));
-    }
-    co_return result<void>{};
+    co_return co_await backend_->barrier();
 }
 
 runtime::task<void> chunk_index::rebuild(std::vector<index_entry> entries) {
@@ -623,8 +647,10 @@ runtime::task<void> chunk_index::rebuild(std::vector<index_entry> entries) {
                 source.mapping.close();
         }
         states_.clear();
-        std::filesystem::remove_all(root_);
-        std::filesystem::create_directories(root_);
+        auto removed = co_await remove_backend_prefix(backend_, prefix_);
+        if (!removed) {
+            co_return std::unexpected(removed.error());
+        }
         next_sequence_ = 1;
         for (auto& entry : entries) {
             auto inserted = insert(std::move(entry));

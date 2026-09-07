@@ -9,9 +9,8 @@ sync, drive reconciliation, the CLI, and build input materialisation consume tha
 ordinary object graph. Keeping the selected working value separately lets users inspect unrelated
 paths and prepare a resolution without losing the base or either competing value.
 
-**Status: implemented for liquid #40.** Structural diff and merge production remains owned by
-#68 and #69; those implementations call the conflict producer described below. Multiplayer
-leasing remains #30.
+**Status: implemented for liquid #40 and structural merge in #69.** Multiplayer leasing remains
+#30.
 
 ## Record
 
@@ -30,7 +29,11 @@ leasing remains #30.
       | nodes: { first: node_id, last: node_id }
   },
   merge_kind: "text" | "structural" | "crdt-suspicious",
-  explanation: text
+  explanation: text,
+  kind?: "entry" | "suspicious-merge",
+  proposal?: digest,
+  reasons?: [text ...],
+  node?: node_id
 }
 ```
 
@@ -39,8 +42,9 @@ one range form. Text
 producers use a byte range over the competing blob contents. Structural and CRDT producers may use
 stable node identifiers when the affected value is a tree region rather than a byte interval.
 `base`, `left`, and `right` are collector references, so every named input stays reachable while
-the conflict is reachable. The decoded public value also carries its computed `id`; that field is
-not serialized into the record it names.
+the conflict is reachable. A suspicious merge also retains its proposal. The optional fields keep
+old records decodable as entry conflicts whose single reason is `explanation`. The decoded public
+value also carries its computed `id`; that field is not serialized into the record it names.
 
 ## Trees, changes, and working state
 
@@ -85,9 +89,9 @@ All producers construct `liquid::conflict` and pass it to `repository::record_co
 - the synchronized text path computes the maximal common prefix and suffix and records the
   remaining byte interval as `text`;
 - repository composition records differing entries and their stable nodes as `structural`;
-- future structural diff and merge work in #68 and #69 uses the same public record operation;
-- a CRDT integration that detects a suspicious converged result records `crdt-suspicious`. The
-  CLI fixture is the current test double for that producer.
+- structural merge at CRDT convergence records entry conflicts for overlapping edits or text files
+  without grammars and `suspicious-merge` values for results that require attention;
+- other CRDT integrations may continue recording `crdt-suspicious` as their merge kind.
 
 Concurrent lock reconciliation emits `crdt-suspicious` with the competing lock records as its
 three values. A lock-only path has no tree entry, so the value remains visible in status and sync
@@ -100,9 +104,10 @@ retention use the conflict object rather than a drive-only representation.
 ## Inspection and resolution
 
 `liquid status` prints one `conflict=<path> <digest>` line for every unresolved path. Its JSON form
-uses `"conflicts":[{"path":...,"id":...}]`. Inspect the full value with:
+uses `"conflicts":[{"path":...,"id":...}]`. List or inspect full values with:
 
 ```sh
+liquid conflicts --json
 liquid conflict show path/to/file
 ```
 
@@ -117,6 +122,16 @@ liquid conflict resolve path/to/file
 Resolution removes the path from the unresolved index and immediately cuts an ordinary version-3
 change. Its `resolutions` entry binds the prior conflict digest to the selected value digest. The
 new tree contains the selected value, and the old conflict remains reachable through history.
+Structural conflicts can instead be resolved by digest:
+
+```sh
+liquid resolve <conflict-id> --accept
+liquid resolve <conflict-id> --left
+liquid resolve <conflict-id> --right
+liquid resolve <conflict-id> --from prepared-file
+```
+
+`--accept` is valid only when the conflict carries a proposal.
 
 ## Verification
 
@@ -133,5 +148,5 @@ new tree contains the selected value, and the old conflict remains reachable thr
 ## Compatibility and limits
 
 Old change records with inline conflict references remain decodable but cannot be inspected as a
-standalone conflict object; they report that a new merge is required. Structural merge policy is
-not implemented here. Multiplayer lease policy is also outside this record and resolution model.
+standalone conflict object; they report that a new merge is required. Multiplayer lease policy is
+outside this record and resolution model.

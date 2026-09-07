@@ -790,6 +790,10 @@ auto encode(const conflict& value) -> result<std::vector<std::byte>> {
                                      "conflict requires a path, explanation, and one region range",
                                      "conflict"});
     }
+    if (value.kind == conflict_kind::suspicious_merge && !value.proposal) {
+        return std::unexpected(error{
+            errc::invalid_argument, "suspicious merge conflict requires a proposal", "conflict"});
+    }
     auto region = cbor::value::map{{"path", cbor::value{value.region.path}}};
     if (value.region.bytes) {
         region.emplace_back("bytes",
@@ -800,17 +804,34 @@ auto encode(const conflict& value) -> result<std::vector<std::byte>> {
                             map({{"first", encode_node_id(value.region.nodes->first)},
                                  {"last", encode_node_id(value.region.nodes->last)}}));
     }
-    const auto kind = value.kind == conflict_kind::text         ? "text"
-                      : value.kind == conflict_kind::structural ? "structural"
-                                                                : "crdt-suspicious";
-    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
-                             {"kind", "conflict"},
-                             {"base", encode_digest(value.base)},
-                             {"left", encode_digest(value.left)},
-                             {"right", encode_digest(value.right)},
-                             {"region", cbor::value{std::move(region)}},
-                             {"merge_kind", cbor::value{kind}},
-                             {"explanation", cbor::value{value.explanation}}}));
+    const auto kind = value.kind == conflict_kind::text              ? "text"
+                      : value.kind == conflict_kind::structural      ? "structural"
+                      : value.kind == conflict_kind::crdt_suspicious ? "crdt-suspicious"
+                                                                     : "suspicious-merge";
+    auto reasons = cbor::value::array{};
+    if (value.reasons.empty()) {
+        reasons.emplace_back(value.explanation);
+    } else {
+        for (const auto& reason : value.reasons) {
+            if (reason.empty()) {
+                return std::unexpected(
+                    error{errc::invalid_argument, "conflict reason cannot be empty", "conflict"});
+            }
+            reasons.emplace_back(reason);
+        }
+    }
+    return cbor::encode(map(
+        {{"v", cbor::value{std::uint64_t{1}}},
+         {"kind", "conflict"},
+         {"base", encode_digest(value.base)},
+         {"left", encode_digest(value.left)},
+         {"right", encode_digest(value.right)},
+         {"region", cbor::value{std::move(region)}},
+         {"merge_kind", cbor::value{kind}},
+         {"explanation", cbor::value{value.explanation}},
+         {"proposal", value.proposal ? encode_digest(*value.proposal) : cbor::value{cbor::null{}}},
+         {"reasons", cbor::value{std::move(reasons)}},
+         {"node", value.node ? cbor::value{*value.node} : cbor::value{cbor::null{}}}}));
 }
 
 auto encode_change_body_value(const change& value, bool include_signature)
@@ -1361,6 +1382,9 @@ auto decode_conflict(std::span<const std::byte> bytes, std::optional<algorithm> 
     const auto* region_value = find(*source, "region");
     const auto* merge_kind_value = find(*source, "merge_kind");
     const auto* explanation_value = find(*source, "explanation");
+    const auto* proposal_value = find(*source, "proposal");
+    const auto* reasons_value = find(*source, "reasons");
+    const auto* node_value = find(*source, "node");
     auto base = base_value ? decode_digest(*base_value)
                            : result<digest>{std::unexpected(corrupt("conflict base missing"))};
     auto left = left_value ? decode_digest(*left_value)
@@ -1390,8 +1414,42 @@ auto decode_conflict(std::span<const std::byte> bytes, std::optional<algorithm> 
         output.kind = conflict_kind::structural;
     } else if (*merge_kind == "crdt-suspicious") {
         output.kind = conflict_kind::crdt_suspicious;
+    } else if (*merge_kind == "suspicious-merge") {
+        output.kind = conflict_kind::suspicious_merge;
     } else {
         return std::unexpected(corrupt("invalid conflict merge kind"));
+    }
+    if (proposal_value && !std::holds_alternative<cbor::null>(proposal_value->data)) {
+        auto proposal = decode_digest(*proposal_value);
+        if (!proposal) {
+            return std::unexpected(proposal.error());
+        }
+        output.proposal = *proposal;
+    }
+    if (output.kind == conflict_kind::suspicious_merge && !output.proposal) {
+        return std::unexpected(corrupt("suspicious merge conflict has no proposal"));
+    }
+    if (reasons_value) {
+        const auto* reasons = std::get_if<cbor::value::array>(&reasons_value->data);
+        if (!reasons) {
+            return std::unexpected(corrupt("invalid conflict reasons"));
+        }
+        for (const auto& encoded_reason : *reasons) {
+            const auto* reason = std::get_if<std::string>(&encoded_reason.data);
+            if (!reason || reason->empty()) {
+                return std::unexpected(corrupt("invalid conflict reason"));
+            }
+            output.reasons.push_back(*reason);
+        }
+    } else {
+        output.reasons.push_back(output.explanation);
+    }
+    if (node_value && !std::holds_alternative<cbor::null>(node_value->data)) {
+        const auto* node = std::get_if<std::string>(&node_value->data);
+        if (!node || node->empty()) {
+            return std::unexpected(corrupt("invalid conflict node"));
+        }
+        output.node = *node;
     }
     if (bytes_value) {
         const auto* offset_value = find(*bytes_value, "offset");

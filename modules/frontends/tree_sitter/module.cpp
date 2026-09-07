@@ -219,7 +219,11 @@ const liquid_frontend_module_v1 module = {
 
 } // namespace
 
+#if defined(LIQUID_FRONTEND_STATIC)
+extern "C" const liquid_frontend_module_v1* liquid_builtin_tree_sitter_module_v1(void) {
+#else
 extern "C" LIQUID_FRONTEND_MODULE_EXPORT const liquid_frontend_module_v1*
 liquid_frontend_get_module_v1(void) {
+#endif
     return &module;
 }

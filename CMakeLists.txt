@@ -261,6 +261,19 @@ if(LIQUID_BUILD_FRONTENDS)
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON)
 
+  add_library(liquid-frontend-tree-sitter-static OBJECT
+    modules/frontends/tree_sitter/module.cpp)
+  target_include_directories(liquid-frontend-tree-sitter-static PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/frontends
+    ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
+  target_compile_definitions(liquid-frontend-tree-sitter-static PRIVATE
+    LIQUID_FRONTEND_STATIC=1)
+  set_target_properties(liquid-frontend-tree-sitter-static PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    POSITION_INDEPENDENT_CODE ON)
+
   add_library(liquid-frontend-clang MODULE modules/frontends/clang/module.cpp)
   target_include_directories(liquid-frontend-clang PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -590,6 +603,7 @@ add_library(libliquid
   src/search/repository.cpp
   src/secret/sealed_secret.cpp
   src/store.cpp
+  src/store/backend.cpp
   src/store/chunker.cpp
   src/store/collector.cpp
   src/store/compactor.cpp
@@ -650,6 +664,11 @@ target_compile_definitions(libliquid PRIVATE
   LIQUID_GRAMMAR_LOCK_DIGEST="sha256:${LIQUID_GRAMMAR_LOCK_SHA256}"
   LIQUID_WRAP_HOOK_PATH="$<TARGET_FILE:liquid-wrap-hook>"
   LIQUID_WRAP_HOOK_FILENAME="$<TARGET_FILE_NAME:liquid-wrap-hook>")
+if(LIQUID_BUILD_FRONTENDS)
+  target_compile_definitions(libliquid PRIVATE LIQUID_HAS_BUILTIN_FRONTEND=1)
+  target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid-frontend-tree-sitter-static>)
+  target_link_libraries(libliquid PRIVATE $<BUILD_INTERFACE:liquid_frontend_syntax>)
+endif()
 if(NOT WIN32)
   target_compile_definitions(libliquid PRIVATE LIQUID_HAS_APPIMAGE_RUNTIME=1)
 endif()

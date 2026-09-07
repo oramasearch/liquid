@@ -19,7 +19,8 @@ action plan.
 
 ## Status
 
-The Phase 1 store exit criterion is met: the chunk store, repositories, capture, identity,
+The Phase 1 store exit criterion is met: the chunk store has an injected persistence backend with
+disk and in-memory implementations, and repositories, capture, identity,
 encryption, Git import and export, sync, clone, drive and the macOS/Linux checkout daemon are implemented
 inside libliquid. The Phase 2 build wrapper, cache, verification and provenance, the Phase 3
 encryption, Git import and export, sync, drive and the macOS/Linux checkout daemon are implemented
@@ -27,6 +28,7 @@ inside libliquid, including private sessions, presence, leases, and per-line att
 Phase 2 build wrapper, cache, verification and provenance, the Phase 3
 remote blobs, replay and delta delivery, the Phase 4 query graph, daemon, search and structural
 edits, and the Phase 5 formats, projection, resolution and `.liquid` configuration are implemented
+with structural merge and suspicious-convergence conflict values,
 as recorded in [`docs/library/status.md`](docs/library/status.md), which also lists the known
 limits. Phase 5 projection includes Debian-only Tier B source packages as well as Tier A outputs.
 Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model

@@ -96,14 +96,14 @@ owning issue in `error::context`.
 | `liquid/edit.hpp` | #205 | implemented | canonical structural-edit requests, targets, previews, refusals, attribution, file/text changes, results, and codecs |
 | `liquid/git.hpp` | #43 | implemented | Git repository import and export reports and operations |
 | `liquid/import.hpp` | #75 | implemented | Spack import loss and report values, stable report codecs, offline patch bytes, target toolchain binding, and the coroutine import operation |
-| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199 | implemented | `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
+| `liquid/store.hpp` | #1, #7, #8, #17, #46, #53, #58, #64, #116, #199, #278 | implemented | coroutine-native persistence backend contract and disk factory; `store`: memory and streaming-file content in and out; pre-pack write-through; local/remote/absent blob availability, local eviction, and lazy remote ranges; encrypted trust domains, key-version, and subject-attestation lookup; leases, collection, rule counts, and pack compaction |
 | `liquid/node_store.hpp` | #202 | implemented | per-node shared chunk store, metadata-only image receipt, reference-counted read-only image mounts, hydration/reuse counters, logical byte budget and remote-content eviction, local snapshotter API, and TCP control surfaces |
 | `liquid/delta.hpp` | #64 | implemented | content-addressed delta records, zstd reference patches, verified create/apply, and fetch through local or registered remote blobs with chunk fallback |
 | `liquid/data.hpp` | #87 | implemented for PostgreSQL template copies; reflink capability selection implemented | session identifiers, persisted application-database declarations, branch records, and coroutine-native create/list/discard/promote operations |
-| `liquid/object.hpp` | #2, #17, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #68, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff with source structural edits and labelled fallback tiers, text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes and live data branches, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted data/REAPI/retention configuration, retention explanations, and bounded signed sync export/import |
-| `liquid/object.hpp` | #2, #17, #40, #50, #62 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, versioned `change`, standalone conflict records and resolution references, attestation references, repository references, and reserved symbols |
-| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; cost-planned working/ref search with common located hits and executed-plan explanations; redaction, structural key diff, public tree/change diff and text-anchor mapping, recorded moves/removals, cuts, refs, status including remote bytes and live data branches, history, readability, nest/split/combine, conflicts, undo, locks, paged result/attestation/trace/SBOM enumeration, ABI lookup, cache statistics, configured build plans and one-call builds, direct build handles, test target registration/enumeration/execution, persisted data/REAPI/retention configuration, retention explanations, and bounded signed sync export/import |
+| `liquid/object.hpp` | #2, #17, #50, #62, #69 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, `change`, attestation references, repository references, conflicts including suspicious merge proposals, and reserved symbols |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #68, #69, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural diff and CRDT-convergence merge with explicit suspicious-proposal resolution; cost-planned search; redaction, text-anchor mapping, recorded moves/removals, cuts, refs, status, history, composition, conflicts, undo, locks, records, build operations, configuration, retention, and bounded signed sync export/import |
+| `liquid/object.hpp` | #2, #17, #40, #50, #62, #69 | implemented | node kinds and canonical record values: local and remote `blob`, `tree`, versioned `change`, standalone conflict records and resolution references including suspicious merge proposals, attestation references, repository references, and reserved symbols |
+| `liquid/repository.hpp` | #2, #11, #16, #17, #22, #27, #40, #41, #42, #50, #52, #53, #58, #66, #67, #68, #69, #87, #116, #160, #165, #166, #174, #193, #200 | implemented | `repository`: open on local or caller-owned stores; current tree digest; encrypted, plaintext, and remote reads; memory, streaming-file, and remote-record writes; content-addressed symbol and ABI records; structural diff and CRDT-convergence merge with explicit suspicious-proposal resolution; cost-planned search; redaction, text-anchor mapping, recorded moves/removals, cuts, refs, status, history, composition, conflicts, undo, locks, records, build operations, configuration, retention, and bounded signed sync export/import |
 | `liquid/drip.hpp` | #4, #5, #48, #50 | implemented (#5, #50); declared (#4, #48) | `drip`, `capture`: the scanned journal as a subscription, safe block events, pause and resume |
 | `liquid/identity.hpp` | #4, #7, #51, #53, #81, #111 | implemented | TAAP `actor`, software/FIDO2/PIV `signer`, cross-backend identity rotation and chain verification, versioned data-key rotation, TPM sealing, keyring, and custody providers |
 | `liquid/release.hpp` | #81 | implemented | signed release policy and approval records plus distinct-identity, expiry, and compromise-aware threshold verification |
@@ -554,6 +554,20 @@ attestation bytes, budget and eviction operations, OpenAPI, metrics, and MCP. Se
 ### `liquid/store.hpp`
 
 ```cpp
+struct store_backend_entry { std::string key; std::uint64_t size; };
+class store_backend {
+ public:
+  virtual runtime::task<void> put(std::string key, std::vector<std::byte>) = 0;
+  virtual runtime::task<void> put_range(
+      std::string key, std::uint64_t offset, std::vector<std::byte>) = 0;
+  virtual runtime::task<std::vector<std::byte>> get_range(
+      std::string key, std::uint64_t offset, std::uint64_t size) = 0;
+  virtual runtime::task<void> remove(std::string key) = 0;
+  virtual runtime::task<std::vector<store_backend_entry>> list(std::string prefix) = 0;
+  virtual runtime::task<void> barrier() = 0;
+};
+std::shared_ptr<store_backend> make_disk_store_backend(
+    std::filesystem::path root, bool durable = false);
 class blob_write_through {
  public:
   virtual runtime::task<void> put(digest content, std::span<const std::byte> bytes,
@@ -574,6 +588,7 @@ struct store_options {
   std::shared_ptr<blob_write_through> write_through;
   hydration_observer on_hydration;
   remote_access_observer on_remote_access;
+  std::shared_ptr<store_backend> backend; // null selects the disk backend at the store path
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -622,6 +637,10 @@ acknowledgement, remote source map, and optional write-through callback. `store:
 `errc::not_remote` unless the whole-content digest has a persisted remote registration. A non-null
 keyring enables trust-domain encrypted objects; see
 [encryption.md](encryption.md).
+`store_backend` is the persistence contract for whole objects, pack ranges, byte-range reads,
+deletion, prefix listing, and durability barriers. Missing keys return `not_found`, invalid stored
+ranges or bytes return `corrupt`, unreachable services return `unavailable`, and rejected backend
+authority returns `unauthorized`; the disk implementation maps local system failures to `io`.
 
 ### `liquid/remote.hpp`
 
@@ -1094,6 +1113,7 @@ class repository {
   runtime::task<repository> split(std::string path, std::filesystem::path into);
   runtime::task<void> combine(repository other, std::optional<std::string> at);
   runtime::task<std::vector<conflict>> conflicts();      // #40: conflicts are values
+  runtime::task<change_id> resolve_conflict(digest, conflict_resolution_request); // #69
   runtime::task<std::vector<operation_record>> operations(log_options = {}); // newest first
   runtime::task<undo_report> undo(op_id);
   runtime::task<undo_report> undo_session(session_id, undo_options = {});

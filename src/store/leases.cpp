@@ -7,6 +7,7 @@
 #include <span>
 #include <system_error>
 
+#include "backend.hpp"
 #include "faults.hpp"
 #include "pack.hpp"
 
@@ -76,9 +77,8 @@ std::string random_id() {
     return output;
 }
 
-std::filesystem::path record_path(const std::filesystem::path& directory,
-                                  const lease_record& record) {
-    return directory / ("lease-" + record.id + "-" + std::to_string(record.generation) + ".lease");
+std::string record_key(const lease_record& record) {
+    return "leases/lease-" + record.id + "-" + std::to_string(record.generation) + ".lease";
 }
 
 std::vector<std::byte> encode(const lease_record& record) {
@@ -117,68 +117,41 @@ result<lease_record> decode(std::span<const std::byte> bytes, const std::filesys
     std::copy_n(bytes.begin() + 36, 32, record.root.bytes.begin());
     record.id.assign(reinterpret_cast<const char*>(bytes.data() + 68), id_size);
     record.owner.assign(reinterpret_cast<const char*>(bytes.data() + 68 + id_size), owner_size);
-    record.path = path;
+    record.key = path.generic_string();
     if (record.id.empty())
         return std::unexpected(lease_error(errc::corrupt, "lease id is empty", path));
     return record;
 }
 
-runtime::task<void> write_record(const std::filesystem::path& directory, lease_record& record) {
-    try {
-        std::filesystem::create_directories(directory);
-    } catch (const std::system_error& caught) {
-        co_return std::unexpected(lease_error(errc::io, caught.what(), directory));
-    }
-    record.path = record_path(directory, record);
-    auto temporary = record.path;
-    temporary += ".tmp";
-    auto written = co_await write_file(temporary, encode(record));
+runtime::task<void> write_record(const std::shared_ptr<::liquid::store_backend>& backend,
+                                 lease_record& record) {
+    record.key = record_key(record);
+    auto written = co_await backend->put(record.key, encode(record));
     if (!written)
         co_return std::unexpected(written.error());
-    try {
-        visit_fault({fault_operation::rename, fault_phase::before, temporary});
-        std::filesystem::rename(temporary, record.path);
-        visit_fault({fault_operation::rename, fault_phase::after, record.path});
-        co_return result<void>{};
-    } catch (const std::system_error& caught) {
-        co_return std::unexpected(lease_error(errc::io, caught.what(), record.path));
-    }
+    co_return co_await backend->barrier();
 }
 
 } // namespace
 
 runtime::task<std::shared_ptr<lease_state>>
-create_lease(std::filesystem::path directory, digest root, std::chrono::seconds ttl) {
-    if (ttl < std::chrono::seconds::zero()) {
-        co_return std::unexpected(
-            lease_error(errc::invalid_argument, "lease ttl cannot be negative", directory));
-    }
-    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    if (ttl > std::chrono::sys_seconds::max() - now) {
-        co_return std::unexpected(
-            lease_error(errc::invalid_argument, "lease ttl is too large", directory));
-    }
-    co_return co_await create_lease_until(
-        std::move(directory), root, std::optional{now + ttl}, std::string{});
-}
-
-runtime::task<std::shared_ptr<lease_state>>
-create_lease_until(std::filesystem::path directory,
+create_lease_until(std::shared_ptr<::liquid::store_backend> backend,
+                   std::filesystem::path context,
                    digest root,
                    std::optional<std::chrono::sys_seconds> expiry,
                    std::string owner) {
     if (owner.size() > std::numeric_limits<std::uint16_t>::max()) {
         co_return std::unexpected(
-            lease_error(errc::invalid_argument, "lease owner is too long", directory));
+            lease_error(errc::invalid_argument, "lease owner is too long", context));
     }
     auto state = std::make_shared<lease_state>();
-    state->directory = std::move(directory);
+    state->backend = std::move(backend);
     state->record.id = random_id();
     state->record.root = root;
     state->record.owner = owner.empty() ? "local:" + state->record.id : std::move(owner);
     state->record.generation = 1;
     state->record.expiry = expiry.value_or(std::chrono::sys_seconds::max());
-    auto written = co_await write_record(state->directory, state->record);
+    auto written = co_await write_record(state->backend, state->record);
     if (!written)
         co_return std::unexpected(written.error());
     co_return state;
@@ -196,11 +169,13 @@ runtime::task<void> renew_lease(std::shared_ptr<lease_state> state, std::chrono:
     ++replacement.generation;
     replacement.expiry =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()) + ttl;
-    auto written = co_await write_record(state->directory, replacement);
+    auto written = co_await write_record(state->backend, replacement);
     if (!written)
         co_return std::unexpected(written.error());
-    std::error_code ignored;
-    std::filesystem::remove(state->record.path, ignored);
+    auto removed = co_await state->backend->remove(state->record.key);
+    if (!removed && removed.error().code != errc::not_found) {
+        co_return std::unexpected(removed.error());
+    }
     state->record = std::move(replacement);
     co_return result<void>{};
 }
@@ -208,27 +183,29 @@ runtime::task<void> renew_lease(std::shared_ptr<lease_state> state, std::chrono:
 runtime::task<void> release_lease(std::shared_ptr<lease_state> state) {
     if (!state || state->released)
         co_return result<void>{};
-    try {
-        std::filesystem::remove(state->record.path);
-        state->released = true;
-        co_return result<void>{};
-    } catch (const std::system_error& caught) {
-        co_return std::unexpected(lease_error(errc::io, caught.what(), state->record.path));
+    auto removed = co_await state->backend->remove(state->record.key);
+    if (!removed && removed.error().code != errc::not_found) {
+        co_return std::unexpected(removed.error());
     }
+    state->released = true;
+    co_return result<void>{};
 }
 
-runtime::task<std::vector<lease_record>> load_leases(std::filesystem::path directory) {
+runtime::task<std::vector<lease_record>>
+load_leases(std::shared_ptr<::liquid::store_backend> backend, std::filesystem::path context) {
     std::vector<lease_record> records;
     try {
-        if (!std::filesystem::exists(directory))
-            co_return records;
-        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-            if (!entry.is_regular_file() || entry.path().extension() != ".lease")
+        auto entries = co_await backend->list("leases/");
+        if (!entries) {
+            co_return std::unexpected(entries.error());
+        }
+        for (const auto& entry : *entries) {
+            if (!entry.key.ends_with(".lease"))
                 continue;
-            auto bytes = co_await read_file(entry.path());
+            auto bytes = co_await read_backend_object(backend, entry.key);
             if (!bytes)
                 co_return std::unexpected(bytes.error());
-            auto decoded = decode(*bytes, entry.path());
+            auto decoded = decode(*bytes, entry.key);
             if (!decoded)
                 co_return std::unexpected(decoded.error());
             records.push_back(std::move(*decoded));
@@ -248,7 +225,7 @@ runtime::task<std::vector<lease_record>> load_leases(std::filesystem::path direc
                       records.end());
         co_return records;
     } catch (const std::system_error& caught) {
-        co_return std::unexpected(lease_error(errc::io, caught.what(), directory));
+        co_return std::unexpected(lease_error(errc::io, caught.what(), context));
     }
 }
 
