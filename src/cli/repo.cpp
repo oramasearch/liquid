@@ -223,6 +223,20 @@ auto strings_json(const std::vector<std::string>& values) -> std::string {
     return output;
 }
 
+auto conflicts_json(const std::vector<liquid::conflict_reference>& values) -> std::string {
+    auto output = std::string{"["};
+    for (auto index = std::size_t{}; index < values.size(); ++index) {
+        if (index != 0) {
+            output += ',';
+        }
+        output += std::format("{{\"path\":{},\"id\":{}}}",
+                              json_string(values[index].path),
+                              json_string(liquid::to_string(values[index].id)));
+    }
+    output += ']';
+    return output;
+}
+
 auto data_branches_json(const std::vector<liquid::data_branch_record>& branches) -> std::string {
     auto output = std::string{"["};
     for (std::size_t index = 0; index < branches.size(); ++index) {
@@ -426,7 +440,7 @@ auto repo_status(int argc, char** argv) -> int {
             current->pending_drips,
             current->remote_bytes,
             current->paused ? "true" : "false",
-            current->conflicts.size(),
+            conflicts_json(current->conflicts),
             current->oversized_directories.size(),
             current->head ? json_string(head) : "null",
             current->agents.require_base ? "true" : "false",
@@ -460,6 +474,9 @@ auto repo_status(int argc, char** argv) -> int {
         std::println("remote_bytes={}", current->remote_bytes);
         std::println("paused={}", current->paused);
         std::println("conflicts={}", current->conflicts.size());
+        for (const auto& conflict : current->conflicts) {
+            std::println("conflict={} {}", conflict.path, liquid::to_string(conflict.id));
+        }
         std::println("oversized_directories={}", current->oversized_directories.size());
         std::println("head={}", head);
         std::println("agents_require_base={}", current->agents.require_base);

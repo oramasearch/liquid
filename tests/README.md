@@ -136,6 +136,9 @@ each continuation returns to the caller executor without losing a wake during su
 drip bodies, same-path line-hunk reports, declared read dependencies, disjoint and forced records,
 and a synchronized replica whose signed write arrives before refusal. The CLI scenario
 also covers scripted writes, default refusal, re-validation choices, and signed JSON projection.
+Conflict coverage pins canonical records, text and structural producers, reopen, resolution
+references, push and fresh-pull transfer, unrelated reads, build rejection, and the CRDT-suspicious
+CLI test double.
 Search tests compile the private index and mapped-file readers into their target, prove identical
 literal and regex hit identities across scan and trigrams, pin cost choices and stale-index
 exclusion, replace a changed archive's daemon-published entry documents, and parse the CLI

@@ -143,7 +143,9 @@ Liquid #42 adds configured exclusive checkout path patterns, holder/time/reason 
 holder-aware write refusal and release, signed offline reconciliation through conflict values,
 connected lake authorization callbacks, daemon lock snapshots, and `liquid lock`/`unlock`.
 The repository object model, internal CRDT metadata document, canonical CBOR codec, and drip
-journal are implemented. Liquid #41 adds per-handle session IDs, complete mutation records,
+journal are implemented. Liquid #40 adds canonical first-class conflict records, conflict tree
+entries, version-3 change resolution references, status and CLI handling, sync reachability, and
+conflict-aware build materialisation. Liquid #41 adds per-handle session IDs, complete mutation records,
 local-intent operation and session undo reports, operation-log CLI output, and historical refs,
 exclusive locks, and nested pointers. Liquid #30 adds private speculative sessions, semantic leases,
 transient presence, compaction epochs, and delegation-attributed publication. Directory

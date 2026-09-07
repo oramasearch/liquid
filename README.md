@@ -78,6 +78,9 @@ it.
 > lazy mounts use libfuse3 on Linux and optional macFUSE on macOS. Repository creation, working-tree reads
 > and writes, recorded moves
 > and removals, change cuts, references, snapshots, historical document state, composition,
+> canonical first-class conflict objects with status, inspection, resolution, sync, and build
+> handling, operation- and session-scoped local-intent undo, advisory
+> locks, status, public tree/change diff, edit-surviving text anchors, paged result, attestation, trace, and SBOM enumeration,
 > conflict values, operation- and session-scoped local-intent undo, advisory
 > locks, private speculative agent sessions, semantic file/symbol/range leases, transient presence,
 > conflict values, operation- and session-scoped local-intent undo, configured exclusive checkout
@@ -319,6 +322,7 @@ and Zetta's.
 
 - [`docs/library/libliquid.md`](docs/library/libliquid.md) — the library: targets, public API rules, how to consume and verify it.
 - [`docs/library/api-map.md`](docs/library/api-map.md) — the implemented and declared public headers, ABI rules, and dependency provenance.
+- [`docs/library/conflicts.md`](docs/library/conflicts.md) — canonical conflict objects, producers, resolution changes, transfer, and build behavior.
 - [`docs/library/transparency.md`](docs/library/transparency.md) — Lake transparency-log checkpoints, tiles, proofs, scans, RFC 3161 timestamps, RFC 4998 evidence, and trust policy.
 - [`docs/library/hash-agility.md`](docs/library/hash-agility.md) — digest and signature algorithm tags, mixed BLAKE3/SHA-256 stores, rehashing, and present limits.
 - [`docs/library/runtime.md`](docs/library/runtime.md) — coroutine tasks, executors, blocking work, and runtime safety rules.

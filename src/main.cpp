@@ -89,6 +89,7 @@ auto install(int argc, char** argv) -> int;
 auto rollback(int argc, char** argv) -> int;
 auto review(int argc, char** argv) -> int;
 auto deploy(int argc, char** argv) -> int;
+auto conflict(int argc, char** argv) -> int;
 auto session(int argc, char** argv) -> int;
 auto compact(int argc, char** argv) -> int;
 auto tiers(int argc, char** argv) -> int;
@@ -502,6 +503,16 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_status},
+    {"conflict",
+     "conflict <show|resolve> <path>",
+     "inspect or resolve an unresolved conflict",
+     "available",
+     {},
+     "Display a recorded conflict or commit the current path value as its resolution.",
+     "liquid conflict show document.txt",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::conflict},
     {"data",
      "data branch <database> [--session <id>] | data list [--json] | data <discard|promote> <id>",
      "manage session database branches",

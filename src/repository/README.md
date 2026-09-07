@@ -23,6 +23,11 @@ entries by `node_id`, and reports moves independently from mode and content chan
 comparison also attaches the conflict values stored on each change. Text hunk generation reads
 blob contents only when the caller opts in.
 
+Unresolved text, composition, drive, and CRDT outcomes use one canonical conflict record. A cut
+places its digest in the tree and version-3 change while the repository checkpoint retains the
+selected working entry for reads and reopen. Resolution cuts a change that binds the conflict
+digest to the selected value. Sync imports rebuild this index from the accepted `main` change.
+
 Text-anchor mapping reuses one change-level text diff, indexes anchors by their source paths, and
 walks each matched path's line hunks in order. It follows renames through `node_id`, shifts lines
 for earlier count changes, marks replacements approximate, and marks removed regions deleted.

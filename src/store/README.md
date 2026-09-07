@@ -72,3 +72,6 @@ catalog. Delta fetch uses ordinary registered remote blobs for a missing patch o
 ABI descriptors are detected as their own canonical kind and retain their subject library blobs.
 Compatibility attestations retain their preceding library blobs; both record kinds remain reachable
 through result references and the subject index.
+Conflict records are detected as their own canonical kind and retain the base, left, and right
+objects. Trees and version-3 changes retain conflict digests, while resolution changes retain both
+the prior conflict and selected value.

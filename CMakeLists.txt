@@ -739,6 +739,7 @@ if(LIQUID_BUILD_CLI)
     src/cli/tier.cpp
     src/cli/tiers.cpp
     src/cli/repo.cpp
+    src/cli/conflict.cpp
     src/cli/registry.cpp
     src/cli/review.cpp
     src/cli/release.cpp

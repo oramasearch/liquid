@@ -41,6 +41,45 @@ TEST(Records, empty_tree_fixture_is_canonical) {
     EXPECT_EQ(digest->alg, liquid::algorithm::blake3);
 }
 
+TEST(Records, conflict_records_are_canonical_content_addressed_values) {
+    const auto original = liquid::conflict{
+        .base = example_digest(0x10),
+        .left = example_digest(0x20),
+        .right = example_digest(0x30),
+        .region = {.path = "src/value.cpp",
+                   .bytes = liquid::conflict_byte_range{.offset = 17, .length = 9}},
+        .kind = liquid::conflict_kind::text,
+        .explanation = "both sides changed the expression"};
+    auto encoded = liquid::objects::encode(original);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::objects::decode_conflict(*encoded, liquid::algorithm::blake3);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    EXPECT_EQ(decoded->region.path, original.region.path);
+    ASSERT_TRUE(decoded->region.bytes);
+    EXPECT_EQ(decoded->region.bytes->offset, 17U);
+    EXPECT_EQ(decoded->region.bytes->length, 9U);
+    EXPECT_EQ(decoded->kind, liquid::conflict_kind::text);
+    EXPECT_EQ(decoded->explanation, original.explanation);
+    auto reencoded = liquid::objects::encode(*decoded);
+    ASSERT_TRUE(reencoded) << reencoded.error().message;
+    EXPECT_EQ(*reencoded, *encoded);
+    auto digest = liquid::objects::digest_of(liquid::algorithm::blake3, *encoded);
+    ASSERT_TRUE(digest);
+    EXPECT_EQ(liquid::to_string(decoded->id), liquid::to_string(*digest));
+}
+
+TEST(Records, conflict_records_require_exactly_one_region_range) {
+    auto invalid = liquid::conflict{.base = example_digest(0x10),
+                                    .left = example_digest(0x20),
+                                    .right = example_digest(0x30),
+                                    .region = {.path = "src/value.cpp"},
+                                    .kind = liquid::conflict_kind::structural,
+                                    .explanation = "missing node range"};
+    auto encoded = liquid::objects::encode(invalid);
+    ASSERT_FALSE(encoded);
+    EXPECT_EQ(encoded.error().code, liquid::errc::invalid_argument);
+}
+
 TEST(Records, blob_records_carry_range_addressable_chunk_sizes) {
     auto chunk = liquid::digest{liquid::algorithm::blake3, {}};
     chunk.bytes.front() = std::byte{0x42};

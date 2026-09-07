@@ -52,6 +52,7 @@ built binary under the build directory before CTest compares it with the committ
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
 | `clone` | `clone <url\|drive-folder> [<dir>] [--json]` | Clone, configure, and fully materialize a repository. | available |
 | `status` | `status [--json]` | Show repository status. | available |
+| `conflict` | `conflict <show\|resolve> <path>` | Inspect or resolve an unresolved conflict. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
 | `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
@@ -194,13 +195,18 @@ bytes. `log --ops --json` includes a `delegation` digest for version-3 agent dri
 show` prints every typed attribute.
 
 `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
-but not present in the local store, plus `agents.require_base`, the configured actor list, and one
-row per live application-data branch. JSON status returns those records in `data_branches`.
+but not present in the local store, plus `agents.require_base`, the configured actor list, one line
+per unresolved conflict, and one row per live application-data branch. JSON status returns
+conflicts as path and digest objects in `conflicts` and branch records in `data_branches`.
 Hydration and materialisation reduce the value chunk by
 chunk. Its `daemon` object reports availability, process id, the last triggered drip, graph memory
 counts, validation backlog, and the last graph divergence with its query and inputs. Text status
 adds one `daemon_target` line per ordered target with its cursor, distance behind capture, and
 successful delivery count.
+`conflict show <path>` prints the canonical conflict digest, base, both sides, merge kind, range,
+and explanation. After the selected working path contains the intended result, `conflict resolve
+<path>` cuts an ordinary change that references the conflict and selected value. See
+[`conflicts.md`](../library/conflicts.md).
 The `hot-update` target also emits `daemon_target_detail=<name> <detail>` after a successful
 delivery. Its detail names the configured build target, `patched` or `restart` outcome, tier, and
 content-addressed record.

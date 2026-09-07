@@ -196,7 +196,7 @@ struct LIQUID_EXPORT repository_status {
     std::uint64_t pending_drips{};
     std::uint64_t remote_bytes{};
     bool paused{};
-    std::vector<conflict> conflicts;
+    std::vector<conflict_reference> conflicts;
     std::vector<std::string> oversized_directories;
     std::optional<change_id> head;
     agents_config agents;
@@ -532,6 +532,9 @@ public:
     [[nodiscard]] runtime::task<repository> split(std::string path, std::filesystem::path into);
     [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);
     [[nodiscard]] runtime::task<std::vector<conflict>> conflicts();
+    [[nodiscard]] runtime::task<conflict> conflict_at(std::string path);
+    [[nodiscard]] runtime::task<digest> record_conflict(conflict value);
+    [[nodiscard]] runtime::task<change_id> resolve_conflict(std::string path);
     [[nodiscard]] runtime::task<std::vector<operation_record>> operations(log_options options = {});
     [[nodiscard]] runtime::task<undo_report> undo(op_id operation);
     [[nodiscard]] runtime::task<undo_report> undo_session(session_id session,

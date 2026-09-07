@@ -1,5 +1,9 @@
 # Build implementation
 
+Input tree materialisation rejects a reached `conflict` entry with `errc::conflict` and names its
+repository path and digest. Other input trees continue through the ordinary blob and directory
+materialisation path.
+
 `executor.cpp` owns action validation, sandbox launch, observed-read capture, output collection, and
 signed result creation. It exposes one preparation and one publication path to
 `distribution.cpp`, which walks source and toolchain object graphs, measures the remote's missing
