@@ -97,7 +97,8 @@ while changing a verified parent hash tile and requires the failure to name that
 level case proves consistency verification completes the tile walk before requesting its proof.
 `liquid-transparency-measure` times cold and cached verification of a synthetic `2^16`-leaf log.
 Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
-Kubernetes fixtures, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
+Kubernetes fixtures, policy-pinned checkpoint trust, valid inclusion, forged parent tiles,
+untrusted checkpoints, policy reload, source readiness, metrics, REST, and MCP under `admission/`.
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.

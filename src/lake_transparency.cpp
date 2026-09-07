@@ -1305,13 +1305,18 @@ log_client& log_client::operator=(log_client&&) noexcept = default;
 runtime::task<checkpoint> log_client::current_checkpoint() {
     auto identity = co_await impl_->source->identity();
     auto configuration = co_await impl_->source->configuration();
-    auto value = co_await impl_->source->current_checkpoint();
-    if (!identity || !configuration || !value) {
-        co_return std::unexpected(!identity        ? identity.error()
-                                  : !configuration ? configuration.error()
-                                                   : value.error());
+    if (!identity || !configuration) {
+        co_return std::unexpected(!identity ? identity.error() : configuration.error());
     }
-    auto verified = value->verify({*identity, *configuration});
+    co_return co_await current_checkpoint({*identity, *configuration});
+}
+
+runtime::task<checkpoint> log_client::current_checkpoint(const log_trust& trust) {
+    auto value = co_await impl_->source->current_checkpoint();
+    if (!value) {
+        co_return std::unexpected(value.error());
+    }
+    auto verified = value->verify(trust);
     if (!verified) {
         co_return std::unexpected(verified.error());
     }
@@ -1441,14 +1446,9 @@ runtime::task<void> log_client::verify_tiles(checkpoint value) {
     co_return result<void>{};
 }
 
-runtime::task<checkpoint_trust> log_client::verify_inclusion(repository& destination,
-                                                             std::vector<std::byte> attestation,
-                                                             bootstrap_policy policy) {
-    auto canonical = verify_canonical_attestation(attestation);
-    if (!canonical) {
-        co_return std::unexpected(canonical.error());
-    }
-    auto selected = co_await current_checkpoint();
+runtime::task<checkpoint> log_client::verify_inclusion(std::vector<std::byte> attestation,
+                                                       const log_trust& trust) {
+    auto selected = co_await current_checkpoint(trust);
     if (!selected) {
         co_return std::unexpected(selected.error());
     }
@@ -1469,6 +1469,26 @@ runtime::task<checkpoint_trust> log_client::verify_inclusion(repository& destina
     auto verified = proof->verify(attestation, *selected);
     if (!verified) {
         co_return std::unexpected(verified.error());
+    }
+    co_return std::move(*selected);
+}
+
+runtime::task<checkpoint_trust> log_client::verify_inclusion(repository& destination,
+                                                             std::vector<std::byte> attestation,
+                                                             bootstrap_policy policy) {
+    auto canonical = verify_canonical_attestation(attestation);
+    if (!canonical) {
+        co_return std::unexpected(canonical.error());
+    }
+    auto identity = co_await impl_->source->identity();
+    auto configuration = co_await impl_->source->configuration();
+    if (!identity || !configuration) {
+        co_return std::unexpected(!identity ? identity.error() : configuration.error());
+    }
+    auto selected = co_await verify_inclusion(
+        std::move(attestation), log_trust{std::move(*identity), std::move(*configuration)});
+    if (!selected) {
+        co_return std::unexpected(selected.error());
     }
     co_return co_await trust_checkpoint(
         destination, impl_->source->name(), std::move(*selected), policy);

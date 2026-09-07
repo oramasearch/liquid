@@ -1,6 +1,5 @@
 #include "admission/internal.hpp"
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -13,6 +12,7 @@
 #include "formats/json.hpp"
 #include "http1/client.hpp"
 #include "liquid/store.hpp"
+#include "liquid/transparency.hpp"
 
 namespace liquid::admission_detail {
 namespace {
@@ -157,16 +157,28 @@ private:
 
 class checkpoint_log_verifier final : public log_verifier {
 public:
-    checkpoint_log_verifier(admission_log_policy policy, std::filesystem::path cache)
-        : policy_(std::move(policy)), cache_(std::move(cache)) {}
+    checkpoint_log_verifier(admission_log_policy policy,
+                            std::filesystem::path cache,
+                            std::unique_ptr<transparency::log_source> source)
+        : policy_(std::move(policy)), cache_(std::move(cache)), source_(std::move(source)),
+          client_(*source_) {}
 
-    runtime::task<log_verdict> verify_inclusion(digest attestation) override {
-        static_cast<void>(attestation);
-        if (!policy_.lake.empty()) {
-            auto response = co_await http1::request(
-                {.url = policy_.lake, .suffix = "/v1/transparency_checkpoint"});
-            if (response && response->status >= 200 && response->status < 300 && !cache_.empty()) {
-                auto stored = co_await runtime::offload([path = cache_, body = response->body] {
+    runtime::task<admission_log_verification>
+    verify_inclusion(std::vector<std::byte> attestation) override {
+        auto verified = co_await client_.verify_inclusion(std::move(attestation), policy_.trust);
+        if (!verified) {
+            const auto verdict =
+                verified.error().code == errc::unavailable || verified.error().code == errc::io
+                    ? log_verdict::unavailable
+                    : log_verdict::not_included;
+            co_return admission_log_verification{
+                .verdict = verdict,
+                .reason = verified.error().message,
+            };
+        }
+        if (!cache_.empty()) {
+            const auto stored =
+                co_await runtime::offload([path = cache_, body = verified->canonical_body] {
                     auto code = std::error_code{};
                     if (path.has_parent_path()) {
                         std::filesystem::create_directories(path.parent_path(), code);
@@ -179,28 +191,34 @@ public:
                                  static_cast<std::streamsize>(body.size()));
                     return static_cast<bool>(output);
                 });
-                static_cast<void>(stored);
-            }
+            static_cast<void>(stored);
         }
-        if (!cache_.empty()) {
-            auto cache_fresh = co_await runtime::offload(
-                [path = cache_, maximum_age = policy_.max_checkpoint_age_seconds] {
-                    auto code = std::error_code{};
-                    const auto modified = std::filesystem::last_write_time(path, code);
-                    if (code) {
-                        return false;
-                    }
-                    const auto now = std::filesystem::file_time_type::clock::now();
-                    return maximum_age == 0 || now - modified <= std::chrono::seconds{maximum_age};
-                });
-            static_cast<void>(cache_fresh);
-        }
-        co_return log_verdict::unavailable;
+        co_return admission_log_verification{
+            .verdict = log_verdict::included,
+            .checkpoint = digest{.alg = algorithm::sha256, .bytes = verified->checkpoint_hash},
+            .checkpoint_sequence = verified->sequence,
+            .tree_size = verified->tree_size,
+            .reason = "included in verified log",
+        };
     }
 
 private:
     admission_log_policy policy_;
     std::filesystem::path cache_;
+    std::unique_ptr<transparency::log_source> source_;
+    transparency::log_client client_;
+};
+
+class denied_log_verifier final : public log_verifier {
+public:
+    runtime::task<admission_log_verification>
+    verify_inclusion(std::vector<std::byte> attestation) override {
+        static_cast<void>(attestation);
+        co_return admission_log_verification{
+            .verdict = log_verdict::denied,
+            .reason = "log verification denied by policy",
+        };
+    }
 };
 
 } // namespace
@@ -222,7 +240,22 @@ runtime::task<std::shared_ptr<attestation_source>> open_source(std::string locat
 
 std::shared_ptr<log_verifier> make_log_verifier(admission_log_policy policy,
                                                 std::filesystem::path cache) {
-    return std::make_shared<checkpoint_log_verifier>(std::move(policy), std::move(cache));
+    if (policy.mode == admission_log_mode::deny) {
+        return std::make_shared<denied_log_verifier>();
+    }
+    auto source = std::make_unique<transparency::http_log_source>(policy.lake);
+    return std::make_shared<checkpoint_log_verifier>(
+        std::move(policy), std::move(cache), std::move(source));
+}
+
+std::shared_ptr<log_verifier> make_log_verifier(admission_log_policy policy,
+                                                std::filesystem::path cache,
+                                                std::unique_ptr<transparency::log_source> source) {
+    if (policy.mode == admission_log_mode::deny) {
+        return std::make_shared<denied_log_verifier>();
+    }
+    return std::make_shared<checkpoint_log_verifier>(
+        std::move(policy), std::move(cache), std::move(source));
 }
 
 } // namespace liquid::admission_detail

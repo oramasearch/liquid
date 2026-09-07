@@ -64,13 +64,23 @@ public:
     std::vector<liquid::log_verdict> verdicts;
     std::size_t calls{};
 
-    liquid::runtime::task<liquid::log_verdict>
-    verify_inclusion(liquid::digest attestation) override {
+    liquid::runtime::task<liquid::admission_log_verification>
+    verify_inclusion(std::vector<std::byte> attestation) override {
         static_cast<void>(attestation);
+        auto selected = verdict;
         if (calls < verdicts.size()) {
-            co_return verdicts[calls++];
+            selected = verdicts[calls++];
         }
-        co_return verdict;
+        auto reason = std::string{"included in verified log"};
+        if (selected == liquid::log_verdict::not_included) {
+            reason = "not in log";
+        } else if (selected == liquid::log_verdict::unavailable) {
+            reason = "log verifier unavailable";
+        } else if (selected == liquid::log_verdict::denied) {
+            reason = "log verification denied by policy";
+        }
+        co_return liquid::admission_log_verification{.verdict = selected,
+                                                     .reason = std::move(reason)};
     }
 };
 
@@ -81,7 +91,20 @@ auto policy_for(const liquid::attestation& statement) -> liquid::admission_polic
             .exempt = {"registry.example/exempt/*"},
             .exempt_namespaces = {"kube-system"},
             .attestation_source = "/store",
-            .log = {.lake = "http://lake.example", .max_checkpoint_age_seconds = 300}};
+            .log = {.mode = liquid::admission_log_mode::verify,
+                    .lake = "http://lake.example",
+                    .trust = {.identity = {.taap_id = "taap:1:ed25519:fixture-log",
+                                           .algorithm = "ed25519",
+                                           .public_key = std::vector<std::byte>(32)},
+                              .configuration =
+                                  {
+                                      .witnesses = {{
+                                          .endpoint = "https://witness.example/checkpoint",
+                                          .public_key = liquid::transparency::hash{std::byte{1}},
+                                      }},
+                                      .witness_threshold = 1,
+                                  }},
+                    .max_checkpoint_age_seconds = 300}};
 }
 
 auto review(const liquid::admission_policy& policy,
@@ -108,8 +131,28 @@ TEST(AdmissionPolicy, round_trips_the_versioned_contract) {
     EXPECT_EQ(decoded->exempt, policy.exempt);
     EXPECT_EQ(decoded->exempt_namespaces, policy.exempt_namespaces);
     EXPECT_EQ(decoded->attestation_source, policy.attestation_source);
+    EXPECT_EQ(decoded->log.mode, liquid::admission_log_mode::verify);
     EXPECT_EQ(decoded->log.lake, policy.log.lake);
+    EXPECT_EQ(decoded->log.trust.identity.taap_id, policy.log.trust.identity.taap_id);
+    EXPECT_EQ(decoded->log.trust.identity.public_key, policy.log.trust.identity.public_key);
+    EXPECT_EQ(decoded->log.trust.configuration.witness_threshold, 1U);
+    ASSERT_EQ(decoded->log.trust.configuration.witnesses.size(), 1U);
+    EXPECT_EQ(decoded->log.trust.configuration.witnesses.front().endpoint,
+              "https://witness.example/checkpoint");
+    EXPECT_EQ(decoded->log.trust.configuration.witnesses.front().public_key,
+              policy.log.trust.configuration.witnesses.front().public_key);
     EXPECT_EQ(decoded->log.max_checkpoint_age_seconds, 300U);
+}
+
+TEST(AdmissionPolicy, refuses_an_invalid_verify_url) {
+    const auto statement = signed_image();
+    auto policy = policy_for(statement);
+    policy.log.lake = "lake.example";
+    auto encoded = liquid::encode_admission_policy(policy);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::decode_admission_policy(*encoded);
+    ASSERT_FALSE(decoded);
+    EXPECT_EQ(decoded.error().context, "log.lake");
 }
 
 TEST(AdmissionDecision, round_trips_cbor_and_json) {
@@ -126,7 +169,11 @@ TEST(AdmissionDecision, round_trips_cbor_and_json) {
                         .issuer = "taap:1:ed25519:rejected",
                         .verified = false,
                         .rule_id = "attestation.issuer_rejected",
-                        .reason = "issuer not accepted"}},
+                        .reason = "issuer not accepted",
+                        .log =
+                            liquid::admission_log_verification{
+                                .verdict = liquid::log_verdict::not_included,
+                                .reason = "not in log"}}},
     };
     auto cbor = liquid::encode_admission_decision_cbor(value);
     ASSERT_TRUE(cbor) << cbor.error().message;
@@ -138,6 +185,7 @@ TEST(AdmissionDecision, round_trips_cbor_and_json) {
 
     auto json = liquid::encode_admission_decision_json(value);
     ASSERT_TRUE(json) << json.error().message;
+    EXPECT_NE(json->find(R"("outcome": "not_included")"), std::string::npos);
     auto decoded_json = liquid::decode_admission_decision_json(*json);
     ASSERT_TRUE(decoded_json) << decoded_json.error().message;
     auto reencoded_json = liquid::encode_admission_decision_json(*decoded_json);
@@ -204,7 +252,12 @@ TEST(AdmissionReview, applies_all_image_decisions_without_assumption) {
     records.values = {statement, statement};
     verifier.verdicts = {liquid::log_verdict::unavailable, liquid::log_verdict::included};
     verifier.calls = 0;
-    EXPECT_TRUE(review(policy, records, verifier).allowed);
+    const auto logged = review(policy, records, verifier);
+    EXPECT_TRUE(logged.allowed);
+    ASSERT_EQ(logged.considered.size(), 2U);
+    ASSERT_TRUE(logged.considered.back().log.has_value());
+    EXPECT_EQ(logged.considered.back().log->verdict, liquid::log_verdict::included);
+    EXPECT_EQ(verifier.calls, 2U);
 
     records.values = {statement};
     verifier.verdicts.clear();

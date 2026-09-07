@@ -66,8 +66,9 @@ it.
 > `liquid serve admission` provides the fail-closed Kubernetes webhook, TLS and control listeners,
 > atomically reloaded named policy sets at `/admit/<policy>`, structured CBOR/JSON decisions in
 > AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
-> metrics, REST, OpenAPI, and MCP. The shared transparency client now provides complete inclusion
-> verification; the admission lake adapter remains fail-closed until it calls that verifier.
+> metrics, REST, OpenAPI, and MCP. Log-mode policy sets select fail-closed denial or verification
+> against pinned log identity and witness trust; verification uses the shared checkpoint,
+> parent-tile, and inclusion path and records its outcome in each decision.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
 > per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the

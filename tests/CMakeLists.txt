@@ -58,6 +58,7 @@ add_executable(liquid-tests
   test_tuf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
   attestation/test_registry.cpp
+  admission/test_log.cpp
   admission/test_review.cpp
   scan/test_capture.cpp
   scan/test_detectors.cpp

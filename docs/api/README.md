@@ -7,7 +7,7 @@ liquid's worker RPCs are documented as an internal protocol.
 
 | Component | Reference |
 |---|---|
-| Image admission | [`admission.md`](admission.md) |
+| Image admission | [`admission.md`](admission.md), including policy-pinned transparency outcomes |
 | Scheduler | [`scheduler.md`](scheduler.md) |
 | Worker control listener | [`worker.md`](worker.md) |
 | Node store | [`node-store.md`](node-store.md) |

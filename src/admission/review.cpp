@@ -1,7 +1,9 @@
 #include "liquid/admission.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <ranges>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -115,8 +117,7 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
     auto accepted_issuer = false;
     auto accepted_profile = false;
     auto invalid_signature = false;
-    auto inclusion_unavailable = false;
-    auto not_included = false;
+    auto log_refusal = std::optional<admission_reason>{};
     for (const auto& statement : *attestations) {
         auto id = record_digest(statement);
         if (!id) {
@@ -151,17 +152,31 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
             continue;
         }
         if (policy.mode == admission_mode::attestation_and_log) {
-            auto included = co_await log.verify_inclusion(*id);
-            if (!included || *included == log_verdict::unavailable) {
-                evidence_reason(
-                    considered, "transparency.verifier_unavailable", "log verifier unavailable");
-                inclusion_unavailable = true;
-                output.considered.push_back(std::move(considered));
-                continue;
+            auto encoded = encode_attestation(statement);
+            auto included =
+                encoded ? co_await log.verify_inclusion(std::move(*encoded))
+                        : result<admission_log_verification>{std::unexpected(encoded.error())};
+            if (!included) {
+                included = admission_log_verification{
+                    .verdict = log_verdict::unavailable,
+                    .reason = included.error().message,
+                };
             }
-            if (*included == log_verdict::not_included) {
-                evidence_reason(considered, "transparency.not_included", "not in log");
-                not_included = true;
+            considered.log = *included;
+            if (included->verdict != log_verdict::included) {
+                auto rule_id = std::string{"transparency.not_included"};
+                if (included->verdict == log_verdict::unavailable) {
+                    rule_id = "transparency.verifier_unavailable";
+                } else if (included->verdict == log_verdict::denied) {
+                    rule_id = "transparency.policy_denied";
+                }
+                auto reason =
+                    included->reason.empty() ? std::string{"not in log"} : included->reason;
+                evidence_reason(considered, rule_id, reason);
+                if (!log_refusal) {
+                    log_refusal = admission_reason{.rule_id = std::move(rule_id),
+                                                   .message = std::move(reason)};
+                }
                 output.considered.push_back(std::move(considered));
                 continue;
             }
@@ -176,10 +191,8 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
     }
     if (attestations->empty()) {
         refuse(output, "attestation.missing", "no attestation");
-    } else if (inclusion_unavailable) {
-        refuse(output, "transparency.verifier_unavailable", "log verifier unavailable");
-    } else if (not_included) {
-        refuse(output, "transparency.not_included", "not in log");
+    } else if (log_refusal) {
+        refuse(output, std::move(log_refusal->rule_id), std::move(log_refusal->message));
     } else if (invalid_signature && accepted_profile) {
         refuse(output, "attestation.signature_invalid", "signature invalid");
     } else if (accepted_issuer) {

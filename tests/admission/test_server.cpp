@@ -166,7 +166,9 @@ auto policy_for(std::string issuer,
             .exempt = {"registry.example/exempt/*"},
             .exempt_namespaces = {"kube-system"},
             .attestation_source = store.string(),
-            .log = {.lake = "http://127.0.0.1:1", .max_checkpoint_age_seconds = 60}};
+            .log = {.mode = liquid::admission_log_mode::deny,
+                    .lake = "http://127.0.0.1:1",
+                    .max_checkpoint_age_seconds = 60}};
 }
 
 auto write_policy(const std::filesystem::path& path, const liquid::admission_policy& policy)
@@ -353,14 +355,18 @@ TEST(AdmissionServer, serves_tls_control_and_cli_contracts) {
     EXPECT_NE(text(request(control, "GET", "/v1").body).find("admission"), std::string::npos);
     EXPECT_NE(text(request(control, "GET", "/v1/policy").body).find("image_provenance/1"),
               std::string::npos);
-    EXPECT_NE(text(request(control, "GET", "/v1/openapi.json").body).find("/admission/review"),
-              std::string::npos);
+    const auto openapi = text(request(control, "GET", "/v1/openapi.json").body);
+    EXPECT_NE(openapi.find("/admission/review"), std::string::npos);
+    EXPECT_NE(openapi.find("AdmissionLogPolicy"), std::string::npos);
+    EXPECT_NE(openapi.find("LogVerification"), std::string::npos);
+    EXPECT_NE(openapi.find("not_included"), std::string::npos);
 
     policy.mode = liquid::admission_mode::attestation_and_log;
     write_policy(root / "policy.json", policy);
     EXPECT_EQ(request(control, "POST", "/v1/policy/reload", "{}").status, 200U);
     auto unavailable_log = request(webhook, "POST", "/admission/review", review, false);
-    EXPECT_NE(text(unavailable_log.body).find("log verifier unavailable"), std::string::npos);
+    EXPECT_NE(text(unavailable_log.body).find("log verification denied by policy"),
+              std::string::npos);
 
     policy.mode = liquid::admission_mode::off;
     write_policy(root / "policy.json", policy);
@@ -377,6 +383,7 @@ TEST(AdmissionServer, serves_tls_control_and_cli_contracts) {
         control, "POST", "/mcp", R"({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})");
     EXPECT_NE(text(tools.body).find("admission_policy"), std::string::npos);
     EXPECT_NE(text(tools.body).find("admission_verify"), std::string::npos);
+    EXPECT_NE(text(tools.body).find("evidence.log reports checkpoint"), std::string::npos);
     auto called = request(
         control,
         "POST",
@@ -486,7 +493,9 @@ TEST(AdmissionServer, refuses_when_the_network_source_is_down) {
         .issuers = {"taap:1:ed25519:issuer"},
         .profiles = {"image_provenance/1"},
         .attestation_source = source,
-        .log = {.lake = "", .max_checkpoint_age_seconds = 60},
+        .log = {.mode = liquid::admission_log_mode::deny,
+                .lake = "",
+                .max_checkpoint_age_seconds = 60},
     };
     write_policy(root / "policy.json", policy);
     const auto port = free_port();
