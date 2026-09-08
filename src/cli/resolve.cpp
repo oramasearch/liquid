@@ -242,6 +242,12 @@ auto resolve(int argc, char** argv) -> int {
     if (!universe) {
         return fail(universe.error());
     }
+    if (universe->packages.empty()) {
+        return fail({liquid::errc::not_found,
+                     "No candidates were loaded from " + universe_path.generic_string() +
+                         "; supply .liquid declarations or canonical .cbor records",
+                     universe_path.generic_string()});
+    }
     auto options = liquid::resolve_options{};
     if (reuse) {
         auto loaded = read_reuse(universe_path, options);

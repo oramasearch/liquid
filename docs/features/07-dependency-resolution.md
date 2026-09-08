@@ -5,7 +5,7 @@
 > **Position:** Spack's resolution model is the best in existence and is the model
 > liquid follows. Nix's store model is the other half.
 >
-> **Status:** implemented by issues #25 and #74: the public spec parser, canonical package and
+> **Status:** implemented by issues #25, #74, and #287: the public spec parser, canonical package and
 > concretised-spec records, package-universe loading, CDCL concretizer, lexicographic optimisation,
 > minimal attributed conflict cores, explanations, `liquid resolve`, and the typed `.liquid`
 > language with static diagnostics, lowering, formatting, includes, verified sources, and
@@ -46,6 +46,12 @@ package hdf5 {
     when "hdf5 +mpi" { depends_on openmpi { version: 5.0.0 type: link } }
 }
 ```
+
+`liquid resolve <spec> --universe <directory>` loads `.liquid` declarations directly alongside
+canonical `.cbor` records. `config lower --output-record <file|->` also exposes canonical package
+records for scripts. The [executable guide](../guides/resolve-packages.md) resolves two packages
+with a dependency from declarations alone. Empty or unsupported-only universes name the missing
+candidates and accepted formats; contradictory package rules still produce an attributed core.
 
 The configuration-language golden test pins this example's name, version, compiler, target,
 variants, conditional dependency, and dependency type after lowering.

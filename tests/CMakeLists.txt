@@ -423,6 +423,17 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_MAN_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/cli-man-pages
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/man-pages.cmake)
+  if(UNIX)
+    add_test(NAME guides-resolution
+      COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/guides/run.py
+        --liquid $<TARGET_FILE:liquid-cli>
+        --guides ${PROJECT_SOURCE_DIR}/docs/guides
+        --guide resolve-packages.md
+        --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/build/wrap
+        --work ${CMAKE_CURRENT_BINARY_DIR}/guides-resolution)
+    set_tests_properties(guides-resolution PROPERTIES TIMEOUT 60)
+  endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME guides-run
       COMMAND ${LIQUID_PYTHON_EXECUTABLE}
@@ -593,6 +604,9 @@ if(LIQUID_BUILD_CLI)
   endif()
   if(LIQUID_BUILD_FRONTENDS)
     list(APPEND LIQUID_CLI_TESTS symbols-cli-python)
+  endif()
+  if(UNIX)
+    list(APPEND LIQUID_CLI_TESTS guides-resolution)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND LIQUID_CLI_TESTS guides-run)

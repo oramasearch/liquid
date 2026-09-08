@@ -359,7 +359,10 @@ refuse by default; and signed `projection/1`, source provenance, and SBOM statem
 every artifact
 ([`projection.md`](projection.md)).
 
-**Dependency resolution** is implemented. Canonical `package/1` and fully bound
+**Dependency resolution** is implemented. Issue #287 connects `.liquid` declarations to directory
+and repository universes, provides `config lower --output-record` for a selected canonical package,
+and diagnoses an empty universe before solving. The [executable guide](../guides/resolve-packages.md)
+checks source-only resolution and record equivalence. Canonical `package/1` and fully bound
 `concretised_spec/1` records carry versions, variants, virtual and concrete dependencies, compiler
 and target constraints, conflicts, and patches. The public Spack-style parser reports exact error
 columns, while directory and repository universes use the documented `packages/` tree. Liquid's

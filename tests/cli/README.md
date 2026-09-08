@@ -90,3 +90,7 @@ HTTP and posts committed Kubernetes fixtures.
 `cli-keys` creates an encrypted store through `store_options::custody`, then drives `keys show`,
 `rotate`, `revoke`, `rewrap`, and `split`. It checks the rotation disclosures, the one-line mutation
 reports, all emitted Shamir shares, and the final persisted custody kind.
+
+The configuration scenario also checks canonical record file/stdout equivalence, successful
+resolution from emitted records, named package selection and output errors, empty and unsupported
+universe diagnostics in text/JSON modes, and an exact attributed contradiction narrative (#287).

@@ -144,7 +144,10 @@ constexpr auto flags_search = std::to_array<flag>({
     {"--limit", "<count>", "Limit results to a value from 1 through 1000.", "20"},
 });
 constexpr auto flags_resolve = std::to_array<flag>({
-    {"--universe", "<path>", "Read package candidates from this directory.", "current directory"},
+    {"--universe",
+     "<path>",
+     "Read .liquid declarations or canonical .cbor candidates from this directory.",
+     "current directory"},
     {"--reuse", {}, "Reuse the existing resolution when it remains valid.", "false"},
     {"--explain", {}, "Show the selected candidates and rejected constraints.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
@@ -447,6 +450,15 @@ constexpr auto flags_docs = std::to_array<flag>({
 constexpr auto flags_config = std::to_array<flag>({
     {"--json", {}, "Write stable JSON instead of text.", "false"},
     {"--trace", {}, "Include source and generated-record origins.", "false"},
+    {"--output-record",
+     "<file|->",
+     "Write one canonical package/1 record; - selects binary stdout. Exclusive with --json and "
+     "--trace.",
+     "none"},
+    {"--package",
+     "<name>",
+     "Select the package for --output-record when several are declared.",
+     "the only package"},
 });
 constexpr auto flags_session = std::to_array<flag>({
     {"--from", "<file>", "Read session-write content from this file.", "required for write"},
@@ -610,13 +622,15 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::resolve},
     {"config",
-     "config check <file|dir> | config lower <file> [--json] [--trace] | config format <file>",
+     "config check <file|dir> | config lower <file> [--json] [--trace] [--output-record <file|-> "
+     "[--package <name>]] | config format <file>",
      "check, lower, or format .liquid configuration",
      "available",
      flags_config,
-     "Check configuration documents, inspect their lowered form, or rewrite one in canonical "
-     "format.",
-     "liquid config lower liquid.liquid --json",
+     "Check configuration documents, inspect their lowered form, emit a canonical package record, "
+     "or rewrite one in canonical format.",
+     "liquid config lower liquid.liquid --json\nliquid config lower example.liquid --output-record "
+     "example.cbor",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::config},

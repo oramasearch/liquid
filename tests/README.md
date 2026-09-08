@@ -304,3 +304,6 @@ The format-registry inventory also pins the Debian, RPM, and Alpine codecs besid
 codecs.
 Support-matrix tests compare every live codec and locked grammar with `support_matrix()`, and pin
 the compiler frontend as the strongest C++ registration.
+
+`guides-resolution` executes the source-only package guide on macOS and Linux, including
+canonical record equivalence. The configuration CLI scenario pins loading diagnostics (#287).

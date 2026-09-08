@@ -10,3 +10,7 @@
 
 Every shell block has a `guides-run` marker and runs through the Linux `guides-run` CTest against
 the repository fixtures.
+
+[Resolve packages from declarations](resolve-packages.md) checks a two-package dependency graph
+and canonical record file/stdout output. It also runs natively on macOS through `guides-resolution`
+without a mount or repository.

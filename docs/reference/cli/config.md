@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid config check <file|dir> | config lower <file> [--json] [--trace] | config format <file>
+liquid config check <file|dir> | config lower <file> [--json] [--trace] [--output-record <file|-> [--package <name>]] | config format <file>
 ```
 
 ## Description
 
-Check configuration documents, inspect their lowered form, or rewrite one in canonical format.
+Check configuration documents, inspect their lowered form, emit a canonical package record, or rewrite one in canonical format.
 
 ## Options
 
@@ -18,6 +18,8 @@ Check configuration documents, inspect their lowered form, or rewrite one in can
 |---|---|---|---|
 | `--json` | — | Write stable JSON instead of text. | false |
 | `--trace` | — | Include source and generated-record origins. | false |
+| `--output-record` | `<file\|->` | Write one canonical package/1 record; - selects binary stdout. Exclusive with --json and --trace. | none |
+| `--package` | `<name>` | Select the package for --output-record when several are declared. | the only package |
 
 ## Availability
 
@@ -27,6 +29,7 @@ available
 
 ```sh
 liquid config lower liquid.liquid --json
+liquid config lower example.liquid --output-record example.cbor
 ```
 
 ## Exit status

@@ -217,3 +217,7 @@ the canonical grammar-lock digest alongside the release version.
 `hot_update.cpp` classifies two recorded builds from public hot-update evidence and prints the
 tier, outcome, symbols, and evidence records. Its status view verifies every signed patch before
 showing the base artifact plus its patch composition.
+
+`config lower --output-record <file|-> [--package <name>]` writes a selected canonical package
+record through the public encoder, with binary stdout and no summary. `resolve` diagnoses a
+universe with no loaded candidates before invoking the solver (issue #287).
