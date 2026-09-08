@@ -12,6 +12,7 @@ add_test(NAME docs-links
 
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
+  ../src/cli/identity.cpp
   test_asn1.cpp
   test_drip.cpp
   test_delta.cpp
@@ -383,6 +384,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-scenario
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/scenario.cmake)
+  add_test(NAME cli-split
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CLI_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-split
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/split.cmake)
   add_executable(liquid-conflict-cli-fixture cli/conflict_fixture.cpp)
   target_link_libraries(liquid-conflict-cli-fixture PRIVATE liquid::liquid)
   add_test(NAME cli-conflict

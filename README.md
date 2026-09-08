@@ -1,5 +1,8 @@
 # liquid
 
+Standalone ordinary and nested splits own their data and retain original signed history; see
+[`docs/library/split.md`](docs/library/split.md).
+
 liquid is a content-addressed, coroutine-native version control system and build system in one
 program. One chunk store holds source, binaries, packages, images, search indexes and encrypted
 data. One dependency graph of pure actions builds, packages, indexes and deploys from that store;
@@ -16,6 +19,9 @@ collects, and [liquify](docs/features/21-liquify-ide.md) is the IDE. The reposit
 project and one module of
 [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge), which holds the
 action plan.
+
+Before signing up for lake, export your public identity with `liquid identity show --document`;
+see the [identity guide](docs/library/identity.md). The private signing key stays local.
 
 ## Status
 
@@ -74,7 +80,8 @@ it.
 > AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
 > metrics, REST, OpenAPI, and MCP. Log-mode policy sets select fail-closed denial or verification
 > against pinned log identity and witness trust; verification uses the shared checkpoint,
-> parent-tile, and inclusion path and records its outcome in each decision.
+> parent-tile, and inclusion path, enforces configured checkpoint freshness from signed issuance
+> time, and records its outcome in each decision.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
 > per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the
@@ -916,6 +923,8 @@ mkdir example && printf 'first\n' > example/readme.txt
 `include/liquid/` and the CMake package. Prerequisites, options, the install layout and the
 documentation checks are in [`docs/build/local.md`](docs/build/local.md). Consuming the library
 from another CMake project is in [`docs/library/libliquid.md`](docs/library/libliquid.md).
+The installed `liquid::liquid` target carries the complete private static dependency closure;
+the relocated consumer gate checks repository create/open, persisted file write/read, and coroutines.
 
 ## Documentation
 

@@ -3,7 +3,19 @@ if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_IDENTITY_CODEC OR
   message(FATAL_ERROR "cli identity codec test requires its executables and identity home")
 endif()
 
+find_program(identity_python NAMES python3 python REQUIRED)
+function(check_document_output)
+  execute_process(
+    COMMAND "${identity_python}" "${CMAKE_CURRENT_LIST_DIR}/identity-document.py"
+            "${LIQUID_CLI}" "${LIQUID_IDENTITY_CODEC}" "${LIQUID_IDENTITY_HOME}"
+    RESULT_VARIABLE document_result)
+  if(NOT document_result EQUAL 0)
+    message(FATAL_ERROR "public identity document output failed verification")
+  endif()
+endfunction()
+
 file(REMOVE_RECURSE "${LIQUID_IDENTITY_HOME}")
+check_document_output()
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_IDENTITY_HOME}"
           "${LIQUID_CLI}" identity show --json
@@ -41,3 +53,5 @@ execute_process(
 if(NOT rotation_codec_result EQUAL 0)
   message(FATAL_ERROR "public codec rejected the identity rotation chain")
 endif()
+
+check_document_output()

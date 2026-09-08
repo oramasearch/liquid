@@ -804,9 +804,9 @@ auto openapi() -> std::string {
           "mode": {"type": "string", "enum": ["deny", "verify"]},
           "lake": {"type": "string"},
           "trust": {"$ref": "#/components/schemas/LogTrust"},
-          "max_checkpoint_age_seconds": {"type": "integer", "minimum": 0}
+          "max_checkpoint_age_seconds": {"type": "integer", "minimum": 1}
         },
-        "required": ["mode", "lake", "trust", "max_checkpoint_age_seconds"]
+        "required": ["mode", "lake", "trust"]
       },
       "AdmissionPolicy": {
         "type": "object",

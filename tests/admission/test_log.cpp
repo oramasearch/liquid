@@ -1,10 +1,13 @@
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -15,7 +18,9 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include "../temporary_directory.hpp"
 #include "admission/internal.hpp"
+#include "checkpoint_fixture.hpp"
 #include "liquid/hash.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/transparency.hpp"
@@ -176,6 +181,7 @@ public:
 
     liquid::runtime::task<transparency::tile>
     get_tile(std::uint32_t level, std::uint64_t index, std::uint64_t width) override {
+        ++tile_requests;
         const auto found = std::ranges::find_if(value_.tiles, [=](const auto& tile) {
             return tile.level == level && tile.index == index && tile.width == width;
         });
@@ -207,21 +213,23 @@ public:
     }
 
     fixture value_;
+    std::size_t tile_requests{};
 };
 
 auto policy_for(const fixture& value) -> liquid::admission_log_policy {
     return {.mode = liquid::admission_log_mode::verify,
             .lake = "https://lake.example",
-            .trust = value.trust,
-            .max_checkpoint_age_seconds = 300};
+            .trust = value.trust};
 }
 
-auto verify(fixture value, liquid::admission_log_policy policy)
+auto verify(fixture value,
+            liquid::admission_log_policy policy,
+            liquid::admission_detail::checkpoint_clock clock = std::chrono::system_clock::now)
     -> liquid::admission_log_verification {
     auto source = std::make_unique<fixture_source>(std::move(value));
     const auto entry = source->value_.entries.front();
     auto verifier = liquid::admission_detail::make_log_verifier(
-        std::move(policy), std::filesystem::path{}, std::move(source));
+        std::move(policy), std::filesystem::path{}, std::move(source), std::move(clock));
     auto result = liquid::runtime::block_on(verifier->verify_inclusion(entry));
     EXPECT_TRUE(result) << result.error().message;
     return result ? *result : liquid::admission_log_verification{};
@@ -255,6 +263,142 @@ TEST(AdmissionLogVerifier, refuses_an_untrusted_checkpoint) {
     const auto result = verify(std::move(value), std::move(policy));
     EXPECT_EQ(result.verdict, liquid::log_verdict::not_included);
     EXPECT_EQ(result.reason, "checkpoint log signature is invalid");
+}
+
+TEST(AdmissionLogReview, checkpoint_without_authenticated_time_fails_freshness_requirement) {
+    const auto value = load_fixture();
+    auto policy = policy_for(value);
+    policy.max_checkpoint_age_seconds = 1;
+    const auto result = verify(value, policy);
+    EXPECT_NE(result.verdict, liquid::log_verdict::included)
+        << "Checkpoint with no authenticated issuance time accepted under a 1-second age bound: "
+        << result.reason;
+    EXPECT_EQ(result.reason, "checkpoint stale");
+    EXPECT_EQ(result.verdict, liquid::log_verdict::not_included);
+}
+
+auto timed_fixture(const json& issued_at) -> fixture {
+    auto value = load_fixture();
+    auto body = json::parse(value.checkpoint.canonical_body);
+    body["issued_at"] = issued_at;
+    auto signed_value = liquid::test::admission::sign_checkpoint(body);
+    value.checkpoint = std::move(signed_value.checkpoint);
+    value.trust = std::move(signed_value.trust);
+    for (auto& proof : value.inclusion) {
+        proof.bound_checkpoint = value.checkpoint;
+    }
+    return value;
+}
+
+auto fixed_clock(std::int64_t seconds) -> liquid::admission_detail::checkpoint_clock {
+    return
+        [seconds] { return std::chrono::system_clock::time_point{std::chrono::seconds{seconds}}; };
+}
+
+TEST(AdmissionLogVerifier, enforces_authenticated_age_and_exact_skew_boundaries) {
+    constexpr auto now = std::uint64_t{1700000000};
+    struct example {
+        std::uint64_t issued_at;
+        std::uint64_t maximum_age;
+        bool accepted;
+    };
+    for (const auto& example : {example{now, 1, true},
+                                example{now - 1, 1, true},
+                                example{now - 2, 1, false},
+                                example{now + 60, 1, true},
+                                example{now + 61, 1, false},
+                                example{std::numeric_limits<std::uint64_t>::max(), 1, false},
+                                example{0, std::numeric_limits<std::uint64_t>::max(), true}}) {
+        SCOPED_TRACE(example.issued_at);
+        auto value = timed_fixture(example.issued_at);
+        auto policy = policy_for(value);
+        policy.max_checkpoint_age_seconds = example.maximum_age;
+        const auto result = verify(value, policy, fixed_clock(now));
+        EXPECT_EQ(result.verdict,
+                  example.accepted ? liquid::log_verdict::included
+                                   : liquid::log_verdict::not_included);
+        EXPECT_EQ(result.reason,
+                  example.accepted ? "included in verified log" : "checkpoint stale");
+        ASSERT_TRUE(result.checkpoint.has_value());
+        EXPECT_EQ(result.checkpoint->bytes, value.checkpoint.checkpoint_hash);
+        EXPECT_EQ(result.checkpoint_sequence, value.checkpoint.sequence);
+        EXPECT_EQ(result.tree_size, value.checkpoint.tree_size);
+    }
+}
+
+TEST(AdmissionLogVerifier, refuses_invalid_authenticated_time) {
+    for (const auto& time : {json(nullptr),
+                             json(-1),
+                             json(1.5),
+                             json("1700000000"),
+                             json(true),
+                             json::object(),
+                             json::array()}) {
+        SCOPED_TRACE(time.dump());
+        auto value = timed_fixture(time);
+        auto policy = policy_for(value);
+        policy.max_checkpoint_age_seconds = 300;
+        const auto result = verify(value, policy, fixed_clock(1700000000));
+        EXPECT_EQ(result.verdict, liquid::log_verdict::not_included);
+        EXPECT_EQ(result.reason, "checkpoint stale");
+    }
+}
+
+TEST(AdmissionLogVerifier, omitted_bound_does_not_require_or_limit_time) {
+    for (const auto& value : {load_fixture(), timed_fixture(0)}) {
+        const auto result = verify(value, policy_for(value), fixed_clock(1700000000));
+        EXPECT_EQ(result.verdict, liquid::log_verdict::included);
+    }
+}
+
+TEST(AdmissionLogVerifier, refuses_a_time_changed_without_resigning) {
+    auto value = timed_fixture(1700000000);
+    auto policy = policy_for(value);
+    policy.max_checkpoint_age_seconds = 1;
+    auto body = json::parse(value.checkpoint.canonical_body);
+    body["issued_at"] = 1700000100;
+    value.checkpoint.canonical_body = liquid::test::admission::bytes(body.dump());
+    value.checkpoint.checkpoint_hash =
+        liquid::test::admission::sha256(value.checkpoint.canonical_body);
+    const auto result = verify(value, policy, fixed_clock(1700000100));
+    EXPECT_EQ(result.verdict, liquid::log_verdict::not_included);
+    EXPECT_EQ(result.reason, "checkpoint log signature is invalid");
+}
+
+TEST(AdmissionLogVerifier, rechecks_replayed_checkpoints_and_preserves_the_inspection_cache) {
+    constexpr auto issued_at = std::int64_t{1700000000};
+    auto value = timed_fixture(issued_at);
+    auto policy = policy_for(value);
+    policy.max_checkpoint_age_seconds = 1;
+    auto now = issued_at;
+    auto source = std::make_unique<fixture_source>(value);
+    auto* observed_source = source.get();
+    const auto cache = liquid::test::fixture_path("admission-checkpoint-cache");
+    auto verifier =
+        liquid::admission_detail::make_log_verifier(policy, cache, std::move(source), [&now] {
+            return std::chrono::system_clock::time_point{std::chrono::seconds{now}};
+        });
+    auto first = liquid::runtime::block_on(verifier->verify_inclusion(value.entries.front()));
+    ASSERT_TRUE(first.has_value());
+    ASSERT_EQ(first->verdict, liquid::log_verdict::included);
+    const auto requests = observed_source->tile_requests;
+    now += 2;
+    auto replay = liquid::runtime::block_on(verifier->verify_inclusion(value.entries.front()));
+    ASSERT_TRUE(replay.has_value());
+    EXPECT_EQ(replay->verdict, liquid::log_verdict::not_included);
+    EXPECT_EQ(replay->reason, "checkpoint stale");
+    EXPECT_EQ(observed_source->tile_requests, requests);
+
+    observed_source->value_ = timed_fixture(issued_at - 10);
+    auto older = liquid::runtime::block_on(verifier->verify_inclusion(value.entries.front()));
+    ASSERT_TRUE(older.has_value());
+    EXPECT_EQ(older->reason, "checkpoint stale");
+    const auto input = std::ifstream{cache, std::ios::binary};
+    auto contents = std::string{std::istreambuf_iterator<char>{input.rdbuf()},
+                                std::istreambuf_iterator<char>{}};
+    EXPECT_EQ(contents,
+              std::string(reinterpret_cast<const char*>(value.checkpoint.canonical_body.data()),
+                          value.checkpoint.canonical_body.size()));
 }
 
 } // namespace

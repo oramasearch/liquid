@@ -1,5 +1,9 @@
 # Implementation status
 
+Issue #2: ordinary and nested splits own their referenced chunks and expose original signed
+history after source removal. Shared-store sources produce standalone destinations. Publication
+and limitations are documented in [`split.md`](split.md).
+
 This page states what libliquid and the `liquid` binary implement today, by phase, and what each
 phase still lacks. It is the consolidated status record that the root `README.md` used to carry;
 the root file now keeps a short summary and links here. Each paragraph names the page that holds
@@ -9,7 +13,10 @@ same commit.
 **Code shape.** Code is a C++26 **libliquid** (`liquid::liquid`, static by default, shared with
 `BUILD_SHARED_LIBS`) plus the `liquid` binary as a thin client of it; liquify and lake link the
 same library. The public waiting operations are lazy Boost.Capy tasks, backed by a private Corosio
-runtime ([`runtime.md`](runtime.md)). `find_package(liquid)` works from an install
+runtime ([`runtime.md`](runtime.md)). Issue #285 completes the installed static dependency
+closure: `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid` support repository
+create/open, persisted file write/read, and consumer-defined coroutines, checked after moving
+the install prefix
 ([`libliquid.md`](libliquid.md)). The `liquid` binary is the documented thin client of the Phase 1
 repository, capture, VFS, store, and identity APIs plus the Phase 2 build wrapper
 ([`../cli/README.md`](../cli/README.md)).
@@ -23,6 +30,12 @@ readability, TAAP/1 software, FIDO2, and PIV identities with cross-backend rotat
 drips and changes, TPM PCR-bound sealing, signed threshold release approval, local change capture,
 agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env`
 encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.
+
+**Identity export (#294).** `liquid identity show --document` emits only the signed public TAAP/1
+document as unpadded base64url canonical CBOR, with no newline. Software, FIDO2, and PIV private
+keys remain local. Combining `--document` with `--json` or rotation returns a usage error (exit 2).
+The public `signer::document()` accessor supplies the stored signed document to the existing codec
+([`identity.md`](identity.md)).
 
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
@@ -113,7 +126,10 @@ control listeners, atomically reloaded named policy sets at `/admit/<policy>`, s
 CBOR/JSON decisions in AdmissionReview status, a bounded local decision stream, local or
 node-store evidence lookup, and policy-pinned transparency verification through the shared
 checkpoint, parent-tile, and inclusion verifier. Each decision records the log outcome and exact
-failure reason. Metrics, REST, OpenAPI, and MCP expose the same record
+failure reason. Positive checkpoint age bounds use the signed `issued_at`, refuse missing time,
+expiry, and future skew beyond 60 seconds, and apply on every decision; zero is invalid at policy
+load and an omitted bound disables freshness enforcement. The log attests its own clock.
+Metrics, REST, OpenAPI, and MCP expose the same record
 ([`admission.md`](admission.md),
 [`../api/admission.md`](../api/admission.md)).
 

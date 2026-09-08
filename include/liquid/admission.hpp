@@ -31,7 +31,7 @@ struct LIQUID_EXPORT admission_log_policy {
     admission_log_mode mode{admission_log_mode::deny};
     std::string lake;
     transparency::log_trust trust;
-    std::uint64_t max_checkpoint_age_seconds{};
+    std::optional<std::uint64_t> max_checkpoint_age_seconds;
 };
 
 struct LIQUID_EXPORT admission_policy {

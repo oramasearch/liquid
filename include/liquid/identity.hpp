@@ -100,6 +100,7 @@ public:
     rotate_to(std::string custody, std::optional<compromise_declaration> compromise = {});
 
     [[nodiscard]] actor identity() const;
+    [[nodiscard]] result<identity_document> document() const;
 
 private:
     friend runtime::task<signer> identity_detail::local_signer();

@@ -1,5 +1,9 @@
 # Tests
 
+Issue #2 regressions cover split ownership after source removal, retained historical bytes and
+identities, borrowed-store independence, nested history, and destination cleanup. `cli-split`
+replays the customer scenarios in fresh processes; see [the contract](../docs/library/split.md).
+
 Exclusive checkout coverage spans repository holder/refusal/release and offline-sync cases,
 configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
 
@@ -261,10 +265,15 @@ libliquid, so this target compiles its private sources directly for static and s
 `consumer/` is an independent CMake project that finds the installed liquid package, then builds
 and runs an executable linked to `liquid::liquid`. `consumer-project-build` installs the already-
 built parent artifacts into a test-local prefix, configures the consumer with the parent generator
-and C++ compiler, and compiles only the consumer source. `cli-identity-codec` creates and rotates an
+and C++ compiler, and compiles only consumer sources. The gate moves the install prefix before
+configuration and rejects source/build paths in package metadata. Its library-only executable
+creates and reopens a repository, writes and reads persisted bytes, and awaits/yields in its own
+coroutines. Separate consumers check the hot ABI and installed forge double. `cli-identity-codec`
+creates and rotates an
 identity through the CLI, then decodes, re-encodes, and verifies the stored canonical-CBOR files
 through the public API. `test_hardware_keys.cpp` drives CTAP2, PIV, and TPM command-level doubles,
-cross-backend identity rotation, malformed signature rejection, and threshold release approval
+cross-backend identity rotation, private-key absence in CLI document output for software, FIDO2
+EdDSA/ES256, and PIV custody, malformed signature rejection, and threshold release approval
 including compromise-time refusal. On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 

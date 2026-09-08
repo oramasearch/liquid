@@ -1,5 +1,8 @@
 # CLI tests
 
+`split.cmake` verifies ordinary and nested splits in separate CLI processes after moving or
+deleting their sources, checks materialised bytes and prior history, and rejects failed output.
+
 `scenario.cmake` drives the built `liquid` executable through the Phase 1 command-line scenario
 without watcher capture: import files with `init`, inspect status, cut, move, nest a second
 repository, split a subtree, combine it, inspect JSON history, undo the move, reject a locked
@@ -73,7 +76,9 @@ and proves that the plaintext is absent from stderr.
 
 `cli-identity-codec` runs `liquid identity show` and `liquid identity rotate` with an isolated home,
 then passes the stored initial and successor documents to a fixture that uses only the public
-identity encode, decode, and verification APIs.
+identity encode, decode, and verification APIs. `identity-document.py` also checks first-use and
+post-rotation public export, exact base64url and stored-document bytes, self-signature acceptance,
+stable repeat output, and exit-2 flag refusals without creating an identity.
 The command table and generated-reference tests also cover the hardware `identity --to` option,
 direct `sign`, and the release policy, approval, and verification commands.
 `cli-release` creates two isolated identities, signs a two-of-two repository policy, persists both

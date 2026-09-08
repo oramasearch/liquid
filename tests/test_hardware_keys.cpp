@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -11,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include <openssl/bn.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 
@@ -31,7 +34,12 @@
 #include "liquid/release.hpp"
 #include "liquid/runtime.hpp"
 #include "monocypher-ed25519.h"
+#include "monocypher.h"
 #include "temporary_directory.hpp"
+
+namespace liquid_cli {
+auto identity(int argc, char** argv) -> int;
+}
 
 namespace {
 
@@ -160,6 +168,10 @@ public:
         }});
     }
 
+    auto private_key() const -> std::span<const std::byte> {
+        return std::as_bytes(std::span{secret_});
+    }
+
 private:
     std::array<std::uint8_t, 64> secret_{};
     std::array<std::uint8_t, 32> public_key_{};
@@ -192,6 +204,18 @@ public:
         EXPECT_EQ(size, 65U);
         return {reinterpret_cast<const std::byte*>(encoded.data() + 1),
                 reinterpret_cast<const std::byte*>(encoded.data() + size)};
+    }
+
+    auto private_key() const -> std::vector<std::byte> {
+        auto scalar = static_cast<BIGNUM*>(nullptr);
+        EXPECT_GT(EVP_PKEY_get_bn_param(key_, OSSL_PKEY_PARAM_PRIV_KEY, &scalar), 0);
+        auto output = std::vector<std::byte>(32);
+        if (scalar) {
+            EXPECT_EQ(BN_bn2binpad(scalar, reinterpret_cast<unsigned char*>(output.data()), 32),
+                      32);
+        }
+        BN_clear_free(scalar);
+        return output;
     }
 
     auto sign_digest(std::span<const std::byte> digest) const -> std::vector<std::byte> {
@@ -292,6 +316,10 @@ public:
         }});
     }
 
+    auto private_key() const -> std::vector<std::byte> {
+        return key_.private_key();
+    }
+
 private:
     p256_key key_;
     std::vector<std::byte> credential_{std::byte{0x82}, std::byte{0x04}, std::byte{0x08}};
@@ -342,6 +370,10 @@ public:
         }
         return std::unexpected(
             liquid::error{liquid::errc::unauthorized, "unsupported PIV APDU", "PIV double"});
+    }
+
+    auto private_key() const -> std::vector<std::byte> {
+        return key_.private_key();
     }
 
 private:
@@ -674,6 +706,149 @@ auto digest_with(std::byte value) -> liquid::digest {
     auto output = liquid::digest{liquid::algorithm::blake3, {}};
     output.bytes.fill(value);
     return output;
+}
+
+auto read_identity_bytes(const std::filesystem::path& path) -> std::vector<std::uint8_t> {
+    auto stream = std::ifstream{path, std::ios::binary};
+    return {std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
+}
+
+auto expect_private_key_absent(std::string_view output, std::span<const std::byte> secret) -> void {
+    ASSERT_GE(secret.size(), 32U);
+    const auto raw = std::string_view{reinterpret_cast<const char*>(secret.data()), secret.size()};
+    EXPECT_EQ(output.find(raw), std::string::npos);
+    auto encoded = liquid::identity_detail::base64(secret);
+    EXPECT_EQ(output.find(encoded), std::string::npos);
+    std::replace(encoded.begin(), encoded.end(), '+', '-');
+    std::replace(encoded.begin(), encoded.end(), '/', '_');
+    while (encoded.ends_with('=')) {
+        encoded.pop_back();
+    }
+    EXPECT_EQ(output.find(encoded), std::string::npos);
+    auto hex = std::string{};
+    constexpr auto digits = std::string_view{"0123456789abcdef"};
+    for (const auto byte : secret) {
+        const auto value = std::to_integer<unsigned char>(byte);
+        hex += digits[value >> 4];
+        hex += digits[value & 15];
+    }
+    EXPECT_EQ(output.find(hex), std::string::npos);
+}
+
+auto expect_public_document(liquid::signer& signer, std::span<const std::byte> secret) -> void {
+    auto show = std::string{"show"};
+    auto document_flag = std::string{"--document"};
+    auto arguments = std::array{show.data(), document_flag.data()};
+    testing::internal::CaptureStdout();
+    testing::internal::CaptureStderr();
+    const auto status = liquid_cli::identity(static_cast<int>(arguments.size()), arguments.data());
+    const auto output = testing::internal::GetCapturedStdout();
+    const auto errors = testing::internal::GetCapturedStderr();
+    ASSERT_EQ(status, 0) << errors;
+    EXPECT_TRUE(errors.empty());
+    ASSERT_FALSE(output.empty());
+    EXPECT_EQ(output.find_first_not_of(
+                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"),
+              std::string::npos);
+    expect_private_key_absent(output, secret);
+
+    auto padded = output;
+    std::replace(padded.begin(), padded.end(), '-', '+');
+    std::replace(padded.begin(), padded.end(), '_', '/');
+    const auto padding = (4 - padded.size() % 4) % 4;
+    padded.append(padding, '=');
+    auto decoded = std::vector<std::byte>(padded.size() / 4 * 3);
+    const auto count = EVP_DecodeBlock(reinterpret_cast<unsigned char*>(decoded.data()),
+                                       reinterpret_cast<const unsigned char*>(padded.data()),
+                                       static_cast<int>(padded.size()));
+    ASSERT_GE(count, static_cast<int>(padding));
+    decoded.resize(static_cast<std::size_t>(count) - padding);
+    const auto raw =
+        std::string_view{reinterpret_cast<const char*>(decoded.data()), decoded.size()};
+    expect_private_key_absent(raw, secret);
+    // Ed25519's 64-byte descriptor contains a 32-byte seed followed by the public key.
+    if (secret.size() == 64) {
+        expect_private_key_absent(output, secret.first(32));
+        expect_private_key_absent(raw, secret.first(32));
+    }
+    const auto document = liquid::decode_identity_document(decoded);
+    ASSERT_TRUE(document) << document.error().message;
+    const auto verified = liquid::verify_document(*document);
+    ASSERT_TRUE(verified) << verified.error().message;
+    EXPECT_TRUE(*verified);
+    const auto held = signer.document();
+    ASSERT_TRUE(held) << held.error().message;
+    const auto canonical = liquid::encode_identity_document(*held);
+    ASSERT_TRUE(canonical) << canonical.error().message;
+    EXPECT_EQ(decoded, *canonical);
+    EXPECT_EQ(document->subject.taap_id, signer.identity().taap_id);
+    EXPECT_EQ(document->subject.public_key, signer.identity().public_key);
+    EXPECT_EQ(document->subject.custody, signer.identity().custody);
+}
+
+TEST(IdentityDocument, SoftwareOutputExcludesPrivateKey) {
+    auto signer = open_identity("document-software");
+    const auto home = liquid::test::fixture_path("liquid-hardware-document-software");
+    const auto root = home / "identity";
+    const auto wrapped = read_identity_bytes(root / (signer.identity().fingerprint + ".key"));
+    const auto wrapping_key = read_identity_bytes(root / ".wrapping.key");
+    ASSERT_EQ(wrapped.size(), 104U);
+    ASSERT_EQ(wrapping_key.size(), 32U);
+    auto secret = std::array<std::uint8_t, 64>{};
+    ASSERT_EQ(crypto_aead_unlock(secret.data(),
+                                 wrapped.data() + 24,
+                                 wrapping_key.data(),
+                                 wrapped.data(),
+                                 nullptr,
+                                 0,
+                                 wrapped.data() + 40,
+                                 secret.size()),
+              0);
+    expect_public_document(signer, std::as_bytes(std::span{secret}));
+    const auto rotated = liquid::runtime::block_on(signer.rotate());
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    const auto document = signer.document();
+    ASSERT_TRUE(document) << document.error().message;
+    EXPECT_EQ(document->subject.key_fingerprint, rotated->subject.key_fingerprint);
+    expect_public_document(signer, std::as_bytes(std::span{secret}));
+    crypto_wipe(secret.data(), secret.size());
+}
+
+TEST(IdentityDocument, Fido2OutputExcludesPrivateKey) {
+    auto transport = std::make_shared<fido_double>();
+    liquid::identity_detail::install_fido2_transport(transport);
+    auto signer = open_identity("document-fido2");
+    const auto rotated = liquid::runtime::block_on(signer.rotate_to("fido2"));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    expect_public_document(signer, transport->private_key());
+    liquid::identity_detail::install_fido2_transport({});
+}
+
+TEST(IdentityDocument, Fido2Es256OutputExcludesPrivateKey) {
+    auto transport = std::make_shared<fido_es256_double>();
+    liquid::identity_detail::install_fido2_transport(transport);
+    auto signer = open_identity("document-fido2-es256");
+    const auto rotated = liquid::runtime::block_on(signer.rotate_to("fido2"));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    expect_public_document(signer, transport->private_key());
+    liquid::identity_detail::install_fido2_transport({});
+}
+
+TEST(IdentityDocument, PivOutputExcludesPrivateKey) {
+    auto transport = std::make_shared<piv_double>();
+    liquid::identity_detail::install_piv_transport(transport);
+    auto signer = open_identity("document-piv");
+    const auto rotated = liquid::runtime::block_on(signer.rotate_to("piv:9c"));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    expect_public_document(signer, transport->private_key());
+    liquid::identity_detail::install_piv_transport({});
+}
+
+TEST(IdentityDocument, EmptySignerReturnsUsageError) {
+    const auto signer = liquid::signer{};
+    const auto document = signer.document();
+    ASSERT_FALSE(document);
+    EXPECT_EQ(document.error().code, liquid::errc::invalid_argument);
 }
 
 TEST(HardwareIdentity, fido2_double_signs_drips_and_changes) {

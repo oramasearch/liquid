@@ -1613,6 +1613,178 @@ TEST(Repository, split_nest_and_combine_are_composable) {
     EXPECT_EQ(root->entries.size(), 3U);
 }
 
+TEST(Repository, split_owns_current_and_historical_bytes_after_source_removal) {
+    temporary_repository parent_path;
+    temporary_repository child_path;
+    auto parent = liquid::runtime::block_on(liquid::repository::create(parent_path.path()));
+    ASSERT_TRUE(parent);
+    ASSERT_TRUE(liquid::runtime::block_on(parent->write("component/file", content("first"))));
+    const auto first = liquid::runtime::block_on(parent->cut("first version"));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(liquid::runtime::block_on(parent->write("component/file", content("second"))));
+    const auto second = liquid::runtime::block_on(parent->cut("second version"));
+    ASSERT_TRUE(second);
+    const auto original = liquid::runtime::block_on(parent->root());
+    ASSERT_TRUE(original);
+    const auto subtree = liquid::runtime::block_on(parent->tree(original->entries.front().ref));
+    ASSERT_TRUE(subtree);
+    auto split = liquid::runtime::block_on(parent->split("component", child_path.path()));
+    ASSERT_TRUE(split) << split.error().message;
+    *split = {};
+    *parent = {};
+    std::filesystem::remove_all(parent_path.path());
+
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(child_path.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(reopened->collect()));
+    const auto current = liquid::runtime::block_on(reopened->read("file"));
+    ASSERT_TRUE(current) << current.error().message;
+    EXPECT_EQ(*current, content("second"));
+    const auto root = liquid::runtime::block_on(reopened->root());
+    ASSERT_TRUE(root);
+    ASSERT_EQ(root->entries.size(), 1U);
+    EXPECT_EQ(root->entries.front().node, subtree->entries.front().node);
+    EXPECT_EQ(liquid::to_string(root->entries.front().ref),
+              liquid::to_string(subtree->entries.front().ref));
+    const auto history = liquid::runtime::block_on(reopened->history("file"));
+    ASSERT_TRUE(history) << history.error().message;
+    EXPECT_TRUE(std::ranges::any_of(*history, [&](const auto& entry) {
+        return liquid::to_string(entry.change.value) == liquid::to_string(first->value) &&
+               entry.message == "first version";
+    }));
+    const auto log = liquid::runtime::block_on(reopened->log());
+    ASSERT_TRUE(log) << log.error().message;
+    EXPECT_TRUE(std::ranges::any_of(*log, [&](const auto& entry) {
+        return liquid::to_string(entry.id.value) == liquid::to_string(first->value) &&
+               entry.message == "first version";
+    }));
+    EXPECT_TRUE(std::ranges::any_of(*log, [&](const auto& entry) {
+        return liquid::to_string(entry.id.value) == liquid::to_string(second->value) &&
+               entry.message == "second version";
+    }));
+    const auto historical = liquid::runtime::block_on(reopened->at(*first));
+    ASSERT_TRUE(historical) << historical.error().message;
+    const auto old_tree =
+        liquid::runtime::block_on(reopened->tree(historical->root.entries.front().ref));
+    ASSERT_TRUE(old_tree);
+    const auto old_bytes = liquid::runtime::block_on(reopened->blob(old_tree->entries.front().ref));
+    ASSERT_TRUE(old_bytes) << old_bytes.error().message;
+    EXPECT_EQ(*old_bytes, content("first"));
+}
+
+TEST(Repository, split_failure_removes_destination_and_preserves_source) {
+    temporary_repository parent_path;
+    temporary_repository child_path;
+    auto parent = liquid::runtime::block_on(liquid::repository::create(parent_path.path()));
+    ASSERT_TRUE(parent);
+    auto missing = liquid::repo_ref{};
+    missing.id.value.alg = liquid::algorithm::blake3;
+    ASSERT_TRUE(liquid::runtime::block_on(parent->nest_ref("component/missing", missing)));
+    auto split = liquid::runtime::block_on(parent->split("component", child_path.path()));
+    ASSERT_FALSE(split);
+    EXPECT_FALSE(std::filesystem::exists(child_path.path()));
+    const auto root = liquid::runtime::block_on(parent->root());
+    ASSERT_TRUE(root);
+    ASSERT_EQ(root->entries.size(), 1U);
+    EXPECT_EQ(root->entries.front().kind, liquid::node_kind::tree);
+}
+
+TEST(Repository, split_from_shared_store_reopens_without_the_borrowed_store) {
+    temporary_repository shared_path;
+    temporary_repository child_path;
+    auto shared = liquid::runtime::block_on(liquid::store::open(shared_path.path()));
+    ASSERT_TRUE(shared);
+    auto options = liquid::repository_options{};
+    options.store = &*shared;
+    auto parent = liquid::runtime::block_on(liquid::repository::create("parent", options));
+    ASSERT_TRUE(parent);
+    ASSERT_TRUE(liquid::runtime::block_on(parent->write("component/file", content("owned"))));
+    auto split = liquid::runtime::block_on(parent->split("component", child_path.path()));
+    ASSERT_TRUE(split) << split.error().message;
+    *split = {};
+    *parent = {};
+    *shared = {};
+    std::filesystem::remove_all(shared_path.path());
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(child_path.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto bytes = liquid::runtime::block_on(reopened->read("file"));
+    ASSERT_TRUE(bytes) << bytes.error().message;
+    EXPECT_EQ(*bytes, content("owned"));
+}
+
+TEST(Repository, split_nested_preserves_repository_and_change_identity) {
+    temporary_repository parent_path;
+    temporary_repository nested_path;
+    temporary_repository child_path;
+    auto parent = liquid::runtime::block_on(liquid::repository::create(parent_path.path()));
+    auto nested = liquid::runtime::block_on(liquid::repository::create(nested_path.path()));
+    ASSERT_TRUE(parent);
+    ASSERT_TRUE(nested);
+    const auto nested_identity = nested->id();
+    ASSERT_TRUE(nested_identity);
+    ASSERT_TRUE(liquid::runtime::block_on(nested->write("asset", content("asset bytes"))));
+    auto first = liquid::runtime::block_on(nested->cut("asset history"));
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(liquid::runtime::block_on(parent->nest(std::move(*nested), "vendor/assets")));
+    ASSERT_TRUE(liquid::runtime::block_on(parent->cut("nest")));
+    ASSERT_TRUE(liquid::runtime::block_on(parent->collect()));
+    std::filesystem::remove_all(nested_path.path());
+    *parent = {};
+    parent = liquid::runtime::block_on(liquid::repository::open(parent_path.path()));
+    ASSERT_TRUE(parent);
+    auto split = liquid::runtime::block_on(parent->split("vendor/assets", child_path.path()));
+    ASSERT_TRUE(split) << split.error().message;
+    *parent = {};
+    std::filesystem::remove_all(parent_path.path());
+    *split = {};
+    split = liquid::runtime::block_on(liquid::repository::open(child_path.path()));
+    ASSERT_TRUE(split);
+    ASSERT_TRUE(split->id());
+    EXPECT_EQ(*split->id(), *nested_identity);
+    auto history = liquid::runtime::block_on(split->log({.first_parent = true}));
+    ASSERT_TRUE(history) << history.error().message;
+    ASSERT_EQ(history->size(), 1U);
+    EXPECT_EQ(liquid::to_string(history->front().id.value), liquid::to_string(first->value));
+    auto bytes = liquid::runtime::block_on(split->read("asset"));
+    ASSERT_TRUE(bytes) << bytes.error().message;
+    EXPECT_EQ(*bytes, content("asset bytes"));
+}
+
+TEST(Repository, split_refuses_existing_destination_without_replacing_it) {
+    temporary_repository parent_path;
+    temporary_repository child_path;
+    auto parent = liquid::runtime::block_on(liquid::repository::create(parent_path.path()));
+    ASSERT_TRUE(parent);
+    ASSERT_TRUE(liquid::runtime::block_on(parent->write("component/file", content("source"))));
+    std::filesystem::create_directories(child_path.path());
+    const auto sentinel = child_path.path() / "keep";
+    std::ofstream{sentinel} << "existing data";
+    const auto split = liquid::runtime::block_on(parent->split("component", child_path.path()));
+    ASSERT_FALSE(split);
+    EXPECT_EQ(split.error().code, liquid::errc::already_exists);
+    auto input = std::ifstream{sentinel};
+    EXPECT_EQ((std::string{std::istreambuf_iterator<char>{input}, {}}), "existing data");
+    EXPECT_FALSE(std::filesystem::exists(child_path.path() / "LIQUID_REPO"));
+}
+
+TEST(Repository, combining_a_split_does_not_duplicate_the_nested_repository_archive) {
+    temporary_repository parent_path;
+    temporary_repository child_path;
+    auto parent = liquid::runtime::block_on(liquid::repository::create(parent_path.path()));
+    ASSERT_TRUE(parent);
+    ASSERT_TRUE(liquid::runtime::block_on(parent->write("component/file", content("content"))));
+    ASSERT_TRUE(liquid::runtime::block_on(parent->cut("content history")));
+    auto split = liquid::runtime::block_on(parent->split("component", child_path.path()));
+    ASSERT_TRUE(split) << split.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(parent->combine(std::move(*split), "combined")));
+    *parent = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(parent_path.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    const auto tree = liquid::runtime::block_on(reopened->root());
+    ASSERT_TRUE(tree);
+    EXPECT_EQ(tree->entries.size(), 2U);
+}
+
 TEST(Repository, combine_collision_is_a_conflict_value) {
     temporary_repository left_path;
     temporary_repository right_path;
