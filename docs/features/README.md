@@ -127,7 +127,7 @@ specifies it.
 | # | Area | Summary |
 |---|---|---|
 | [01](01-object-model-and-storage.md) | Object model and storage | The chunk store, Merkle DAG, large-file support, and how everything else sits on it. |
-| [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, splitting and merging unrelated codebases. |
+| [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, standalone splits with owned data and retained history, and merging unrelated codebases. |
 | [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML, with a generated codec-tier table. |
 | [04](04-build-engine.md) | Build engine | The incremental query graph, actions, typed `.liquid` targets, early cutoff, compile-as-you-type, and local critical-path traces. |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
@@ -153,13 +153,17 @@ specifies it.
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 | [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
 | [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Write flow control, private replicas, presence, leases, epochs, and per-line attribution are implemented; suspicious-region detection remains. |
-| [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, the append-only log with optional public anchoring, and policy-pinned admission verification. |
+| [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, the append-only log with optional public anchoring, and policy-pinned admission verification with authenticated checkpoint age bounds. |
 
 ## Status
 
 The implemented Phase 1 chunk store selects a coroutine-native persistence backend. Disk is the
 reference implementation, and the deterministic simulator also runs against an in-memory test
 implementation with injected latency and failures.
+
+The installed library target also supports repository create/open, persisted file write/read, and
+consumer-defined coroutines through `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid`;
+the relocated consumer gate verifies that dependency closure ([library guide](../library/libliquid.md)).
 
 This tree is the specification. Each document states implementation status where code has landed;
 unimplemented behavior remains explicit, and open decisions stay in each document's final section.

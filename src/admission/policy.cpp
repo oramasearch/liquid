@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -212,6 +213,31 @@ std::string_view to_string(log_verdict value) noexcept {
 }
 
 result<std::string> encode_admission_policy(const admission_policy& value) {
+    auto log = json::value::object{
+        {"mode", json::value{std::string{to_string(value.log.mode)}}},
+        {"lake", json::value{value.log.lake}},
+        {"trust",
+         json::value{json::value::object{
+             {"identity",
+              json::value{json::value::object{
+                  {"taap_id", json::value{value.log.trust.identity.taap_id}},
+                  {"public_key", json::value{hex(value.log.trust.identity.public_key)}},
+              }}},
+             {"witness_threshold",
+              json::value{
+                  json::number{std::to_string(value.log.trust.configuration.witness_threshold)}}},
+             {"witnesses", witnesses_json(value.log.trust.configuration.witnesses)},
+         }}},
+    };
+    if (value.log.max_checkpoint_age_seconds) {
+        if (*value.log.max_checkpoint_age_seconds == 0) {
+            return std::unexpected(
+                policy_error("field must be positive", "log.max_checkpoint_age_seconds"));
+        }
+        log.emplace_back(
+            "max_checkpoint_age_seconds",
+            json::value{json::number{std::to_string(*value.log.max_checkpoint_age_seconds)}});
+    }
     auto document = json::value{json::value::object{
         {"v", json::value{json::number{std::to_string(value.v)}}},
         {"mode", json::value{std::string{to_string(value.mode)}}},
@@ -220,25 +246,7 @@ result<std::string> encode_admission_policy(const admission_policy& value) {
         {"exempt", json_strings(value.exempt)},
         {"exempt_namespaces", json_strings(value.exempt_namespaces)},
         {"attestation_source", json::value{value.attestation_source}},
-        {"log",
-         json::value{json::value::object{
-             {"mode", json::value{std::string{to_string(value.log.mode)}}},
-             {"lake", json::value{value.log.lake}},
-             {"trust",
-              json::value{json::value::object{
-                  {"identity",
-                   json::value{json::value::object{
-                       {"taap_id", json::value{value.log.trust.identity.taap_id}},
-                       {"public_key", json::value{hex(value.log.trust.identity.public_key)}},
-                   }}},
-                  {"witness_threshold",
-                   json::value{json::number{
-                       std::to_string(value.log.trust.configuration.witness_threshold)}}},
-                  {"witnesses", witnesses_json(value.log.trust.configuration.witnesses)},
-              }}},
-             {"max_checkpoint_age_seconds",
-              json::value{json::number{std::to_string(value.log.max_checkpoint_age_seconds)}}},
-         }}},
+        {"log", json::value{std::move(log)}},
     }};
     return json::write(document);
 }
@@ -287,7 +295,19 @@ result<admission_policy> decode_admission_policy(std::string_view input) {
     auto log_mode = string_field(*log, "mode");
     auto lake = string_field(*log, "lake");
     const auto* trust = field(*log, "trust");
-    auto maximum_age = unsigned_field(*log, "max_checkpoint_age_seconds");
+    auto maximum_age = std::optional<std::uint64_t>{};
+    if (field(*log, "max_checkpoint_age_seconds")) {
+        auto decoded_age = unsigned_field(*log, "max_checkpoint_age_seconds");
+        if (!decoded_age) {
+            return std::unexpected(
+                policy_error(decoded_age.error().message, "log.max_checkpoint_age_seconds"));
+        }
+        if (*decoded_age == 0) {
+            return std::unexpected(
+                policy_error("field must be positive", "log.max_checkpoint_age_seconds"));
+        }
+        maximum_age = *decoded_age;
+    }
     if (!log_mode) {
         return std::unexpected(log_mode.error());
     }
@@ -296,9 +316,6 @@ result<admission_policy> decode_admission_policy(std::string_view input) {
     }
     if (!trust || !std::holds_alternative<json::value::object>(trust->data)) {
         return std::unexpected(policy_error("trust field must be an object", "log.trust"));
-    }
-    if (!maximum_age) {
-        return std::unexpected(maximum_age.error());
     }
     if (*version != 1) {
         return std::unexpected(policy_error("unsupported policy version", "v"));
@@ -385,7 +402,7 @@ result<admission_policy> decode_admission_policy(std::string_view input) {
                                        .public_key = std::move(*identity_key)},
                           .configuration = {.witnesses = std::move(*witnesses),
                                             .witness_threshold = *witness_threshold}},
-                .max_checkpoint_age_seconds = *maximum_age}};
+                .max_checkpoint_age_seconds = maximum_age}};
 }
 
 } // namespace liquid

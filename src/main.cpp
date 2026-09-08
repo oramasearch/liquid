@@ -842,7 +842,10 @@ constexpr auto commands = std::to_array<command>({
      "split a subtree into a repository",
      "available",
      {},
-     "Create a repository from a subtree while retaining its history.",
+     "Create a standalone repository from a directory or nested repository, copying all referenced "
+     "data into its own store and retaining original signed history and object identities. "
+     "Historical snapshots keep their original paths. The destination must not exist; failures "
+     "remove incomplete output.",
      "liquid split src ../src-repository",
      normal_exit,
      argument_policy::ordinary,

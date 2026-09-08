@@ -124,12 +124,16 @@ command to run after checkout.
 ### Splitting
 
 ```
-liquid split <path> --into <new-repo>
+liquid split <path> <new-repo>
 ```
 
 Extracts a subtree into an independent repository, **preserving the history of that
 subtree and the object identities within it**. The original repository can retain
-it as a nested repository, so the split need not be a divorce.
+it as a nested repository, so the split need not be a divorce. Ordinary directories and nested
+repositories both work through the CLI. The destination owns every referenced chunk and remains
+readable after the source is moved or deleted. Original signed changes keep their identities and
+historical paths; the log traverses the recorded source ancestry. A failed split exits nonzero
+and removes its incomplete destination. See the [implementation contract](../library/split.md).
 
 ### Merging unrelated repositories
 

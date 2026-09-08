@@ -65,6 +65,12 @@ witness threshold no larger than the configured witness list. Identity and witne
 Lake's `/v1/identity` and `/v1/transparency_log_configuration` responses are not trust anchors for
 admission.
 
+`log.max_checkpoint_age_seconds` is optional. Omitting it disables freshness enforcement,
+including for old checkpoints without an authenticated issuance time. When present it must be a
+positive unsigned integer; zero is rejected when the policy loads. A rejected reload leaves the
+previous complete policy map active. The public `admission_log_policy` represents omission as
+`std::nullopt`, and encoding an omitted bound leaves the JSON member absent.
+
 The server reads policy files through `runtime::offload` and checks their contents from a Capy
 reload coroutine. A changed directory is prepared in full and swapped as one map only after every
 JSON file validates. An unreadable or invalid file leaves the complete previous map active. The
@@ -111,6 +117,34 @@ shared verifier's exact reason. Missing or forged tiles therefore retain their l
 width in both the decision reason and the considered-evidence record. Transport failures are
 `unavailable`. The adapter caches immutable tile bytes in memory, but the shared verifier decodes
 and authenticates the complete path on every decision.
+
+### Authenticated checkpoint age
+
+[Bridge decision 37](https://github.com/oramasearch/liquid-bridge/blob/main/docs/decisions.md)
+adds `issued_at` to the `lake_checkpoint/1` body: a nonnegative integer number of seconds since
+the Unix epoch, UTC. The field sits inside `checkpoint` in the HTTP response, alongside
+`tree_size` and `root_hash`. It is covered by the existing Ed25519 signature over
+`TAAP/1 lake_checkpoint/1`, one NUL byte, and the CBOR encoding of the complete body. The existing
+canonical JSON body hash and witness signatures also cover it. No separate timestamp credential
+is introduced. Lake publishes this field under lake#128; liquid consumes the decided format.
+
+After signature, witness, tile, and inclusion verification, admission reads `issued_at` from the
+authenticated body and compares it with its current UTC clock on every decision. With a positive
+bound, missing or invalid time, age greater than the bound, or issuance more than **60 seconds**
+in the future returns `not_included` with reason **`checkpoint stale`** and rule id
+`transparency.not_included`. The record retains the verified checkpoint digest, sequence, and tree
+size so the refusal identifies its evidence. Age exactly equal to the bound and future skew up to
+and including 60 seconds are accepted. The skew allowance does not extend the maximum past age.
+
+Fetched-at time and file modification time never establish checkpoint freshness. Replaying the
+same signed checkpoint, reusing cached tiles, or reloading a stricter age bound cannot reset its
+age. A stale checkpoint does not replace the inspection cache. Old checkpoints lacking
+`issued_at` cannot satisfy any finite bound; this is the intended migration.
+
+The log attests its own time. This protects against stale or replayed checkpoints, not against a
+log that lies about when it signed. Binding RFC 3161 time from an independent authority is the
+stronger option described in [transparency verification](transparency.md), and is outside this
+admission change under decision 37.
 
 ## Decision record and stream
 
@@ -191,6 +225,25 @@ prints a warning. The independent control listener defaults to `127.0.0.1:8083`.
 
 The k0s integration must point `attestation_source` at a node store implementing the subject route,
 or mount a liquid store directory. A `liquid serve sync` double cannot satisfy this contract.
+
+## Verification
+
+The issue #290 regression lives in `tests/admission/test_log.cpp` and failed against the pre-fix
+verifier at `7ff6ed82f93b916ef206c5776e2761b19536d8f3`: a checkpoint without authenticated time
+returned `included in verified log` under a one-second bound. The fixed verifier returns
+`checkpoint stale`. Run the focused checks with:
+
+```sh
+build/tests/liquid-tests --gtest_filter='AdmissionLogReview.*:AdmissionLogVerifier.*:AdmissionPolicy.*:AdmissionServer.enforces_checkpoint_age_and_stricter_reload_over_http'
+```
+
+The injected-clock cases cover exact age and skew boundaries, invalid time, unauthenticated time
+changes, omitted bounds, integer limits, and replay with cached tiles. The process case mints a
+real image attestation and serves a signed, zero-witness local HTTP log. `POST /admit/default`
+allows the fresh checkpoint with a one-second bound, refuses the same checkpoint after expiry,
+refuses excessive future skew, and applies stricter policy reloads to previously accepted evidence.
+A zero-bound reload returns HTTP 400 and preserves the previous policy. Full native static and
+shared builds run these checks through CTest as well.
 
 ## Deferred work
 

@@ -1,5 +1,8 @@
 # Public headers
 
+`repository::split` always takes a filesystem destination and returns a repository with its own
+store, even for a borrowed-store source. See [the contract](../../docs/library/split.md).
+
 Installed C++ headers in this directory define libliquid's supported API. `liquid.hpp` is the
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.
@@ -64,6 +67,10 @@ outcomes, injected attestation-source and transparency-log interfaces, the one-i
 operation, named policy-directory options, bounded replay, and the long-running admission server.
 `identity.hpp` exposes algorithm- and custody-tagged actors, the signed public document snapshot
 through `signer::document()`, software and hardware key rotation,
+The optional checkpoint age bound distinguishes an omitted limit from an invalid explicit zero;
+positive limits use the authenticated log issuance time described in
+[`admission.md`](../../docs/library/admission.md).
+`identity.hpp` exposes algorithm- and custody-tagged actors, software and hardware key rotation,
 and TPM-capable key custody without exposing transport types. `release.hpp` exposes signed release
 policy and approval values plus distinct-identity threshold verification.
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical

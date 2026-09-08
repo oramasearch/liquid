@@ -91,6 +91,14 @@ configured witnesses with valid signatures over the canonical JSON body. Duplica
 not count twice, and too few distinct valid signatures fail with `checkpoint witness threshold not
 met`.
 
+Under [bridge decision 37](https://github.com/oramasearch/liquid-bridge/blob/main/docs/decisions.md),
+the `lake_checkpoint/1` body can carry `issued_at`, a nonnegative integer of Unix epoch seconds,
+UTC, covered by the same signature, canonical body hash, and witness signatures. Older bodies
+omit it. The shared verifier authenticates the entire body without imposing an age policy;
+[admission](admission.md#authenticated-checkpoint-age) requires this field when a positive
+`max_checkpoint_age_seconds` is configured. The log attests its own clock; independent RFC 3161
+time binding remains outside this admission policy change. Lake's producer update is lake#128.
+
 Entry tiles use `LAKE-TILE-1\n` followed by nonzero big-endian lengths and canonical TAAP
 attestations. Hash tiles use `LAKE-HASH-TILE-1\n` followed by 32-byte hashes. Every tile hash is
 validated, every leaf is recomputed as `SHA256(0x00 || entry)`, and every parent as

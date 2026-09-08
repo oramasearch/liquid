@@ -24,8 +24,9 @@ for what is implemented today.
 
 | Page | What it contains |
 |---|---|
+| [`library/split.md`](library/split.md) | Standalone split ownership, original history and identities, nested repositories, publication, and verification. |
 | [`library/status.md`](library/status.md) | What libliquid and the `liquid` binary implement today, by phase, and the known limits in one place. |
-| [`library/libliquid.md`](library/libliquid.md) | libliquid targets, public API, consumption, and verification. |
+| [`library/libliquid.md`](library/libliquid.md) | libliquid targets, installed static dependency closure, public API, consumption, and relocated repository/coroutine verification. |
 | [`library/object-model.md`](library/object-model.md) | The records in local or caller-owned shared stores, public tree/change diff, stale-reasoning guards, structural-edit operations, edit-surviving text anchors, compact/shallow CRDT checkpoints, historical document state, measured open cost, and how composition, conflicts, operation/session undo, and locks work. Design for liquid #2, #3, #41, #86, #136, #165, #166, #174, and #205. |
 | [`library/conflicts.md`](library/conflicts.md) | Issue #40's canonical first-class conflict record, tree and change references, producer contract, status and resolution CLI, sync reachability, and build behavior. |
 | [`library/structural-merge.md`](library/structural-merge.md) | Issue #69's structural three-way merge at CRDT convergence, suspicious proposal rules, explicit resolution, operation metadata, and merge-quality measurement. |
@@ -157,7 +158,7 @@ for what is implemented today.
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
-| [`library/admission.md`](library/admission.md) | Image provenance statements, atomically reloaded named policy sets, fail-closed evaluation, evidence sources, transparency behavior, TLS serving, structured decisions, and bounded replay. |
+| [`library/admission.md`](library/admission.md) | Image provenance statements, atomically reloaded named policy sets, fail-closed evaluation, evidence sources, authenticated checkpoint age, TLS serving, structured decisions, and bounded replay. |
 | [`api/admission.md`](api/admission.md) | Named Kubernetes webhook, decision stream, control, metrics, REST, OpenAPI, and MCP routes. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync, path history, flow status and retry output, examples, and verification. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |
@@ -198,7 +199,7 @@ for what is implemented today.
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
-| [`library/admission.md`](library/admission.md) | Image provenance statements, atomically reloaded named policy sets, fail-closed evaluation, evidence sources, transparency behavior, TLS serving, structured decisions, and bounded replay. |
+| [`library/admission.md`](library/admission.md) | Image provenance statements, atomically reloaded named policy sets, fail-closed evaluation, evidence sources, authenticated checkpoint age, TLS serving, structured decisions, and bounded replay. |
 | [`api/admission.md`](api/admission.md) | Named Kubernetes webhook, decision stream, control, metrics, REST, OpenAPI, and MCP routes. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, structural edits, hot updates, named build inputs, retention explanations, output, capture, drive sync, path history, flow status and retry output, examples, and verification. |
 | [`cli/README.md`](cli/README.md) | Command-line commands, retention explanations, output, capture, examples, and verification. |

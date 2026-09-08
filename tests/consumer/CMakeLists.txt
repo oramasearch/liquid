@@ -13,4 +13,6 @@ target_link_libraries(liquid-consumer PRIVATE liquid::liquid)
 
 add_executable(liquid-forge-double-consumer forge_double.cpp)
 target_link_libraries(liquid-forge-double-consumer PRIVATE liquid::liquid_forge_double)
-target_link_libraries(liquid-consumer PRIVATE liquid::liquid liquid::hot)
+
+add_executable(liquid-hot-consumer hot.cpp)
+target_link_libraries(liquid-hot-consumer PRIVATE liquid::liquid liquid::hot)

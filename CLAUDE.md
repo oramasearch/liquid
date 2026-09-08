@@ -1,5 +1,8 @@
 # CLAUDE.md — liquid
 
+Liquid #2 makes ordinary and nested splits independently reopenable with owned chunks, original
+signed history, stable identities, and failure cleanup; see `docs/library/split.md`.
+
 Repo-scoped rules. **Org-wide conventions live in the bridge**
 ([`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge) `CLAUDE.md`)
 and apply here in full. The ones most often hit in this repo are restated below —
@@ -13,8 +16,10 @@ and runtime in one program. See [`README.md`](README.md).
 **Status: Phase 1 store exit criterion met — the store is inside libliquid, including the #204 Lake sealed-secret envelope and CLI.** Phase 0 is decided and Phase 0.5 met (see *Decisions* below).
 Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package` works; see
 `docs/library/libliquid.md`) plus the `liquid` binary as a thin client of it; liquify links the
-same library as a pinned submodule, lake will. The mapped public headers compile and link; the
-error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
+same library as a pinned submodule, lake will. The mapped public headers compile and link.
+The installed static target includes the private CRDT, search, and frontend archive dependencies;
+liquid #285's relocated consumer gate checks repository create/open, file write/read, and coroutines.
+The error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
 store, liquid #278's coroutine-native persistence backend with disk and in-memory implementations,
 liquid #199's pre-pack write-through callback and remote-registered local eviction,
 liquid #4's TAAP/1 actor identities and #294's public identity document CLI export,
@@ -201,7 +206,9 @@ Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and 
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
 metrics, REST, OpenAPI, and MCP are implemented. Liquid #268 connects log-mode admission to the
 shared #83 verifier with policy-pinned log identity and witness trust, complete parent-tile and
-inclusion verification, and recorded outcomes.
+inclusion verification, and recorded outcomes. Liquid #290 enforces positive checkpoint age bounds
+against signed `issued_at`, refuses missing time and future skew beyond 60 seconds, rejects zero
+at policy load, and leaves freshness unenforced when the bound is absent.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.
