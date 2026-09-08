@@ -188,9 +188,19 @@ result digest. `liquid config lower --trace` displays those origins.
 ```sh
 liquid config check <file|dir>
 liquid config lower <file> [--json] [--trace]
+liquid config lower <file> --output-record <file|-> [--package <name>]
 liquid config format <file>
 liquid build --target <name> [--json]
 ```
+
+Issue #287 connects declarations directly to `liquid resolve --universe <directory>` and adds
+`config lower --output-record` for scripts. The option writes one raw canonical `package/1`
+record, with no summary or framing, to a file or to stdout with `-`. The parent directory must
+exist. A document with several packages requires `--package <name>`; no packages or an unknown
+selection is an error. `--package` requires `--output-record`, which is exclusive with `--json`
+and `--trace`. Without record output, lower retains its name/origin summary. Targets, sources,
+and lock rules are not emitted by the package-record option. See the
+[executable package guide](../guides/resolve-packages.md) for both resolution paths.
 
 `config check` checks every `.liquid` file under a directory. `format` writes the canonical form;
 formatting twice produces identical bytes. A repository build prefers `liquid.liquid`, then the

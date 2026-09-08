@@ -17,3 +17,10 @@ node once every edge target exists. At most one frame is open per selected packa
 dependency chain costs heap frames, never worker-thread stack. That stack is 512 KiB on a macOS
 pool thread, and one native frame per link overflowed it at 500 packages in Release builds
 (issue #263).
+
+Issue #287 adds `.liquid` parsing and lowering to both universe loaders, preserves canonical-record
+loading and duplicate-name validation, and deduplicates repeated discoveries of included source
+declarations. Generators require explicit lowering before universe loading.
+
+Sibling canonical records take precedence over declarations with the same stem, retaining
+compatibility with the paired Spack import layout. Other duplicate package names remain errors.

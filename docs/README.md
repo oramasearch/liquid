@@ -14,7 +14,7 @@ for what is implemented today.
 | `library/` | Implementation, design, and benchmark notes for libliquid contributors, indexed below. |
 | [`cli/`](cli/README.md) | The command-line client, its output contracts, and focused command pages, indexed below. |
 | [`reference/`](reference/) | Generated command, flag, example, availability, and exit-status reference. |
-| [`guides/`](guides/) | Executable user workflows for a first repository, existing builds, and encryption. |
+| [`guides/`](guides/) | Executable user workflows for a first repository, existing builds, encryption, and [package resolution](guides/resolve-packages.md). |
 | [`api/`](api/README.md) | Network capability maps for liquid's server components, indexed below. |
 | [`build/`](build/README.md) | Local and continuous-integration build verification, indexed below. |
 

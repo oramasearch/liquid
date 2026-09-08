@@ -171,6 +171,94 @@ TEST(ResolutionRecords, repository_universe_loads_package_blobs) {
     std::filesystem::remove_all(location);
 }
 
+TEST(ResolutionRecords, declarations_mix_with_records_and_includes_load_once) {
+    const auto location = liquid::test::fixture_path("resolution-declarations");
+    std::filesystem::create_directories(location / "packages" / "nested");
+    std::ofstream{location / "packages" / "app.liquid"}
+        << "include \"nested/library.liquid\"\n"
+           "package app { versions: [1.0] depends_on library { version: 2.0 } }\n";
+    std::ofstream{location / "packages" / "nested" / "library.liquid"}
+        << "package library { versions: [1.0, 2.0] }\n";
+    write_package(location / "packages" / "other.cbor",
+                  {.name = "other", .versions = {{"1.0", std::nullopt}}});
+    auto loaded = liquid::runtime::block_on(liquid::load_package_universe(location));
+    ASSERT_TRUE(loaded) << loaded.error().message;
+    ASSERT_EQ(loaded->packages.size(), 3U);
+    auto solved = run_resolution(*loaded, {parse("app")});
+    ASSERT_TRUE(solved) << solved.error().message;
+    const auto* graph = std::get_if<liquid::resolution_graph>(&*solved);
+    ASSERT_NE(graph, nullptr);
+    const auto* library = node(*graph, "library");
+    ASSERT_NE(library, nullptr);
+    EXPECT_EQ(library->version, "2.0");
+    std::filesystem::remove_all(location);
+}
+
+TEST(ResolutionRecords, declaration_errors_and_duplicates_are_not_ignored) {
+    const auto location = liquid::test::fixture_path("resolution-declaration-errors");
+    std::filesystem::create_directories(location);
+    const auto path = location / "bad.liquid";
+    std::ofstream{path} << "package bad { versions: [\"1.0\"] }\n";
+    auto loaded = liquid::runtime::block_on(liquid::load_package_universe(location));
+    ASSERT_FALSE(loaded);
+    EXPECT_NE(loaded.error().message.find("bad.liquid:1:26: expected version"), std::string::npos);
+    std::ofstream{path} << "package bad { versions: [1.0] }\n";
+    write_package(location / "duplicate.cbor",
+                  {.name = "bad", .versions = {{"1.0", std::nullopt}}});
+    loaded = liquid::runtime::block_on(liquid::load_package_universe(location));
+    ASSERT_FALSE(loaded);
+    EXPECT_EQ(loaded.error().message, "duplicate package 'bad'");
+    std::filesystem::remove(location / "duplicate.cbor");
+    std::ofstream{location / "duplicate.liquid"} << "package bad { versions: [2.0] }\n";
+    loaded = liquid::runtime::block_on(liquid::load_package_universe(location));
+    ASSERT_FALSE(loaded);
+    EXPECT_EQ(loaded.error().message, "duplicate package 'bad'");
+    std::filesystem::remove_all(location);
+}
+
+TEST(ResolutionRecords, canonical_companions_preserve_existing_universe_loading) {
+    const auto location = liquid::test::fixture_path("resolution-canonical-companions");
+    std::filesystem::create_directories(location);
+    std::ofstream{location / "app.liquid"}
+        << "include \"library.liquid\"\npackage app { versions: [1.0] }\n";
+    std::ofstream{location / "library.liquid"} << "package library { versions: [2.0] }\n";
+    write_package(location / "library.cbor",
+                  {.name = "library", .versions = {{"1.0", std::nullopt}}});
+    auto loaded = liquid::runtime::block_on(liquid::load_package_universe(location));
+    ASSERT_TRUE(loaded) << loaded.error().message;
+    ASSERT_EQ(loaded->packages.size(), 2U);
+    EXPECT_EQ(loaded->packages[1].name, "library");
+    EXPECT_EQ(loaded->packages[1].versions.front().version, "1.0");
+    std::filesystem::remove_all(location);
+}
+
+TEST(ResolutionRecords, repository_declarations_resolve_with_canonical_records) {
+    const auto location = liquid::test::fixture_path("resolution-repository-declarations");
+    {
+        auto repository = liquid::runtime::block_on(liquid::repository::create(location));
+        ASSERT_TRUE(repository) << repository.error().message;
+        const auto declaration =
+            std::string{"package app { versions: [1.0] depends_on library { version: 2.0 } }\n"};
+        const auto bytes = std::as_bytes(std::span{declaration});
+        auto written = liquid::runtime::block_on(repository->write(
+            "packages/app.liquid", std::vector<std::byte>{bytes.begin(), bytes.end()}));
+        ASSERT_TRUE(written) << written.error().message;
+        auto encoded =
+            liquid::encode_package({.name = "library", .versions = {{"2.0", std::nullopt}}});
+        ASSERT_TRUE(encoded);
+        written = liquid::runtime::block_on(repository->write("packages/library.cbor", *encoded));
+        ASSERT_TRUE(written) << written.error().message;
+        auto loaded = liquid::runtime::block_on(liquid::load_package_universe(*repository));
+        ASSERT_TRUE(loaded) << loaded.error().message;
+        auto solved = run_resolution(*loaded, {parse("app")});
+        ASSERT_TRUE(solved) << solved.error().message;
+        const auto* graph = std::get_if<liquid::resolution_graph>(&*solved);
+        ASSERT_NE(graph, nullptr);
+        EXPECT_EQ(graph->nodes.size(), 2U);
+    }
+    std::filesystem::remove_all(location);
+}
+
 TEST(ResolutionSolver, selects_a_versioned_virtual_provider_and_bound_variant) {
     const auto universe = liquid::package_universe{
         {{.name = "app",

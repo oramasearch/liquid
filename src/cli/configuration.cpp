@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <print>
 #include <string>
 #include <string_view>
@@ -10,6 +12,11 @@
 #include "liquid/configuration.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 namespace liquid_cli {
 namespace {
@@ -164,8 +171,53 @@ auto lower_json(const liquid::lowered_configuration& value) -> std::string {
     return output + "]}";
 }
 
-auto lower_command(const std::filesystem::path& path, bool json, bool trace)
-    -> liquid::runtime::task<int> {
+auto write_package_record(const liquid::lowered_configuration& lowered,
+                          const std::filesystem::path& output,
+                          const std::optional<std::string>& name) -> liquid::result<void> {
+    const auto package =
+        name ? std::ranges::find(lowered.packages, *name, &liquid::package_record::name)
+             : lowered.packages.begin();
+    if (package == lowered.packages.end() || (!name && lowered.packages.size() != 1)) {
+        return std::unexpected(liquid::error{
+            liquid::errc::invalid_argument,
+            name ? "no package named '" + *name + "' in configuration"
+                 : "--output-record requires exactly one package; select one with --package <name>",
+            output.generic_string()});
+    }
+    auto encoded = liquid::encode_package(*package);
+    if (!encoded) {
+        return std::unexpected(encoded.error());
+    }
+    if (output == "-") {
+#if defined(_WIN32)
+        if (_setmode(_fileno(stdout), _O_BINARY) == -1) {
+            return std::unexpected(
+                liquid::error{liquid::errc::io, "cannot set binary stdout", "stdout"});
+        }
+#endif
+        if (std::fwrite(encoded->data(), 1, encoded->size(), stdout) != encoded->size() ||
+            std::fflush(stdout) != 0) {
+            return std::unexpected(
+                liquid::error{liquid::errc::io, "cannot write package record", "stdout"});
+        }
+        return {};
+    }
+    auto stream = std::ofstream{output, std::ios::binary | std::ios::trunc};
+    stream.write(reinterpret_cast<const char*>(encoded->data()),
+                 static_cast<std::streamsize>(encoded->size()));
+    stream.close();
+    if (!stream) {
+        return std::unexpected(liquid::error{
+            liquid::errc::io, "cannot write package record", output.generic_string()});
+    }
+    return {};
+}
+
+auto lower_command(const std::filesystem::path& path,
+                   bool json,
+                   bool trace,
+                   const std::optional<std::filesystem::path>& output,
+                   const std::optional<std::string>& package) -> liquid::runtime::task<int> {
     auto document = load_document(path);
     if (!document) {
         co_return std::unexpected(document.error());
@@ -183,6 +235,13 @@ auto lower_command(const std::filesystem::path& path, bool json, bool trace)
         if (!lowered) {
             co_return std::unexpected(lowered.error());
         }
+    }
+    if (output) {
+        auto written = write_package_record(*lowered, *output, package);
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        co_return 0;
     }
     if (json) {
         std::println("{}", lower_json(*lowered));
@@ -246,21 +305,42 @@ auto config(int argc, char** argv) -> int {
         return failed ? 1 : 0;
     }
     if (operation == "lower") {
-        if (argc < 2 || argc > 4) {
-            return usage("config lower <file> [--json] [--trace]");
+        if (argc < 2) {
+            return usage("config lower <file> [--json] [--trace] [--output-record <file|-> "
+                         "[--package <name>]]");
         }
         auto json = false;
         auto trace = false;
+        auto output = std::optional<std::filesystem::path>{};
+        auto package = std::optional<std::string>{};
         for (auto index = 2; index < argc; ++index) {
             if (std::string_view{argv[index]} == "--json") {
                 json = true;
             } else if (std::string_view{argv[index]} == "--trace") {
                 trace = true;
+            } else if (std::string_view{argv[index]} == "--output-record") {
+                if (output || ++index == argc || std::string_view{argv[index]}.empty()) {
+                    return usage("--output-record requires one file or - for stdout");
+                }
+                output = argv[index];
+            } else if (std::string_view{argv[index]} == "--package") {
+                if (package || ++index == argc || std::string_view{argv[index]}.empty()) {
+                    return usage("--package requires one package name");
+                }
+                package = argv[index];
             } else {
-                return usage("config lower <file> [--json] [--trace]");
+                return usage("config lower <file> [--json] [--trace] [--output-record <file|-> "
+                             "[--package <name>]]");
             }
         }
-        auto lowered = liquid::runtime::block_on(lower_command(argv[1], json, trace));
+        if (output && (json || trace)) {
+            return usage("--output-record cannot be combined with --json or --trace");
+        }
+        if (package && !output) {
+            return usage("--package requires --output-record");
+        }
+        auto lowered =
+            liquid::runtime::block_on(lower_command(argv[1], json, trace, output, package));
         return lowered ? *lowered : fail(lowered.error());
     }
     if (operation == "format") {

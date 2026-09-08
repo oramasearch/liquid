@@ -6,7 +6,9 @@
 #include <set>
 #include <utility>
 
+#include "build/repository_access.hpp"
 #include "encoding/cbor.hpp"
+#include "liquid/configuration.hpp"
 #include "liquid/repository.hpp"
 
 namespace liquid {
@@ -284,6 +286,66 @@ auto validate(package_universe universe) -> result<package_universe> {
     return universe;
 }
 
+struct declaration_state {
+    std::set<std::pair<std::filesystem::path, std::string>> loaded;
+    std::set<std::filesystem::path> canonical_sources;
+};
+
+auto declarations_for(const std::vector<std::filesystem::path>& paths) -> declaration_state {
+    auto output = declaration_state{};
+    for (auto path : paths) {
+        if (path.extension() == ".cbor") {
+            path.replace_extension(".liquid");
+            output.canonical_sources.insert(std::filesystem::weakly_canonical(path));
+        }
+    }
+    return output;
+}
+
+auto append_packages(const std::filesystem::path& path,
+                     std::span<const std::byte> bytes,
+                     std::vector<package_record>& packages,
+                     declaration_state& declarations) -> result<void> {
+    if (path.extension() == ".cbor") {
+        auto package = decode_package(bytes);
+        if (!package) {
+            auto issue = package.error();
+            issue.context = path.string();
+            return std::unexpected(std::move(issue));
+        }
+        packages.push_back(std::move(*package));
+        return {};
+    }
+    if (declarations.canonical_sources.contains(std::filesystem::weakly_canonical(path))) {
+        return {};
+    }
+    const auto text = std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    auto document = parse_configuration(text, path);
+    if (!document) {
+        return std::unexpected(document.error());
+    }
+    auto lowered = lower(*document);
+    if (!lowered) {
+        return std::unexpected(lowered.error());
+    }
+    if (!lowered->generators.empty()) {
+        return std::unexpected(error{
+            errc::unsupported,
+            "universe declarations cannot run generators; use config lower --output-record first",
+            path.string()});
+    }
+    for (std::size_t index = 0; index < lowered->packages.size(); ++index) {
+        auto& package = lowered->packages[index];
+        const auto origin = std::filesystem::weakly_canonical(lowered->package_origins[index].file);
+        // An included declaration may also be discovered by the directory walk.
+        if (!declarations.canonical_sources.contains(origin) &&
+            declarations.loaded.emplace(origin, package.name).second) {
+            packages.push_back(std::move(package));
+        }
+    }
+    return {};
+}
+
 auto read_directory(std::filesystem::path directory) -> result<package_universe> {
     auto root = directory / "packages";
     if (!std::filesystem::is_directory(root)) {
@@ -298,7 +360,8 @@ auto read_directory(std::filesystem::path directory) -> result<package_universe>
     for (auto iterator = std::filesystem::recursive_directory_iterator{root, failure_code};
          !failure_code && iterator != std::filesystem::recursive_directory_iterator{};
          iterator.increment(failure_code)) {
-        if (iterator->is_regular_file() && iterator->path().extension() == ".cbor") {
+        if (iterator->is_regular_file() && (iterator->path().extension() == ".cbor" ||
+                                            iterator->path().extension() == ".liquid")) {
             paths.push_back(iterator->path());
         }
     }
@@ -307,6 +370,7 @@ auto read_directory(std::filesystem::path directory) -> result<package_universe>
     }
     std::ranges::sort(paths);
     auto universe = package_universe{};
+    auto declarations = declarations_for(paths);
     for (const auto& path : paths) {
         auto stream = std::ifstream{path, std::ios::binary};
         if (!stream) {
@@ -318,21 +382,18 @@ auto read_directory(std::filesystem::path directory) -> result<package_universe>
         for (const auto value : chars) {
             data.push_back(std::byte{static_cast<unsigned char>(value)});
         }
-        auto package = decode_package(data);
-        if (!package) {
-            auto issue = package.error();
-            issue.context = path.string();
-            return std::unexpected(std::move(issue));
+        auto appended = append_packages(path, data, universe.packages, declarations);
+        if (!appended) {
+            return std::unexpected(appended.error());
         }
-        universe.packages.push_back(std::move(*package));
     }
     return validate(std::move(universe));
 }
 
-runtime::task<void> collect_repository_packages(repository* source,
-                                                tree directory,
-                                                std::string prefix,
-                                                std::vector<package_record>* output) {
+runtime::task<void> collect_repository_paths(repository* source,
+                                             tree directory,
+                                             std::string prefix,
+                                             std::vector<std::filesystem::path>* output) {
     for (const auto& entry : directory.entries) {
         auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
         if (entry.kind == node_kind::tree) {
@@ -340,26 +401,15 @@ runtime::task<void> collect_repository_packages(repository* source,
             if (!nested) {
                 co_return std::unexpected(nested.error());
             }
-            auto collected = co_await collect_repository_packages(
+            auto collected = co_await collect_repository_paths(
                 source, std::move(*nested), std::move(path), output);
             if (!collected) {
                 co_return std::unexpected(collected.error());
             }
-            continue;
+        } else if (entry.kind == node_kind::blob && path.starts_with("packages/") &&
+                   (path.ends_with(".cbor") || path.ends_with(".liquid"))) {
+            output->push_back(std::move(path));
         }
-        if (entry.kind != node_kind::blob || !path.starts_with("packages/") ||
-            !path.ends_with(".cbor")) {
-            continue;
-        }
-        auto data = co_await source->read(path);
-        if (!data) {
-            co_return std::unexpected(data.error());
-        }
-        auto package = decode_package(*data);
-        if (!package) {
-            co_return std::unexpected(package.error());
-        }
-        output->push_back(std::move(*package));
     }
     co_return {};
 }
@@ -707,10 +757,35 @@ runtime::task<package_universe> load_package_universe(repository& source) {
     if (!root) {
         co_return std::unexpected(root.error());
     }
-    auto packages = std::vector<package_record>{};
-    auto collected = co_await collect_repository_packages(&source, std::move(*root), {}, &packages);
+    auto location = repository_detail::build_access::root_path(source);
+    if (!location) {
+        co_return std::unexpected(location.error());
+    }
+    auto paths = std::vector<std::filesystem::path>{};
+    auto collected = co_await collect_repository_paths(&source, std::move(*root), {}, &paths);
     if (!collected) {
         co_return std::unexpected(collected.error());
+    }
+    std::ranges::sort(paths);
+    auto absolute_paths = paths;
+    for (auto& path : absolute_paths) {
+        path = *location / path;
+    }
+    auto declarations = declarations_for(absolute_paths);
+    auto packages = std::vector<package_record>{};
+    for (const auto& path : paths) {
+        auto data = co_await source.read(path.generic_string());
+        if (!data) {
+            co_return std::unexpected(data.error());
+        }
+        auto appended = co_await runtime::offload(
+            [&] { return append_packages(*location / path, *data, packages, declarations); });
+        if (!appended) {
+            co_return std::unexpected(appended.error());
+        }
+        if (!*appended) {
+            co_return std::unexpected(appended->error());
+        }
     }
     auto checked = validate(package_universe{std::move(packages)});
     if (!checked) {

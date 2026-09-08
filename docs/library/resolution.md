@@ -47,19 +47,37 @@ returns `errc::invalid_argument`.
 
 ## Package-universe layout
 
-A filesystem universe is either a directory containing `packages/` or the `packages/` directory
-itself. Every regular file below that root whose name ends in `.cbor` is one `package/1` record.
-Paths are sorted before decoding and package names must be unique.
+A filesystem universe is a directory, or its `packages/` child when present. Every regular
+`.liquid` file below that root is parsed, checked, and lowered in memory; every `.cbor` file
+remains one canonical `package/1` record. Paths are sorted before loading, and package names must
+be unique across both formats. A `.cbor` record takes precedence over a sibling `.liquid` file
+with the same stem, preserving the paired output of the Spack importer. Remove or regenerate the
+record when editing that declaration. Includes retain the configuration language's local-path checks.
+The same source declaration discovered through an include and through the scan is loaded once;
+different declarations with the same package name remain an error.
 
 A repository universe uses the same visible layout in its working tree:
 
 ```text
+packages/<namespace>/<package>.liquid
 packages/<namespace>/<package>.cbor
 ```
 
-The loader walks tree records and reads the package blobs through the public repository API. The
-layout needs no configuration-language dependency; issue #74 can lower declarations directly to
-these records, and issue #75 can populate the same tree.
+The loader walks tree records and reads package blobs through the public repository API.
+Declaration parsing and lowering run off the coroutine executor; includes resolve against the
+repository working directory. Generator declarations are refused with an instruction to use
+`config lower --output-record` first. Loading never starts a generator or fetches sources.
+
+`liquid config lower <file> --output-record <file|->` emits a single canonical `package/1`
+record to a file or binary stdout. Select one package from a multi-package document with
+`--package <name>`. The [executable guide](../guides/resolve-packages.md) resolves a two-package
+dependency graph from declarations and verifies that the emitted records produce identical JSON.
+
+When the loader returns no packages, the CLI reports `No candidates were loaded from <path>;
+supply .liquid declarations or canonical .cbor records` before calling the solver. Empty and
+unsupported-only directories receive this diagnostic even with `--json`; it is a loading error
+on stderr with exit status 1. Invalid supported inputs retain their checker or codec errors.
+The solver's semantics, attributed conflict core, and JSON remain unchanged.
 
 The CLI additionally reads `<universe>/reuse.txt` when `--reuse` is present. Each non-comment line
 is one already-built concretised-spec digest. Library callers instead pass those digests directly
@@ -141,7 +159,8 @@ and accepts responsibility for the solver engineering required by Spack-grade be
 ## Verification
 
 `tests/resolve/test_resolution.cpp` pins parser round trips and error columns; canonical package and
-concretised-record round trips; directory and repository loading; virtual-provider, compiler,
+concretised-record round trips; directory and repository loading of declarations and canonical records; include deduplication;
+malformed declarations and duplicate names; virtual-provider, compiler,
 conflict, target, cancellation, conditional-variant, reuse, compatibility, and known-output
 behavior; minimal origins; exact graph and conflict JSON; CLI JSON; and a generated 500-package
 graph. `tests/headers/resolve.cpp` compiles the public header in isolation, and the installed

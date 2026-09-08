@@ -16,7 +16,7 @@ Resolve package constraints or commit an explicit conflict resolution.
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
-| `--universe` | `<path>` | Read package candidates from this directory. | current directory |
+| `--universe` | `<path>` | Read .liquid declarations or canonical .cbor candidates from this directory. | current directory |
 | `--reuse` | — | Reuse the existing resolution when it remains valid. | false |
 | `--explain` | — | Show the selected candidates and rejected constraints. | false |
 | `--json` | — | Write stable JSON instead of text. | false |

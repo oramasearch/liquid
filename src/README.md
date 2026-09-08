@@ -12,3 +12,7 @@ command group and exposed only through `include/liquid/import.hpp`.
 `lake_transparency.cpp` owns the shared checkpoint, complete parent-tile, inclusion, consistency,
 and identity-scan verifier. It accepts caller-pinned trust for admission and source-discovered trust
 for the existing repository workflows.
+
+Issue #287 connects source package declarations to universe loading. The CLI table documents
+canonical package output through `config lower --output-record`; `resolve` reports an empty
+universe before solving. See [resolution](../docs/library/resolution.md).

@@ -31,6 +31,7 @@ edits, and the Phase 5 formats, projection, resolution and `.liquid` configurati
 with structural merge and suspicious-convergence conflict values,
 as recorded in [`docs/library/status.md`](docs/library/status.md), which also lists the known
 limits. Phase 5 projection includes Debian-only Tier B source packages as well as Tier A outputs.
+Hand-written package declarations now resolve directly; see the [package guide](docs/guides/resolve-packages.md).
 Phase 5 also includes Tier 2 artifact codecs for binaries, documents, packages, and model
 files. The code is a C++26 library, `liquid::liquid`, plus the `liquid` binary as a thin client of
 it.

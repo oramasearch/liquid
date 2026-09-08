@@ -29,18 +29,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--guides", required=True, type=pathlib.Path)
     parser.add_argument("--fixtures", required=True, type=pathlib.Path)
     parser.add_argument("--work", required=True, type=pathlib.Path)
+    parser.add_argument("--guide", help="Run one guide that needs no FUSE mount")
     return parser.parse_args()
 
 
 def main() -> int:
     arguments = parse_args()
-    if not pathlib.Path("/dev/fuse").exists():
+    if arguments.guide is None and not pathlib.Path("/dev/fuse").exists():
         print("guides-run skipped: /dev/fuse is unavailable")
         return 77
     shutil.rmtree(arguments.work, ignore_errors=True)
     arguments.work.mkdir(parents=True)
     found = 0
-    for guide in sorted(arguments.guides.glob("*.md")):
+    guides = (
+        [arguments.guides / arguments.guide]
+        if arguments.guide
+        else sorted(arguments.guides.glob("*.md"))
+    )
+    for guide in guides:
         content = guide.read_text()
         blocks = list(BLOCK.finditer(content))
         if len(blocks) != len(SHELL_FENCE.findall(content)):
