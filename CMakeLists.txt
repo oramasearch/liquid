@@ -242,6 +242,7 @@ if(LIQUID_BUILD_FRONTENDS)
   target_compile_features(liquid_frontend_syntax PRIVATE c_std_11 cxx_std_26)
   target_compile_definitions(liquid_frontend_syntax PRIVATE TREE_SITTER_HIDE_SYMBOLS)
   set_target_properties(liquid_frontend_syntax PROPERTIES
+    EXPORT_NAME detail_frontend_syntax
     POSITION_INDEPENDENT_CODE ON
     C_VISIBILITY_PRESET hidden
     CXX_VISIBILITY_PRESET hidden
@@ -384,7 +385,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # automerge-cpp is the private CRDT engine. Keep it static even when libliquid is shared;
-# no dependency header or target is part of liquid's installed interface.
+# its archive is an installed link dependency, but its headers remain private.
 set(LIQUID_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 set(AUTOMERGE_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -401,10 +402,20 @@ block()
 endblock()
 set(BUILD_SHARED_LIBS ${LIQUID_SAVED_BUILD_SHARED_LIBS})
 set_target_properties(automerge-cpp PROPERTIES
+  EXPORT_NAME detail_automerge
+  INTERFACE_INCLUDE_DIRECTORIES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/include>"
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN ON
   POSITION_INDEPENDENT_CODE ON
   EXCLUDE_FROM_ALL ON)
+# JSON is header-only and needed only when compiling automerge. Preserve its runtime
+# link requirements (Threads, zlib, and bcrypt on Windows) in the installed export.
+get_target_property(LIQUID_AUTOMERGE_LINK_LIBRARIES automerge-cpp INTERFACE_LINK_LIBRARIES)
+list(TRANSFORM LIQUID_AUTOMERGE_LINK_LIBRARIES REPLACE
+  "^nlohmann_json::nlohmann_json$" "$<BUILD_INTERFACE:nlohmann_json::nlohmann_json>")
+set_property(TARGET automerge-cpp PROPERTY INTERFACE_LINK_LIBRARIES
+  "${LIQUID_AUTOMERGE_LINK_LIBRARIES}")
 
 # oramacore-cpp supplies the private BM25F engine. Keep its own test tree out of
 # liquid's build and fold its static target into shared libliquid with hidden symbols.
@@ -413,6 +424,9 @@ block()
   add_subdirectory(modules/oramacore-cpp EXCLUDE_FROM_ALL)
 endblock()
 set_target_properties(oramacore-cpp PROPERTIES
+  EXPORT_NAME detail_oramacore
+  INTERFACE_INCLUDE_DIRECTORIES
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/modules/oramacore-cpp/include>"
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN ON
   POSITION_INDEPENDENT_CODE ON
@@ -667,7 +681,7 @@ target_compile_definitions(libliquid PRIVATE
 if(LIQUID_BUILD_FRONTENDS)
   target_compile_definitions(libliquid PRIVATE LIQUID_HAS_BUILTIN_FRONTEND=1)
   target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid-frontend-tree-sitter-static>)
-  target_link_libraries(libliquid PRIVATE $<BUILD_INTERFACE:liquid_frontend_syntax>)
+  target_link_libraries(libliquid PRIVATE liquid_frontend_syntax)
 endif()
 if(NOT WIN32)
   target_compile_definitions(libliquid PRIVATE LIQUID_HAS_APPIMAGE_RUNTIME=1)
@@ -682,8 +696,7 @@ endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
   PRIVATE Boost::corosio Boost::corosio_openssl Boost::http libzstd_static ZLIB::ZLIB
-          ${CMAKE_DL_LIBS} $<BUILD_INTERFACE:automerge-cpp::automerge-cpp>
-          $<BUILD_INTERFACE:orama::oramacore-cpp>)
+          ${CMAKE_DL_LIBS} automerge-cpp::automerge-cpp orama::oramacore-cpp)
 if(LIQUID_FUSE_TARGET)
   target_compile_definitions(libliquid PRIVATE ${LIQUID_FUSE_DEFINITION})
   target_link_libraries(libliquid PRIVATE ${LIQUID_FUSE_TARGET})
@@ -846,6 +859,16 @@ install(TARGETS libliquid EXPORT liquidTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# Static consumers need the private implementation archives. Export them as link-only
+# dependencies of liquid::liquid; shared libliquid already contains these implementations.
+if(NOT BUILD_SHARED_LIBS)
+  install(TARGETS automerge-cpp oramacore-cpp EXPORT liquidTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  if(LIQUID_BUILD_FRONTENDS)
+    install(TARGETS liquid_frontend_syntax EXPORT liquidTargets
+      ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  endif()
+endif()
 install(TARGETS liquid_forge_double EXPORT liquidTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(TARGETS liquid-forge-double RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -6,6 +6,8 @@ endif()
 
 file(REMOVE_RECURSE "${LIQUID_CONSUMER_BINARY_DIR}")
 file(REMOVE_RECURSE "${LIQUID_CONSUMER_INSTALL_DIR}")
+set(relocated_install_dir "${LIQUID_CONSUMER_INSTALL_DIR}-relocated")
+file(REMOVE_RECURSE "${relocated_install_dir}")
 
 set(install_command
   "${CMAKE_COMMAND}"
@@ -30,13 +32,29 @@ if(LIQUID_CONSUMER_HAS_CLI)
   endforeach()
 endif()
 
+# Move the prefix before importing it and reject references to the source/build trees.
+# System dependency paths (OpenSSL, SDKs, and platform libraries) remain valid.
+file(RENAME "${LIQUID_CONSUMER_INSTALL_DIR}" "${relocated_install_dir}")
+get_filename_component(liquid_source_dir "${LIQUID_CONSUMER_SOURCE_DIR}/../.." ABSOLUTE)
+file(GLOB_RECURSE package_files "${relocated_install_dir}/*.cmake")
+foreach(package_file IN LISTS package_files)
+  file(READ "${package_file}" package_contents)
+  foreach(forbidden_path IN ITEMS
+      "${LIQUID_BINARY_DIR}" "${liquid_source_dir}" "${LIQUID_CONSUMER_INSTALL_DIR}")
+    string(FIND "${package_contents}" "${forbidden_path}" path_position)
+    if(NOT path_position EQUAL -1)
+      message(FATAL_ERROR "installed package contains ${forbidden_path}: ${package_file}")
+    endif()
+  endforeach()
+endforeach()
+
 set(configure_command
   "${CMAKE_COMMAND}"
   -S "${LIQUID_CONSUMER_SOURCE_DIR}"
   -B "${LIQUID_CONSUMER_BINARY_DIR}"
   -G "${LIQUID_CONSUMER_GENERATOR}"
   "-DCMAKE_CXX_COMPILER=${LIQUID_CONSUMER_CXX_COMPILER}"
-  "-DCMAKE_PREFIX_PATH=${LIQUID_CONSUMER_INSTALL_DIR}")
+  "-DCMAKE_PREFIX_PATH=${relocated_install_dir}")
 if(DEFINED LIQUID_CONSUMER_BUILD_TYPE AND NOT LIQUID_CONSUMER_BUILD_TYPE STREQUAL "")
   list(APPEND configure_command "-DCMAKE_BUILD_TYPE=${LIQUID_CONSUMER_BUILD_TYPE}")
 endif()
@@ -52,19 +70,29 @@ endif()
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" --build "${LIQUID_CONSUMER_BINARY_DIR}"
-    --target liquid-consumer liquid-forge-double-consumer
+    --parallel 6 --target liquid-consumer liquid-forge-double-consumer liquid-hot-consumer
   RESULT_VARIABLE build_result
   OUTPUT_VARIABLE build_output
   ERROR_VARIABLE build_error)
 if(NOT build_result EQUAL 0)
   message(FATAL_ERROR "consumer build failed\n${build_output}\n${build_error}")
 endif()
+message(STATUS "consumer build output:\n${build_output}")
 
+file(MAKE_DIRECTORY "${LIQUID_CONSUMER_BINARY_DIR}/repository")
 execute_process(
   COMMAND "${LIQUID_CONSUMER_BINARY_DIR}/liquid-consumer"
+  WORKING_DIRECTORY "${LIQUID_CONSUMER_BINARY_DIR}/repository"
   RESULT_VARIABLE run_result)
 if(NOT run_result EQUAL 0)
   message(FATAL_ERROR "consumer executable failed")
+endif()
+
+execute_process(
+  COMMAND "${LIQUID_CONSUMER_BINARY_DIR}/liquid-hot-consumer"
+  RESULT_VARIABLE hot_run_result)
+if(NOT hot_run_result EQUAL 0)
+  message(FATAL_ERROR "hot ABI consumer executable failed")
 endif()
 
 execute_process(
