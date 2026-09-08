@@ -13,7 +13,10 @@ same commit.
 **Code shape.** Code is a C++26 **libliquid** (`liquid::liquid`, static by default, shared with
 `BUILD_SHARED_LIBS`) plus the `liquid` binary as a thin client of it; liquify and lake link the
 same library. The public waiting operations are lazy Boost.Capy tasks, backed by a private Corosio
-runtime ([`runtime.md`](runtime.md)). `find_package(liquid)` works from an install
+runtime ([`runtime.md`](runtime.md)). Issue #285 completes the installed static dependency
+closure: `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid` support repository
+create/open, persisted file write/read, and consumer-defined coroutines, checked after moving
+the install prefix
 ([`libliquid.md`](libliquid.md)). The `liquid` binary is the documented thin client of the Phase 1
 repository, capture, VFS, store, and identity APIs plus the Phase 2 build wrapper
 ([`../cli/README.md`](../cli/README.md)).
