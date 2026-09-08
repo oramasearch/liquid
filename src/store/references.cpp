@@ -81,6 +81,9 @@ std::vector<digest> extract_tree(std::span<const std::byte> bytes) {
     for (const auto& entry : tree->entries) {
         append_once(output, entry.id);
         append_once(output, entry.ref);
+        if (entry.nested) {
+            append_once(output, entry.nested->id.value);
+        }
     }
     return output;
 }

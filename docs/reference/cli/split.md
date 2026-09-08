@@ -10,7 +10,7 @@ liquid split <path> <into>
 
 ## Description
 
-Create a repository from a subtree while retaining its history.
+Create a standalone repository from a directory or nested repository, copying all referenced data into its own store and retaining original signed history and object identities. Historical snapshots keep their original paths. The destination must not exist; failures remove incomplete output.
 
 ## Options
 

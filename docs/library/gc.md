@@ -1,5 +1,8 @@
 # Store garbage collection
 
+Nested tree entries retain their pinned change in addition to their materialised tree. This keeps
+the original nested history available for standalone splits after collection.
+
 **Status: implemented for single-process stores through the persistence backend (liquid #8, #46,
 #58, #133, #278).** Leased roots, epoch
 marking, chunk-list reference extraction, whole-pack deletion, sparse-pack compaction, dry runs,

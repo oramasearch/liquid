@@ -1,5 +1,9 @@
 # Repository implementation
 
+Composition copies the referenced object graph before publication. Splits always own their store,
+including from borrowed stores, and preserve original history through recorded ancestry. Nested
+splits keep their repository identity. See [the split contract](../../docs/library/split.md).
+
 Repository mutations update the working tree, directory documents, signed drip bodies, and local
 or caller-owned shared store. A shared-store path argument is hashed into a repository-specific
 state directory; the handle borrows the store, and repository, directory, ref, and result lease

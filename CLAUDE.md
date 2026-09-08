@@ -1,5 +1,8 @@
 # CLAUDE.md — liquid
 
+Liquid #2 makes ordinary and nested splits independently reopenable with owned chunks, original
+signed history, stable identities, and failure cleanup; see `docs/library/split.md`.
+
 Repo-scoped rules. **Org-wide conventions live in the bridge**
 ([`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge) `CLAUDE.md`)
 and apply here in full. The ones most often hit in this repo are restated below —

@@ -1,5 +1,8 @@
 # Public headers
 
+`repository::split` always takes a filesystem destination and returns a repository with its own
+store, even for a borrowed-store source. See [the contract](../../docs/library/split.md).
+
 Installed C++ headers in this directory define libliquid's supported API. `liquid.hpp` is the
 umbrella include; individual headers are independently compilable. The detailed status and API
 inventory is maintained in `docs/library/api-map.md`.

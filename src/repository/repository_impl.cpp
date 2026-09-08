@@ -4,8 +4,10 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <cstdio>
 #include <format>
 #include <fstream>
 #include <functional>
@@ -17,6 +19,13 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+
+#if defined(__linux__)
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #include "build/budgets.hpp"
 #include "build/cache.hpp"
@@ -42,6 +51,7 @@
 #include "search/repository_access.hpp"
 #include "store/leases.hpp"
 #include "store/pack.hpp"
+#include "store/references.hpp"
 #include "vfs/repository_access.hpp"
 
 #if defined(LIQUID_HAS_BUILTIN_FRONTEND)
@@ -151,8 +161,8 @@ void collect_format_entry_bytes(const format_tree& tree,
     }
 }
 
-auto unpack_format_entries(std::span<const std::byte> contents,
-                           std::string path) -> result<std::vector<std::vector<std::byte>>> {
+auto unpack_format_entries(std::span<const std::byte> contents, std::string path)
+    -> result<std::vector<std::vector<std::byte>>> {
     auto tree = format_registry::global().unpack(contents, path);
     if (!tree) {
         if (tree.error().code == errc::not_found) {
@@ -165,9 +175,8 @@ auto unpack_format_entries(std::span<const std::byte> contents,
     return output;
 }
 
-auto store_format_entries(store& objects,
-                          std::span<const std::byte> contents,
-                          std::string path) -> runtime::task<std::vector<digest>> {
+auto store_format_entries(store& objects, std::span<const std::byte> contents, std::string path)
+    -> runtime::task<std::vector<digest>> {
     auto unpacked = co_await runtime::offload(
         [contents, path = std::move(path)] { return unpack_format_entries(contents, path); });
     if (!unpacked) {
@@ -192,8 +201,8 @@ auto store_format_entries(store& objects,
     co_return output;
 }
 
-auto format_file_candidate(std::string_view repository_path,
-                           const std::filesystem::path& source) -> bool {
+auto format_file_candidate(std::string_view repository_path, const std::filesystem::path& source)
+    -> bool {
     auto& registry = format_registry::global();
     if (!registry.find_by_extension(repository_path).empty()) {
         return true;
@@ -544,8 +553,12 @@ auto encode_repository_document(const repository_document& value)
     for (const auto& [node, document] : value.dirs)
         dirs.push_back(map({{"node", bytes(node)}, {"document", digest_value(document)}}));
     auto nested_entries = cbor::value::array{};
+    auto retained_nested = std::set<std::string>{};
     const auto collect_nested_entries = [&](const auto& self, const working_entry& entry) -> void {
         if (entry.kind == entry_kind::nested_repository) {
+            if (!retained_nested.insert(to_string(entry.object)).second) {
+                return;
+            }
             nested_entries.push_back(
                 map({{"object", digest_value(entry.object)}, {"entry", encode_entry(entry)}}));
             return;
@@ -2121,8 +2134,8 @@ auto lookup(working_entry& root, const std::vector<std::string>& path) -> workin
     }
     return current;
 }
-auto lookup(const working_entry& root,
-            const std::vector<std::string>& path) -> const working_entry* {
+auto lookup(const working_entry& root, const std::vector<std::string>& path)
+    -> const working_entry* {
     const working_entry* current = &root;
     for (const auto& part : path) {
         const auto found = current->entries.find(part);
@@ -2195,16 +2208,16 @@ auto same_digest(const digest& left, const digest& right) -> bool {
     return left.alg == right.alg && left.bytes == right.bytes;
 }
 
-auto same_change(const std::optional<change_id>& left,
-                 const std::optional<change_id>& right) -> bool {
+auto same_change(const std::optional<change_id>& left, const std::optional<change_id>& right)
+    -> bool {
     if (!left || !right) {
         return !left && !right;
     }
     return same_digest(left->value, right->value);
 }
 
-auto same_nested(const std::optional<repo_ref>& left,
-                 const std::optional<repo_ref>& right) -> bool {
+auto same_nested(const std::optional<repo_ref>& left, const std::optional<repo_ref>& right)
+    -> bool {
     if (!left || !right) {
         return !left && !right;
     }
@@ -2226,8 +2239,8 @@ auto same_entry(const working_entry& left, const working_entry& right) -> bool {
     return true;
 }
 
-auto same_entry(const working_entry* current,
-                const std::optional<working_entry>& expected) -> bool {
+auto same_entry(const working_entry* current, const std::optional<working_entry>& expected)
+    -> bool {
     if (!current || !expected) {
         return !current && !expected;
     }
@@ -2294,8 +2307,8 @@ auto replace_entry(working_entry& root,
     return {};
 }
 
-auto optional_ref(const std::map<std::string, change_id>& refs,
-                  std::string_view name) -> std::optional<change_id> {
+auto optional_ref(const std::map<std::string, change_id>& refs, std::string_view name)
+    -> std::optional<change_id> {
     const auto found = refs.find(std::string{name});
     if (found == refs.end()) {
         return std::nullopt;
@@ -2627,8 +2640,8 @@ auto decode_repository_drip(std::span<const std::byte> input) -> result<decoded_
     return output;
 }
 
-auto entry_parent(const working_entry& root,
-                  const std::vector<std::string>& path) -> const working_entry* {
+auto entry_parent(const working_entry& root, const std::vector<std::string>& path)
+    -> const working_entry* {
     const working_entry* current = &root;
     for (std::size_t index = 0; index + 1 < path.size(); ++index) {
         const auto found = current->entries.find(path[index]);
@@ -2813,6 +2826,113 @@ auto node_text(const node_id& node) -> std::string {
         output.push_back(digits[value & 0x0f]);
     }
     return output;
+}
+
+constexpr auto composition_origin_prefix = std::string_view{"composition.origin."};
+
+auto history_repository(const repository_document& document, const node_id& repository) -> bool {
+    return repository == document.repository ||
+           document.metadata.contains(std::string{composition_origin_prefix} +
+                                      node_text(repository));
+}
+
+void append_composition_roots(const working_entry& entry, std::vector<digest>& roots) {
+    roots.push_back(entry.object);
+    if (entry.nested) {
+        roots.push_back(entry.nested->id.value);
+    }
+    for (const auto& [name, child] : entry.entries) {
+        static_cast<void>(name);
+        append_composition_roots(child, roots);
+    }
+}
+
+runtime::task<void>
+copy_composition_objects(store& source, store& destination, std::vector<digest> pending) {
+    auto visited = std::set<std::string>{};
+    const auto registry = store_detail::reference_registry{};
+    while (!pending.empty()) {
+        const auto id = pending.back();
+        pending.pop_back();
+        if (!visited.insert(to_string(id)).second) {
+            continue;
+        }
+        if (id.alg == algorithm::blake3_keyed) {
+            co_return std::unexpected(
+                failure(errc::unsupported,
+                        "composition requires an independent keyed-object policy",
+                        to_string(id)));
+        }
+        auto bytes = co_await source.get(id);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        const auto kind = store_detail::detect_object_kind(*bytes);
+        const auto references = registry.extract(kind, *bytes);
+        pending.insert(pending.end(), references.digests.begin(), references.digests.end());
+        auto copied = co_await repository_detail::store_access::put_verified(
+            destination, id, std::move(*bytes));
+        if (!copied) {
+            co_return std::unexpected(copied.error());
+        }
+    }
+    co_return result<void>{};
+}
+
+struct split_staging_directory {
+    std::filesystem::path path;
+
+    ~split_staging_directory() {
+        if (!path.empty()) {
+            auto code = std::error_code{};
+            std::filesystem::remove_all(path, code);
+        }
+    }
+};
+
+auto prepare_split_directory(const std::filesystem::path& destination)
+    -> result<std::filesystem::path> {
+    auto code = std::error_code{};
+    const auto status = std::filesystem::symlink_status(destination, code);
+    if (code && code != std::errc::no_such_file_or_directory) {
+        return std::unexpected(failure(errc::io, code.message(), destination.string()));
+    }
+    if (std::filesystem::exists(status)) {
+        return std::unexpected(
+            failure(errc::already_exists, "split destination exists", destination.string()));
+    }
+    const auto staging = destination.parent_path() / (".liquid-split-" + node_text(random_id()));
+    code.clear();
+    if (!std::filesystem::create_directory(staging, code)) {
+        return std::unexpected(failure(
+            errc::io, code ? code.message() : "split staging directory exists", staging.string()));
+    }
+    return staging;
+}
+
+auto publish_split_directory(const std::filesystem::path& from, const std::filesystem::path& into)
+    -> result<void> {
+    auto code = std::error_code{};
+#if defined(__APPLE__)
+    if (::renamex_np(from.c_str(), into.c_str(), RENAME_EXCL) != 0) {
+        code = std::error_code{errno, std::generic_category()};
+    }
+#elif defined(__linux__)
+    if (::syscall(
+            SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, into.c_str(), RENAME_NOREPLACE) != 0) {
+        code = std::error_code{errno, std::generic_category()};
+    }
+#else
+    // Windows directory rename refuses an existing destination.
+    std::filesystem::rename(from, into, code);
+#endif
+    if (code) {
+        return std::unexpected(
+            failure(code == std::errc::file_exists ? errc::already_exists : errc::io,
+                    code.message(),
+                    into.string()));
+    }
+    return {};
 }
 
 runtime::task<void>
@@ -4002,8 +4122,8 @@ auto validate_hot_update_config(const hot_update_config& config) -> result<void>
     return {};
 }
 
-auto encryption_rule_for(const repository_document& document,
-                         std::string_view path) -> const encryption_path_rule* {
+auto encryption_rule_for(const repository_document& document, std::string_view path)
+    -> const encryption_path_rule* {
     for (const auto& rule : document.encryption_rules) {
         if (glob_matches(rule.path, path)) {
             return &rule;
@@ -4027,8 +4147,8 @@ auto string_bytes(std::string_view input) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(input.data() + input.size())};
 }
 
-auto identifier_path(store& objects,
-                     const std::filesystem::path& identifier) -> result<std::filesystem::path> {
+auto identifier_path(store& objects, const std::filesystem::path& identifier)
+    -> result<std::filesystem::path> {
     const auto text = identifier.generic_string();
     if (text.empty()) {
         return std::unexpected(
@@ -4381,6 +4501,33 @@ struct repository::impl {
             output.push_back({node, std::move(*heads)});
         }
         co_return output;
+    }
+    runtime::task<void>
+    import_composition(impl& source, const working_entry& root, std::optional<change_id> head) {
+        auto roots = std::vector<digest>{};
+        append_composition_roots(root, roots);
+        if (head) {
+            roots.push_back(head->value);
+        }
+        for (const auto& [node, archive] : source.current.dirs) {
+            static_cast<void>(node);
+            roots.push_back(archive);
+        }
+        auto copied = co_await copy_composition_objects(source.objects, objects, std::move(roots));
+        if (!copied) {
+            co_return std::unexpected(copied.error());
+        }
+        for (const auto& [node, archive] : source.current.dirs) {
+            current.dirs.try_emplace(node, archive);
+        }
+        for (const auto& [key, value] : source.current.metadata) {
+            if (key.starts_with(composition_origin_prefix)) {
+                current.metadata.insert_or_assign(key, value);
+            }
+        }
+        current.metadata.try_emplace(std::string{composition_origin_prefix} +
+                                     node_text(source.current.repository));
+        co_return result<void>{};
     }
     runtime::task<digest> persist(bool synchronize_reachable) {
         if (synchronize_reachable) {
@@ -5336,8 +5483,8 @@ struct repository::impl {
         });
         return found == current.leases.end() ? nullptr : &*found;
     }
-    auto validate_lease_write(std::string_view path,
-                              const write_options& options) const -> result<void> {
+    auto validate_lease_write(std::string_view path, const write_options& options) const
+        -> result<void> {
         auto requested = lease_claim{.path = std::string{path},
                                      .kind = options.symbol  ? lease_kind::symbol
                                              : options.range ? lease_kind::range
@@ -7241,12 +7388,12 @@ runtime::task<std::vector<change>> repository::log(log_options options) {
             auto bytes = co_await impl_->objects.get(next->value);
             if (!bytes)
                 co_return std::unexpected(bytes.error());
-            auto value = objects::decode_change(*bytes, impl_->hash_algorithm);
+            auto value = objects::decode_change(*bytes, next->value.alg);
             if (!value)
                 co_return std::unexpected(value.error());
             output.push_back(*value);
             if (value->parents.empty() ||
-                value->parents.front().repo_id != impl_->current.repository) {
+                !history_repository(impl_->current, value->parents.front().repo_id)) {
                 next.reset();
             } else {
                 next = value->parents.front().id;
@@ -7269,20 +7416,20 @@ runtime::task<std::vector<change>> repository::log(log_options options) {
         auto bytes = co_await impl_->objects.get(id.value);
         if (!bytes)
             co_return std::unexpected(bytes.error());
-        auto value = objects::decode_change(*bytes, impl_->hash_algorithm);
+        auto value = objects::decode_change(*bytes, id.value.alg);
         if (!value)
             co_return std::unexpected(value.error());
         indexes.emplace(key, changes.size());
         changes.push_back(*value);
         for (const auto& parent : value->parents)
-            if (parent.repo_id == impl_->current.repository)
+            if (history_repository(impl_->current, parent.repo_id))
                 pending.push_back(parent.id);
     }
 
     std::vector<std::uint64_t> children(changes.size());
     for (const auto& value : changes)
         for (const auto& parent : value.parents)
-            if (parent.repo_id == impl_->current.repository) {
+            if (history_repository(impl_->current, parent.repo_id)) {
                 const auto found = indexes.find(to_string(parent.id.value));
                 if (found != indexes.end())
                     ++children[found->second];
@@ -7303,7 +7450,7 @@ runtime::task<std::vector<change>> repository::log(log_options options) {
         ready.erase(ready.begin());
         output.push_back(changes[index]);
         for (const auto& parent : changes[index].parents) {
-            if (parent.repo_id != impl_->current.repository)
+            if (!history_repository(impl_->current, parent.repo_id))
                 continue;
             const auto found = indexes.find(to_string(parent.id.value));
             if (found == indexes.end())
@@ -7518,6 +7665,15 @@ runtime::task<void> repository::nest(repository source, std::string path) {
         co_return std::unexpected(parent.error());
     if ((*parent)->entries.contains(parts->back()))
         co_return std::unexpected(failure(errc::already_exists, "nest destination exists", path));
+    auto saved_source = co_await source.impl_->checkpoint();
+    if (!saved_source) {
+        co_return std::unexpected(saved_source.error());
+    }
+    auto copied = co_await impl_->import_composition(
+        *source.impl_, source.impl_->current.root, source.impl_->current.head);
+    if (!copied) {
+        co_return std::unexpected(copied.error());
+    }
     auto nested = source.impl_->current.root;
     nested.kind = entry_kind::nested_repository;
     if (source.impl_->current.head)
@@ -7540,48 +7696,134 @@ runtime::task<void> repository::nest(repository source, std::string path) {
     co_return result<void>{};
 }
 runtime::task<repository> repository::split(std::string path, std::filesystem::path into) {
-    if (!impl_)
+    if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
     auto parts = split_path(path);
-    if (!parts)
+    if (!parts) {
         co_return std::unexpected(parts.error());
+    }
     auto* entry = lookup(impl_->current.root, *parts);
-    if (!entry || entry->kind != entry_kind::directory)
+    if (!entry || entry->kind == entry_kind::file) {
         co_return std::unexpected(failure(errc::not_found, "subtree does not exist", path));
+    }
+    into = std::filesystem::absolute(into).lexically_normal();
+    auto prepared = co_await runtime::offload([into] { return prepare_split_directory(into); });
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
+    if (!*prepared) {
+        co_return std::unexpected(prepared->error());
+    }
+    auto staging = split_staging_directory{std::move(**prepared)};
     repository_options options;
     options.checkpoint_interval = impl_->checkpoint_interval;
     options.session = impl_->session;
-    if (!impl_->owned_objects) {
-        options.store = &impl_->objects;
-    } else {
-        options.storage.hash_algorithm = impl_->hash_algorithm;
-    }
-    auto destination = co_await create(std::move(into), std::move(options));
-    if (!destination)
+    options.storage.hash_algorithm = impl_->hash_algorithm;
+    auto destination = co_await create(staging.path, options);
+    if (!destination) {
         co_return std::unexpected(destination.error());
-    const auto before = *entry;
-    destination->impl_->current.root = *entry;
-    auto child_change = co_await destination->cut("split subtree");
-    if (!child_change)
-        co_return std::unexpected(child_change.error());
-    entry->kind = entry_kind::nested_repository;
-    entry->object = child_change->value;
-    entry->nested = repo_ref{destination->impl_->current.repository, *child_change};
+    }
+    auto initialized = co_await destination->initialize_split(*this, path);
+    if (!initialized) {
+        co_return std::unexpected(initialized.error());
+    }
+    // Store handles retain filesystem paths. Close before moving, then reopen at the final path.
+    *destination = {};
+    auto published = co_await runtime::offload(
+        [from = staging.path, into] { return publish_split_directory(from, into); });
+    if (!published) {
+        co_return std::unexpected(published.error());
+    }
+    if (!*published) {
+        co_return std::unexpected(published->error());
+    }
+    staging.path = into;
+    destination = co_await open(into, options);
+    if (!destination) {
+        co_return std::unexpected(destination.error());
+    }
+    auto recorded = co_await retain_split(*destination, path);
+    if (!recorded) {
+        co_return std::unexpected(recorded.error());
+    }
+    staging.path.clear();
+    co_return std::move(*destination);
+}
+
+runtime::task<void> repository::initialize_split(repository& source, const std::string& path) {
+    auto parts = split_path(path);
+    auto* entry = lookup(source.impl_->current.root, *parts);
+    auto saved = co_await source.impl_->checkpoint();
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    const auto nested = entry->kind == entry_kind::nested_repository;
+    if (nested && !entry->nested) {
+        co_return std::unexpected(failure(errc::not_found, "nested history is unavailable", path));
+    }
+    const auto head = nested ? std::optional{entry->nested->id} : source.impl_->current.head;
+    auto copied = co_await impl_->import_composition(*source.impl_, *entry, head);
+    if (!copied) {
+        co_return std::unexpected(copied.error());
+    }
+    impl_->current.root = *entry;
+    impl_->current.root.kind = entry_kind::directory;
+    impl_->current.root.nested.reset();
+    impl_->directory_cache.clear();
+    if (nested) {
+        impl_->current.repository = entry->nested->repo_id;
+        impl_->current.head = head;
+        impl_->current.refs["main"] = *head;
+        co_return co_await impl_->checkpoint();
+    }
+    auto input = change_input{};
+    if (head) {
+        input.parents.push_back({source.impl_->current.repository, *head});
+    }
+    input.author = impl_->signing_key.identity();
+    input.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    input.message = "split " + path;
+    input.ref = "main";
+    auto recorded = co_await record(std::move(input));
+    if (!recorded) {
+        co_return std::unexpected(recorded.error());
+    }
+    co_return result<void>{};
+}
+
+runtime::task<void> repository::retain_split(repository& destination, const std::string& path) {
+    auto copied = co_await copy_composition_objects(
+        destination.impl_->objects, impl_->objects, {destination.impl_->current.head->value});
+    if (!copied) {
+        co_return std::unexpected(copied.error());
+    }
     auto operation_id = random_operation_id(impl_->hash_algorithm);
     if (!operation_id) {
         co_return std::unexpected(operation_id.error());
     }
+    const auto before = impl_->current;
+    auto parts = split_path(path);
+    auto* entry = lookup(impl_->current.root, *parts);
     auto operation = stored_operation{};
     operation.id = *operation_id;
     operation.kind = "split";
     operation.from = path;
-    operation.entries.push_back({path, before, *entry});
+    operation.entries.push_back({path, *entry, std::nullopt});
+    entry->kind = entry_kind::nested_repository;
+    entry->object = destination.impl_->current.root.object;
+    entry->nested =
+        repo_ref{destination.impl_->current.repository, *destination.impl_->current.head};
+    operation.entries.back().after = *entry;
     impl_->record_operation(std::move(operation));
     ++impl_->current.pending_drips;
     auto saved = co_await impl_->checkpoint_or_journal();
-    if (!saved)
+    if (!saved) {
+        impl_->current = before;
+        impl_->directory_cache.clear();
         co_return std::unexpected(saved.error());
-    co_return std::move(*destination);
+    }
+    co_return result<void>{};
 }
 runtime::task<void> repository::combine(repository other, std::optional<std::string> at) {
     if (!impl_ || !other.impl_)
@@ -8014,9 +8256,8 @@ auto apply_attribution_hunks(std::span<const line_attribution> previous,
     return output;
 }
 
-auto snapshot_entry(repository& source,
-                    liquid::tree current,
-                    std::span<const std::string> path) -> runtime::task<tree_entry> {
+auto snapshot_entry(repository& source, liquid::tree current, std::span<const std::string> path)
+    -> runtime::task<tree_entry> {
     for (auto index = std::size_t{}; index < path.size(); ++index) {
         const auto found = std::ranges::find(current.entries, path[index], &tree_entry::name);
         if (found == current.entries.end()) {
@@ -8224,8 +8465,8 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
                           .base_cursor = journal_cursor{*cursor}};
 }
 
-auto delegation_attribute(const attestation& value,
-                          std::string_view name) -> const attestation_value* {
+auto delegation_attribute(const attestation& value, std::string_view name)
+    -> const attestation_value* {
     const auto found = std::ranges::find(value.attributes, name, &attestation_attribute::name);
     return found == value.attributes.end() ? nullptr : &found->value;
 }

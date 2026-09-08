@@ -1,5 +1,9 @@
 # Tests
 
+Issue #2 regressions cover split ownership after source removal, retained historical bytes and
+identities, borrowed-store independence, nested history, and destination cleanup. `cli-split`
+replays the customer scenarios in fresh processes; see [the contract](../docs/library/split.md).
+
 Exclusive checkout coverage spans repository holder/refusal/release and offline-sync cases,
 configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
 
