@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <span>
 #include <string>
@@ -22,6 +23,7 @@
 #include <vector>
 
 #include "../temporary_directory.hpp"
+#include "checkpoint_fixture.hpp"
 #include "http1/client.hpp"
 #include "liquid/admission.hpp"
 #include "liquid/attestation.hpp"
@@ -513,6 +515,164 @@ TEST(AdmissionServer, refuses_when_the_network_source_is_down) {
     auto refused =
         request("http://127.0.0.1:" + std::to_string(port), "POST", "/admission/review", review);
     EXPECT_NE(text(refused.body).find("attestation source unavailable"), std::string::npos);
+}
+
+auto unix_seconds() -> std::uint64_t {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count());
+}
+
+auto publish_checkpoint(const std::filesystem::path& root,
+                        const liquid::attestation& statement,
+                        std::uint64_t issued_at) -> liquid::transparency::log_trust {
+    namespace fixture = liquid::test::admission;
+    using json = nlohmann::json;
+    const auto encoded = liquid::encode_attestation(statement);
+    EXPECT_TRUE(encoded.has_value());
+    if (!encoded) {
+        return {};
+    }
+    auto leaf = std::vector<std::byte>{std::byte{0}};
+    leaf.insert(leaf.end(), encoded->begin(), encoded->end());
+    const auto root_hash = fixture::hex(fixture::sha256(leaf));
+    const auto checkpoint = fixture::sign_checkpoint({{"version", "lake_checkpoint/1"},
+                                                      {"hash_algorithm", "sha256"},
+                                                      {"tree_size", 1},
+                                                      {"tile_width", 1024},
+                                                      {"hash_tile_width", 1024},
+                                                      {"root_hash", root_hash},
+                                                      {"issued_at", issued_at}});
+    auto tile = bytes("LAKE-TILE-1\n");
+    const auto size = static_cast<std::uint32_t>(encoded->size());
+    for (const auto shift : {24U, 16U, 8U, 0U}) {
+        tile.push_back(std::byte{static_cast<unsigned char>(size >> shift)});
+    }
+    tile.insert(tile.end(), encoded->begin(), encoded->end());
+    const auto directory = root / "log" / "v1";
+    std::filesystem::create_directories(directory);
+    write_file(directory / "transparency_tile",
+               json{{"version", "lake_tile/1"},
+                    {"kind", "entries"},
+                    {"encoding", "base64url"},
+                    {"level", 0},
+                    {"index", 0},
+                    {"entries", 1},
+                    {"sha256", fixture::hex(fixture::sha256(tile))},
+                    {"tile", fixture::base64url(tile)}}
+                   .dump());
+    write_file(directory / "transparency_inclusion_proof",
+               json{{"version", "lake_inclusion_proof/1"},
+                    {"hash_algorithm", "sha256"},
+                    {"leaf_index", 0},
+                    {"tree_size", 1},
+                    {"root_hash", root_hash},
+                    {"audit_path", json::array()},
+                    {"checkpoint", checkpoint.record}}
+                   .dump());
+    write_file(directory / "transparency_checkpoint", checkpoint.record.dump());
+    return checkpoint.trust;
+}
+
+auto expect_checkpoint_decision(const std::string& webhook,
+                                const std::string& review,
+                                bool allowed,
+                                std::string_view label) -> void {
+    const auto response = request(webhook, "POST", "/admit/default", review);
+    ASSERT_EQ(response.status, 200U);
+    const auto document = nlohmann::json::parse(text(response.body));
+    const auto& result = document.at("response");
+    EXPECT_EQ(result.at("allowed"), allowed) << document.dump();
+    const auto& decision = result.at("status").at("decisions").at(0);
+    const auto& log = decision.at("evidence").at(0).at("log");
+    EXPECT_EQ(log.at("outcome"), allowed ? "included" : "not_included");
+    EXPECT_EQ(log.at("reason"), allowed ? "included in verified log" : "checkpoint stale");
+    EXPECT_EQ(log.at("checkpoint_sequence"), 1);
+    EXPECT_EQ(log.at("tree_size"), 1);
+    EXPECT_FALSE(log.at("checkpoint").is_null());
+    if (!allowed) {
+        EXPECT_EQ(decision.at("reasons").at(0).at("rule_id"), "transparency.not_included");
+    }
+    std::cout << label << ": POST /admit/default allowed=" << result.at("allowed")
+              << " log=" << log.dump() << '\n';
+}
+
+TEST(AdmissionServer, enforces_checkpoint_age_and_stricter_reload_over_http) {
+    const auto root = liquid::test::fixture_path("admission-checkpoint-age");
+    std::filesystem::create_directories(root);
+    const auto statement = mint_with_cli(root);
+    const auto trust = publish_checkpoint(root, statement, unix_seconds());
+    const auto log_port = free_port();
+    auto log = child_process{{"/usr/bin/env",
+                              "python3",
+                              "-m",
+                              "http.server",
+                              std::to_string(log_port),
+                              "--bind",
+                              "127.0.0.1",
+                              "--directory",
+                              (root / "log").string()}};
+    const auto log_url = "http://127.0.0.1:" + std::to_string(log_port);
+    auto policy = policy_for(statement.issuer.taap_id,
+                             root / ".liquid-store",
+                             liquid::admission_mode::attestation_and_log);
+    policy.log = {.mode = liquid::admission_log_mode::verify,
+                  .lake = log_url,
+                  .trust = trust,
+                  .max_checkpoint_age_seconds = 1};
+    write_policy(root / "policy.json", policy);
+    const auto port = free_port();
+    const auto control_port = free_port();
+    auto server = child_process{server_arguments(root, port, control_port, false)};
+    const auto control = "http://127.0.0.1:" + std::to_string(control_port);
+    const auto webhook = "http://127.0.0.1:" + std::to_string(port);
+    wait_until_ready(control);
+    for (auto attempt = 0; attempt < 100; ++attempt) {
+        const auto response = liquid::runtime::block_on(
+            liquid::http1::request({.url = log_url, .suffix = "/v1/transparency_checkpoint"}));
+        if (response && response->status == 200) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    }
+    auto review = nlohmann::json::parse(
+        read_file(std::filesystem::path{LIQUID_ADMISSION_FIXTURES} / "review.json"));
+    auto& spec = review["request"]["object"]["spec"];
+    spec.erase("initContainers");
+    spec.erase("ephemeralContainers");
+    spec["containers"] = nlohmann::json::array({{{"name", "app"}, {"image", image}}});
+    const auto issued_at = unix_seconds();
+    publish_checkpoint(root, statement, issued_at);
+    expect_checkpoint_decision(webhook, review.dump(), true, "fresh, bound=1");
+    while (unix_seconds() <= issued_at + 1) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    }
+    expect_checkpoint_decision(webhook, review.dump(), false, "expired, bound=1");
+    expect_checkpoint_decision(webhook, review.dump(), false, "replayed, bound=1");
+
+    policy.log.max_checkpoint_age_seconds = 300;
+    write_policy(root / "policy.json", policy);
+    ASSERT_EQ(request(control, "POST", "/v1/policy/reload", "{}").status, 200U);
+    publish_checkpoint(root, statement, unix_seconds() - 10);
+    expect_checkpoint_decision(webhook, review.dump(), true, "age=10, bound=300");
+    policy.log.max_checkpoint_age_seconds = 1;
+    write_policy(root / "policy.json", policy);
+    ASSERT_EQ(request(control, "POST", "/v1/policy/reload", "{}").status, 200U);
+    expect_checkpoint_decision(webhook, review.dump(), false, "stricter reload, bound=1");
+
+    auto invalid = nlohmann::json::parse(read_file(root / "policy.json"));
+    invalid["log"]["max_checkpoint_age_seconds"] = 0;
+    write_file(root / "policy.json", invalid.dump());
+    const auto rejected = request(control, "POST", "/v1/policy/reload", "{}");
+    EXPECT_EQ(rejected.status, 400U);
+    EXPECT_NE(text(rejected.body).find("must be positive"), std::string::npos);
+    std::cout << "zero bound policy load: HTTP " << rejected.status << " " << text(rejected.body)
+              << '\n';
+    expect_checkpoint_decision(webhook, review.dump(), false, "invalid reload retains bound=1");
+    write_policy(root / "policy.json", policy);
+    ASSERT_EQ(request(control, "POST", "/v1/policy/reload", "{}").status, 200U);
+    publish_checkpoint(root, statement, unix_seconds() + 3600);
+    expect_checkpoint_decision(webhook, review.dump(), false, "future beyond 60-second skew");
 }
 
 } // namespace

@@ -65,6 +65,9 @@ and the report returns the OSTree commit independently of an OCI image digest.
 rule-attributed review results, per-policy log mode and trust anchors, detailed transparency
 outcomes, injected attestation-source and transparency-log interfaces, the one-image review
 operation, named policy-directory options, bounded replay, and the long-running admission server.
+The optional checkpoint age bound distinguishes an omitted limit from an invalid explicit zero;
+positive limits use the authenticated log issuance time described in
+[`admission.md`](../../docs/library/admission.md).
 `identity.hpp` exposes algorithm- and custody-tagged actors, software and hardware key rotation,
 and TPM-capable key custody without exposing transport types. `release.hpp` exposes signed release
 policy and approval values plus distinct-identity threshold verification.

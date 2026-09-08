@@ -8,4 +8,8 @@ AdmissionReview parsing, named policy routing, atomic directory reload, bounded 
 metrics, REST, OpenAPI, MCP, and the TLS or explicitly insecure listener.
 
 All listener, reload, stream, source, and lake work is coroutine-native. Blocking policy and
-checkpoint file access runs through `runtime::offload`.
+checkpoint file access runs through `runtime::offload`. The Lake adapter checks the signed body's
+`issued_at` after proof verification on every request, with a clock injected through the private
+factory for deterministic tests. Positive age bounds fail closed with `checkpoint stale` for
+missing, expired, or excessively future-dated time. Policy decoding rejects zero; omission is
+represented by an empty optional and disables freshness enforcement.

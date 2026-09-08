@@ -76,7 +76,8 @@ it.
 > AdmissionReview status, a bounded local decision stream, local or node-store evidence lookup,
 > metrics, REST, OpenAPI, and MCP. Log-mode policy sets select fail-closed denial or verification
 > against pinned log identity and witness trust; verification uses the shared checkpoint,
-> parent-tile, and inclusion path and records its outcome in each decision.
+> parent-tile, and inclusion path, enforces configured checkpoint freshness from signed issuance
+> time, and records its outcome in each decision.
 > HTTP/1.1 client and `serve sync` adapter are implemented. Issue #195 adds the persisted
 > three-tree drive client, named concurrent conflict values, interrupted-transfer resume,
 > per-reference refusal reporting, stable-node path history and restore, `liquid drive`, and the

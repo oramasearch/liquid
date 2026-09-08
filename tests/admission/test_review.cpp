@@ -155,6 +155,37 @@ TEST(AdmissionPolicy, refuses_an_invalid_verify_url) {
     EXPECT_EQ(decoded.error().context, "log.lake");
 }
 
+TEST(AdmissionPolicy, preserves_an_omitted_checkpoint_age_bound) {
+    auto policy = policy_for(signed_image());
+    policy.log.max_checkpoint_age_seconds.reset();
+    const auto encoded = liquid::encode_admission_policy(policy);
+    ASSERT_TRUE(encoded.has_value());
+    EXPECT_EQ(encoded->find("max_checkpoint_age_seconds"), std::string::npos);
+    const auto decoded = liquid::decode_admission_policy(*encoded);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_FALSE(decoded->log.max_checkpoint_age_seconds.has_value());
+}
+
+TEST(AdmissionPolicy, refuses_zero_and_malformed_checkpoint_age_bounds_at_load) {
+    auto policy = policy_for(signed_image());
+    policy.log.max_checkpoint_age_seconds = 987654321;
+    const auto encoded = liquid::encode_admission_policy(policy);
+    ASSERT_TRUE(encoded.has_value());
+    for (const auto invalid : {"0", "-1", "null", "true", "1.5", "\"1\"", "18446744073709551616"}) {
+        SCOPED_TRACE(invalid);
+        auto input = *encoded;
+        const auto offset = input.find("987654321");
+        ASSERT_NE(offset, std::string::npos);
+        input.replace(offset, 9, invalid);
+        const auto decoded = liquid::decode_admission_policy(input);
+        ASSERT_FALSE(decoded.has_value());
+        EXPECT_EQ(decoded.error().code, liquid::errc::invalid_argument);
+        EXPECT_EQ(decoded.error().context, "log.max_checkpoint_age_seconds");
+    }
+    policy.log.max_checkpoint_age_seconds = 0;
+    EXPECT_FALSE(liquid::encode_admission_policy(policy).has_value());
+}
+
 TEST(AdmissionDecision, round_trips_cbor_and_json) {
     const auto value = liquid::admission_decision{
         .sequence = 42,

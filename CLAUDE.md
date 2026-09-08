@@ -206,7 +206,9 @@ Liquid #203 adds `image_provenance/1`, device-signed `liquid attest image`, and 
 share the private Corosio HTTP/1.1 layer; policy reload, local or node-store evidence lookup,
 metrics, REST, OpenAPI, and MCP are implemented. Liquid #268 connects log-mode admission to the
 shared #83 verifier with policy-pinned log identity and witness trust, complete parent-tile and
-inclusion verification, and recorded outcomes.
+inclusion verification, and recorded outcomes. Liquid #290 enforces positive checkpoint age bounds
+against signed `issued_at`, refuses missing time and future skew beyond 60 seconds, rejects zero
+at policy load, and leaves freshness unenforced when the bound is absent.
 Liquid #238 adds atomically reloaded named admission policy sets at `/admit/<policy>`, maps the
 single-policy form to `default`, returns versioned CBOR/JSON decisions with rule ids and consulted
 evidence in AdmissionReview status, and publishes the same records through a bounded local stream.

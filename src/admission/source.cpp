@@ -1,5 +1,7 @@
 #include "admission/internal.hpp"
 
+#include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -155,13 +157,45 @@ private:
     std::string url_;
 };
 
+auto checkpoint_is_fresh(const transparency::checkpoint& checkpoint,
+                         std::uint64_t maximum_age,
+                         std::chrono::system_clock::time_point now) -> bool {
+    const auto body =
+        std::string_view{reinterpret_cast<const char*>(checkpoint.canonical_body.data()),
+                         checkpoint.canonical_body.size()};
+    const auto document = json::parse(body);
+    const auto* issued = document ? json_field(*document, "issued_at") : nullptr;
+    const auto* number = issued ? std::get_if<json::number>(&issued->data) : nullptr;
+    if (!number || maximum_age == 0) {
+        return false;
+    }
+    auto issued_at = std::uint64_t{};
+    const auto parsed =
+        std::from_chars(number->text.data(), number->text.data() + number->text.size(), issued_at);
+    if (parsed.ec != std::errc{} || parsed.ptr != number->text.data() + number->text.size()) {
+        return false;
+    }
+    const auto seconds =
+        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    if (seconds < 0) {
+        return false;
+    }
+    const auto current = static_cast<std::uint64_t>(seconds);
+    constexpr auto allowed_future_skew = std::uint64_t{60};
+    if (issued_at > current) {
+        return issued_at - current <= allowed_future_skew;
+    }
+    return current - issued_at <= maximum_age;
+}
+
 class checkpoint_log_verifier final : public log_verifier {
 public:
     checkpoint_log_verifier(admission_log_policy policy,
                             std::filesystem::path cache,
-                            std::unique_ptr<transparency::log_source> source)
+                            std::unique_ptr<transparency::log_source> source,
+                            checkpoint_clock clock)
         : policy_(std::move(policy)), cache_(std::move(cache)), source_(std::move(source)),
-          client_(*source_) {}
+          client_(*source_), clock_(std::move(clock)) {}
 
     runtime::task<admission_log_verification>
     verify_inclusion(std::vector<std::byte> attestation) override {
@@ -175,6 +209,19 @@ public:
                 .verdict = verdict,
                 .reason = verified.error().message,
             };
+        }
+        auto decision = admission_log_verification{
+            .verdict = log_verdict::included,
+            .checkpoint = digest{.alg = algorithm::sha256, .bytes = verified->checkpoint_hash},
+            .checkpoint_sequence = verified->sequence,
+            .tree_size = verified->tree_size,
+            .reason = "included in verified log",
+        };
+        if (policy_.max_checkpoint_age_seconds &&
+            !checkpoint_is_fresh(*verified, *policy_.max_checkpoint_age_seconds, clock_())) {
+            decision.verdict = log_verdict::not_included;
+            decision.reason = "checkpoint stale";
+            co_return decision;
         }
         if (!cache_.empty()) {
             const auto stored =
@@ -193,13 +240,7 @@ public:
                 });
             static_cast<void>(stored);
         }
-        co_return admission_log_verification{
-            .verdict = log_verdict::included,
-            .checkpoint = digest{.alg = algorithm::sha256, .bytes = verified->checkpoint_hash},
-            .checkpoint_sequence = verified->sequence,
-            .tree_size = verified->tree_size,
-            .reason = "included in verified log",
-        };
+        co_return decision;
     }
 
 private:
@@ -207,6 +248,7 @@ private:
     std::filesystem::path cache_;
     std::unique_ptr<transparency::log_source> source_;
     transparency::log_client client_;
+    checkpoint_clock clock_;
 };
 
 class denied_log_verifier final : public log_verifier {
@@ -244,18 +286,18 @@ std::shared_ptr<log_verifier> make_log_verifier(admission_log_policy policy,
         return std::make_shared<denied_log_verifier>();
     }
     auto source = std::make_unique<transparency::http_log_source>(policy.lake);
-    return std::make_shared<checkpoint_log_verifier>(
-        std::move(policy), std::move(cache), std::move(source));
+    return make_log_verifier(std::move(policy), std::move(cache), std::move(source));
 }
 
 std::shared_ptr<log_verifier> make_log_verifier(admission_log_policy policy,
                                                 std::filesystem::path cache,
-                                                std::unique_ptr<transparency::log_source> source) {
+                                                std::unique_ptr<transparency::log_source> source,
+                                                checkpoint_clock clock) {
     if (policy.mode == admission_log_mode::deny) {
         return std::make_shared<denied_log_verifier>();
     }
     return std::make_shared<checkpoint_log_verifier>(
-        std::move(policy), std::move(cache), std::move(source));
+        std::move(policy), std::move(cache), std::move(source), std::move(clock));
 }
 
 } // namespace liquid::admission_detail
