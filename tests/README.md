@@ -272,7 +272,8 @@ coroutines. Separate consumers check the hot ABI and installed forge double. `cl
 creates and rotates an
 identity through the CLI, then decodes, re-encodes, and verifies the stored canonical-CBOR files
 through the public API. `test_hardware_keys.cpp` drives CTAP2, PIV, and TPM command-level doubles,
-cross-backend identity rotation, malformed signature rejection, and threshold release approval
+cross-backend identity rotation, private-key absence in CLI document output for software, FIDO2
+EdDSA/ES256, and PIV custody, malformed signature rejection, and threshold release approval
 including compromise-time refusal. On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 

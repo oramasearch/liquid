@@ -6,6 +6,36 @@ software Ed25519 key, a FIDO2 credential, or PIV slot `9c`. An actor identifier 
 canonical-CBOR public-key object. Rotation preserves the original TAAP identifier while the
 current key's algorithm, fingerprint, and custody may change.
 
+## Before signing up for lake
+
+Run this command, then paste its output into lake's TAAP/1 identity document field:
+
+```sh
+liquid identity show --document
+```
+
+The command works before creating a repository and creates a software identity on first use.
+It writes only the complete signed public document as unpadded base64url canonical CBOR, with no
+whitespace, newline, prose, or ANSI escapes, and exits 0. The private signing key stays local:
+software keys remain on the client, and FIDO2 and PIV keys remain on their tokens. Exporting an
+existing identity does not ask the token to sign again or change the identity.
+
+`--document --json` is refused with a clear usage error on stderr and exit 2. `--document` applies
+only to `show`; using it with `rotate` also returns exit 2. Ordinary text and JSON summaries retain
+their existing behavior. After a rotation, export returns the current successor document.
+
+The output matches [lake's sign-up identity contract](https://github.com/oramasearch/lake/blob/main/docs/api/identity.md):
+base64url wraps the complete canonical record, including its self-signature. The CBOR fields include
+`protocol_version = "TAAP/1"`, `artifact_type = "identity_document"`, `encoding = "ccbor"`,
+`identifier`, `keys`, and `signatures`. Lake decodes, re-encodes, and verifies that record
+using the same libliquid public codecs and `verify_document`.
+
+For inspection with a standard-base64 decoder, translate the URL alphabet and restore padding:
+
+```sh
+liquid identity show --document | python3 -c 'import base64,sys; s=sys.stdin.buffer.read(); sys.stdout.buffer.write(base64.urlsafe_b64decode(s + b"=" * (-len(s) % 4)))' | xxd
+```
+
 ## Exact signed bytes
 
 For body `B`, liquid signs `ASCII("TAAP/1 " + artifact_type) || 0x00 || canonical_cbor(B)`.
@@ -26,10 +56,22 @@ rotation successor use this same public record type and codec. `decode_signature
 canonical TAAP/1 signature object into `result<signature>` and rejects unsupported algorithms or
 invalid signature lengths or algorithm-specific fields.
 
+`signer::document()` returns a copy of the public signed document retained when the signer is
+created or opened, and updated after successful rotation. It performs no I/O or signing and returns
+`errc::invalid_argument` for an empty signer. The CLI passes this value to
+`encode_identity_document`; it has no second CBOR encoder or direct access to key files.
+
 The codecs do not verify trust. Call `verify_document` for one decoded document and `verify_chain`
 for an ordered initial-document and rotation-document chain. `cli-identity-codec` runs `liquid
 identity show` and `liquid identity rotate`, then round-trips and verifies their exact stored files
-through these public functions. The identity unit test also decodes a complete canonical signature
+through these public functions. It also exercises first-use and post-rotation `--document` output,
+verifies byte equality with the stored document, checks the base64url alphabet and absence of all
+whitespace, and proves refused flag combinations exit 2 before creating an identity.
+`IdentityDocument.*` captures the CLI handler output for software, FIDO2 EdDSA, FIDO2 ES256, and PIV.
+It independently decodes base64url and verifies the canonical record and self-signature. Tests
+assert that neither stdout nor the decoded CBOR contains raw, base64, base64url, or hexadecimal
+private key material, including the Ed25519 seed; hardware cases use the existing protocol doubles.
+The identity unit test also decodes a complete canonical signature
 object through `decode_signature`.
 
 ## Rotation

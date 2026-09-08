@@ -260,6 +260,11 @@ constexpr auto flags_keys = std::to_array<flag>({
 });
 constexpr auto flags_identity = std::to_array<flag>({
     {"--to", "<software|fido2|piv:9c>", "Select the new identity-key custody.", "software"},
+    {"--document",
+     {},
+     "Show only the public TAAP/1 document as unpadded base64url canonical CBOR, "
+     "without a newline. Only for show; incompatible with --json (exit 2).",
+     "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
 constexpr auto flags_release = std::to_array<flag>({
@@ -978,12 +983,13 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::retain},
     {"identity",
-     "identity [show|rotate [--to software|fido2|piv:9c]] [--json]",
+     "identity [show [--document]|rotate [--to software|fido2|piv:9c]] [--json]",
      "show or rotate the device identity",
      "available",
      flags_identity,
-     "Show the device TAAP identity or rotate its signing key with a linked successor document.",
-     "liquid identity rotate --json",
+     "Show the device TAAP identity, export its public document for sign-up, or rotate its signing "
+     "key with a linked successor document. The private signing key stays local for every custody.",
+     "liquid identity show --document\nliquid identity rotate --json",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::identity},

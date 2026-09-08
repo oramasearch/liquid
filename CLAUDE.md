@@ -22,7 +22,7 @@ liquid #285's relocated consumer gate checks repository create/open, file write/
 The error, digest, identity document codec, and signature decoder APIs plus liquid #1's local chunk
 store, liquid #278's coroutine-native persistence backend with disk and in-memory implementations,
 liquid #199's pre-pack write-through callback and remote-registered local eviction,
-liquid #4's TAAP/1 actor identities,
+liquid #4's TAAP/1 actor identities and #294's public identity document CLI export,
 liquid #111's identity-key rotation and chain verification, liquid #81's software, FIDO2, and PIV
 identity backends, TPM-sealed KEK custody, and threshold release approval, signed drips and changes, liquid #7's
 trust-domain encrypted objects, liquid #51's pluggable local, recipient, cloud KMS, lake transit,
