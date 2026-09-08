@@ -24,6 +24,12 @@ drips and changes, TPM PCR-bound sealing, signed threshold release approval, loc
 agent write flow control, inline secret scanning, verified redaction, structured JSON/`.env`
 encryption, Lake sealed-secret envelopes, and the macOS/Linux checkout daemon are implemented.
 
+**Identity export (#294).** `liquid identity show --document` emits only the signed public TAAP/1
+document as unpadded base64url canonical CBOR, with no newline. Software, FIDO2, and PIV private
+keys remain local. Combining `--document` with `--json` or rotation returns a usage error (exit 2).
+The public `signer::document()` accessor supplies the stored signed document to the existing codec
+([`identity.md`](identity.md)).
+
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
 ([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),

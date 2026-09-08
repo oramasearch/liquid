@@ -12,6 +12,7 @@ add_test(NAME docs-links
 
 add_executable(liquid-tests
   ../src/daemon/fanout.cpp
+  ../src/cli/identity.cpp
   test_asn1.cpp
   test_drip.cpp
   test_delta.cpp

@@ -1764,6 +1764,7 @@ result<signature> decode_signature(std::span<const std::byte> encoded);
 class signer {
  public:
   runtime::task<signature> sign(std::string artifact_type, std::vector<std::byte> canonical_body);  // TAAP/1 §6.6
+  result<identity_document> document() const;  // public signed snapshot, no I/O or signing
   runtime::task<identity_document> rotate(std::optional<compromise_declaration> compromise = {});
   runtime::task<identity_document> rotate_to(std::string custody,
     std::optional<compromise_declaration> compromise = {});
@@ -1943,7 +1944,8 @@ from that key at or after `declared_at` fail; earlier signatures remain valid an
 `verified_identity` reports compromised history. `signer::rotate` persists the chain under
 `identity/<identity-fingerprint>/documents/NNN.cbor`, replaces the active local private key after
 the successor is signed, and `verify_chain` returns the current key set. Initial and successor
-documents share the `identity_document` type: `encode_identity_document` emits their complete
+documents share the `identity_document` type. `signer::document()` exposes the held signed public
+document used by `identity show --document`, without accessing the backend or signing again: `encode_identity_document` emits their complete
 canonical CBOR, `decode_identity_document` rejects malformed or non-canonical input, and
 `decode_signature` parses a canonical TAAP/1 signature object. Decoding is separate from
 `verify_document` and `verify_chain` so callers explicitly choose their trust policy.

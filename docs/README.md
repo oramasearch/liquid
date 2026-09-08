@@ -11,7 +11,7 @@ for what is implemented today.
 | [`research/`](research/) | What the world currently does, what works, what is broken, and what people actually complain about. 27 topics, each with a curated analysis and, for 24 of them, the web-grounded sources it was drawn from. |
 | [`features/`](features/) | What liquid does: the premise, the names, the design axioms, what it must do, and 25 feature areas, each traceable to the research. |
 | [`standards/`](standards/) | External standards liquid depends on; currently [TAAP/1](standards/taap-1-spec-draft.md), vendored until it has its own repository. |
-| `library/` | Implementation, design, and benchmark notes for libliquid contributors, indexed below. |
+| [`library/`](library/README.md) | Implementation, design, and benchmark notes for libliquid contributors, indexed below. |
 | [`cli/`](cli/README.md) | The command-line client, its output contracts, and focused command pages, indexed below. |
 | [`reference/`](reference/) | Generated command, flag, example, availability, and exit-status reference. |
 | [`guides/`](guides/) | Executable user workflows for a first repository, existing builds, and encryption. |
@@ -54,7 +54,7 @@ for what is implemented today.
 | [`library/encryption.md`](library/encryption.md) | Trust-domain encrypted store objects, versioned data-key rotation and revocation, readability reports, key custody, on-disk envelopes, and failure behavior. |
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/sealed-secrets.md`](library/sealed-secrets.md) | The X25519 and XChaCha20-Poly1305 Lake envelope, canonical CBOR, exact scope binding, Go mapping, key custody, and interoperability fixture. |
-| [`library/identity.md`](library/identity.md) | TAAP/1 identity documents, public canonical-CBOR codecs, rotation, signatures, and verification. |
+| [`library/identity.md`](library/identity.md) | TAAP/1 public document export for sign-up, canonical-CBOR codecs, rotation, signatures, and verification. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
@@ -152,7 +152,7 @@ for what is implemented today.
 | [`library/sealed-secrets.md`](library/sealed-secrets.md) | The X25519 and XChaCha20-Poly1305 Lake envelope, canonical CBOR, exact scope binding, Go mapping, key custody, and interoperability fixture. |
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
-| [`library/identity.md`](library/identity.md) | TAAP/1 identity documents, public canonical-CBOR codecs, rotation, signatures, and verification. |
+| [`library/identity.md`](library/identity.md) | TAAP/1 public document export for sign-up, canonical-CBOR codecs, rotation, signatures, and verification. |
 | [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |

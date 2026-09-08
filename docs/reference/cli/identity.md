@@ -5,18 +5,19 @@
 ## Synopsis
 
 ```text
-liquid identity [show|rotate [--to software|fido2|piv:9c]] [--json]
+liquid identity [show [--document]|rotate [--to software|fido2|piv:9c]] [--json]
 ```
 
 ## Description
 
-Show the device TAAP identity or rotate its signing key with a linked successor document.
+Show the device TAAP identity, export its public document for sign-up, or rotate its signing key with a linked successor document. The private signing key stays local for every custody.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
 | `--to` | `<software\|fido2\|piv:9c>` | Select the new identity-key custody. | software |
+| `--document` | — | Show only the public TAAP/1 document as unpadded base64url canonical CBOR, without a newline. Only for show; incompatible with --json (exit 2). | false |
 | `--json` | — | Write stable JSON instead of text. | false |
 
 ## Availability
@@ -26,6 +27,7 @@ available
 ## Examples
 
 ```sh
+liquid identity show --document
 liquid identity rotate --json
 ```
 

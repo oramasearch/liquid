@@ -527,6 +527,7 @@ auto identity_wrapping_key(const std::filesystem::path& directory)
 
 struct signer::impl {
     actor identity;
+    identity_document document;
     std::string label;
     std::unique_ptr<identity_detail::key_backend> backend;
 };
@@ -574,6 +575,13 @@ runtime::task<signature> signer::sign(std::string artifact_type,
 
 auto signer::identity() const -> actor {
     return impl_ ? impl_->identity : actor{};
+}
+
+auto signer::document() const -> result<identity_document> {
+    if (!impl_) {
+        return std::unexpected(identity_error(errc::invalid_argument, "signer has no identity"));
+    }
+    return impl_->document;
 }
 
 runtime::task<signer> signer::open(std::string identifier, keyring&) {
@@ -752,6 +760,7 @@ signer::rotate_to(std::string custody, std::optional<compromise_declaration> com
         co_return std::unexpected(written.error());
     }
     impl_->identity = successor.subject;
+    impl_->document = successor;
     impl_->label = successor.key_label;
     impl_->backend = std::move(next.impl_->backend);
     co_return successor;
@@ -1080,6 +1089,7 @@ runtime::task<signer> identity_detail::local_signer() {
     auto label = std::string{"liquid-device"};
     auto created_at = identity_detail::now();
     actor identity;
+    identity_document current_document;
     auto backend = std::unique_ptr<identity_detail::key_backend>{};
     if (!public_key.empty() && !fingerprint.empty()) {
         auto provisional =
@@ -1099,6 +1109,7 @@ runtime::task<signer> identity_detail::local_signer() {
         }
         identity = stored->back().document.subject;
         label = stored->back().document.key_label;
+        current_document = stored->back().document;
         if (identity.public_key != public_key) {
             co_return std::unexpected(
                 identity_error(errc::corrupt,
@@ -1204,10 +1215,12 @@ runtime::task<signer> identity_detail::local_signer() {
         if (!written) {
             co_return std::unexpected(written.error());
         }
+        current_document = std::move(document);
     }
     signer output;
     output.impl_ = std::make_unique<signer::impl>();
     output.impl_->identity = std::move(identity);
+    output.impl_->document = std::move(current_document);
     output.impl_->label = std::move(label);
     output.impl_->backend = std::move(backend);
     co_return output;

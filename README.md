@@ -17,6 +17,9 @@ project and one module of
 [`oramasearch/liquid-bridge`](https://github.com/oramasearch/liquid-bridge), which holds the
 action plan.
 
+Before signing up for lake, export your public identity with `liquid identity show --document`;
+see the [identity guide](docs/library/identity.md). The private signing key stays local.
+
 ## Status
 
 The Phase 1 store exit criterion is met: the chunk store has an injected persistence backend with

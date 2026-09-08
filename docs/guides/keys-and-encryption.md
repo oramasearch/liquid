@@ -5,6 +5,19 @@ keyed digest; equal plaintext in different domains has different identifiers. JS
 rules can encrypt selected leaf values while leaving the document structure visible, and file mode
 encrypts the whole file when structure cannot remain visible.
 
+Before signing up for lake, run one command and paste its output into the TAAP/1 identity document
+field. The private signing key stays local for software, FIDO2, and PIV custody alike:
+
+<!-- guides-run: keys-document -->
+```sh
+liquid identity show --document
+```
+
+The output is only unpadded base64url canonical CBOR, with no newline. This works without a
+repository and creates a software identity if one does not exist. `--document` cannot be combined
+with `--json` or `rotate`; those combinations report a usage error and exit 2. See the
+[identity guide](../library/identity.md) for the document and verification contract.
+
 The current user-facing identity commands manage the device's TAAP signing identity. They do not
 configure store encryption keys:
 

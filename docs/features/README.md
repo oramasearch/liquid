@@ -147,7 +147,7 @@ specifies it.
 | [16](16-universality.md) | Universality | Every language, platform and operating system, declared through the generated support matrix. |
 | [17](17-implementation.md) | Implementation | C++26, the component inventory, and the build order. |
 | [18](18-lake-service.md) | **lake.live** | The hosted service: GitHub + Google Drive + Railway over one store. |
-| [19](19-identity.md) | Identity and auth | Clerk-quality auth, and why identity is the trust root for the whole chain of custody. |
+| [19](19-identity.md) | Identity and auth | Clerk-quality auth, public TAAP/1 document export for sign-up, and identity as the trust root for the whole chain of custody. |
 | [20](20-secrets-service-and-pki.md) | Secrets service and PKI | Dynamic secrets, encryption as a service, and certificate issuance. |
 | [21](21-liquify-ide.md) | **liquify** | The IDE. No language server, because the editor and the build are one graph. |
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
