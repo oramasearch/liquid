@@ -1,5 +1,8 @@
 # Store implementation
 
+Tree reachability includes each nested repository's pinned change as well as its tree, preserving
+nested history during composition transfers and collection.
+
 Repository configuration encryption uses the private `repository_detail::store_access` adapter to
 choose a plaintext metadata put or an explicit trust-domain encrypted put for whole-file payload
 chunks; the public store API keeps its existing default-key behavior.

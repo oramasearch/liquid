@@ -69,6 +69,12 @@ descendant on the named branch.
 program linked to `liquid::liquid`, and runs it. The main CTest suite installs its already-built
 artifacts into a test-local prefix, then configures the consumer with the parent generator and C++
 compiler. The consumer source is the only project source compiled by this test.
+Before configuration, the gate moves the installed prefix and rejects package metadata containing
+the original prefix or liquid's source/build directories, so the package must remain relocatable.
+The repository executable links only `liquid::liquid`: it creates a repository, writes and reads
+a file, destroys the handle, reopens `"."`, and checks the persisted bytes. Consumer-defined
+coroutines await those operations and yield through the executor. Separate executables retain
+the identity/hot ABI and forge-double checks.
 
 `cmake --install build --prefix <p>` lays out `bin/liquid`, `lib/libliquid.a`, `include/liquid/`,
 `lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, and
@@ -83,17 +89,50 @@ component targets required by the sync client; its config resolves the OpenSSL, 
 zstd targets used by static consumers. On Linux it also recreates the pkg-config FUSE3 target that
 the installed library's private link interface requires.
 
-**Verify.** Static: `cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build`.
+The static install also provides `libautomerge-cpp.a`, `liboramacore-cpp.a`, and, when
+`LIQUID_BUILD_FRONTENDS=ON`, `libliquid_frontend_syntax.a`. CMake exports them as
+`liquid::detail_automerge`, `liquid::detail_oramacore`, and `liquid::detail_frontend_syntax` and
+carries them through `liquid::liquid`'s private static link dependencies. These are implementation
+targets, not additional consumer API. Their upstream headers are not installed or exposed;
+automerge's header-only JSON dependency is needed only while building liquid. Its Threads, zlib,
+and Windows bcrypt dependencies remain in the link closure.
+
+These archives are deliberately installed and exported separately instead of merged into
+`libliquid.a`: CMake retains dependency ordering and platform link requirements without a
+platform-specific archive-merging step or duplicate implementation objects. A shared build links
+these static implementations into libliquid with hidden symbols and does not install the three
+companion archives. BLAKE3 and Monocypher objects remain bundled as before. No new dependency is
+introduced.
+
+An installed consumer needs a compatible C++26 compiler, the prefix in `CMAKE_PREFIX_PATH`,
+OpenSSL and zlib development packages, and the platform system libraries (including FUSE3 on
+Linux). zstd, Capy, Corosio, Boost.HTTP, and the required Boost component libraries are supplied
+by the install. Configure a separate project with the same compiler used to build liquid:
+
+```sh
+cmake -S consumer -B consumer-build -G Ninja \
+  -DCMAKE_CXX_COMPILER=<compiler> -DCMAKE_PREFIX_PATH=<prefix>
+cmake --build consumer-build -j 6
+```
+
+The project's only liquid link entry is `target_link_libraries(app PRIVATE liquid::liquid)`.
+Do not add archives or source/build include paths by hand. `liquid::hot` remains an optional
+additional target only for processes using its separate cooperative hot-update C ABI.
+
+**Verify.** Static: `cmake -S . -B build -G Ninja && cmake --build build -j 6 && ctest --test-dir build --output-on-failure`.
 Shared: `cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON` then
 `nm -gU build-shared/libliquid.dylib | grep liquid` lists exactly the exported API. For an
 install consumer, install to a temporary prefix, configure a separate CMake project whose
 `CMakeLists.txt` calls `find_package(liquid CONFIG REQUIRED)` and links its executable to
 `liquid::liquid`, then build and run that executable with the prefix in `CMAKE_PREFIX_PATH`.
-Its source should `co_await` a `liquid::runtime::task<T>` so the check also compiles Capy's
-exported coroutine headers.
+The consumer must create and reopen a repository, check written and persisted bytes, and
+`co_await` a `liquid::runtime::task<T>` so the check also compiles Capy's exported coroutine headers.
 
 The default CTest suite includes `consumer-project-build`; run it alone with
 `ctest --test-dir <build> -R '^consumer-project-build$' --output-on-failure`.
+On the pre-fix tree `7ff6ed82`, the strengthened executable compiled but failed to link with
+undefined automerge and frontend symbols. Issue #285 preserves that regression check while
+completing the installed dependency closure.
 
 **Change.** New public headers go under `include/liquid/` and into `liquid.hpp`; new sources into
 the `libliquid` target. The public surface, its rules and the ABI policy are

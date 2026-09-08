@@ -148,8 +148,8 @@ repository opened on it has been destroyed.
 
 When `repository_options::store` is null, the path retains its original meaning and libliquid
 opens `<path>/.liquid-store`. `repository_options::storage` configures that owned store. A split
-from a shared-store repository creates the destination identifier in the same store, so both
-repositories continue sharing immutable objects and chunks.
+always creates an independent filesystem destination with its own store, including when the source
+borrows a shared store; see [`split.md`](split.md) for ownership, history, and failure behavior.
 
 Local writes retain `blob/1` identity. A remote output uses `blob/2`: `digest` identifies the
 complete byte stream while the parallel chunk arrays define independently verifiable range
@@ -245,7 +245,7 @@ Rules liquid's wrapper enforces on top of automerge-cpp:
 | `log` | walk `parents` from a ref; identity is the digest, so a change transplanted to another branch is recognised as itself. |
 | merge | Automerge converges the directory document, then liquid finds the common change and structurally merges base, local, and received blobs for each concurrently changed `node_id`. Disjoint definition edits replace the selected entry. Overlap, grammarless text, and suspicious proposals become conflict values. The operation records the algorithm, grammar digest, path, and three inputs. |
 | `nest(source, path)` | the entry at `path` becomes `kind: repo` with the source's `repo_id` and pinned change; `nested[path]` mirrors it. The nested repository keeps its own document and its own history; its files are visible because `root()` descends into nested repositories through the store. |
-| `split(path, into)` | new `repo` record and document; the subtree's entries move (same `node_id`s) into it; the original keeps `path` as a `repo` entry. History of the subtree is preserved by construction: the old changes still reference the old trees, and the new repository's `root_change` names the change it was split from. |
+| `split(path, into)` | new `repo` record and document; the subtree's entries move (same `node_id`s) into it; the original keeps `path` as a `repo` entry. The destination owns the referenced chunks and preserves original signed history through a recorded source parent. Nested splits retain the nested repository identity and pinned history. See [`split.md`](split.md). |
 | `combine(other, at)` | one change with parents in both repositories (`change_ref` carries `repo_id`); path collisions become conflict values. |
 | `operations()` / `undo(op_id)` | every mutation appends an `op` record to `ops` (`{ id, kind, from, to, at, by, session, inverse }`). `operations()` returns them newest first; `undo` applies the selected inverse as a new operation and returns applied and skipped paths. Undo never rewrites history. |
 | `preview_edit(request, attribution)` / `apply_edit(preview)` | Preview records exact range-local replacements and file digests. Apply checks every input before writing one drip per file, then groups every entry effect into one attributed `structural_edit` operation so one undo restores the complete edit. |

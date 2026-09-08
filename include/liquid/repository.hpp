@@ -576,6 +576,8 @@ public:
     readability(std::optional<change_id> revision = {});
     [[nodiscard]] runtime::task<void> nest(repository source, std::string path);
     [[nodiscard]] runtime::task<void> nest_ref(std::string path, repo_ref reference);
+    // Creates an owned filesystem repository, including from a borrowed-store source.
+    // Preserves original history and node identities; removes incomplete output on failure.
     [[nodiscard]] runtime::task<repository> split(std::string path, std::filesystem::path into);
     [[nodiscard]] runtime::task<void> combine(repository other, std::optional<std::string> at);
     [[nodiscard]] runtime::task<std::vector<conflict>> conflicts();
@@ -631,6 +633,9 @@ public:
     [[nodiscard]] std::vector<flow_bucket_status> flow_buckets() const;
 
 private:
+    [[nodiscard]] runtime::task<void> initialize_split(repository& source, const std::string& path);
+    [[nodiscard]] runtime::task<void> retain_split(repository& destination,
+                                                   const std::string& path);
     [[nodiscard]] runtime::task<std::optional<stale_revalidation>>
     validate_write(write_options options, std::vector<std::string> paths);
     [[nodiscard]] runtime::task<std::vector<digest>> record_ids(std::string kind);
