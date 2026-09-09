@@ -14,6 +14,8 @@
 #include "liquid/runtime.hpp"
 #include "liquid/transparency.hpp"
 
+#include "cli/verify.hpp"
+
 namespace liquid_cli {
 namespace {
 
@@ -179,7 +181,7 @@ void print_replay_text(const liquid::replay_report& report, bool recorded) {
 
 } // namespace
 
-auto verify(int argc, char** argv) -> int {
+auto verify_detail::run(int argc, char** argv, const verification_runner& runner) -> int {
     auto options = liquid::verify_options{};
     auto log_url = std::optional<std::string>{};
     auto selector = false;
@@ -278,8 +280,7 @@ auto verify(int argc, char** argv) -> int {
     if (!selector) {
         return usage("verify requires an action digest, --all, or --changed");
     }
-    auto report =
-        liquid::runtime::block_on(liquid::build::verify(std::filesystem::current_path(), options));
+    auto report = runner(std::filesystem::current_path(), options);
     if (!report) {
         return fail(report.error());
     }
@@ -328,6 +329,14 @@ auto verify(int argc, char** argv) -> int {
                  report->actions.size(),
                  divergent);
     return divergent ? 1 : 0;
+}
+
+auto verify(int argc, char** argv) -> int {
+    return verify_detail::run(
+        argc, argv, [](std::filesystem::path working_tree, liquid::verify_options options) {
+            return liquid::runtime::block_on(
+                liquid::build::verify(std::move(working_tree), options));
+        });
 }
 
 auto replay(int argc, char** argv) -> int {

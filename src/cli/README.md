@@ -74,9 +74,10 @@ and includes entry size, kind, and opaque-reader reason.
 `repository::retain_explain` result. Rule evaluation and reachability stay in libliquid.
 `gc.cpp` implements both repository collection and `repack`; repack requests a compaction-only
 delta rebase through the public collection API and reports rewritten packs, deltas, and bytes.
-`verify.cpp` parses action, all, changed, and graph selectors, calls the public verification APIs,
-prints action attestations or graph audit records, names critical query inputs and output
-differences, and returns failure on divergence.
+`verify.cpp` parses action, all, changed, graph, and log selectors, calls the public verification
+APIs, requires transparency inclusion for agreeing reproducibility attestations when `--log` is
+selected, prints action attestations or graph audit records, names critical query inputs and output
+differences, and returns failure on divergence or required inclusion failure.
 The same command group implements `replay`: it parses an action or result plus `--json` and
 `--record`, calls the public replay API, and treats a matching recorded nonzero exit as success.
 

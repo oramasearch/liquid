@@ -418,6 +418,30 @@ if(LIQUID_BUILD_CLI)
     COMMAND $<TARGET_FILE:liquid-cli> docs --format json)
   set_tests_properties(cli-docs-json PROPERTIES
     PASS_REGULAR_EXPRESSION "^\\{\"schema_version\":1,\"commands\":\\[")
+  if(UNIX)
+    add_executable(liquid-verify-log-cli
+      cli/verify_log.cpp
+      ${PROJECT_SOURCE_DIR}/src/cli/verify.cpp
+      ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+      ${PROJECT_SOURCE_DIR}/src/objects/records.cpp)
+    target_include_directories(liquid-verify-log-cli PRIVATE
+      ${PROJECT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
+      ${monocypher_source_SOURCE_DIR}/src
+      ${monocypher_source_SOURCE_DIR}/src/optional)
+    target_link_libraries(liquid-verify-log-cli PRIVATE
+      liquid::liquid
+      liquid_monocypher
+      GTest::gtest)
+    add_test(NAME cli-verify-log COMMAND $<TARGET_FILE:liquid-verify-log-cli>)
+  endif()
+  add_test(NAME cli-verify-log-guide
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_TRANSPARENCY_GUIDE=${PROJECT_SOURCE_DIR}/docs/library/transparency.md
+      -DLIQUID_GUIDE_WORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/verify-log-guide.cmake)
   add_test(NAME cli-man-pages
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -572,6 +596,7 @@ if(LIQUID_BUILD_CLI)
     cli-scenario
     cli-help-docs
     cli-reference-docs
+    cli-verify-log-guide
     cli-docs-json
     cli-man-pages
     cli-configuration

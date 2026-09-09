@@ -181,8 +181,10 @@ the first differing input on a miss. The on-disk action index rebuilds from its 
 
 **Verification.** `liquid verify` re-executes cached actions in fresh sandboxes, compares exit
 status and every output digest, signs a `reproducibility/1` attestation, and permanently
-quarantines a divergent result. `wrap` schedules one-in-20 graph and action samples on the shared
-runtime by default.
+quarantines a divergent result. `verify --log <log-url>` additionally requires inclusion for every
+agreeing reproducibility attestation; missing, tampered, and unavailable inclusion fail the command,
+while an omitted log keeps local-only verification. `wrap` schedules one-in-20 graph and action
+samples on the shared runtime by default.
 
 **Outputs and inputs.** New signed results carry canonical output-tree digests.
 `wrap --input <name>=<result|tree>` and direct named inputs mount upstream bytes read-only below
