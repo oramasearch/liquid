@@ -55,19 +55,21 @@ def main() -> int:
         for match in blocks:
             found += 1
             name = match.group(1)
+            script = match.group(2)
             directory = arguments.work / name
             directory.mkdir()
             environment = os.environ.copy()
             environment["PATH"] = f"{arguments.liquid.parent}:{environment['PATH']}"
             environment["HOME"] = str(directory / "home")
             environment["LIQUID_GUIDE_FIXTURES"] = str(arguments.fixtures)
-            environment["LIQUID_GUIDE_PORT"] = str(available_port())
+            if "LIQUID_GUIDE_PORT" in script:
+                environment["LIQUID_GUIDE_PORT"] = str(available_port())
             environment["LIQUID_WRAP_CACHE"] = str(directory / "wrap-cache")
             environment["TMPDIR"] = str(directory / "tmp")
             pathlib.Path(environment["HOME"]).mkdir()
             pathlib.Path(environment["TMPDIR"]).mkdir()
             result = subprocess.run(
-                ["bash", "-eu", "-o", "pipefail", "-c", match.group(2)],
+                ["bash", "-eu", "-o", "pipefail", "-c", script],
                 cwd=directory,
                 env=environment,
                 text=True,

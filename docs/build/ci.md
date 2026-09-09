@@ -88,6 +88,35 @@ that FUSE is unavailable and is skipped rather than silently substituting the ma
 path. A job token must have access to every private submodule when `ORAMA_SUBMODULES_TOKEN` is not
 available; otherwise CI stops at checkout before any FUSE proof can run.
 
+## Offline CLI prerequisites and diagnosis (#296)
+
+Run the outer CTest command from a native host shell. The test itself creates the denied-network
+environment: macOS uses `sandbox-exec`, allowing local Unix-domain sockets while denying TCP,
+including loopback; Linux uses the build wrapper's user, mount, and network namespaces.
+The host must permit that sandbox mechanism, subprocess creation, writable fixture and temporary
+directories, and local Unix-domain sockets. The CLI starts its own checkout daemon, so no
+pre-existing daemon or network service is required. Daemon-backed commands also require the
+platform file watcher to work; macOS needs FSEvents to report the capture arming cookie.
+
+The format test's ZIP, HDF5, JSON, and text diff checks read the repository directly. Its final
+`search changed` assertion starts the daemon. The daemon opens its listener before opening
+capture; if capture startup fails, destroying the daemon state closes that listener. A client
+already waiting for a status response can then see `daemon socket closed`. Normal CLI startup
+redirects daemon stderr to `/dev/null`; running `liquid daemon --serve <checkout>` in the
+foreground exposes the startup error. An FSEvents arming failure is distinct from an IP-socket
+permission failure and can also occur outside the offline sandbox.
+FSEvents arming reliability is tracked in [#282](https://github.com/oramasearch/liquid/issues/282).
+
+`guides-resolution` had a separate, deterministic fixture error: the guide runner reserved a TCP
+loopback port before every shell block, even though package resolution never used it. The macOS
+offline sandbox correctly refused that bind with `PermissionError: [Errno 1] Operation not
+permitted`. This guide test was added in `e5db43f` (#298), after the original #296 baseline
+`7ff6ed8`, so it cannot explain that earlier socket failure. The runner now allocates
+`LIQUID_GUIDE_PORT` only when the block references it. The local-peer guide keeps its port allocation,
+and every existing offline CLI test and assertion still runs. The nested CTest continues after a
+failed guide, so the guide failure does not prevent
+`cli-format-diff` from running or explain a daemon socket closure.
+
 ## Local Linux verification
 
 Hosted CI cannot build when neither the org submodule token nor the job token can read the private
