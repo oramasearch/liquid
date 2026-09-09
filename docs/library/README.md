@@ -1,10 +1,10 @@
 # Library implementation notes
 
-The [documentation index](../README.md#library) lists the library's implementation pages.
-[Status](status.md) records what is implemented and the [API map](api-map.md) defines the public
-surface. The [identity guide](identity.md) covers public document export for sign-up, the shared
-canonical-CBOR codec, software and hardware custody, and verification.
-# Library documentation
+The [documentation index](../README.md#library) lists one entry for each library topic.
+[Implementation status](status.md) is the authoritative inventory of implemented behavior and
+known limits. [libliquid](libliquid.md) covers CMake targets, the installed dependency closure,
+consumer setup, and the repository/coroutine install gate; the [API map](api-map.md) defines
+the public headers and ABI rules.
 
 The [documentation index](../README.md#library) lists the public API and implementation pages.
 [Status](status.md) records implemented behavior and limits.
@@ -24,3 +24,7 @@ The complete topic index is in [`../README.md`](../README.md#library).
 filesystem and observation assertions, direct core calibration, adding a driver, and the Linux
 libfuse baseline still owed against #299. The [proof record](vfs-conformance-proof.md) preserves
 the passing cases, deliberate regression and native suite results.
+The [identity guide](identity.md) covers public document export, custody, and verification.
+[Standalone splits](split.md) covers data ownership, retained history, identities, and cleanup.
+The [historical README record](readme-history.md) preserves earlier context and documents how
+competing front-door and index passages were reconciled.
