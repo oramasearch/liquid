@@ -37,7 +37,7 @@ URL or explicit TSA anchor file is absent.
 thresholds; expiry and persisted rollback checks; exact metadata bindings; root-key recovery; full
 target hashing; and the `registry trust` CLI.
 
-Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
+Ordinary filesystem fixtures use `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
 Linux, resolves a relative temporary root before subprocesses can change directory, reports a clear
 error when the temporary root is not writable, and removes the directory at process exit. Tests may
@@ -45,6 +45,11 @@ use fixed names beneath that directory, but must never name a fixed path directl
 temporary root. `TemporaryDirectory.*` covers root selection, per-process stability, unique child
 creation, cleanup, and the failure diagnostic. Subprocess daemon coverage supplies the same root
 relative to the checkout before changing directory.
+
+New Unix-domain listener fixtures use the scoped `socket_fixture.hpp` helper, which keeps socket
+paths within the native byte limit independently of checkout depth and removes each directory on scope
+exit. Root fallback and bound-socket cleanup have dedicated coverage; see
+[the socket fixture rules](../docs/build/socket-fixtures.md).
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.

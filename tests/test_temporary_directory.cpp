@@ -7,6 +7,15 @@
 
 #include "temporary_directory.hpp"
 
+#if !defined(_WIN32)
+#include <cstring>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include "socket_fixture.hpp"
+#endif
+
 TEST(TemporaryDirectory, process_root_is_stable_and_uses_the_platform_temporary_root) {
     const auto& first = liquid::test::process_fixture_root();
     const auto& second = liquid::test::process_fixture_root();
@@ -53,3 +62,55 @@ TEST(TemporaryDirectory, unusable_root_reports_the_writable_root_requirement) {
 
     std::filesystem::remove(unusable_root);
 }
+
+#if !defined(_WIN32)
+
+TEST(SocketFixture, short_roots_are_private_and_unique) {
+    auto first = liquid::test::socket_fixture{"/tmp"};
+    auto second = liquid::test::socket_fixture{"/tmp"};
+
+    EXPECT_NE(first.path().parent_path(), second.path().parent_path());
+    EXPECT_EQ(first.path().parent_path().parent_path(), "/tmp");
+    EXPECT_TRUE(first.path().is_absolute());
+    EXPECT_LT(first.path().native().size(), sizeof(sockaddr_un::sun_path));
+    EXPECT_EQ(std::filesystem::status(first.path().parent_path()).permissions(),
+              std::filesystem::perms::owner_all);
+}
+
+TEST(SocketFixture, long_and_relative_roots_fall_back_to_short_absolute_paths) {
+    const auto deep_root =
+        liquid::test::fixture_path(std::string(sizeof(sockaddr_un::sun_path), 'd'));
+    std::filesystem::create_directory(deep_root);
+    auto absolute = liquid::test::socket_fixture{deep_root};
+    auto relative = liquid::test::socket_fixture{std::filesystem::relative(deep_root)};
+
+    EXPECT_EQ(absolute.path().parent_path().parent_path(), "/tmp");
+    EXPECT_EQ(relative.path().parent_path().parent_path(), "/tmp");
+    EXPECT_LT(absolute.path().native().size(), sizeof(sockaddr_un::sun_path));
+    EXPECT_LT(relative.path().native().size(), sizeof(sockaddr_un::sun_path));
+    EXPECT_NE(absolute.path(), relative.path());
+}
+
+TEST(SocketFixture, scope_exit_removes_a_bound_socket_and_its_directory) {
+    auto endpoint = std::filesystem::path{};
+    {
+        auto fixture = liquid::test::socket_fixture{};
+        endpoint = fixture.path();
+        auto address = sockaddr_un{};
+        address.sun_family = AF_UNIX;
+        const auto text = endpoint.string();
+        ASSERT_LT(text.size(), sizeof(address.sun_path));
+        std::memcpy(address.sun_path, text.c_str(), text.size() + 1);
+        const auto descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        ASSERT_GE(descriptor, 0);
+        const auto bound =
+            ::bind(descriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+        ::close(descriptor);
+        ASSERT_EQ(bound, 0);
+        EXPECT_TRUE(std::filesystem::is_socket(endpoint));
+    }
+    EXPECT_FALSE(std::filesystem::exists(endpoint));
+    EXPECT_FALSE(std::filesystem::exists(endpoint.parent_path()));
+}
+
+#endif

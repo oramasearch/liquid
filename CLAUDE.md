@@ -124,6 +124,10 @@ ls docs/research/*/sources.md | wc -l   # with sources
 ls docs/features/*.md | grep -v README | wc -l
 ```
 
+Unix-domain socket fixtures use the scoped `tests/socket_fixture.hpp` helper, independently of
+repository paths. Native byte limits, temporary-root fallback, and cleanup are documented in
+[`docs/build/socket-fixtures.md`](docs/build/socket-fixtures.md) (liquid #305).
+
 ### Formatting
 
 `clang-format` with the repository's `.clang-format` (LLVM base, 100 columns, 4-space indents) before

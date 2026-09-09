@@ -6,12 +6,14 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
 
+#include "../socket_fixture.hpp"
 #include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/provenance.hpp"
@@ -136,7 +138,8 @@ auto wait_for_hot_update(liquid::daemon& daemon, std::string_view expected)
 TEST(HotUpdateDemo, TierOnePatchChangesARunningCapyLoop) {
     const auto root = liquid::test::fixture_path("liquid-hot-update-demo");
     std::filesystem::remove_all(root);
-    const auto endpoint = root / "demo.sock";
+    auto socket = liquid::test::socket_fixture{};
+    const auto endpoint = socket.path();
     auto options = liquid::repository_options{};
     options.cache.publish = true;
     options.verify.rate = std::numeric_limits<std::uint32_t>::max();
@@ -270,6 +273,24 @@ TEST(HotUpdateDemo, TierOnePatchChangesARunningCapyLoop) {
     std::printf("drip=input.txt tier=1 outcome=patched pid=%d before=value=1 after=value=2\n",
                 static_cast<int>(child));
     std::filesystem::remove_all(root);
+}
+
+TEST(HotUpdateDemo, SocketPathLimitNamesTheEndpointAndNativeCapacity) {
+    auto socket = liquid::test::socket_fixture{};
+    const auto capacity = sizeof(sockaddr_un::sun_path);
+    auto endpoint = socket.path().string();
+    endpoint.append(capacity - 1 - endpoint.size(), 'x');
+
+    ASSERT_EQ(liquid_hot_listen(endpoint.c_str()), LIQUID_HOT_OK) << liquid_hot_last_error();
+    EXPECT_TRUE(std::filesystem::exists(endpoint));
+    const auto overlong = endpoint + 'x';
+    EXPECT_EQ(liquid_hot_listen(overlong.c_str()), LIQUID_HOT_INVALID);
+    EXPECT_EQ(std::string{liquid_hot_last_error()},
+              "socket path exceeds the platform limit (" + std::to_string(capacity + 1) + " > " +
+                  std::to_string(capacity) + " bytes including NUL): '" + overlong + "'");
+    EXPECT_TRUE(std::filesystem::exists(endpoint));
+    liquid_hot_close();
+    EXPECT_FALSE(std::filesystem::exists(endpoint));
 }
 
 TEST(HotUpdateDemo, TierTwoLoadsAnAdditiveObject) {
