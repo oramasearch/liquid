@@ -1,10 +1,5 @@
 # liquid
 
-Named VFS conformance runs against a direct core reference; Linux libfuse calibration is still
-owed. See the [VFS verification guide](docs/library/vfs.md#backend-conformance-301).
-
-Standalone ordinary and nested splits own their data and retain original signed history; see
-[`docs/library/split.md`](docs/library/split.md).
 liquid helps you keep file history and build software in one tool. Import a folder, capture
 edits as signed **drips**, and give a group of drips a reviewable name as a **change**. The same
 tool can reuse build results and package the outputs. Start below by recording a file and
