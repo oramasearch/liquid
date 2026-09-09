@@ -103,6 +103,47 @@ void wait_without_drips() {
 
 } // namespace
 
+TEST(Drip, capture_reports_whether_the_watcher_armed) {
+    workspace files;
+    auto capture = open_capture(files.path());
+    const auto status = capture.status();
+    ASSERT_TRUE(status);
+    if (status->watcher_armed) {
+        EXPECT_TRUE(status->watcher_diagnostic.empty())
+            << "an armed watcher must not carry a diagnostic";
+    } else {
+        // Capture must say why it degraded rather than looking healthy, and the
+        // reason has to be actionable: this is the condition that cost four
+        // sessions before it was diagnosed (#282).
+        EXPECT_FALSE(status->watcher_diagnostic.empty())
+            << "a watcher that did not arm must say so";
+        EXPECT_NE(status->watcher_diagnostic.find("reconciliation"), std::string::npos)
+            << status->watcher_diagnostic;
+    }
+    EXPECT_TRUE(liquid::runtime::block_on(capture.close()));
+}
+
+TEST(Drip, changes_are_captured_even_when_the_watcher_never_delivers) {
+    workspace files;
+    auto capture = open_capture(files.path());
+    auto drips = drip_collector{};
+    auto subscribed = capture.subscribe([&](const liquid::drip& drip) { drips.add(drip); });
+    ASSERT_TRUE(subscribed);
+    {
+        auto output = std::ofstream{files.path() / "written.txt"};
+        output << "observed without the watcher\n";
+    }
+    // Periodic reconciliation observes this on its interval whether or not the
+    // platform watcher delivered anything, so a wedged watcher costs latency
+    // rather than correctness.
+    wait_for_drips(drips, 1);
+    const auto values = drips.values();
+    ASSERT_GE(values.size(), 1U);
+    const auto status = capture.status();
+    ASSERT_TRUE(status);
+    EXPECT_TRUE(liquid::runtime::block_on(capture.close()));
+}
+
 TEST(Drip, atomic_rename_is_one_target_drip) {
     workspace files;
     auto capture = open_capture(files.path());
