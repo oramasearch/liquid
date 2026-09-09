@@ -163,6 +163,10 @@ public:
 
 class LIQUID_EXPORT http_log_source final : public log_source {
 public:
+    /// Validate locally and return invalid_argument without DNS, sockets, or HTTP requests.
+    [[nodiscard]] static result<http_log_source> create(std::string url);
+
+    /// Retained for existing callers. Invalid URLs are returned by each request operation.
     explicit http_log_source(std::string url);
     ~http_log_source() override;
     http_log_source(http_log_source&&) noexcept;

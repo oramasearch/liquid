@@ -26,3 +26,6 @@ universe before solving. See [resolution](../docs/library/resolution.md).
 The command table documents ordinary-repository projection and `liquid tree`, which prints the
 recorded root digest. The CLI chooses the owning repository before calling projection; format
 writers retain their existing behavior.
+HTTP log sources validate URL syntax and numeric port bounds locally. The factory returns
+public errors; legacy sources return retained validation errors before transport access.
+See [the URL contract](../docs/library/transparency.md#http-url-validation-289).

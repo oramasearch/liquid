@@ -56,6 +56,7 @@ add_executable(liquid-tests
   test_tiers.cpp
   test_temporary_directory.cpp
   test_lake_transparency.cpp
+  test_log_url.cpp
   test_transparency.cpp
   test_tuf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
@@ -514,6 +515,21 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_LOCK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lock-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/locks.cmake)
+  set(LIQUID_LOG_URL_SANDBOX_ARGS)
+  if(UNIX)
+    list(APPEND LIQUID_LOG_URL_SANDBOX_ARGS
+      -DLIQUID_OFFLINE_RUNNER=$<TARGET_FILE:liquid-offline-runner>
+      -DLIQUID_SOURCE_ROOT=${PROJECT_SOURCE_DIR})
+  endif()
+  add_test(NAME cli-log-url
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_API_TESTS=$<TARGET_FILE:liquid-tests>
+      -DLIQUID_LOG_URL_WORK=${CMAKE_CURRENT_BINARY_DIR}/log-url-work
+      ${LIQUID_LOG_URL_SANDBOX_ARGS}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/log-url.cmake)
+  set_tests_properties(cli-log-url PROPERTIES TIMEOUT 120)
+
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>

@@ -88,3 +88,7 @@ offline patch-byte injection, optional target toolchain binding, and the corouti
 `deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
 status calls for an operator-owned control plane. Its interim image input is an OCI reference
 pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.
+
+`transparency.hpp` provides `http_log_source::create()` for local URL validation through
+`result<http_log_source>`. Existing string construction retains errors for request operations;
+see [the contract](../../docs/library/transparency.md#http-url-validation-289).

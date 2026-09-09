@@ -85,6 +85,39 @@ them. The coroutine-native `log_source` interface lets applications and tests pr
 tiles, and proofs. `http_log_source` obtains Lake's HTTP representation without linking a Lake
 library.
 
+### HTTP URL validation (#289)
+
+Use `http_log_source::create(url)` to construct a source through
+`result<http_log_source>`. Malformed schemes, missing hosts, and ports outside the decimal
+range 1–65535 return `errc::invalid_argument` with an HTTP/HTTPS URL diagnostic. Validation
+is local: it does not resolve a host, open a socket, or request log data. Successful
+construction also performs no I/O.
+
+The string constructor remains source-compatible for existing clients. It retains a URL
+validation error instead of throwing; each of its six request operations returns that same
+error before entering the HTTP transport. New callers should use the factory to receive the
+error at construction. This also protects existing admission and verification callers without
+changing their proof or trust behavior.
+
+`log scan`, `log consistency`, and `log verify` use the factory before opening a repository
+or decoding an attestation. Invalid URLs print the specific correction and exit **2** (invalid
+usage); a valid URL's failed operation still exits **1**, as the
+[command reference](../reference/cli/log.md#exit-status) specifies.
+
+`HttpLogSource` API tests cover rejected schemes, absent hosts, empty/nondecimal/out-of-range
+ports, valid HTTP/HTTPS URLs, and every legacy request operation. `cli/log-url.cmake` repeats
+the invalid cases through all three verbs outside a repository and runs the API cases too.
+On macOS and Linux, that CTest case uses the existing offline runner with networking denied.
+No test in this regression starts a server or requires an endpoint.
+
+A review of explicit throws in library-owned public constructors also found
+`forge_client(std::string, forge_client_options)` in `src/forge.cpp` and
+`sync_endpoint(std::string, sync_endpoint_options)` in `src/sync/endpoint.cpp` throwing
+`std::invalid_argument` for invalid endpoints. Those remain outside #289. This review does
+not establish that allocations or constructors in dependencies cannot throw.
+
+### Checkpoints and proofs
+
 The client validates the checkpoint's compact canonical JSON hash, then the Ed25519 Lake signature
 over `TAAP/1 lake_checkpoint/1`, a NUL byte, and the CBOR checkpoint body. It accepts only
 configured witnesses with valid signatures over the canonical JSON body. Duplicate witness keys do

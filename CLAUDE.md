@@ -62,7 +62,9 @@ tile, inclusion, consistency, identity-scan, RFC 3161 timestamp, and RFC 4998 ev
 verification with repository-backed trusted checkpoint state. Liquid #83 adds complete full and
 partial parent-tile walks, cache reauthentication through the selected checkpoint, and the same walk
 before consistency proofs. Liquid #288 registers `verify --log <log-url>` in the typed CLI table and
-requires log inclusion for every agreeing reproducibility attestation. Liquid #61 adds signed `sbom/1` attestations with graph-derived
+requires log inclusion for every agreeing reproducibility attestation. Liquid #289 adds a
+result-returning HTTP log source factory, error-preserving legacy construction, and local URL
+validation with CLI exit 2 for invalid usage. Liquid #61 adds signed `sbom/1` attestations with graph-derived
 SPDX/CycloneDX documents or distinctly marked binary inference. Liquid #17 adds transport-neutral
 remote blob records, local/remote/absent store availability, chunk-range hydration and on-demand
 materialisation, remote-byte status, metadata-only remote result recording, and opt-in Linux read
