@@ -648,6 +648,44 @@ target_include_directories(liquid-vfs-queue-tests PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(liquid-vfs-queue-tests PRIVATE liquid::liquid GTest::gtest_main)
 gtest_discover_tests(liquid-vfs-queue-tests DISCOVERY_TIMEOUT 120)
 
+# Compile the existing private mount entry points unchanged. This keeps the
+# conformance adapter usable with hidden shared-library symbols as well as static.
+add_executable(liquid-vfs-conformance
+  vfs/conformance_main.cpp
+  vfs/conformance_backend.cpp
+  vfs/conformance_direct.cpp
+  vfs/conformance_posix.cpp
+  vfs/test_conformance.cpp
+  ${PROJECT_SOURCE_DIR}/src/vfs/fuse_fs.cpp
+  ${PROJECT_SOURCE_DIR}/src/vfs/observation.cpp)
+target_include_directories(liquid-vfs-conformance PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-vfs-conformance PRIVATE liquid::liquid GTest::gtest)
+if(LIQUID_FUSE_TARGET)
+  target_compile_definitions(liquid-vfs-conformance PRIVATE ${LIQUID_FUSE_DEFINITION})
+  target_link_libraries(liquid-vfs-conformance PRIVATE ${LIQUID_FUSE_TARGET})
+endif()
+if(BUILD_SHARED_LIBS)
+  target_sources(liquid-vfs-conformance PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+    ${PROJECT_SOURCE_DIR}/src/vfs/hydration.cpp
+    ${PROJECT_SOURCE_DIR}/src/vfs/request_queue.cpp
+    ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
+endif()
+set(LIQUID_VFS_CONFORMANCE_BACKENDS "direct;libfuse" CACHE STRING
+  "Named VFS drivers to run through the common conformance suite")
+foreach(backend IN LISTS LIQUID_VFS_CONFORMANCE_BACKENDS)
+  set(conformance_availability)
+  if((backend STREQUAL "libfuse" AND NOT LIQUID_FUSE_TARGET) OR
+     (WIN32 AND backend STREQUAL "direct"))
+    set(conformance_availability --allow-unavailable)
+  endif()
+  add_test(NAME vfs-conformance-${backend}
+    COMMAND liquid-vfs-conformance --backend=${backend} ${conformance_availability})
+  set_tests_properties(vfs-conformance-${backend} PROPERTIES
+    LABELS "vfs;conformance" RUN_SERIAL TRUE TIMEOUT 300 SKIP_RETURN_CODE 77)
+endforeach()
+
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-capture-measure PRIVATE liquid::liquid)

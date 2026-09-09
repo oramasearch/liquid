@@ -11,3 +11,17 @@ See [`docs/library/vfs.md`](../../docs/library/vfs.md) for the complete scenario
 
 Tree and mount fixtures allocate their named directories beneath the unique process root specified
 in the parent [`README.md`](../README.md).
+
+The named `liquid-vfs-conformance` executable keeps backend registration in
+`conformance_backend.cpp`, the test operation interface in `conformance_operations.hpp`, POSIX
+syscalls in `conformance_posix.cpp`, and the core calibration implementation in
+`conformance_direct.cpp`. The direct backend is test-only; every real backend must pass the same
+cases in `test_conformance.cpp`. No kernel mount is used by `direct`, and no production libfuse
+code changes for this harness.
+
+The nine cases cover recorded-tree observation, attributed capture, file mutations, xattrs,
+synthetic times, read-only refusal, and concurrent range hydration with persistent cache reuse.
+Required backend execution fails on unavailability; optional availability returns CTest skip code
+77. The direct baseline and deliberate wrong-size failure are recorded in the
+[proof record](../../docs/library/vfs-conformance-proof.md). Linux libfuse calibration remains
+owed against #299; see the [run and extension guide](../../docs/library/vfs.md#backend-conformance-301).

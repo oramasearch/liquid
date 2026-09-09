@@ -19,3 +19,8 @@ consumer setup, and repository/coroutine install gate. [`api-map.md`](api-map.md
 public headers and ABI rules.
 
 The complete topic index is in [`../README.md`](../README.md#library).
+
+[VFS conformance](vfs.md#backend-conformance-301) documents named backend execution, common
+filesystem and observation assertions, direct core calibration, adding a driver, and the Linux
+libfuse baseline still owed against #299. The [proof record](vfs-conformance-proof.md) preserves
+the passing cases, deliberate regression and native suite results.

@@ -1,5 +1,12 @@
 # Implementation status
 
+**VFS conformance (#301).** Nine common cases pass against the direct core calibration backend,
+covering file operations, recorded inputs, attributed writes, partial hydration, synthetic times,
+xattrs and read-only refusal. A deliberate wrong-size mutation fails with the operation and
+expectation. The unchanged libfuse entry skips on this Mac because macFUSE is absent. Agreement
+with liquid's own core is weaker than agreement with a known-good filesystem; the Linux libfuse
+baseline remains owed against #299 ([`vfs.md`](vfs.md#backend-conformance-301)).
+
 Issue #2: ordinary and nested splits own their referenced chunks and expose original signed
 history after source removal. Shared-store sources produce standalone destinations. Publication
 and limitations are documented in [`split.md`](split.md).

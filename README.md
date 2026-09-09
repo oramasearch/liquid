@@ -1,5 +1,8 @@
 # liquid
 
+Named VFS conformance runs against a direct core reference; Linux libfuse calibration is still
+owed. See the [VFS verification guide](docs/library/vfs.md#backend-conformance-301).
+
 Standalone ordinary and nested splits own their data and retain original signed history; see
 [`docs/library/split.md`](docs/library/split.md).
 
