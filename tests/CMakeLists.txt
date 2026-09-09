@@ -121,16 +121,17 @@ if(UNIX)
   target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
-  liquid::liquid
+  # liquid_forge_double links liquid::liquid publicly, so naming it here too put
+  # libliquid.a on the link line twice.
   liquid_forge_double
   liquid_monocypher
-  orama::oramacore-cpp
+  $<COMPILE_ONLY:orama::oramacore-cpp>
   GTest::gtest_main
   Boost::assert
   Boost::config
   Boost::throw_exception
-  Boost::corosio
-  Boost::corosio_openssl)
+  $<COMPILE_ONLY:Boost::corosio>
+  $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
@@ -163,8 +164,8 @@ add_executable(liquid-http2-test-server
   ${LIQUID_HTTP2_TEST_SOURCES})
 target_link_libraries(liquid-http2-test-server PRIVATE
   liquid::liquid
-  Boost::corosio
-  Boost::corosio_openssl)
+  $<COMPILE_ONLY:Boost::corosio>
+  $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 add_executable(liquid-build-fixture build/fixture.c)
@@ -263,7 +264,8 @@ if(LIQUID_BUILD_FRONTENDS)
     ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
   target_link_libraries(liquid-tests PRIVATE
     liquid-frontend-clang-static
-    liquid_frontend_syntax)
+    # libliquid already carries the syntax archive to consumers.
+    $<COMPILE_ONLY:liquid_frontend_syntax>)
 
   add_test(NAME grammar-lock-digests
     COMMAND ${CMAKE_COMMAND}
@@ -830,7 +832,7 @@ target_include_directories(liquid-index-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/crypto
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
-target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main Boost::corosio libzstd_static)
+target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main $<COMPILE_ONLY:Boost::corosio> libzstd_static)
 gtest_discover_tests(liquid-index-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-crypto-tests

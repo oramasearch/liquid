@@ -801,8 +801,13 @@ if(LIQUID_BUILD_CLI)
     src/cli/workers.cpp
     src/cli/wrap.cpp)
   set_target_properties(liquid-cli PROPERTIES OUTPUT_NAME liquid)
+  # libliquid is a static archive, so CMake already carries its private
+  # dependencies to consumers for the final link. Linking them again put the
+  # same archive on the command line twice; COMPILE_ONLY keeps the headers
+  # and usage requirements without the duplicate.
   target_link_libraries(liquid-cli PRIVATE
-    liquid::liquid Boost::corosio Boost::corosio_openssl Boost::http Boost::json)
+    liquid::liquid $<COMPILE_ONLY:Boost::corosio> $<COMPILE_ONLY:Boost::corosio_openssl>
+    $<COMPILE_ONLY:Boost::http> $<COMPILE_ONLY:Boost::json>)
   target_include_directories(liquid-cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
   # Keep a build-tree reference beside the binary.  The CTest below compares this
@@ -845,7 +850,8 @@ target_include_directories(liquid_forge_double
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include)
 target_link_libraries(liquid_forge_double
   PUBLIC liquid::liquid
-  PRIVATE Boost::corosio Boost::corosio_openssl Boost::http)
+  PRIVATE $<COMPILE_ONLY:Boost::corosio> $<COMPILE_ONLY:Boost::corosio_openssl>
+          $<COMPILE_ONLY:Boost::http>)
 set_target_properties(liquid_forge_double PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_executable(liquid-forge-double tests/support/forge_double_main.cpp)
@@ -949,12 +955,33 @@ if(LIQUID_BUILD_TESTS)
   add_executable(liquid-platform-installer-fixture tests/platform/installer_fixture.cpp)
   target_link_libraries(liquid-platform-installer-fixture PRIVATE liquid::liquid)
   add_executable(liquid-platform-installer-program tests/platform/installer_program.cpp)
+  # SYSTEM marks its headers as system headers, so googletest's own warnings
+  # do not appear in liquid's build output where they read as ours.
   FetchContent_Declare(googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.17.0)
+    GIT_TAG        v1.17.0
+    SYSTEM)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
+  # FetchContent's SYSTEM does not reach targets that publish their own include
+  # directories, so mark them explicitly; otherwise googletest's warnings appear
+  # in liquid's output where they read as ours.
+  foreach(gtest_target gtest gtest_main gmock gmock_main)
+    if(TARGET ${gtest_target})
+      get_target_property(gtest_includes ${gtest_target} INTERFACE_INCLUDE_DIRECTORIES)
+      if(gtest_includes)
+        set_target_properties(${gtest_target} PROPERTIES
+          INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${gtest_includes}")
+      endif()
+      # gtest-printers.h converts char8_t to char32_t, which recent Clang warns
+      # about while googletest compiles its own sources. System include marking
+      # cannot reach that, and the code is not ours to fix.
+      if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${gtest_target} PRIVATE -Wno-character-conversion)
+      endif()
+    endif()
+  endforeach()
   enable_testing()
   add_subdirectory(tests)
 endif()
