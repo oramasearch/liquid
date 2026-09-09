@@ -148,3 +148,21 @@ hint is lost, visibility is bounded by `max(coalesce_window, reconcile_interval)
 - Windows USN journal support is deferred. The watcher has no persistent Windows journal token.
 - Action attribution is Phase 2; `capture_options::attribution` reserves its control point.
 - Journal retention and compaction remain coupled to metadata-history retention.
+
+
+## Degraded capture when the watcher does not deliver
+
+Arming writes a cookie into the workspace and waits for the platform watcher to report it. A
+platform can accept the subscription and then deliver nothing — a wedged macOS `fseventsd` does
+exactly this. Capture treats the watcher as an **optimisation for latency, not a requirement for
+correctness**: when arming fails it continues on periodic reconciliation and says so through
+`capture_status::watcher_armed` and `watcher_diagnostic`.
+
+Reconciliation cannot then be switched off. If `reconcile_interval` is zero while the watcher is
+not delivering, capture restores the default interval, because reconciliation is the only remaining
+way a change is seen.
+
+What this costs: changes are observed on the reconcile interval instead of as they happen, and a
+reconcile is a scan rather than a targeted hint. What it buys: `wrap`, `drip` and the daemon keep
+working on a host whose watcher has gone quiet, instead of refusing to start. See
+[`../build/ci.md`](../build/ci.md) for the macOS repair.

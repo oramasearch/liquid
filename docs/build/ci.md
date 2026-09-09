@@ -227,3 +227,38 @@ empty field before a Markdown row's first `|` is retained.
 
 
 Test discovery (`gtest_discover_tests`) runs each test binary once at build time with a 120 s timeout (the CMake default is 5 s, which a loaded host exceeds and reports as a build failure).
+
+
+## When the platform watcher stops delivering
+
+`liquid capture` arms its watcher by writing a cookie file into the workspace and waiting for the
+platform to report it. If the platform accepts the subscription and then reports nothing, capture
+**does not fail**: it records the condition and runs on periodic reconciliation, which observes the
+same changes on `capture_options::reconcile_interval` rather than as they happen.
+
+`capture_status` says which mode it is in:
+
+| Field | Meaning |
+|---|---|
+| `watcher_armed` | false when the watcher never delivered and capture is reconciling |
+| `watcher_diagnostic` | why, and what to do about it — empty when armed |
+
+**On macOS this is usually a wedged `fseventsd`.** It can stop delivering events process-wide while
+still accepting subscriptions, so every FSEvents consumer goes quiet at once. It is not liquid, and
+it is reproducible without liquid — a forty-line program that creates an `FSEventStream`, writes a
+file into the watched directory and waits will report nothing:
+
+```text
+RESULT: FSEvents delivered NOTHING
+```
+
+The repair is to restart the daemon, which macOS relaunches immediately:
+
+```sh
+sudo killall -9 fseventsd
+```
+
+Before this was understood it cost four separate sessions, because twelve to fourteen `Drip.*` and
+`Daemon.*` tests failed with `FSEvents did not arm for workspace` and looked like a liquid
+regression (#282). They now pass on such a host, because capture no longer needs the watcher to
+function — only to be prompt.
