@@ -22,3 +22,7 @@ for the existing repository workflows.
 Issue #287 connects source package declarations to universe loading. The CLI table documents
 canonical package output through `config lower --output-record`; `resolve` reports an empty
 universe before solving. See [resolution](../docs/library/resolution.md).
+
+The command table documents ordinary-repository projection and `liquid tree`, which prints the
+recorded root digest. The CLI chooses the owning repository before calling projection; format
+writers retain their existing behavior.

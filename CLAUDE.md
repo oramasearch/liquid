@@ -11,6 +11,8 @@ the bridge remains authoritative.
 and runtime in one program. See [`README.md`](README.md).
 
 **Status:** The local repository workflow is implemented in libliquid and its CLI.
+`project` accepts ordinary-repository changes and trees; `liquid tree` exposes the recorded root
+([guide](docs/guides/project-from-files.md)).
 The authoritative feature inventory and known limits are in
 [`docs/library/status.md`](docs/library/status.md). Keep detailed status there; this file records
 repository rules and decisions. The README provides the build and first-result path; the

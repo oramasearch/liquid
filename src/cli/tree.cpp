@@ -25,6 +25,22 @@ auto open_repository() -> liquid::result<liquid::repository> {
 
 } // namespace
 
+auto tree_digest(int argc, char**) -> int {
+    if (argc != 0) {
+        return usage("tree takes no arguments");
+    }
+    auto repository = open_repository();
+    if (!repository) {
+        return fail(repository.error());
+    }
+    auto root = liquid::runtime::block_on(repository->root_digest());
+    if (!root) {
+        return fail(root.error());
+    }
+    std::println("{}", liquid::to_string(*root));
+    return 0;
+}
+
 auto tree_move(int argc, char** argv) -> int {
     if (argc != 2) {
         return usage("move requires a source and destination");

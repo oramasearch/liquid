@@ -102,3 +102,8 @@ reports, all emitted Shamir shares, and the final persisted custody kind.
 The configuration scenario also checks canonical record file/stdout equivalence, successful
 resolution from emitted records, named package selection and output errors, empty and unsupported
 universe diagnostics in text/JSON modes, and an exact attributed contradiction narrative (#287).
+
+`project.py` covers ordinary changes and trees without a build cache, deterministic Debian
+bytes, OCI/RPM/APK output, Debian source changes, and explicit unsupported-input errors. Its
+public-API fixture records results in a separate build repository to preserve result-ID and
+producing-install-tree behavior, including a checkout without ordinary repository state.

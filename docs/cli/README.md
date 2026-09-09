@@ -841,3 +841,9 @@ in the matching `src/cli/*.cpp` command group, and regenerate `docs/reference/cl
 docs --format markdown --out docs/reference/cli` followed by the JSON form. Keep each command on
 public libliquid calls; a library capability that does not exist belongs in the library before it
 reaches the CLI.
+
+`liquid tree` prints only the current recorded root digest, including the algorithm prefix, for
+direct use as a `project` input. `project` resolves changes and trees in the ordinary repository
+and retains build-repository result lookup. Unsupported inputs name the supplied kind and the
+accepted kinds. See [package ordinary files](../guides/project-from-files.md) and
+[projection](../library/projection.md) for source-package and overlay requirements.

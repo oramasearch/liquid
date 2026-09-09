@@ -37,6 +37,9 @@ printf 'first line\n' > build/readme-example/notes.txt
 local signing identity in `build/readme-identity/`. The static library is `build/libliquid.a`
 and the CLI is `build/liquid`.
 
+To package ordinary files, follow [package repository files](docs/guides/project-from-files.md).
+It requires no build configuration or filesystem mount.
+
 Continue with [your first repository](docs/guides/first-repository.md) to capture an edit,
 compare changes, search, and sync with a local peer. To try build caching, follow
 [wrap an existing build](docs/guides/wrap-an-existing-build.md). The wrapper requires libfuse3
