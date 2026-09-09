@@ -35,3 +35,5 @@ The [identity guide](identity.md) covers public document export, custody, and ve
 [Standalone splits](split.md) covers data ownership, retained history, identities, and cleanup.
 The [historical README record](readme-history.md) preserves earlier context and documents how
 competing front-door and index passages were reconciled.
+The hot-update status includes bounded demo socket paths and explicit platform-limit diagnostics;
+[the fixture guide](../build/socket-fixtures.md) records the construction and cleanup rules.

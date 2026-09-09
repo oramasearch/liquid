@@ -211,5 +211,6 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 |---|---|
 | [`build/README.md`](build/README.md) | Index of the build verification pages. |
 | [`build/local.md`](build/local.md) | Building liquid on a workstation: prerequisites, configure, build, test, run, install, options, and the documentation checks. |
+| [`build/socket-fixtures.md`](build/socket-fixtures.md) | Unix-domain socket limits, bounded temporary fixtures, cleanup, and deep-worktree verification. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, toolchains, the documentation-site job, and the local Linux container proof. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Local action execution: fixed environment, observed-mount manifest, Linux namespace enforcement, platform limits, and mount verification. |

@@ -279,8 +279,19 @@ liquid_hot_status liquid_hot_listen(const char* endpoint) {
     struct sockaddr_un address;
     int descriptor;
     int flags;
-    if (endpoint == NULL || endpoint[0] == '\0' || strlen(endpoint) >= sizeof(address.sun_path)) {
+    size_t required_size;
+    if (endpoint == NULL || endpoint[0] == '\0') {
         return set_error(LIQUID_HOT_INVALID, "invalid hot-update endpoint");
+    }
+    required_size = strlen(endpoint) + 1;
+    if (required_size > sizeof(address.sun_path)) {
+        snprintf(last_error,
+                 sizeof(last_error),
+                 "socket path exceeds the platform limit (%zu > %zu bytes including NUL): '%s'",
+                 required_size,
+                 sizeof(address.sun_path),
+                 endpoint);
+        return LIQUID_HOT_INVALID;
     }
     close_listener();
     descriptor = socket(AF_UNIX, SOCK_STREAM, 0);

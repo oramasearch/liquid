@@ -312,7 +312,9 @@ and `liquid symbols <path>` ([`symbols.md`](symbols.md)).
 patch and restart records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and
 Linux x86_64, sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven
 daemon target. Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise
-returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)).
+returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). Issue #305 gives the tier-1
+demo a scoped, bounded socket path and makes overlong runtime endpoints report the native limit
+and path ([socket fixtures](../build/socket-fixtures.md)).
 
 **Build streams, tests, and plans.** Public build handles stream queued, started, hit, done,
 failed, critical-path, and finished events through the library and daemon. CMake test
