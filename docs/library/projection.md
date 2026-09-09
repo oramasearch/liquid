@@ -10,6 +10,29 @@ the same canonical content-addressed file tree and explicit metadata request.
 Issue #79 adds Debian-only Tier B source projection from a recorded change or the result that
 produced an install tree. Other source-policy formats are not claimed.
 
+## CLI repository selection
+
+Issue #286 makes `init`, `cut`, and `project` work on ordinary repositories. The CLI resolves
+changes to their recorded root trees and accepts tree digests directly in the current repository.
+No build cache or filesystem mount is needed. `liquid tree` prints the current recorded root
+with its algorithm prefix; it does not scan unrecorded filesystem edits. Result IDs continue to
+resolve through the build repository, including checkouts without ordinary repository state.
+Already-recorded results in the current repository also remain usable through the public API.
+
+The primary input selects the repository for the request and its projection attestations.
+Overlay inputs must be trees in that same repository. Unknown digests, blobs, actions, and
+non-digest arguments receive input-specific errors naming the accepted inputs. A filesystem
+installer path is accepted only by `winget`; it can use an ordinary initialized repository.
+
+For `dsc`, a recorded change retains its history and any matching build evidence. Without
+recorded evidence, the source must declare exactly one build target in a top-level `.liquid`
+file. An install tree must have a producing result; an arbitrary bare tree is explicitly refused.
+The existing source writer and result projection behavior are unchanged.
+
+[Package ordinary files](../guides/project-from-files.md) is an executable workflow.
+[The verification record](../build/project-ordinary-repository.md) contains its run and the
+before/after reproduction.
+
 ## Public contract
 
 `liquid/projection.hpp` defines `projection_request`, `package_metadata`, service values, target

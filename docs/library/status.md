@@ -376,7 +376,9 @@ entries are retained as deduplicated blobs beside the verbatim container. Uncomp
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
 reasons ([`formats.md`](formats.md)).
 
-**Projection.** Tier A package and image projection and Debian-only Tier B source projection are
+**Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
+`liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
+lookup ([executable guide](../guides/project-from-files.md)). Tier A package and image projection and Debian-only Tier B source projection are
 implemented. One checked install tree
 projects to deterministic `.deb`, `.rpm`, `.apk`, Homebrew bottles, Arch recipes, OCI image
 layouts, digest-pinned Helm charts, pinned-runtime AppImages, Flatpak build directories, and

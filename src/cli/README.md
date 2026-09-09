@@ -222,3 +222,8 @@ showing the base artifact plus its patch composition.
 `config lower --output-record <file|-> [--package <name>]` writes a selected canonical package
 record through the public encoder, with binary stdout and no summary. `resolve` diagnoses a
 universe with no loaded candidates before invoking the solver (issue #287).
+
+Issue #286 resolves projection inputs through the public repository APIs: ordinary changes and
+trees use their owning repository, with build-repository fallback for existing result IDs.
+Unsupported records name the input and accepted kinds. `tree.cpp` exposes `root_digest()` as
+`liquid tree`; overlays stay in the primary source repository.

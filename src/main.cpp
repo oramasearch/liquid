@@ -26,6 +26,7 @@ auto transparency_log(int argc, char** argv) -> int;
 auto repo_cut(int argc, char** argv) -> int;
 auto repo_refs(int argc, char** argv) -> int;
 auto diff(int argc, char** argv) -> int;
+auto tree_digest(int argc, char** argv) -> int;
 auto tree_move(int argc, char** argv) -> int;
 auto tree_remove(int argc, char** argv) -> int;
 auto anchor(int argc, char** argv) -> int;
@@ -652,9 +653,14 @@ constexpr auto commands = std::to_array<command>({
      "available",
      flags_project,
      "Project a recorded result, change, tree, or installer into a package, source package, image, "
-     "Helm chart, OSTree commit, or bundled-runtime artifact.",
-     "liquid project dsc blake3:<change-or-install-tree> --name example --version 1.0.0 "
-     "--distribution unstable --out projection",
+     "Helm chart, OSTree commit, or bundled-runtime artifact. Changes and trees resolve in the "
+     "current repository without build configuration; result IDs also resolve in its build "
+     "repository. Use liquid tree to obtain the recorded root digest. Installer paths are "
+     "accepted only by winget. Debian source input requires a recorded change, result, or "
+     "install tree with a producing result; a change needs one declared build target or "
+     "recorded build evidence. Overlay trees must belong to the primary source repository.",
+     "liquid project deb blake3:<change-or-tree> --name example --version 1.0.0 "
+     "--arch arm64 --out ../out",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::project},
@@ -815,6 +821,18 @@ constexpr auto commands = std::to_array<command>({
      network_exit,
      argument_policy::ordinary,
      liquid_cli::serve},
+    {"tree",
+     "tree",
+     "print the recorded root tree digest",
+     "available",
+     {},
+     "Print the current recorded root tree digest, including its algorithm prefix. "
+     "This reads repository state without importing unrecorded filesystem edits. "
+     "The output can be passed directly to project.",
+     "liquid tree",
+     normal_exit,
+     argument_policy::ordinary,
+     liquid_cli::tree_digest},
     {"move",
      "move <from> <to>",
      "record a path move",

@@ -14,3 +14,7 @@ the repository fixtures.
 [Resolve packages from declarations](resolve-packages.md) checks a two-package dependency graph
 and canonical record file/stdout output. It also runs natively on macOS through `guides-resolution`
 without a mount or repository.
+
+[Package ordinary repository files](project-from-files.md) records files, packages a change as
+Debian and OCI artifacts, prints its root with `liquid tree`, and compares deterministic Debian
+bytes. It runs natively through `guides-projection` without a filesystem mount.

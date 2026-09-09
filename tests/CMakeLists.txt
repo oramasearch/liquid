@@ -414,6 +414,16 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_INSTALL_ROOT=${CMAKE_CURRENT_BINARY_DIR}/install-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/install.cmake)
+  add_executable(liquid-project-cli-fixture cli/project_fixture.cpp)
+  target_link_libraries(liquid-project-cli-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-project
+    COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/cli/project.py
+      --liquid $<TARGET_FILE:liquid-cli>
+      --fixture $<TARGET_FILE:liquid-project-cli-fixture>
+      --source-fixture ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/projection/debian-source
+      --work ${CMAKE_CURRENT_BINARY_DIR}/project-cli)
+  set_tests_properties(cli-project PROPERTIES TIMEOUT 120)
   add_test(NAME cli-docs-json
     COMMAND $<TARGET_FILE:liquid-cli> docs --format json)
   set_tests_properties(cli-docs-json PROPERTIES
@@ -457,6 +467,15 @@ if(LIQUID_BUILD_CLI)
         --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/build/wrap
         --work ${CMAKE_CURRENT_BINARY_DIR}/guides-resolution)
     set_tests_properties(guides-resolution PROPERTIES TIMEOUT 60)
+    add_test(NAME guides-projection
+      COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/guides/run.py
+        --liquid $<TARGET_FILE:liquid-cli>
+        --guides ${PROJECT_SOURCE_DIR}/docs/guides
+        --guide project-from-files.md
+        --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/build/wrap
+        --work ${CMAKE_CURRENT_BINARY_DIR}/guides-projection)
+    set_tests_properties(guides-projection PROPERTIES TIMEOUT 60)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME guides-run
@@ -598,6 +617,7 @@ if(LIQUID_BUILD_CLI)
     cli-reference-docs
     cli-verify-log-guide
     cli-docs-json
+    cli-project
     cli-man-pages
     cli-configuration
     cli-transparency-configuration
@@ -631,7 +651,7 @@ if(LIQUID_BUILD_CLI)
     list(APPEND LIQUID_CLI_TESTS symbols-cli-python)
   endif()
   if(UNIX)
-    list(APPEND LIQUID_CLI_TESTS guides-resolution)
+    list(APPEND LIQUID_CLI_TESTS guides-resolution guides-projection)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND LIQUID_CLI_TESTS guides-run)

@@ -10,7 +10,7 @@ liquid project <oci|ostree|bootc|deb|rpm|apk|helm|macos-pkg|macos-dmg|msix|winge
 
 ## Description
 
-Project a recorded result, change, tree, or installer into a package, source package, image, Helm chart, OSTree commit, or bundled-runtime artifact.
+Project a recorded result, change, tree, or installer into a package, source package, image, Helm chart, OSTree commit, or bundled-runtime artifact. Changes and trees resolve in the current repository without build configuration; result IDs also resolve in its build repository. Use liquid tree to obtain the recorded root digest. Installer paths are accepted only by winget. Debian source input requires a recorded change, result, or install tree with a producing result; a change needs one declared build target or recorded build evidence. Overlay trees must belong to the primary source repository.
 
 ## Options
 
@@ -45,7 +45,7 @@ available
 ## Examples
 
 ```sh
-liquid project dsc blake3:<change-or-install-tree> --name example --version 1.0.0 --distribution unstable --out projection
+liquid project deb blake3:<change-or-tree> --name example --version 1.0.0 --arch arm64 --out ../out
 ```
 
 ## Exit status

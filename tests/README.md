@@ -324,3 +324,7 @@ library forms. Each configured backend receives the same filesystem and observat
 The `direct` driver calibrates them through the core without mounting; `libfuse` uses real POSIX
 syscalls. See the [VFS guide](../docs/library/vfs.md#backend-conformance-301) for required backend
 execution, explicit unavailable results, the deliberate regression and Linux proof still owed.
+
+Issue #286 adds `cli-project` for ordinary-repository projection and existing result-ID
+compatibility. `guides-projection` runs the documented file-to-package workflow natively,
+including equality of Debian bytes from a change and its root tree, without a mount.

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "liquid/build.hpp"
 #include "liquid/projection.hpp"
 #include "liquid/repository.hpp"
 
@@ -114,6 +115,116 @@ auto find_result(liquid::repository& repository, liquid::digest tree, bool outpu
     return std::optional<liquid::result_id>{};
 }
 
+auto input_error(std::string_view kind, liquid::digest id) -> liquid::error {
+    return {liquid::errc::invalid_argument,
+            "project input is " + std::string{kind} +
+                "; accepted inputs are a recorded result, change, or tree "
+                "(installer paths are accepted only by winget)",
+            liquid::to_string(id)};
+}
+
+// A missing object can belong to the build repository. A present but unsupported
+// object must report its input error instead of suggesting build configuration.
+auto resolve_input(liquid::repository& repository, liquid::digest candidate)
+    -> liquid::result<std::optional<liquid::projection_source>> {
+    auto tree = liquid::runtime::block_on(repository.tree(candidate));
+    if (tree) {
+        return liquid::projection_source{.value = candidate};
+    }
+    if (tree.error().code == liquid::errc::not_found) {
+        return std::optional<liquid::projection_source>{};
+    }
+    if (tree.error().code != liquid::errc::corrupt) {
+        return std::unexpected(tree.error());
+    }
+    auto changes = liquid::runtime::block_on(
+        repository.log({.from = liquid::change_id{candidate}, .first_parent = true}));
+    if (changes && !changes->empty()) {
+        return liquid::projection_source{.value = changes->front().root,
+                                         .change = liquid::change_id{candidate}};
+    }
+    auto result =
+        liquid::runtime::block_on(liquid::build::result(repository, liquid::result_id{candidate}));
+    if (result) {
+        return liquid::projection_source{.value = liquid::result_id{candidate}};
+    }
+    auto blob = liquid::runtime::block_on(repository.blob(candidate));
+    if (blob) {
+        return std::unexpected(input_error("a blob", candidate));
+    }
+    auto action = liquid::runtime::block_on(repository.action(candidate));
+    if (action) {
+        return std::unexpected(input_error("an action", candidate));
+    }
+    return std::unexpected(input_error("an unsupported stored record", candidate));
+}
+
+struct projection_context {
+    liquid::repository repository;
+    liquid::projection_source source;
+};
+
+auto open_projection(liquid::digest candidate) -> liquid::result<projection_context> {
+    const auto path = std::filesystem::current_path();
+    auto repository = liquid::runtime::block_on(liquid::repository::open(path));
+    if (repository) {
+        auto source = resolve_input(*repository, candidate);
+        if (!source) {
+            return std::unexpected(source.error());
+        }
+        if (*source) {
+            return projection_context{std::move(*repository), std::move(**source)};
+        }
+    }
+    // Opening an uninitialized checkout reports an I/O error for its missing marker.
+    // It can still have a build repository containing the requested result.
+    auto build = liquid::runtime::block_on(liquid::repository::open_build(path));
+    if (build) {
+        auto source = resolve_input(*build, candidate);
+        if (!source) {
+            return std::unexpected(source.error());
+        }
+        if (*source) {
+            return projection_context{std::move(*build), std::move(**source)};
+        }
+    } else if (build.error().code != liquid::errc::not_configured &&
+               build.error().code != liquid::errc::not_found) {
+        return std::unexpected(build.error());
+    }
+    return std::unexpected(
+        liquid::error{liquid::errc::not_found,
+                      "project input was not found in the current or build repository; "
+                      "accepted inputs are a recorded result, change, or tree",
+                      liquid::to_string(candidate)});
+}
+
+auto resolve_source_package(liquid::repository& repository, liquid::projection_request& request)
+    -> liquid::result<void> {
+    for (auto& source : request.sources) {
+        if (std::holds_alternative<liquid::result_id>(source.value)) {
+            continue;
+        }
+        const auto tree = std::get<liquid::digest>(source.value);
+        auto evidence = find_result(repository, tree, !source.change.has_value());
+        if (!evidence) {
+            return std::unexpected(evidence.error());
+        }
+        if (source.change) {
+            request.build_evidence = *evidence;
+        } else if (*evidence) {
+            source.value = **evidence;
+        } else {
+            return std::unexpected(
+                liquid::error{liquid::errc::invalid_argument,
+                              "dsc input is a bare tree without a producing result; "
+                              "accepted inputs are a recorded change, result, or install tree with "
+                              "a producing result",
+                              liquid::to_string(tree)});
+        }
+    }
+    return {};
+}
+
 auto ostree_mode(std::string_view value) -> liquid::result<liquid::ostree_repository_mode> {
     if (value == "archive-z2") {
         return liquid::ostree_repository_mode::archive_z2;
@@ -214,7 +325,10 @@ auto project(int argc, char** argv) -> int {
     if (*selected != liquid::projection_target::winget_manifest) {
         auto source_id = liquid::parse_digest(argv[1]);
         if (!source_id) {
-            return fail(source_id.error());
+            return fail({liquid::errc::invalid_argument,
+                         "project input is not a digest; accepted inputs are a recorded result, "
+                         "change, or tree (installer paths are accepted only by winget)",
+                         argv[1]});
         }
         sources.push_back({.value = *source_id});
     }
@@ -318,49 +432,61 @@ auto project(int argc, char** argv) -> int {
         }
         return usage("project received an unknown option");
     }
-    auto repository =
-        liquid::runtime::block_on(liquid::repository::open_build(std::filesystem::current_path()));
-    if (!repository) {
-        return fail(repository.error());
-    }
+    auto repository = liquid::repository{};
     if (*selected == liquid::projection_target::winget_manifest) {
+        if (liquid::parse_digest(argv[1])) {
+            return fail({liquid::errc::invalid_argument,
+                         "winget input is a digest; accepted inputs are MSIX installer paths",
+                         argv[1]});
+        }
+        auto opened =
+            liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
+        if (!opened) {
+            opened = liquid::runtime::block_on(
+                liquid::repository::open_build(std::filesystem::current_path()));
+        }
+        if (!opened) {
+            if (opened.error().code == liquid::errc::not_configured) {
+                return fail({liquid::errc::not_configured,
+                             "winget requires a repository for projection attestations; "
+                             "run liquid init . first",
+                             argv[1]});
+            }
+            return fail(opened.error());
+        }
+        repository = std::move(*opened);
         request.sources.push_back({.path = std::filesystem::path{argv[1]}});
     } else {
-        for (auto& source : sources) {
-            const auto candidate = std::get<liquid::digest>(source.value);
-            auto result_page = liquid::runtime::block_on(
-                repository->results({.id = liquid::result_id{candidate}}));
-            if (result_page && !result_page->records.empty()) {
-                source.value = liquid::result_id{candidate};
-            } else if (*selected == liquid::projection_target::debian_source) {
-                auto installed = find_result(*repository, candidate, true);
-                if (!installed) {
-                    return fail(installed.error());
-                }
-                if (*installed) {
-                    source.value = **installed;
-                } else {
-                    auto changes = liquid::runtime::block_on(repository->log(
-                        {.from = liquid::change_id{candidate}, .first_parent = true}));
-                    if (changes && !changes->empty()) {
-                        source.value = changes->front().root;
-                        source.change = liquid::change_id{candidate};
-                        auto evidence = find_result(*repository, changes->front().root, false);
-                        if (!evidence) {
-                            return fail(evidence.error());
-                        }
-                        request.build_evidence = *evidence;
-                    } else {
-                        return fail({liquid::errc::invalid_argument,
-                                     "dsc source must be a recorded change or install tree",
-                                     argv[1]});
-                    }
-                }
+        auto context = open_projection(std::get<liquid::digest>(sources.front().value));
+        if (!context) {
+            return fail(context.error());
+        }
+        repository = std::move(context->repository);
+        request.sources.push_back(std::move(context->source));
+        for (auto index = std::size_t{1}; index < sources.size(); ++index) {
+            const auto candidate = std::get<liquid::digest>(sources[index].value);
+            auto source = resolve_input(repository, candidate);
+            if (!source) {
+                return fail(source.error());
             }
-            request.sources.push_back(std::move(source));
+            if (!*source || (**source).change ||
+                !std::holds_alternative<liquid::digest>((**source).value)) {
+                return fail(
+                    {liquid::errc::invalid_argument,
+                     "overlay input must be a tree in the same repository as the primary source",
+                     liquid::to_string(candidate)});
+            }
+            (**source).path = std::move(sources[index].path);
+            request.sources.push_back(std::move(**source));
+        }
+        if (*selected == liquid::projection_target::debian_source) {
+            auto resolved = resolve_source_package(repository, request);
+            if (!resolved) {
+                return fail(resolved.error());
+            }
         }
     }
-    auto report = liquid::runtime::block_on(liquid::project(*repository, std::move(request)));
+    auto report = liquid::runtime::block_on(liquid::project(repository, std::move(request)));
     if (!report) {
         return fail(report.error());
     }
