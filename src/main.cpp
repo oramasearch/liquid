@@ -313,6 +313,10 @@ constexpr auto flags_verify = std::to_array<flag>({
     {"--all", {}, "Validate every eligible value or action.", "sample"},
     {"--changed", {}, "Validate results without a recorded verification.", "false"},
     {"--explain", {}, "Include first-difference details.", "false"},
+    {"--log",
+     "<log-url>",
+     "Require inclusion of every agreeing reproducibility attestation.",
+     "local verification only"},
 });
 constexpr auto flags_replay = std::to_array<flag>({
     {"--json", {}, "Write stable JSON instead of text.", "false"},
@@ -1062,7 +1066,8 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::delta},
     {"verify",
-     "verify <action|--all|--changed> [--explain] | verify --graph [--all] [--explain]",
+     "verify <action|--all|--changed> [--explain] [--log <log-url>] | verify --graph [--all] "
+     "[--explain]",
      "re-execute and compare cached actions or the query graph",
      "available on Linux with FUSE and on macOS with macFUSE",
      flags_verify,

@@ -33,6 +33,12 @@ compiles the private package-common, tar writer and SquashFS writer translation 
 byte-identity tests; those helpers remain outside the public ABI.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
+`cli-verify-log` uses a loopback HTTP log fixture and a signed stored reproducibility attestation
+to require valid inclusion and reject missing, tampered, and unavailable inclusion through the
+`verify --log` CLI handler. Its test target compiles the private attestation encoder and canonical
+CBOR dependency so it also covers a shared libliquid build with hidden symbols.
+`cli-verify-log-guide` reads the transparency guide's all-actions invocation and runs it through
+the built command parser.
 `test_tuf.cpp` verifies Lake-produced root, targets, snapshot, and timestamp metadata; unique-key
 thresholds; expiry and persisted rollback checks; exact metadata bindings; root-key recovery; full
 target hashing; and the `registry trust` CLI.

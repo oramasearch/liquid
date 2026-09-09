@@ -5,6 +5,13 @@ The [documentation index](../README.md#library) lists one entry for each library
 known limits. [libliquid](libliquid.md) covers CMake targets, the installed dependency closure,
 consumer setup, and the repository/coroutine install gate; the [API map](api-map.md) defines
 the public headers and ABI rules.
+The [documentation index](../README.md#library) lists the library's implementation pages.
+[Status](status.md) records what is implemented and the [API map](api-map.md) defines the public
+surface. The [identity guide](identity.md) covers public document export for sign-up, the shared
+canonical-CBOR codec, software and hardware custody, and verification.
+The [transparency guide](transparency.md) records checkpoint, tile, inclusion, and timestamp
+verification, including the CLI log-inclusion policy.
+# Library documentation
 
 The [documentation index](../README.md#library) lists the public API and implementation pages.
 [Status](status.md) records implemented behavior and limits.

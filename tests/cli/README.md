@@ -17,6 +17,14 @@ outside the public `liquid/` header tree or the CLI's own metadata header. The `
 `cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
 cache.
 
+`verify_log.cpp` uses the CLI verification handler with a completed signed reproducibility report
+and a loopback HTTP log fixture. It requires valid inclusion, rejects missing, tampered, and
+unavailable proofs, and confirms that omitting `--log` retains local-only verification.
+The target compiles the private attestation encoder and its canonical CBOR dependency directly so
+the same fixture works with hidden symbols in shared-library builds.
+`verify-log-guide.cmake` reads the transparency guide's all-actions invocation and requires the
+built command to accept it past argument parsing.
+
 `offline.cmake` runs every test carrying the `liquid-cli` label through `offline_runner.cpp`,
 which invokes the same macOS or Linux sandbox launcher used by build wrapping with networking
 denied. It first pins exit 69 and the exact diagnostic for push, pull, remote execution, and the

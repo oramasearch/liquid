@@ -136,8 +136,18 @@ with `bootstrap_policy::pinned`; `accept_with_warning` returns a recorded bootst
 `liquid log verify <log-url> <attestation-base64url>` verifies inclusion and records its checkpoint.
 `liquid log consistency <log-url>` advances trusted state only through a consistency proof.
 `liquid log scan <log-url> <identity>` returns matching canonical attestations. `liquid verify
---log <log-url>` requires inclusion for each agreeing reproducibility attestation. `liquid log
+--log <log-url>` requires inclusion for each agreeing reproducibility attestation. For every selected
+action, run `liquid verify --all --log <log-url>`. `liquid log
 timestamps <log-url>` and `liquid log verify --timestamps` retain the RFC 3161/RFC 4998 commands.
+
+`cli-verify-log` exercises that policy through the CLI handler. It stores a signed, agreeing
+`reproducibility/1` attestation in a temporary repository and serves the matching checkpoint, entry
+tile, and inclusion proof over loopback HTTP. It also requires missing, tampered, and unavailable
+inclusion to fail; without `--log`, verification retains its local-only policy. The test injects
+only the already-completed verification report, so it can cover the CLI policy without a sandbox
+mount. `cli-verify-log-guide` reads the documented all-actions invocation and runs it through the
+built command parser. The typed command table remains covered independently by generated help and
+reference tests.
 
 `tests/fixtures/transparency/fixture.json` is copied from Lake commit `cb60ed4` and is generated
 by Lake's `tests/fixtures/transparency/regenerate.py`. The tests use its checkpoint, tiles, and
