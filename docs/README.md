@@ -59,7 +59,8 @@ for what is implemented today.
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
-| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, platform coverage, and named backend conformance with direct core calibration and Linux libfuse proof still owed. |
+| [`library/vfs-conformance-proof.md`](library/vfs-conformance-proof.md) | Nine-case direct core calibration, deliberate wrong-size failure, native suite results, and outstanding Linux libfuse proof. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/drive.md`](library/drive.md) | Issues #195, #235, and #258's persisted three-tree reconciliation, per-repository CRDT actors, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
 | [`library/sync.md`](library/sync.md) | Repository metadata, CRDT, ref, and pack-entry exchange through the public server and HTTP/1.1 client, including peer buckets, retry signals, change authorization, per-ref outcomes, and atomic pushes. |
@@ -154,7 +155,7 @@ for what is implemented today.
 | [`library/leaf-encryption.md`](library/leaf-encryption.md) | JSON and `.env` leaf encryption, repository path rules, structural key diff, and whole-file fallback. |
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
 | [`library/identity.md`](library/identity.md) | TAAP/1 public document export for sign-up, canonical-CBOR codecs, rotation, signatures, and verification. |
-| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, platform coverage, and named backend conformance with direct core calibration and Linux libfuse proof still owed. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
@@ -195,7 +196,7 @@ for what is implemented today.
 | [`library/simulation.md`](library/simulation.md) | Deterministic seeded store simulation, fault injection, recovery invariants, and replay. |
 | [`library/identity.md`](library/identity.md) | TAAP/1 software, FIDO2, and PIV identity keys; canonical-CBOR codecs, rotation, signatures, and verification. |
 | [`library/release-approval.md`](library/release-approval.md) | Signed release policies, distinct-signer threshold evaluation, TUF alignment, custody trust models, CLI storage, and compromise handling. |
-| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, and platform coverage. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, platform coverage, and named backend conformance with direct core calibration and Linux libfuse proof still owed. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |

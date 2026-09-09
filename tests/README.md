@@ -307,3 +307,9 @@ the compiler frontend as the strongest C++ registration.
 
 `guides-resolution` executes the source-only package guide on macOS and Linux, including
 canonical record equivalence. The configuration CLI scenario pins loading diagnostics (#287).
+
+`liquid-vfs-conformance` adds named projection-driver coverage under `vfs/`, built against both
+library forms. Each configured backend receives the same filesystem and observation assertions.
+The `direct` driver calibrates them through the core without mounting; `libfuse` uses real POSIX
+syscalls. See the [VFS guide](../docs/library/vfs.md#backend-conformance-301) for required backend
+execution, explicit unavailable results, the deliberate regression and Linux proof still owed.

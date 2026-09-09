@@ -1,5 +1,9 @@
 # CLAUDE.md — liquid
 
+Issue #301 adds named VFS conformance with a nine-case direct core calibration backend.
+Linux libfuse calibration remains owed against #299; agreement with liquid's core is the weaker
+reference. See `docs/library/vfs.md`.
+
 Liquid #2 makes ordinary and nested splits independently reopenable with owned chunks, original
 signed history, stable identities, and failure cleanup; see `docs/library/split.md`.
 
