@@ -55,7 +55,7 @@ on Linux or macFUSE on macOS; the repository example above needs no FUSE mount.
 | Follow a workflow | [Executable guides](docs/guides/README.md) |
 | Look up a command or flag | [Generated CLI reference](docs/reference/cli/README.md) |
 | Configure, test, or install liquid | [Local build](docs/build/local.md) and [CI coverage](docs/build/ci.md) |
-| Use the library in another program | [libliquid](docs/library/libliquid.md) and [public API map](docs/library/api-map.md) |
+| Use the library and handle errors | [libliquid](docs/library/libliquid.md) and [public API map](docs/library/api-map.md) |
 | Understand the design and vocabulary | [Feature specifications](docs/features/README.md) and [research synthesis](docs/research/99-synthesis/README.md) |
 | Understand the documentation reconciliation | [Historical context and decisions](docs/library/readme-history.md) |
 

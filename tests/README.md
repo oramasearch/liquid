@@ -328,3 +328,6 @@ execution, explicit unavailable results, the deliberate regression and Linux pro
 Issue #286 adds `cli-project` for ordinary-repository projection and existing result-ID
 compatibility. `guides-projection` runs the documented file-to-package workflow natively,
 including equality of Debian bytes from a change and its root tree, without a mount.
+`test_log_url.cpp` covers HTTP log URL factory errors and all six legacy source operations.
+`cli-log-url` repeats these API tests and every malformed URL through the three log verbs
+with networking denied on macOS and Linux. See [the contract](../docs/library/transparency.md#http-url-validation-289).

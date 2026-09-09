@@ -227,3 +227,6 @@ Issue #286 resolves projection inputs through the public repository APIs: ordina
 trees use their owning repository, with build-repository fallback for existing result IDs.
 Unsupported records name the input and accepted kinds. `tree.cpp` exposes `root_digest()` as
 `liquid tree`; overlays stay in the primary source repository.
+`log.cpp` constructs HTTP log sources through the public factory before repository access or
+attestation decoding. Invalid URLs report an actionable HTTP/HTTPS diagnostic with exit 2;
+operation failures retain exit 1.

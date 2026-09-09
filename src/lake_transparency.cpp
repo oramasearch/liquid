@@ -478,23 +478,30 @@ auto parse_url(std::string_view input) -> result<parsed_url> {
         output.port = "80";
         input.remove_prefix(7);
     } else {
-        return std::unexpected(failure(errc::invalid_argument, "log URL must use http or https"));
+        return std::unexpected(
+            failure(errc::invalid_argument, "HTTP log URL must use http:// or https://"));
     }
-    const auto slash = input.find('/');
+    const auto slash = input.find_first_of("/?#");
     auto authority = input.substr(0, slash);
     output.path =
         slash == std::string_view::npos ? std::string{} : std::string{input.substr(slash)};
     while (output.path.size() > 1 && output.path.ends_with('/')) {
         output.path.pop_back();
     }
-    if (authority.empty() || authority.contains('@')) {
-        return std::unexpected(failure(errc::invalid_argument, "invalid log URL authority"));
+    if (authority.empty()) {
+        return std::unexpected(
+            failure(errc::invalid_argument, "HTTP/HTTPS log URL must include a host"));
+    }
+    if (authority.contains('@')) {
+        return std::unexpected(failure(errc::invalid_argument,
+                                       "HTTP/HTTPS log URL must not include user information"));
     }
     if (authority.front() == '[') {
         const auto close = authority.find(']');
         if (close == std::string_view::npos ||
             (close + 1 < authority.size() && authority[close + 1] != ':')) {
-            return std::unexpected(failure(errc::invalid_argument, "invalid IPv6 log URL"));
+            return std::unexpected(failure(
+                errc::invalid_argument, "HTTP/HTTPS log URL has an invalid bracketed IPv6 host"));
         }
         output.host = authority.substr(1, close - 1);
         if (close + 1 < authority.size()) {
@@ -506,8 +513,17 @@ auto parse_url(std::string_view input) -> result<parsed_url> {
     } else {
         output.host = authority;
     }
-    if (output.host.empty() || output.port.empty()) {
-        return std::unexpected(failure(errc::invalid_argument, "log URL host or port is empty"));
+    if (output.host.empty()) {
+        return std::unexpected(
+            failure(errc::invalid_argument, "HTTP/HTTPS log URL must include a host"));
+    }
+    auto port = unsigned{};
+    const auto* end = output.port.data() + output.port.size();
+    const auto parsed = std::from_chars(output.port.data(), end, port);
+    if (parsed.ec != std::errc{} || parsed.ptr != end || port == 0 || port > 65535) {
+        return std::unexpected(
+            failure(errc::invalid_argument,
+                    "HTTP/HTTPS log URL port must be a decimal number from 1 to 65535"));
     }
     return output;
 }
@@ -1107,18 +1123,27 @@ result<void> consistency_proof::verify(const checkpoint& old_checkpoint,
 }
 
 struct http_log_source::impl {
-    parsed_url url;
+    result<parsed_url> url;
     std::string name;
+
+    runtime::task<http_response> get(std::string_view suffix, std::string query = {}) {
+        if (!url) {
+            co_return std::unexpected(url.error());
+        }
+        co_return co_await perform_get(*url, query_target(*url, suffix, query));
+    }
 };
 
-http_log_source::http_log_source(std::string url) : impl_(std::make_unique<impl>()) {
-    auto parsed = parse_url(url);
-    if (!parsed) {
-        throw std::invalid_argument(parsed.error().message);
+result<http_log_source> http_log_source::create(std::string url) {
+    auto source = http_log_source{std::move(url)};
+    if (!source.impl_->url) {
+        return std::unexpected(source.impl_->url.error());
     }
-    impl_->url = std::move(*parsed);
-    impl_->name = std::move(url);
+    return source;
 }
+
+http_log_source::http_log_source(std::string url)
+    : impl_(std::make_unique<impl>(impl{parse_url(url), std::move(url)})) {}
 
 http_log_source::~http_log_source() = default;
 http_log_source::http_log_source(http_log_source&&) noexcept = default;
@@ -1129,7 +1154,7 @@ std::string http_log_source::name() const {
 }
 
 runtime::task<actor> http_log_source::identity() {
-    auto response = co_await perform_get(impl_->url, query_target(impl_->url, "/v1/identity"));
+    auto response = co_await impl_->get("/v1/identity");
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -1154,8 +1179,7 @@ runtime::task<actor> http_log_source::identity() {
 }
 
 runtime::task<log_configuration> http_log_source::configuration() {
-    auto response = co_await perform_get(
-        impl_->url, query_target(impl_->url, "/v1/transparency_log_configuration"));
+    auto response = co_await impl_->get("/v1/transparency_log_configuration");
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -1193,8 +1217,7 @@ runtime::task<log_configuration> http_log_source::configuration() {
 }
 
 runtime::task<checkpoint> http_log_source::current_checkpoint() {
-    auto response =
-        co_await perform_get(impl_->url, query_target(impl_->url, "/v1/transparency_checkpoint"));
+    auto response = co_await impl_->get("/v1/transparency_checkpoint");
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -1213,8 +1236,7 @@ runtime::task<tile>
 http_log_source::get_tile(std::uint32_t level, std::uint64_t index, std::uint64_t width) {
     const auto query = "level=" + std::to_string(level) + "&index=" + std::to_string(index) +
                        "&width=" + std::to_string(width);
-    auto response =
-        co_await perform_get(impl_->url, query_target(impl_->url, "/v1/transparency_tile", query));
+    auto response = co_await impl_->get("/v1/transparency_tile", query);
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -1232,8 +1254,7 @@ runtime::task<inclusion_proof> http_log_source::get_inclusion_proof(std::uint64_
                                                                     std::uint64_t tree_size) {
     const auto query =
         "leaf_index=" + std::to_string(leaf_index) + "&tree_size=" + std::to_string(tree_size);
-    auto response = co_await perform_get(
-        impl_->url, query_target(impl_->url, "/v1/transparency_inclusion_proof", query));
+    auto response = co_await impl_->get("/v1/transparency_inclusion_proof", query);
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -1252,8 +1273,7 @@ runtime::task<consistency_proof>
 http_log_source::get_consistency_proof(std::uint64_t old_tree_size, std::uint64_t new_tree_size) {
     const auto query = "old_tree_size=" + std::to_string(old_tree_size) +
                        "&new_tree_size=" + std::to_string(new_tree_size);
-    auto response = co_await perform_get(
-        impl_->url, query_target(impl_->url, "/v1/transparency_consistency_proof", query));
+    auto response = co_await impl_->get("/v1/transparency_consistency_proof", query);
     if (!response) {
         co_return std::unexpected(response.error());
     }

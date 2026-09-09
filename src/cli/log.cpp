@@ -15,10 +15,10 @@ auto repo_log(int argc, char** argv) -> int;
 
 namespace {
 
-auto fail(const liquid::error& value) -> int {
+auto fail(const liquid::error& value, int status = 1) -> int {
     std::println(
         stderr, "error: {}: {} ({})", liquid::to_string(value.code), value.message, value.context);
-    return 1;
+    return status;
 }
 
 auto usage() -> int {
@@ -87,6 +87,10 @@ auto transparency_log(int argc, char** argv) -> int {
     }
     const auto operation = std::string_view{argv[0]};
     if (operation == "verify" && argc == 3) {
+        auto source = liquid::transparency::http_log_source::create(argv[1]);
+        if (!source) {
+            return fail(source.error(), 2);
+        }
         auto encoded = base64url_decode(argv[2]);
         if (!encoded) {
             return fail(encoded.error());
@@ -95,8 +99,7 @@ auto transparency_log(int argc, char** argv) -> int {
         if (!repository) {
             return fail(repository.error());
         }
-        auto source = liquid::transparency::http_log_source{argv[1]};
-        auto client = liquid::transparency::log_client{source};
+        auto client = liquid::transparency::log_client{*source};
         auto verified =
             liquid::runtime::block_on(client.verify_inclusion(*repository, std::move(*encoded)));
         if (!verified) {
@@ -106,12 +109,15 @@ auto transparency_log(int argc, char** argv) -> int {
         return 0;
     }
     if (operation == "consistency" && argc == 2) {
+        auto source = liquid::transparency::http_log_source::create(argv[1]);
+        if (!source) {
+            return fail(source.error(), 2);
+        }
         auto repository = open_repository();
         if (!repository) {
             return fail(repository.error());
         }
-        auto source = liquid::transparency::http_log_source{argv[1]};
-        auto client = liquid::transparency::log_client{source};
+        auto client = liquid::transparency::log_client{*source};
         auto verified = liquid::runtime::block_on(client.verify_consistency(*repository));
         if (!verified) {
             return fail(verified.error());
@@ -120,8 +126,11 @@ auto transparency_log(int argc, char** argv) -> int {
         return 0;
     }
     if (operation == "scan" && argc == 3) {
-        auto source = liquid::transparency::http_log_source{argv[1]};
-        auto client = liquid::transparency::log_client{source};
+        auto source = liquid::transparency::http_log_source::create(argv[1]);
+        if (!source) {
+            return fail(source.error(), 2);
+        }
+        auto client = liquid::transparency::log_client{*source};
         auto scan = liquid::runtime::block_on(client.scan(argv[2]));
         if (!scan) {
             return fail(scan.error());

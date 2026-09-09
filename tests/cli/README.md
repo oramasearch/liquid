@@ -107,3 +107,7 @@ universe diagnostics in text/JSON modes, and an exact attributed contradiction n
 bytes, OCI/RPM/APK output, Debian source changes, and explicit unsupported-input errors. Its
 public-API fixture records results in a separate build repository to preserve result-ID and
 producing-install-tree behavior, including a checkout without ordinary repository state.
+`log-url.cmake` checks malformed schemes, missing hosts, and invalid ports through `log scan`,
+`log consistency`, and `log verify`, requiring exit 2 and specific HTTP/HTTPS diagnostics.
+It also runs the `HttpLogSource` API cases. The existing offline runner denies networking
+on macOS and Linux; no repository or server is required.
