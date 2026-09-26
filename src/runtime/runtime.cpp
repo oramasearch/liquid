@@ -1,6 +1,8 @@
 #include "liquid/runtime.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -51,19 +53,23 @@ boost::capy::task<> complete_spawn(task<void> coroutine,
     co_return;
 }
 
-// Runs `coroutine`, then releases `guard`. Until then the context counts one unit of work, so its
-// runners keep waiting while the coroutine is suspended on something the context does not see as
-// pending work (an offload to the shared pool, or I/O a platform backend does not count). Without
-// it, run() returns early and block_on reports "coroutine completed without a result".
+// Runs `coroutine`, then marks it done and releases `guard`. The guard keeps the context counting
+// one unit of work while the coroutine is suspended on something the context does not see as
+// pending (an offload to the shared pool, or I/O a backend does not count); `done` is what
+// context::run actually waits for, so a context that stops early anyway is restarted rather than
+// abandoned with the coroutine still suspended ("coroutine completed without a result" on Linux).
 template <class Guard>
 boost::capy::task<> release_when_done(boost::capy::task<> coroutine,
-                                      std::shared_ptr<std::optional<Guard>> guard) {
+                                      std::shared_ptr<std::optional<Guard>> guard,
+                                      std::shared_ptr<std::atomic<bool>> done) {
     try {
         co_await std::move(coroutine);
     } catch (...) {
+        done->store(true, std::memory_order_release);
         guard->reset();
         throw;
     }
+    done->store(true, std::memory_order_release);
     guard->reset();
     co_return;
 }
@@ -121,22 +127,35 @@ void context::run(boost::capy::task<> coroutine) {
     using guard_type = boost::capy::work_guard<net::io_context::executor_type>;
     auto guard = std::make_shared<std::optional<guard_type>>(
         boost::capy::make_work_guard(impl_->io.get_executor()));
+    auto done = std::make_shared<std::atomic<bool>>(false);
     boost::capy::run_async(impl_->io.get_executor())(
-        release_when_done(std::move(coroutine), std::move(guard)));
+        release_when_done(std::move(coroutine), std::move(guard), done));
+
+    // Run until the coroutine has finished. When the scheduler finds no outstanding work it stops
+    // for good, so restart it and wait for the completion that is still on its way.
+    const auto drive = [this, done] {
+        while (!done->load(std::memory_order_acquire)) {
+            impl_->io.run();
+            if (done->load(std::memory_order_acquire))
+                break;
+            impl_->io.restart();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
 
     std::vector<std::thread> runners;
     runners.reserve(impl_->runners - 1);
     try {
         for (unsigned index = 1; index < impl_->runners; ++index) {
-            runners.emplace_back([this] { impl_->io.run(); });
+            runners.emplace_back(drive);
         }
     } catch (...) {
-        impl_->io.run();
+        drive();
         for (auto& runner : runners)
             runner.join();
         throw;
     }
-    impl_->io.run();
+    drive();
     for (auto& runner : runners)
         runner.join();
 }
