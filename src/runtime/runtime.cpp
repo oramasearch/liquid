@@ -1,6 +1,7 @@
 #include "liquid/runtime.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <utility>
@@ -47,6 +48,23 @@ boost::capy::task<> complete_spawn(task<void> coroutine,
             on_done(std::move(output));
     } catch (...) {
     }
+    co_return;
+}
+
+// Runs `coroutine`, then releases `guard`. Until then the context counts one unit of work, so its
+// runners keep waiting while the coroutine is suspended on something the context does not see as
+// pending work (an offload to the shared pool, or I/O a platform backend does not count). Without
+// it, run() returns early and block_on reports "coroutine completed without a result".
+template <class Guard>
+boost::capy::task<> release_when_done(boost::capy::task<> coroutine,
+                                      std::shared_ptr<std::optional<Guard>> guard) {
+    try {
+        co_await std::move(coroutine);
+    } catch (...) {
+        guard->reset();
+        throw;
+    }
+    guard->reset();
     co_return;
 }
 
@@ -100,7 +118,11 @@ auto default_context() -> context& {
 }
 
 void context::run(boost::capy::task<> coroutine) {
-    boost::capy::run_async(impl_->io.get_executor())(std::move(coroutine));
+    using guard_type = boost::capy::work_guard<net::io_context::executor_type>;
+    auto guard = std::make_shared<std::optional<guard_type>>(
+        boost::capy::make_work_guard(impl_->io.get_executor()));
+    boost::capy::run_async(impl_->io.get_executor())(
+        release_when_done(std::move(coroutine), std::move(guard)));
 
     std::vector<std::thread> runners;
     runners.reserve(impl_->runners - 1);
