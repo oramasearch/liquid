@@ -133,6 +133,25 @@ TEST(Runtime, OffloadUsesPoolAndReturnsToCallerExecutor) {
     EXPECT_TRUE(observation->resumed_on_executor);
 }
 
+TEST(Runtime, BlockOnWaitsForACoroutineSuspendedOutsideItsContext) {
+    // While the coroutine waits on the shared pool, block_on's own context has nothing queued.
+    // It must keep running until the coroutine finishes, not report "completed without a result"
+    // (seen on Linux in lake's sync tests).
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const auto value = liquid::runtime::block_on([]() -> liquid::runtime::task<int> {
+            auto slept = co_await liquid::runtime::offload([] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                return 42;
+            });
+            if (!slept)
+                co_return std::unexpected(slept.error());
+            co_return *slept;
+        }());
+        ASSERT_TRUE(value.has_value()) << value.error().message;
+        EXPECT_EQ(*value, 42);
+    }
+}
+
 TEST(Runtime, WhenAllComposesLiquidTasksThroughAdapter) {
     const auto sum = liquid::runtime::block_on(combined_task());
     ASSERT_TRUE(sum.has_value());
