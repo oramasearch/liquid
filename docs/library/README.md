@@ -39,6 +39,7 @@ The hot-update status includes bounded demo socket paths and explicit platform-l
 [the fixture guide](../build/socket-fixtures.md) records the construction and cleanup rules.
 
 [Projection](projection.md) includes ordinary-repository changes and trees, the public tree-digest
-command, and the [issue #286 verification record](../build/project-ordinary-repository.md).
+command, vendored AppImage runtime provenance, and the
+[issue #286 verification record](../build/project-ordinary-repository.md).
 The [HTTP log URL contract](transparency.md#http-url-validation-289) documents factory errors,
 legacy-constructor behavior, CLI exit statuses, and regression coverage with networking denied.

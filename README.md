@@ -14,7 +14,10 @@ reading its named history.
 Use a recursive checkout of this repository with access to its private submodules. Install
 Clang 17 or newer (Homebrew LLVM on macOS), CMake 3.28 or newer, Ninja, OpenSSL, zlib, and
 Python 3 for the documentation checks. Linux also requires libfuse3. Configuration downloads
-pinned dependencies. See [local prerequisites](docs/build/local.md#prerequisites) for details.
+pinned source dependencies; the AppImage runtimes in
+[`third_party/appimage-runtimes/`](third_party/appimage-runtimes/) are vendored and hash-checked,
+so that input does not require network access. See
+[local prerequisites](docs/build/local.md#prerequisites) for details.
 
 From the checkout root, build the CLI and record a file in a fresh example directory:
 
@@ -425,7 +428,7 @@ and Zetta's.
 - [`docs/library/incremental-engine.md`](docs/library/incremental-engine.md) — the query graph design and implemented clean validation, tests as actions, daemon lifecycle and build forwarding, cursor fan-out, endpoint, status, and graph value eviction.
 - [`docs/library/search.md`](docs/library/search.md) — BM25F, positional-trigram, and mapped-scan executors; archive entries; measured cost planning; atomic publication; explanations; APIs; and crossover measurements.
 - [`docs/library/formats.md`](docs/library/formats.md) — the format registry, C ABI, launch codecs, resource limits, nested diff and search paths, and storage deduplication.
-- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, install intents, ownership conflicts, atomic generations, derived dependencies, byte identity, and attached attestations.
+- [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, install intents, ownership conflicts, atomic generations, derived dependencies, vendored AppImage runtime provenance, byte identity, and attached attestations.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, OSTree commits, bootc images, byte identity, and attached attestations.
 - [`docs/library/projection.md`](docs/library/projection.md) — Tier A packages, OCI images, Helm charts, derived dependencies, byte identity, and attached attestations.
 - [`docs/library/edit.md`](docs/library/edit.md) — structural edit records, rename/extract/move/tree semantics, daemon and CLI use, exact apply, attribution, undo, limits, and measurement.

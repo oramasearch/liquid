@@ -119,9 +119,9 @@ Liquid #80 adds canonical declarative install intents, fixed Debian/RPM/Alpine l
 generation, script SBOM and projection binding, batch and installed-inventory file conflict
 detection, derived replacement relationships, and atomic projected-tree generations with install,
 list, rollback, and interruption recovery.
-Liquid #77 adds deterministic Homebrew bottles and Arch recipes; pinned-runtime AppImages;
-Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal; and detached
-`projection/1`, provenance, and SBOM attestations.
+Liquid #77 adds deterministic Homebrew bottles and Arch recipes; AppImages with vendored,
+hash-pinned runtimes; Flatpak and Snap build trees; the owned SquashFS writer; relocation refusal;
+and detached `projection/1`, provenance, and SBOM attestations.
 Liquid #78 adds deterministic OSTree commit projection in `archive-z2` and `bare-user` modes,
 digest-pinned base and overlay trees, owned GVariant encoding, and component-layered bootc OCI
 images with ostree-ext labels and subject-bound attestations. Booting those images remains Phase 7.
@@ -293,6 +293,8 @@ docs/reference/cli/
     generated command and flag reference; edit the CLI table, not these pages
 docs/guides/
     executable user workflows whose marked shell blocks run in CTest
+third_party/appimage-runtimes/
+    vendored, hash-pinned AppImage type 2 runtime inputs and their upstream licence
 ```
 
 ### `sources.md` is evidence

@@ -103,7 +103,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | Page | What it contains |
 |---|---|
 | [`library/formats.md`](library/formats.md) | Format registry and C ABI, original archive/data codecs and Tier 2 artifact codecs, fidelity tiers, limits, nested paths, diff/search/storage integration, and measurements. |
-| [`library/projection.md`](library/projection.md) | Native and ecosystem packages, platform installers and signing, Debian source packages, OSTree and bootc, install intents, ownership and atomic generations, deterministic writers, attestations, and peer proof. |
+| [`library/projection.md`](library/projection.md) | Native and ecosystem packages, platform installers and signing, Debian source packages, OSTree and bootc, install intents, ownership and atomic generations, vendored AppImage runtime provenance, deterministic writers, attestations, and peer proof. |
 | [`library/resolution.md`](library/resolution.md) | Package and concretised records, spec grammar, universe layout, solver model, explanations, optimisation, and scale measurements. |
 | [`library/configuration-language.md`](library/configuration-language.md) | The typed `.liquid` grammar, exact diagnostics, package/target/source/install-intent lowering, repository-local includes, verified source fetch, generators, and trace origins. |
 | [`build/sandboxed-executor.md`](build/sandboxed-executor.md) | Issue #10's local executor: fixed environment, observed-mount manifest, Linux namespace enforcement, and platform limits. |
