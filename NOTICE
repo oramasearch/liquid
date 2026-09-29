@@ -1,6 +1,14 @@
 Third-party notices
 ===================
 
+AppImage type 2 runtime
+  Project: https://github.com/AppImage/type2-runtime
+  Embedded upstream source reference: 75849dce7cc37e4319b633df1f116ca895c71a12
+  Licence: MIT, with separately licensed statically linked components
+  The x86-64 and AArch64 executable inputs are vendored under
+  third_party/appimage-runtimes/ and embedded privately after SHA-256 verification.
+  The complete upstream notice is retained beside the binaries.
+
 BLAKE3 C implementation
   Project: https://github.com/BLAKE3-team/BLAKE3
   Version: 1.8.7

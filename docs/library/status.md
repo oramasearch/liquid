@@ -383,8 +383,9 @@ reasons ([`formats.md`](formats.md)).
 lookup ([executable guide](../guides/project-from-files.md)). Tier A package and image projection and Debian-only Tier B source projection are
 implemented. One checked install tree
 projects to deterministic `.deb`, `.rpm`, `.apk`, Homebrew bottles, Arch recipes, OCI image
-layouts, digest-pinned Helm charts, pinned-runtime AppImages, Flatpak build directories, and
-Snaps. A recorded change or producing result projects to an unsigned `.dsc`, deterministic source
+layouts, digest-pinned Helm charts, AppImages with vendored and hash-pinned runtimes, Flatpak build
+directories, and Snaps. A recorded change or producing result projects to an unsigned `.dsc`,
+deterministic source
 archives, and generated Debian policy files. Binary readers derive package relationships;
 incompatible ABI and relocation verdicts
 refuse by default; and signed `projection/1`, source provenance, and SBOM statements accompany

@@ -199,16 +199,61 @@ program in `bin`. x86-64 and AArch64 generation is available on Unix hosts; Wind
 explicit unsupported result because its build does not embed ELF runtimes.
 
 The upstream [AppImage type 2 runtime](https://github.com/AppImage/type2-runtime) is a private
-build input pinned in `CMakeLists.txt`:
+build input vendored under `third_party/appimage-runtimes/` and pinned in `CMakeLists.txt`:
 
-| Architecture | URL | SHA-256 | Bytes |
+| Architecture | Vendored file | SHA-256 | Bytes |
 |---|---|---|---:|
-| x86-64 | `https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64` | `1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf` | 944632 |
-| AArch64 | `https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64` | `7d5d772b7c32f0c84caf0a452a3072a5709027d7eac5856feb89a7a7a8881372` | 936456 |
+| x86-64 | `third_party/appimage-runtimes/runtime-x86_64` | `1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf` | 944632 |
+| AArch64 | `third_party/appimage-runtimes/runtime-aarch64` | `7d5d772b7c32f0c84caf0a452a3072a5709027d7eac5856feb89a7a7a8881372` | 936456 |
 
-The URL can advance, but a changed byte fails configuration until its provenance and hash are
-reviewed together. The runtimes are embedded as read-only data; projection itself does not fetch
-or invoke AppImage tooling.
+CMake copies these repository-owned bytes through `file://` URLs and verifies `EXPECTED_HASH`
+before embedding them as read-only data. Configuration and projection do not fetch or invoke
+AppImage tooling.
+
+### Vendored runtime provenance
+
+The files are the `runtime-x86_64` and `runtime-aarch64` assets served by the upstream
+`continuous` release when liquid recorded the original pins on 2026-09-06 in commit
+`73b136e3a38d1fa0a9baee481d9cded699c30b87`. They were recovered from a configuration cache after
+upstream replaced that moving release on 2026-09-28 and were accepted only after their SHA-256
+digests and byte counts matched the recorded values above.
+
+Both binaries embed the upstream source reference
+[`75849dc`](https://github.com/AppImage/type2-runtime/commit/75849dce7cc37e4319b633df1f116ca895c71a12),
+the last upstream commit at the pin time. This embedded reference is provenance, not independent
+build verification. The SHA-256 digests above are the identities of the vendored inputs.
+
+The AppImage runtime is MIT-licensed. Its executable also contains statically linked musl libc,
+libfuse, squashfuse, libzstd, and zlib code under the separate terms listed by upstream. The exact
+upstream notice is retained in `third_party/appimage-runtimes/LICENSE`; the vendored directory's
+README records the repository and pin date. The runtime's MIT licence permits vendoring with its
+notice retained. The linked components keep their own licences, including libfuse's LGPL; the MIT
+notice does not replace their binary-distribution, corresponding-source, or relinking obligations.
+
+To update the runtimes:
+
+1. Select one upstream source revision and obtain both release assets from the same signed build.
+2. Verify the upstream signatures and review the source and licence changes, including the
+   statically linked components' redistribution requirements.
+3. Replace both vendored files together.
+4. Update both `EXPECTED_HASH` values in `CMakeLists.txt` and the hashes, sizes, source revision,
+   and acquisition date on this page.
+5. Run a clean configure without access to GitHub, then the complete native test suite.
+
+The offline configure check starts with an empty binary directory, including no pre-seeded
+`appimage-runtimes/`. Other FetchContent dependencies still need their source downloads: populate
+those first and supply their local paths with `FETCHCONTENT_SOURCE_DIR_<NAME>` and
+`FETCHCONTENT_FULLY_DISCONNECTED=ON`. On macOS, run the fresh configure under
+`sandbox-exec -p '(version 1) (allow default) (deny network*)'` to deny all network access.
+Both copied runtimes must match the table above. This check does not claim that unrelated source
+dependencies have been vendored.
+
+Issue #318 verification on macOS arm64 passed the network-denied fresh configure and the native
+static suite (700 registered tests, no failures; optional peer/platform tests skipped). The shared
+configure succeeded, but the CLI link failed with 89 undefined Boost symbols. A clean, unmodified
+`origin/main` build at `0863daec3f140ed3fe5b3d0070b5c13baa49516c` produced the identical symbol
+set; that pre-existing shared-build defect is tracked in
+[#319](https://github.com/oramasearch/liquid/issues/319).
 
 ## Flatpak
 
