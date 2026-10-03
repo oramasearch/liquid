@@ -47,6 +47,10 @@ runtime::task<store> store::open(std::filesystem::path path, store_options optio
     co_return output;
 }
 
+store_detail::store_backend* store::implementation() const noexcept {
+    return impl_ ? impl_->value.get() : nullptr;
+}
+
 runtime::task<void> store::close() {
     if (!impl_)
         co_return result<void>{};

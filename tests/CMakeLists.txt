@@ -54,6 +54,7 @@ add_executable(liquid-tests
   test_secret.cpp
   test_store.cpp
   store/test_owner.cpp
+  store/test_transfer.cpp
   test_tiers.cpp
   test_temporary_directory.cpp
   test_lake_transparency.cpp

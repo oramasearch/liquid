@@ -4,8 +4,9 @@
 registered remote blobs, pre-pack write-through, local eviction, and resemblance-selected chunk
 deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278), plus opt-in exclusive
 cross-process ownership with a bounded hand-off between processes (liquid #321), repository
-state routed through the backend with a conditional create (liquid #326), and an injected owner
-whose grant fences stale writers on backends without a local root (liquid #327).**
+state routed through the backend with a conditional create (liquid #326), an injected owner
+whose grant fences stale writers on backends without a local root (liquid #327), and a resumable,
+verifiable whole-repository transfer between two open stores (liquid #328).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -697,6 +698,111 @@ root over, after which the successor writes. Each process case then checks the s
 of every pack decodes and matches the digest its table records, the store reopens, every
 acknowledged object from every process reads back byte for byte, and a full collection over leases
 on all of them keeps every one. Without the lock both process cases fail.
+
+## Whole-repository transfer
+
+**What (liquid #328).** `repository::transfer(from, into, identifier, options)` copies the
+repository that `identifier` names on the shared store `from` into the shared store `into`, both
+open in one process, and returns a `repository_transfer_report`. It copies:
+
+- every object reachable from the repository: its checkpoint and journal documents and those of its
+  sessions, everything those documents name (the working tree, refs, history, directory documents,
+  conflicts, operations, signed drips, metadata such as symbol records), and everything those
+  objects reference in turn through the store's reference registry, so trees, changes, blob records,
+  chunks, build records, attestations about a copied object, and the whole-content object of each
+  blob; Drive files, models and datasets are repository files and metadata, so they travel the same
+  way;
+- the repository's state keys under `repositories/<id-hash>/`: `LIQUID_REPO`, `LIQUID_JOURNAL`,
+  `sessions/<id>/…` and `replication/<source>.cursor` (the structural-merge parse graph is a cache
+  and is skipped);
+- the repository's lease records (owner `repository:<id>\n…`), so the destination's collector
+  retains what the source's retained.
+
+Every digest is kept. A chunk is read from the source (resolving delta bases), verified against its
+digest, and appended to the destination's packs under the same identity as an ordinary frame. An
+object is published to the destination's object map with the source's chunk list only after every
+chunk has been read in order, the whole-content digest recomputed from them, and the chunk-list
+descriptor recomputed and matched. Remote registrations (`remotes.meta`) are copied as
+registrations, with whatever chunks the source holds locally. The destination is therefore equal
+to the source in content digests, and an object it holds is readable with the destination's own
+verification.
+
+**Why (decision 54, lake#380).** Lake moves each workspace's repositories from the space's disk
+store into the workspace's own store, which lives on a remote backend over the workspace Zetta
+(liquid #326, #327). `replicate_from` does this between two instances over HTTP; the move needs it
+locally between two `store` handles, resumable and checkable before lake switches the repository
+over.
+
+**Order.** The walk is depth first and copies an object only after everything it references, so an
+object present in the destination already has everything it reaches. Object metadata is published
+every `batch_objects` objects (index flush, then the object map after a data barrier) and at the
+end. Then the lease records are written, then a barrier, then every state key but the repository's
+own `LIQUID_REPO` (state keys the destination holds and the source does not, such as a journal the
+source has since checkpointed, are removed first), then a barrier, then `LIQUID_REPO`, then a
+barrier. A destination interrupted at any point therefore has no repository, or one whose every
+object is present; it never has a `LIQUID_REPO` naming a missing object.
+
+**Resume and idempotence.** A rerun after an interruption walks from the roots again and does not
+descend into an identity the destination already holds in the form the source does (an object in
+its object map, a chunk in its index, a registration). Pack frames written before the interruption
+are recovered by the destination's next open and are found in its index, so a rerun appends only
+what is missing; at most one batch of object metadata is lost. A rerun of a complete transfer
+writes nothing: no frame, no index run, no object map, no state key, no lease
+(`RepositoryTransfer.InterruptedCopyResumesAndVerifies` counts the destination's mutations).
+
+**Verify.** With `repository_transfer_mode::verify` the transfer writes nothing. It walks the same
+reachable set without skipping, and for every identity reads the destination's copy: a chunk is
+loaded and its digest checked, an object's size, kind, chunk list, chunk sizes and descriptor must
+equal the source's and its chunks must reassemble to its digest, and a registration must be equal.
+It then compares every state key and lease record byte for byte, and reports a destination state
+key the source lacks. Each mismatch is a `repository_transfer_difference` (a digest or key, and the
+reason); `complete` is true only when there is none.
+
+**Fencing.** Every destination write goes through `into`'s persistence backend, which for a store
+opened with an injected owner is the fenced view (see
+[Injected owners and fencing](#injected-owners-and-fencing)). A transfer whose owner loses its
+grant fails with `errc::locked`; the successor opens the store with a higher fence, recovers the
+pack tail, and reruns the transfer.
+
+**Memory.** Content passes one chunk at a time (at most 128 KiB, plus the decompressed delta base
+it needs). Structural records (trees, changes, blob records) and the repository documents are read
+whole, as the repository itself reads them. The walk keeps one 33-byte key per identity visited and
+the references of the objects on its current path, so its memory grows with the number of objects,
+not with their bytes.
+
+**Report.** `objects` counts identities examined, `objects_present` those the destination already
+held (and so did not descend into), `objects_read` and `bytes_read` the chunks read from the source,
+`objects_written` and `bytes_written` what was appended or registered, and `state_written` and
+`leases_written` the keys written or removed. `missing` lists identities a stored record references
+that the source does not hold: they cannot be copied, the destination lacks them exactly as the
+source does, and the transfer still completes. A digest-shaped value in a repository document that
+the source does not hold (an operation identifier, an object already collected) is not reported.
+
+**Limits.** Encrypted objects are refused with `errc::unsupported`: copying them would need either
+the source's trust-domain key in the destination or re-encryption under the destination's key, which
+changes keyed identities and so every record that names them. Both stores must be shared stores
+(a repository with its own checkout store is not a transfer source). The repository must not be
+written while it is transferred; a write after the transfer read the source's state is not copied,
+and a rerun copies it. Nothing else should write or collect the destination during the transfer:
+copied objects are unreferenced until `LIQUID_REPO` is written, so a collection in between could
+remove them (the rerun would copy them again).
+
+**Verify (tests).** `tests/store/test_transfer.cpp` (`RepositoryTransfer.*`) builds a repository on
+a disk store with history, a rename, a 6 MiB file streamed from disk, a second ref, an
+uncheckpointed journal, a private session with its own write, a replication cursor, and an unrelated
+repository beside it, and transfers it into the remote-shaped test backend of liquid #327 held by
+an injected owner, with one-MiB packs so the copy spans several. An uninterrupted copy measures the
+destination's mutations; then, for interruptions at 10, 35, 60, 90 and 99 percent of them, the
+owner's lease lapses mid-copy, the remote refuses the next write and the transfer fails with
+`errc::locked` leaving no `LIQUID_REPO`; a successor with a higher fence reruns it, appending fewer
+bytes than the whole copy and writing `LIQUID_REPO` with its own fence; verify reports no
+difference; a third run writes nothing; and after a reopen the destination verifies again and opens
+the repository with byte-identical files (the streamed file included), the same refs, history,
+drips, replication cursor and session write, and passes a collection dry run. A second test flips
+one byte in a destination pack and verify reports the object that no longer verifies, changes a
+copied cursor and verify reports that key, and verify of an empty destination reports the missing
+state. A third covers the refusals: a repository absent from the source (`errc::not_found`), one
+store as both ends, and a zero batch (`errc::invalid_argument`).
 
 ## Tuning and verification
 

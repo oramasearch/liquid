@@ -78,6 +78,15 @@ when the store is destroyed. A bounded `owner_wait` retries the lock with a doub
 expiry returns `errc::locked` with the holder's recorded pid, host and start time. See
 `docs/library/store.md#process-ownership-and-hand-off`.
 
+`store_impl.cpp` also holds the store side of liquid #328's whole-repository transfer:
+`transfer_describe` (how a store holds an identity: object, chunk, registration), `transfer_copy_chunk`
+and `transfer_copy_object` (a verified chunk at a time from the source store, appended under the same
+digest; an object published only after its whole-content digest and chunk-list descriptor are
+recomputed and matched), `transfer_copy_remote`, `transfer_publish` (index flush and object map
+after a barrier, only when something was appended), and the `transfer_verify_*` reads. The walk,
+the state keys and the lease records are in `src/repository/transfer.cpp`. See
+`docs/library/store.md#whole-repository-transfer`.
+
 `owner.cpp` holds the injected owner of liquid #327: `owner_grant` (a fence and a shared lost
 flag), `make_disk_store_owner` (the flock above as a `store_owner` with fence zero),
 `owned_store_backend` (the wrapper around a backend's fenced view that refuses mutations, and reads

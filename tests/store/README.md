@@ -24,6 +24,12 @@ mid-put (refused by the remote, then locally; the successor recovers, passes a c
 and keeps every acknowledged object), a revoked grant with opted-in reads and release on
 destruction, a backend without `fenced`, the injected disk owner, a stale holder's refused
 `put_if_absent`, and a shared-store repository whose state writes all carry the owner's fence.
+`remote_backend.hpp` is that remote-shaped backend, shared with `test_transfer.cpp`, which covers
+liquid #328's whole-repository transfer from a disk store into it: an interruption at five points
+by a lapsed lease, resumption by a successor with a higher fence that copies only what is missing,
+verify with no difference, a rerun that writes nothing, the reopened destination's files, refs,
+history, drips, cursor and session, a tampered pack byte and a changed state key caught by verify,
+and the refusals.
 
 Store fixtures allocate their named directories beneath the unique process root specified in the
 parent [`README.md`](../README.md).

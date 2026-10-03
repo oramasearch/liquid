@@ -38,6 +38,8 @@ delta-rebase count.
 remote-source registration, hydration and remote-access observation, and live local-byte
 accounting for long-running node stores. `store_options::backend` selects a caller-owned
 implementation; null preserves the disk-backed behavior at the store path.
+`repository.hpp` exposes `repository::transfer` and its options, report and difference values: a
+whole-repository copy or verify between two open shared stores (liquid #328).
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease

@@ -75,7 +75,12 @@ root takes the same ownership through an injected `store_options::owner` whose g
 fence: the backend's fenced view sends it with every mutation, `put_if_absent` included, so the
 remote refuses a stale holder, and a lost grant refuses every later mutation with `errc::locked`
 (liquid #327,
-[`store.md`](store.md#injected-owners-and-fencing)).
+[`store.md`](store.md#injected-owners-and-fencing)). `repository::transfer` copies one repository,
+whole, between two open shared stores: every reachable object with its digest, then its lease
+records, then its state keys with `LIQUID_REPO` last, through the destination's fenced backend; a
+rerun after an interruption copies only what is missing and a verify mode reads both stores and
+reports every difference (liquid #328, [`store.md`](store.md#whole-repository-transfer)). Encrypted
+objects are not transferred yet.
 
 **Repository.** Repository creation, working-tree reads and writes, recorded moves and removals,
 change cuts, references, snapshots, historical document state, composition, conflict values,
