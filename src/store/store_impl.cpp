@@ -210,6 +210,27 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         const auto persistence =
             options.backend ? options.backend : make_disk_store_backend(root, options.durable);
         options.backend = persistence;
+        // An exclusive owner takes the root before reading or repairing anything under it: the
+        // temporary files removed below are another owner's in-progress publications while that
+        // owner runs. A non-disk backend has no local root to lock.
+        if (!options.exclusive_owner && options.owner_wait.count() != 0) {
+            co_return std::unexpected(store_error(
+                errc::invalid_argument, "owner_wait requires exclusive_owner", root.string()));
+        }
+        owner_lock owner;
+        const auto lock_path = options.exclusive_owner
+                                   ? backend_local_path(persistence, "store.lock")
+                                   : std::optional<std::filesystem::path>{};
+        if (options.exclusive_owner && !lock_path) {
+            co_return std::unexpected(store_error(
+                errc::unsupported, "exclusive ownership needs a disk store root", root.string()));
+        }
+        if (lock_path) {
+            auto acquired = co_await owner_lock::acquire(*lock_path, options.owner_wait);
+            if (!acquired)
+                co_return std::unexpected(acquired.error());
+            owner = std::move(*acquired);
+        }
         for (const auto& temporary :
              {"gc/MANIFEST.tmp", "packs/objects.meta.tmp", "packs/remotes.meta.tmp"}) {
             auto removed = co_await persistence->remove(temporary);
@@ -259,6 +280,7 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         }
         auto result =
             std::unique_ptr<store_backend>(new store_backend(std::move(root), std::move(options)));
+        result->owner_ = std::move(owner);
         if (result->options_.keys) {
             auto attached = co_await result->options_.keys->attach(result->root_ / "keys");
             if (!attached)

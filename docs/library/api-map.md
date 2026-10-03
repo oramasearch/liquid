@@ -589,6 +589,8 @@ struct store_options {
   hydration_observer on_hydration;
   remote_access_observer on_remote_access;
   std::shared_ptr<store_backend> backend; // null selects the disk backend at the store path
+  bool exclusive_owner{};              // take the root's cross-process owner lock (liquid #321)
+  std::chrono::milliseconds owner_wait{}; // bounded wait for the current owner; zero refuses at once
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {

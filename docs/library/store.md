@@ -2,7 +2,8 @@
 
 **Status: implemented for single-process stores with an injected persistence backend, local chunks,
 registered remote blobs, pre-pack write-through, local eviction, and resemblance-selected chunk
-deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278).**
+deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278), plus opt-in exclusive
+cross-process ownership with a bounded hand-off between processes (liquid #321).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -59,6 +60,7 @@ The same seeded crash schedule runs against both implementations.
 <root>/repositories/<id-hash>/LIQUID_REPO     shared-store repository checkpoint entry point
 <root>/repositories/<id-hash>/LIQUID_JOURNAL  shared-store repository journal entry point
 <root>/tmp/
+<root>/store.lock          exclusive owner lock and the owner's pid, host and start time
 ```
 
 The disk backend's `open` creates missing directories and refuses a marker other than format 1 with
@@ -467,7 +469,79 @@ tables. Deleting `index/` is therefore recoverable. There is no index write-ahea
 
 Concurrent coroutines on one store serialize mutation with the store's thread-safe
 `mutation_mutex`. Reads use immutable
-runs and are not given that mutation lock. Cross-process access is outside this issue's contract.
+runs and are not given that mutation lock. Across processes, see the next section.
+
+## Process ownership and hand-off
+
+**What.** One open store handle owns a disk store root at a time. An open with
+`store_options::exclusive_owner` takes an exclusive advisory lock on `<root>/store.lock` (`flock`
+on Linux and macOS, `LockFileEx` on Windows) before it reads or repairs anything under the root, and
+holds it until the `store` is destroyed. It then writes its pid, host and start time into the file.
+A second exclusive opener, in this process or another, retries until `store_options::owner_wait`
+has elapsed and then fails with `errc::locked`, whose message names the holder:
+
+```text
+store root is owned by pid 4211 on host lake-7d9f since 2026-10-02T21:14:03Z; one open store
+handle owns a root at a time
+```
+
+A zero wait makes one attempt. A negative wait, or a wait without `exclusive_owner`, is
+`errc::invalid_argument`; `exclusive_owner` with a persistence backend that has no local root is
+`errc::unsupported`. The descriptor is close-on-exec, so a child process never keeps the root.
+The kernel releases the lock when the owner's descriptor closes, however the process ends, so a
+successor never waits on a dead owner.
+
+Opens without `exclusive_owner` take no lock and keep the single-process contract: the caller must
+ensure that no other process writes the root. Existing callers that open one repository's store
+from several handles in one process (repository reopen, the CLI beside its daemon, readers in
+tests) are unchanged.
+
+**Why (liquid #321, found by lake#467).** A store keeps its pack append position, object map,
+chunk index memtable, and delta candidates in process memory. It appends at the offset it
+remembers, publishes `packs/objects.meta` and `index/MANIFEST` by replacing them from that memory,
+and on open removes the fixed-name `gc/MANIFEST.tmp`, `packs/objects.meta.tmp`, and
+`packs/remotes.meta.tmp` that a live writer may be about to publish. Two processes writing one
+root therefore overwrite each other's frames and object maps; lake measured `chunk header digest
+differs from index`, `invalid index run size`, lost acknowledged writes, and a store that no longer
+opened.
+
+Two designs were offered. Making every write path multi-process safe means a cross-process lock
+around each append and publication, re-reading the object map, the unflushed index entries (which
+exist only in the writer's memtable, so a reader would have to rescan the current pack), the
+remote map, the subject index and the pack tail under it, unique temporary names, and the same
+treatment for the repository journal, checkpoints, and leases layered on the store. It would put a
+re-validation on every read and write and would still leave a service's own caches (lake's search
+segments and registry indexes) stale. The hand-off serialises whole processes instead: the root
+has exactly one writer at any instant, the in-memory state stays authoritative for as long as the
+lock is held, and the successor rebuilds it from disk on open, exactly as after a crash. That is
+the same recovery path the crash simulator already proves, so the change adds no new on-disk
+state beyond the lock file.
+
+**A rollout without an unavailable window.** The hand-off removes the stop-then-start gap only if
+the successor is reachable before it owns the root:
+
+1. The successor starts, binds its listener, and passes readiness without opening the store.
+2. It opens the store with `exclusive_owner` and an `owner_wait` longer than the predecessor's drain
+   period. Requests that need the store wait for that open instead of failing.
+3. The predecessor receives its stop signal, stops accepting, finishes in-flight work, and destroys
+   its store (or is killed); the lock is released.
+4. The successor's open succeeds within one retry interval (5 ms, doubling to 100 ms), recovers any
+   torn pack tail, and serves the waiting requests.
+
+Clients see added latency for the length of the drain and no refusals, provided the wait outlasts
+the drain. The lock needs a filesystem whose `flock` is honoured between the processes: a local
+block filesystem shared by two processes on one host is; a network filesystem must provide it
+between its clients.
+
+**Verify.** `tests/store/test_owner.cpp` (`StoreOwner.*`). In-process cases cover refusal, the
+bounded wait expiring, a waiting open taking over when the owner is destroyed, and option
+validation. Process cases run `liquid-store-owner-fixture` as real processes: four writers started
+together on one root must take turns and every acknowledged write must survive; and a writer that
+is killed with `SIGKILL` in the middle of its write stream while a successor waits must hand the
+root over, after which the successor writes. Each process case then checks the store: every frame
+of every pack decodes and matches the digest its table records, the store reopens, every
+acknowledged object from every process reads back byte for byte, and a full collection over leases
+on all of them keeps every one. Without the lock both process cases fail.
 
 ## Tuning and verification
 

@@ -12,5 +12,12 @@ checkpoint leases.
 `test_gc_sim_regression.cpp` replays seed 140: a collection or compaction crash must not remove a
 rooted object during a subsequent index reconstruction.
 
+`test_owner.cpp` covers liquid #321 exclusive ownership: in-process refusal, bounded-wait expiry,
+hand-off to a waiting opener, and option validation; and, on POSIX, real writer processes from
+`owner_fixture.cpp` (bytes from `owner_fixture_content.hpp`) that take turns on one root, and a
+writer killed with `SIGKILL` mid-stream while a successor waits. Each process case ends with a
+frame-level pack scan, reopen, a byte-for-byte read of every acknowledged write, and a full
+collection that must keep every acknowledged object.
+
 Store fixtures allocate their named directories beneath the unique process root specified in the
 parent [`README.md`](../README.md).

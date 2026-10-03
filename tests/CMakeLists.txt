@@ -53,6 +53,7 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_secret.cpp
   test_store.cpp
+  store/test_owner.cpp
   test_tiers.cpp
   test_temporary_directory.cpp
   test_lake_transparency.cpp
@@ -199,6 +200,13 @@ if(UNIX)
   add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
   target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
   add_dependencies(liquid-tests liquid-graph-crash-fixture)
+endif()
+if(UNIX)
+  add_executable(liquid-store-owner-fixture store/owner_fixture.cpp)
+  target_link_libraries(liquid-store-owner-fixture PRIVATE liquid::liquid)
+  add_dependencies(liquid-tests liquid-store-owner-fixture)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_STORE_OWNER_FIXTURE="$<TARGET_FILE:liquid-store-owner-fixture>")
 endif()
 if(UNIX)
   add_executable(liquid-install-crash-fixture install_crash_fixture.cpp)

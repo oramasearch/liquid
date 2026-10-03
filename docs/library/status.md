@@ -63,7 +63,10 @@ remote location. Multiple repositories can use one caller-owned store with repos
 checkpoints, journals, and retention leases. `liquid gc --explain` reports why retained chunks are
 live. Digest-addressed near-duplicate chunk deltas and resemblance-selected bases reduce
 stored bytes; repacking rebases delta chains and garbage collection retains their transitive
-bases ([`store.md`](store.md), [`gc.md`](gc.md)).
+bases ([`store.md`](store.md), [`gc.md`](gc.md)). A long-running owner opens with
+`store_options::exclusive_owner`: one handle owns a disk root across processes, and a successor
+waits up to `owner_wait` for a draining or killed predecessor to release it (liquid #321,
+[`store.md`](store.md#process-ownership-and-hand-off)).
 
 **Repository.** Repository creation, working-tree reads and writes, recorded moves and removals,
 change cuts, references, snapshots, historical document state, composition, conflict values,

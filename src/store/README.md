@@ -65,6 +65,13 @@ chunk table once before any pack mutation. Memory puts retain their input across
 puts first scan in bounded windows, verify a read-only file mapping against that table, and retain
 the mapping across the await before copying one chunk at a time into packs.
 
+`owner_lock.cpp` is the cross-process owner lock taken by `store_options::exclusive_owner` (liquid
+#321): an exclusive close-on-exec `flock` (POSIX) or `LockFileEx` (Windows) on `<root>/store.lock`,
+taken in `store_backend::open` before the fixed-name temporary files are removed and released last
+when the store is destroyed. A bounded `owner_wait` retries the lock with a doubling 5–100 ms delay;
+expiry returns `errc::locked` with the holder's recorded pid, host and start time. See
+`docs/library/store.md#process-ownership-and-hand-off`.
+
 `mutation_mutex.hpp` owns the store's mutation lock: an asynchronous mutex that is safe from any
 thread, following Capy's IoAwaitable protocol so call sites read as with `async_mutex::scoped_lock`.
 Capy's `async_mutex` is single-executor, liquid runs every `io_context` on several threads, and
