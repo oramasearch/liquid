@@ -14,7 +14,7 @@
 #include "leases.hpp"
 #include "liquid/store.hpp"
 #include "mutation_mutex.hpp"
-#include "owner_lock.hpp"
+#include "owner.hpp"
 #include "subject_index.hpp"
 
 namespace liquid::store_detail {
@@ -75,6 +75,8 @@ public:
     [[nodiscard]] const store_options& configuration() const noexcept;
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>>
     lease_root(digest id, std::chrono::seconds ttl, std::string owner);
+    // Detaches the owner so store::close can destroy the store and then await the release.
+    [[nodiscard]] owner_hold take_owner() noexcept;
 
 private:
     explicit store_backend(std::filesystem::path root, store_options options);
@@ -122,7 +124,7 @@ private:
     friend class compactor;
 
     // Declared first so it is released last, after every member that may still write.
-    owner_lock owner_;
+    owner_hold owner_;
     std::filesystem::path root_;
     store_options options_;
     std::shared_ptr<::liquid::store_backend> persistence_;

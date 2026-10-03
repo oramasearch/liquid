@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <string>
 
 #include "liquid/runtime.hpp"
 
@@ -34,15 +35,18 @@ public:
                                                            std::chrono::milliseconds wait);
 
     [[nodiscard]] bool held() const noexcept;
-
-private:
     void release() noexcept;
 
+private:
 #if defined(_WIN32)
     void* handle_{nullptr};
 #else
     int descriptor_{-1};
 #endif
 };
+
+// "pid <pid> on host <host> since <UTC time>" for this process: the holder an injected owner is
+// asked to record, in the same words the disk owner's refusal uses.
+[[nodiscard]] std::string holder_description();
 
 } // namespace liquid::store_detail

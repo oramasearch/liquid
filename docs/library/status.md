@@ -70,7 +70,12 @@ waits up to `owner_wait` for a draining or killed predecessor to release it (liq
 (`LIQUID_REPO`, `LIQUID_JOURNAL`, session state, and replication cursors) is backend keys under
 `repositories/<id-hash>/`, so a backend with no local root holds the whole repository; create is
 exclusive through `store_backend::put_if_absent` (liquid #326,
-[`store.md`](store.md#repository-state-through-the-backend)).
+[`store.md`](store.md#repository-state-through-the-backend)). A store on a backend without a local
+root takes the same ownership through an injected `store_options::owner` whose grant carries a
+fence: the backend's fenced view sends it with every mutation, `put_if_absent` included, so the
+remote refuses a stale holder, and a lost grant refuses every later mutation with `errc::locked`
+(liquid #327,
+[`store.md`](store.md#injected-owners-and-fencing)).
 
 **Repository.** Repository creation, working-tree reads and writes, recorded moves and removals,
 change cuts, references, snapshots, historical document state, composition, conflict values,

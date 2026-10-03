@@ -626,6 +626,7 @@ add_library(libliquid
   src/store/faults.cpp
   src/store/index.cpp
   src/store/leases.cpp
+  src/store/owner.cpp
   src/store/owner_lock.cpp
   src/store/mapped_file.cpp
   src/store/pack.cpp

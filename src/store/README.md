@@ -78,6 +78,15 @@ when the store is destroyed. A bounded `owner_wait` retries the lock with a doub
 expiry returns `errc::locked` with the holder's recorded pid, host and start time. See
 `docs/library/store.md#process-ownership-and-hand-off`.
 
+`owner.cpp` holds the injected owner of liquid #327: `owner_grant` (a fence and a shared lost
+flag), `make_disk_store_owner` (the flock above as a `store_owner` with fence zero),
+`owned_store_backend` (the wrapper around a backend's fenced view that refuses mutations, and reads
+unless opted in, with `errc::locked` once the grant is lost, and revokes the grant when the view
+refuses a stale fence), and `owner_hold` (what an open store keeps; it releases an injected owner
+on `store::close()` or, when destroyed without it, on the runtime). `owned_store_backend` forwards
+`put_if_absent` as a mutation; a new `store_backend` operation must be forwarded the same way. See
+`docs/library/store.md#injected-owners-and-fencing`.
+
 `mutation_mutex.hpp` owns the store's mutation lock: an asynchronous mutex that is safe from any
 thread, following Capy's IoAwaitable protocol so call sites read as with `async_mutex::scoped_lock`.
 Capy's `async_mutex` is single-executor, liquid runs every `io_context` on several threads, and
