@@ -164,7 +164,9 @@ specifies it.
 The implemented Phase 1 chunk store selects a coroutine-native persistence backend. Disk is the
 reference implementation, and the deterministic simulator also runs against an in-memory test
 implementation with injected latency and failures. A repository opened on a shared store keeps all
-of its own state in that store's backend (liquid #326).
+of its own state in that store's backend (liquid #326). `repository::transfer` copies such a
+repository, whole and with every digest, from one open store into another, resumably and with a
+verify mode (liquid #328).
 
 The installed library target also supports repository create/open, persisted file write/read, and
 consumer-defined coroutines through `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid`;

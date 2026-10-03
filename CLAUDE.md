@@ -264,6 +264,11 @@ state, and the new replication cursors) through the store's `store_backend` as
 `repositories/<id-hash>/` keys, and adds `store_backend::put_if_absent` for the exclusive create; a
 checkout keeps its on-disk layout ([store.md](docs/library/store.md#repository-state-through-the-backend)).
 
+Liquid #328 adds `repository::transfer`: a resumable, idempotent copy of one repository between two
+open shared stores that keeps every digest and writes `LIQUID_REPO` last through the destination's
+fenced backend, with a verify mode that reports every difference
+([store.md](docs/library/store.md#whole-repository-transfer)).
+
 Liquid #84 adds an operator-control-plane deployment client with digest-pinned interim OCI images,
 named environments, status readback, and rollback. It uses liquid's HTTP client and neither links
 Zetta nor lake code; the provisional wire contract is `contracts/control-plane/openapi.json`.

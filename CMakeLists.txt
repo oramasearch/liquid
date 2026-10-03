@@ -612,6 +612,7 @@ add_library(libliquid
   src/resolve/spec.cpp
   src/remote.cpp
   src/repository/repository_impl.cpp
+  src/repository/transfer.cpp
   src/runtime/runtime.cpp
   src/sandbox/environment.cpp
   src/scan/detectors.cpp

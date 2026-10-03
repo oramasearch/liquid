@@ -1078,12 +1078,26 @@ struct search_plan { search_executor executor; search_query_kind query_kind;
                                    drips_since_index_update, scan_nanoseconds_per_blob,
                                    scan_parallelism;
                      double trigram_selectivity; std::vector<search_alternative> alternatives; };
+enum class repository_transfer_mode { copy, verify };           // liquid #328
+struct repository_transfer_options { repository_transfer_mode mode{copy};
+                                     std::uint64_t batch_objects{4096}; };
+struct repository_transfer_difference { std::string subject, reason; };
+struct repository_transfer_report { std::uint64_t objects, objects_present, objects_read, bytes_read,
+                                                  objects_written, bytes_written, state_written,
+                                                  leases_written;
+                                    std::vector<digest> missing;
+                                    std::vector<repository_transfer_difference> differences;
+                                    bool complete; };
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
   static runtime::task<repository> open(std::filesystem::path, repository_options = {});
   static runtime::task<repository> open_build(std::filesystem::path working_tree,
                                                repository_options = {});
+  // whole-repository copy or verify between two open shared stores (liquid #328)
+  static runtime::task<repository_transfer_report> transfer(store& from, store& into,
+                                                            std::filesystem::path identifier,
+                                                            repository_transfer_options = {});
   runtime::task<tree> root();                            // the working copy is a change
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);

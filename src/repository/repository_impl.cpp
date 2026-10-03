@@ -48,6 +48,7 @@
 #include "repository/store_access.hpp"
 #include "repository/sync_access.hpp"
 #include "repository/testing.hpp"
+#include "repository/transfer.hpp"
 #include "search/repository_access.hpp"
 #include "store/backend.hpp"
 #include "store/leases.hpp"
@@ -11550,5 +11551,14 @@ auto repository_detail::search_access::index_path(repository& source)
 void repository_detail::testing::reset_directory_loads(repository& value) {
     if (value.impl_)
         value.impl_->directory_load_count = 0;
+}
+
+auto repository_detail::shared_state_prefix(const std::filesystem::path& identifier)
+    -> result<std::string> {
+    auto key = identifier_key(identifier);
+    if (!key) {
+        return std::unexpected(key.error());
+    }
+    return *key + "/";
 }
 } // namespace liquid

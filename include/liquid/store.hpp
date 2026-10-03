@@ -105,6 +105,9 @@ class repository;
 namespace repository_detail {
 struct store_access;
 }
+namespace store_detail {
+class store_backend;
+}
 
 class LIQUID_EXPORT blob_write_through {
 public:
@@ -273,6 +276,9 @@ private:
     void begin_object_batch();
     void abort_object_batch();
     [[nodiscard]] runtime::task<void> commit_object_batch();
+    // The open store's implementation, for a whole-repository transfer (liquid #328); null when
+    // the handle is empty.
+    [[nodiscard]] store_detail::store_backend* implementation() const noexcept;
     friend struct repository_detail::store_access;
     struct impl;
     std::unique_ptr<impl> impl_;

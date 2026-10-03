@@ -2191,4 +2191,373 @@ runtime::task<void> store_backend::redact(std::vector<digest> ids) {
     co_return co_await collector(*this).redact(ids);
 }
 
+namespace {
+
+bool same_identity(const digest& left, const digest& right) {
+    return left.alg == right.alg && left.bytes == right.bytes;
+}
+
+bool same_identities(const std::vector<digest>& left, const std::vector<digest>& right) {
+    return std::ranges::equal(left, right, same_identity);
+}
+
+bool same_registration(const blob& left, const blob& right) {
+    return same_identity(left.content, right.content) && left.size == right.size &&
+           same_identities(left.chunks, right.chunks) && left.chunk_sizes == right.chunk_sizes &&
+           left.remote == right.remote;
+}
+
+error transfer_unsupported(const digest& id) {
+    return store_error(errc::unsupported,
+                       "transferring an encrypted object is not implemented; it would need "
+                       "re-encryption under the destination's trust-domain key",
+                       to_string(id));
+}
+
+} // namespace
+
+result<transfer_entry> store_backend::transfer_describe(digest id) const {
+    auto output = transfer_entry{};
+    const auto key = to_string(id);
+    if (const auto found = objects_.find(key); found != objects_.end()) {
+        output.object = true;
+        output.value = found->second;
+    }
+    auto indexed = index_.find(id);
+    if (!indexed) {
+        return std::unexpected(indexed.error());
+    }
+    output.chunk = indexed->has_value();
+    if (const auto found = remotes_.find(key); found != remotes_.end()) {
+        output.remote = true;
+        output.registration = found->second;
+    }
+    return output;
+}
+
+runtime::task<transfer_counts> store_backend::transfer_copy_chunk(store_backend& source,
+                                                                  digest id) {
+    if (id.alg == algorithm::blake3_keyed || source.chunk_keys_.contains(to_string(id))) {
+        co_return std::unexpected(transfer_unsupported(id));
+    }
+    auto counts = transfer_counts{};
+    auto present = index_.find(id);
+    if (!present) {
+        co_return std::unexpected(present.error());
+    }
+    if (*present) {
+        co_return counts;
+    }
+    auto bytes = co_await source.load_chunk(id);
+    if (!bytes) {
+        co_return std::unexpected(bytes.error());
+    }
+    ++counts.objects_read;
+    counts.bytes_read += bytes->size();
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
+    }
+    // Another writer may have stored it while this one read the source.
+    present = index_.find(id);
+    if (!present) {
+        co_return std::unexpected(present.error());
+    }
+    if (*present) {
+        co_return counts;
+    }
+    const auto size = bytes->size();
+    const auto resemblance = resemblance_hash(*bytes);
+    auto stored = co_await store_chunk(id, std::move(*bytes), resemblance);
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    transfer_pack_ = stored->location.pack_id;
+    transfer_appended_ = true;
+    ++counts.objects_written;
+    counts.bytes_written += size;
+    co_return counts;
+}
+
+runtime::task<transfer_counts> store_backend::transfer_copy_object(store_backend& source,
+                                                                   const stored_object& object) {
+    if (!object.key_id.empty() || object.id.alg == algorithm::blake3_keyed) {
+        co_return std::unexpected(transfer_unsupported(object.id));
+    }
+    if (object.id.alg != algorithm::blake3 && object.id.alg != algorithm::sha256) {
+        co_return std::unexpected(store_error(
+            errc::corrupt, "object has an unknown digest algorithm", to_string(object.id)));
+    }
+    if (!object.chunk_sizes.empty() && object.chunk_sizes.size() != object.chunks.size()) {
+        co_return std::unexpected(
+            store_error(errc::corrupt, "object chunk sizes are incomplete", to_string(object.id)));
+    }
+    auto counts = transfer_counts{};
+    if (objects_.contains(to_string(object.id))) {
+        co_return counts;
+    }
+    // One chunk at a time: the whole-content digest is updated as each verified chunk passes, so
+    // memory stays bounded by one chunk however large the object is. Only the small records whose
+    // metadata the store indexes (blob records and attestations) are kept whole.
+    const auto keep = object.kind == "blob" || object.kind == "attestation";
+    auto kept = std::vector<std::byte>{};
+    auto whole = incremental_digest{object.id.alg, std::nullopt};
+    auto sizes = std::vector<std::uint64_t>{};
+    sizes.reserve(object.chunks.size());
+    auto total = std::uint64_t{};
+    for (auto index = std::size_t{}; index < object.chunks.size(); ++index) {
+        const auto chunk = object.chunks[index];
+        auto bytes = co_await source.load_chunk(chunk);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        ++counts.objects_read;
+        counts.bytes_read += bytes->size();
+        if (!object.chunk_sizes.empty() && object.chunk_sizes[index] != bytes->size()) {
+            co_return std::unexpected(store_error(
+                errc::corrupt, "object chunk size differs from its chunk", to_string(chunk)));
+        }
+        sizes.push_back(bytes->size());
+        total += bytes->size();
+        whole.update(*bytes);
+        if (keep) {
+            kept.insert(kept.end(), bytes->begin(), bytes->end());
+        }
+        auto [lock_error, guard] = co_await mutation_.scoped_lock();
+        if (lock_error) {
+            co_return std::unexpected(
+                store_error(errc::busy, lock_error.message(), "store::transfer"));
+        }
+        auto present = index_.find(chunk);
+        if (!present) {
+            co_return std::unexpected(present.error());
+        }
+        if (*present) {
+            continue;
+        }
+        const auto size = bytes->size();
+        const auto resemblance = resemblance_hash(*bytes);
+        auto stored = co_await store_chunk(chunk, std::move(*bytes), resemblance);
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        transfer_pack_ = stored->location.pack_id;
+        transfer_appended_ = true;
+        ++counts.objects_written;
+        counts.bytes_written += size;
+    }
+    if (total != object.size) {
+        co_return std::unexpected(store_error(
+            errc::corrupt, "object length differs from its chunk list", to_string(object.id)));
+    }
+    if (!same_identity(whole.finish(), object.id)) {
+        co_return std::unexpected(
+            store_error(errc::corrupt, "object digest verification failed", to_string(object.id)));
+    }
+    auto attestation_subject = std::optional<digest>{};
+    if (object.kind == "attestation") {
+        auto value = objects::decode_attestation(kept);
+        if (!value) {
+            co_return std::unexpected(
+                store_error(errc::corrupt, "attestation cannot be decoded", to_string(object.id)));
+        }
+        attestation_subject = value->subject;
+    }
+    auto remote_record = std::optional<blob>{};
+    if (object.kind == "blob") {
+        if (auto decoded = objects::decode_blob(kept); decoded && decoded->remote) {
+            remote_record = std::move(*decoded);
+        }
+    }
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
+    }
+    if (objects_.contains(to_string(object.id))) {
+        co_return counts;
+    }
+    if (object.has_descriptor) {
+        auto descriptor = encode_chunk_list(object.size, {}, object.chunks);
+        const auto descriptor_id = hash(object.descriptor.alg, descriptor);
+        if (!descriptor_id || !same_identity(*descriptor_id, object.descriptor)) {
+            co_return std::unexpected(store_error(errc::corrupt,
+                                                  "object chunk-list descriptor differs from its "
+                                                  "chunks",
+                                                  to_string(object.id)));
+        }
+        auto present = index_.find(object.descriptor);
+        if (!present) {
+            co_return std::unexpected(present.error());
+        }
+        if (!*present) {
+            const auto size = descriptor.size();
+            const auto resemblance = resemblance_hash(descriptor);
+            auto stored =
+                co_await store_chunk(object.descriptor, std::move(descriptor), resemblance);
+            if (!stored) {
+                co_return std::unexpected(stored.error());
+            }
+            transfer_pack_ = stored->location.pack_id;
+            transfer_appended_ = true;
+            counts.bytes_written += size;
+        }
+    }
+    auto published = object;
+    published.chunk_sizes = std::move(sizes);
+    if (published.chunk_resemblances.size() != published.chunks.size()) {
+        published.chunk_resemblances.assign(published.chunks.size(), 0);
+    }
+    auto added = co_await add_object(std::move(published));
+    if (!added) {
+        co_return std::unexpected(added.error());
+    }
+    if (remote_record) {
+        remote_records_[to_string(object.id)] = remote_record->content;
+        remotes_[to_string(remote_record->content)] = *remote_record;
+        auto saved = co_await save_remotes();
+        if (!saved) {
+            co_return std::unexpected(saved.error());
+        }
+    }
+    if (attestation_subject) {
+        subjects_.add(*attestation_subject, object.id);
+    }
+    ++counts.objects_written;
+    co_return counts;
+}
+
+runtime::task<transfer_counts> store_backend::transfer_copy_remote(const blob& registration) {
+    auto counts = transfer_counts{};
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
+    }
+    const auto key = to_string(registration.content);
+    if (const auto found = remotes_.find(key);
+        found != remotes_.end() && same_registration(found->second, registration)) {
+        co_return counts;
+    }
+    remotes_[key] = registration;
+    auto saved = co_await save_remotes();
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    ++counts.objects_written;
+    co_return counts;
+}
+
+runtime::task<void> store_backend::transfer_publish() {
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error) {
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
+    }
+    if (transfer_appended_) {
+        if (transfer_pack_ > index_.highest_pack_id()) {
+            index_.set_highest_pack_id(transfer_pack_);
+        }
+        auto flushed = co_await index_.flush();
+        if (!flushed) {
+            co_return std::unexpected(flushed.error());
+        }
+        transfer_appended_ = false;
+    }
+    if (objects_dirty_) {
+        // save_objects stages the map and publishes it after a barrier on the pack data it names.
+        auto saved = co_await save_objects();
+        if (!saved) {
+            co_return std::unexpected(saved.error());
+        }
+        objects_dirty_ = false;
+    }
+    co_return co_await persistence_->barrier();
+}
+
+void store_backend::transfer_abandon() noexcept {
+    if (object_batch_depth_ != 0) {
+        --object_batch_depth_;
+    }
+}
+
+runtime::task<std::vector<std::string>> store_backend::transfer_verify_chunk(digest id) {
+    auto present = index_.find(id);
+    if (!present) {
+        co_return std::vector<std::string>{"chunk index lookup failed: " + present.error().message};
+    }
+    if (!*present) {
+        co_return std::vector<std::string>{"chunk is missing"};
+    }
+    auto bytes = co_await load_chunk(id);
+    if (!bytes) {
+        co_return std::vector<std::string>{"chunk does not verify: " + bytes.error().message};
+    }
+    co_return std::vector<std::string>{};
+}
+
+runtime::task<std::vector<std::string>>
+store_backend::transfer_verify_object(const stored_object& expected) {
+    auto differences = std::vector<std::string>{};
+    const auto found = objects_.find(to_string(expected.id));
+    if (found == objects_.end()) {
+        differences.emplace_back("object is missing from the object map");
+        co_return differences;
+    }
+    // A copy: the map may change while this coroutine is suspended.
+    const auto actual = found->second;
+    if (actual.size != expected.size) {
+        differences.emplace_back("object size differs");
+    }
+    if (actual.kind != expected.kind) {
+        differences.emplace_back("object kind differs");
+    }
+    if (actual.key_id != expected.key_id) {
+        differences.emplace_back("object key id differs");
+    }
+    if (!same_identities(actual.chunks, expected.chunks)) {
+        differences.emplace_back("object chunk list differs");
+    }
+    if (!actual.chunk_sizes.empty() && !expected.chunk_sizes.empty() &&
+        actual.chunk_sizes != expected.chunk_sizes) {
+        differences.emplace_back("object chunk sizes differ");
+    }
+    if (actual.has_descriptor != expected.has_descriptor ||
+        (expected.has_descriptor && !same_identity(actual.descriptor, expected.descriptor))) {
+        differences.emplace_back("object chunk-list descriptor differs");
+    }
+    if (!differences.empty()) {
+        co_return differences;
+    }
+    auto whole = incremental_digest{actual.id.alg, std::nullopt};
+    for (const auto& chunk : actual.chunks) {
+        auto bytes = co_await load_chunk(chunk);
+        if (!bytes) {
+            differences.push_back("chunk " + to_string(chunk) +
+                                  " does not verify: " + bytes.error().message);
+            co_return differences;
+        }
+        whole.update(*bytes);
+    }
+    if (!same_identity(whole.finish(), actual.id)) {
+        differences.emplace_back("object content does not match its digest");
+    }
+    if (actual.has_descriptor) {
+        auto descriptor = co_await load_chunk(actual.descriptor);
+        if (!descriptor) {
+            differences.push_back("chunk-list descriptor does not verify: " +
+                                  descriptor.error().message);
+        }
+    }
+    co_return differences;
+}
+
+std::vector<std::string> store_backend::transfer_verify_remote(const blob& expected) const {
+    const auto found = remotes_.find(to_string(expected.content));
+    if (found == remotes_.end()) {
+        return {"remote registration is missing"};
+    }
+    if (!same_registration(found->second, expected)) {
+        return {"remote registration differs"};
+    }
+    return {};
+}
+
 } // namespace liquid::store_detail

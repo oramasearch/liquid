@@ -17,6 +17,10 @@ struct store_access {
         return source.configuration();
     }
 
+    [[nodiscard]] static auto implementation(const store& source) -> store_detail::store_backend* {
+        return source.implementation();
+    }
+
     [[nodiscard]] static auto
     lease_root(store& source, digest id, std::chrono::seconds ttl, std::string owner)
         -> runtime::task<lease> {
