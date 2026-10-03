@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <format>
 #include <limits>
+#include <random>
 #include <ranges>
 #include <system_error>
 
@@ -45,6 +47,7 @@ public:
         : root_(std::move(root)), durable_(durable) {}
 
     runtime::task<void> put(std::string key, std::vector<std::byte> bytes) override;
+    runtime::task<void> put_if_absent(std::string key, std::vector<std::byte> bytes) override;
     runtime::task<void>
     put_range(std::string key, std::uint64_t offset, std::vector<std::byte> bytes) override;
     runtime::task<std::vector<std::byte>>
@@ -128,6 +131,53 @@ runtime::task<void> disk_store_backend::put(std::string key, std::vector<std::by
         if (!renamed) {
             co_return std::unexpected(
                 backend_error(errc::io, renamed.error().message, destination->string()));
+        }
+        store_detail::visit_fault({store_detail::fault_operation::rename,
+                                   store_detail::fault_phase::after,
+                                   *destination});
+        co_return result<void>{};
+    } catch (const std::system_error& caught) {
+        co_return std::unexpected(backend_error(errc::io, caught.what(), destination->string()));
+    }
+}
+
+// The bytes are written to a temporary name unique to this call, then hard-linked to the key:
+// link(2) refuses an existing destination atomically, so concurrent creators cannot both win and
+// a reader never sees a partial object. The temporary carries the .backend-tmp suffix list skips.
+runtime::task<void> disk_store_backend::put_if_absent(std::string key,
+                                                      std::vector<std::byte> bytes) {
+    auto destination = path(key);
+    if (!destination) {
+        co_return std::unexpected(destination.error());
+    }
+    auto random = std::random_device{};
+    auto temporary = *destination;
+    temporary += std::format(".{:08x}{:08x}.backend-tmp", random(), random());
+    auto written = co_await write_path(temporary, 0, std::move(bytes), true, durable_);
+    if (!written) {
+        co_return std::unexpected(written.error());
+    }
+    try {
+        store_detail::visit_fault(
+            {store_detail::fault_operation::rename, store_detail::fault_phase::before, temporary});
+        auto linked = co_await runtime::offload([temporary, destination = *destination] {
+            auto code = std::error_code{};
+            std::filesystem::create_hard_link(temporary, destination, code);
+            auto ignored = std::error_code{};
+            std::filesystem::remove(temporary, ignored);
+            return code;
+        });
+        if (!linked) {
+            co_return std::unexpected(
+                backend_error(errc::io, linked.error().message, destination->string()));
+        }
+        if (*linked == std::errc::file_exists) {
+            co_return std::unexpected(
+                backend_error(errc::already_exists, "backend object already exists", key));
+        }
+        if (*linked) {
+            co_return std::unexpected(
+                backend_error(errc::io, linked->message(), destination->string()));
         }
         store_detail::visit_fault({store_detail::fault_operation::rename,
                                    store_detail::fault_phase::after,
@@ -224,18 +274,41 @@ runtime::task<std::vector<store_backend_entry>> disk_store_backend::list(std::st
     try {
         auto listed = co_await runtime::offload([this, prefix] {
             std::vector<store_backend_entry> entries;
-            if (!std::filesystem::exists(root_)) {
-                return entries;
-            }
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(root_)) {
+            const auto add = [&](const std::filesystem::directory_entry& entry) {
                 if (!entry.is_regular_file()) {
-                    continue;
+                    return;
                 }
                 const auto key = entry.path().lexically_relative(root_).generic_string();
                 if (key.ends_with(".backend-tmp") || !key.starts_with(prefix)) {
-                    continue;
+                    return;
                 }
                 entries.push_back({key, entry.file_size()});
+            };
+            // Every key with the prefix lies under the prefix's directory part, in an entry whose
+            // name starts with its last component. Walk only those, so a backend rooted at a
+            // working tree can answer for LIQUID_REPO without visiting the tree (liquid #326).
+            const auto split = prefix.rfind('/');
+            const auto directory = split == std::string::npos
+                                       ? root_
+                                       : root_ / std::filesystem::path(prefix.substr(0, split));
+            const auto leading = split == std::string::npos
+                                     ? std::string_view{prefix}
+                                     : std::string_view{prefix}.substr(split + 1);
+            if (!std::filesystem::is_directory(directory)) {
+                return entries;
+            }
+            for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+                if (!entry.path().filename().generic_string().starts_with(leading)) {
+                    continue;
+                }
+                if (entry.is_directory() && !entry.is_symlink()) {
+                    for (const auto& nested :
+                         std::filesystem::recursive_directory_iterator(entry.path())) {
+                        add(nested);
+                    }
+                    continue;
+                }
+                add(entry);
             }
             std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
                 return left.key < right.key;
@@ -257,6 +330,11 @@ runtime::task<void> disk_store_backend::barrier() {
 }
 
 } // namespace
+
+runtime::task<void> store_backend::put_if_absent(std::string key, std::vector<std::byte>) {
+    co_return std::unexpected(backend_error(
+        errc::unsupported, "store backend does not implement a conditional create", key));
+}
 
 std::shared_ptr<store_backend> make_disk_store_backend(std::filesystem::path root, bool durable) {
     return std::make_shared<disk_store_backend>(std::move(root), durable);

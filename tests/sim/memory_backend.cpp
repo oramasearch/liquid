@@ -16,6 +16,7 @@ struct memory_store_backend::state {
     std::map<std::string, std::vector<std::byte>> objects;
     std::optional<error> failure;
     std::chrono::milliseconds latency{};
+    bool frozen{};
 };
 
 memory_store_backend::memory_store_backend(std::chrono::milliseconds latency)
@@ -54,12 +55,28 @@ std::optional<error> memory_store_backend::take_failure() {
     return std::exchange(state_->failure, std::nullopt);
 }
 
+void memory_store_backend::set_frozen(bool frozen) noexcept {
+    auto lock = std::scoped_lock(state_->mutex);
+    state_->frozen = frozen;
+}
+
+std::optional<error> memory_store_backend::take_mutation_failure(const std::string& key) {
+    if (auto failure = take_failure()) {
+        return failure;
+    }
+    auto lock = std::scoped_lock(state_->mutex);
+    if (state_->frozen) {
+        return error{errc::unavailable, "memory store backend is frozen", key};
+    }
+    return std::nullopt;
+}
+
 runtime::task<void> memory_store_backend::put(std::string key, std::vector<std::byte> bytes) {
     auto waited = co_await wait();
     if (!waited) {
         co_return std::unexpected(waited.error());
     }
-    if (auto failure = take_failure()) {
+    if (auto failure = take_mutation_failure(key)) {
         co_return std::unexpected(std::move(*failure));
     }
     const auto context = std::filesystem::path(key);
@@ -74,6 +91,40 @@ runtime::task<void> memory_store_backend::put(std::string key, std::vector<std::
     co_return result<void>{};
 }
 
+runtime::task<void> memory_store_backend::put_if_absent(std::string key,
+                                                        std::vector<std::byte> bytes) {
+    auto waited = co_await wait();
+    if (!waited) {
+        co_return std::unexpected(waited.error());
+    }
+    if (auto failure = take_mutation_failure(key)) {
+        co_return std::unexpected(std::move(*failure));
+    }
+    const auto context = std::filesystem::path(key);
+    store_detail::visit_fault(
+        {store_detail::fault_operation::write, store_detail::fault_phase::before, context});
+    {
+        auto lock = std::scoped_lock(state_->mutex);
+        if (!state_->objects.try_emplace(key, std::move(bytes)).second) {
+            co_return std::unexpected(
+                error{errc::already_exists, "backend object already exists", key});
+        }
+    }
+    store_detail::visit_fault(
+        {store_detail::fault_operation::write, store_detail::fault_phase::after, context});
+    co_return result<void>{};
+}
+
+std::vector<std::string> memory_store_backend::keys() const {
+    auto lock = std::scoped_lock(state_->mutex);
+    auto output = std::vector<std::string>{};
+    output.reserve(state_->objects.size());
+    for (const auto& [key, bytes] : state_->objects) {
+        output.push_back(key);
+    }
+    return output;
+}
+
 runtime::task<void> memory_store_backend::put_range(std::string key,
                                                     std::uint64_t offset,
                                                     std::vector<std::byte> bytes) {
@@ -81,7 +132,7 @@ runtime::task<void> memory_store_backend::put_range(std::string key,
     if (!waited) {
         co_return std::unexpected(waited.error());
     }
-    if (auto failure = take_failure()) {
+    if (auto failure = take_mutation_failure(key)) {
         co_return std::unexpected(std::move(*failure));
     }
     if (offset > std::numeric_limits<std::size_t>::max() ||
@@ -136,7 +187,7 @@ runtime::task<void> memory_store_backend::remove(std::string key) {
     if (!waited) {
         co_return std::unexpected(waited.error());
     }
-    if (auto failure = take_failure()) {
+    if (auto failure = take_mutation_failure(key)) {
         co_return std::unexpected(std::move(*failure));
     }
     const auto context = std::filesystem::path(key);

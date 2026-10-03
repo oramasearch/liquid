@@ -66,7 +66,11 @@ stored bytes; repacking rebases delta chains and garbage collection retains thei
 bases ([`store.md`](store.md), [`gc.md`](gc.md)). A long-running owner opens with
 `store_options::exclusive_owner`: one handle owns a disk root across processes, and a successor
 waits up to `owner_wait` for a draining or killed predecessor to release it (liquid #321,
-[`store.md`](store.md#process-ownership-and-hand-off)).
+[`store.md`](store.md#process-ownership-and-hand-off)). A shared-store repository's own state
+(`LIQUID_REPO`, `LIQUID_JOURNAL`, session state, and replication cursors) is backend keys under
+`repositories/<id-hash>/`, so a backend with no local root holds the whole repository; create is
+exclusive through `store_backend::put_if_absent` (liquid #326,
+[`store.md`](store.md#repository-state-through-the-backend)).
 
 **Repository.** Repository creation, working-tree reads and writes, recorded moves and removals,
 change cuts, references, snapshots, historical document state, composition, conflict values,

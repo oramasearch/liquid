@@ -626,6 +626,14 @@ public:
     [[nodiscard]] runtime::task<sync_export> export_drips(journal_cursor cursor,
                                                           std::span<sync_item> output);
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
+    // The position a replication peer named source has been pulled to (liquid #326). It is local
+    // state kept beside LIQUID_REPO, through the store backend for a shared-store repository, and
+    // is never exported to peers. Absent until first set. source uses [A-Za-z0-9._-] and does not
+    // begin with a dot.
+    [[nodiscard]] runtime::task<std::optional<journal_cursor>>
+    replication_cursor(std::string source);
+    [[nodiscard]] runtime::task<void> set_replication_cursor(std::string source,
+                                                             journal_cursor cursor);
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
     [[nodiscard]] hot_update_config hot_update_configuration() const;
     [[nodiscard]] deployment_config deploy_configuration() const;

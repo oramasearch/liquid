@@ -51,9 +51,12 @@ private object-kind listing used by repository record pages returns canonical ob
 exposing store internals in the public API.
 
 Repository internals can query the opened store's root and configuration without exposing either
-through the public store API. This places per-repository checkpoint and journal entry points under
-`repositories/` and creates repository-identified lease owners while all immutable objects remain
-in the common packs and index.
+through the public store API. A shared-store repository writes its checkpoint, journal, session and
+replication-cursor entry points as `repositories/<id-hash>/` keys through the store's own backend
+(liquid #326) and creates repository-identified lease owners while all immutable objects remain in
+the common packs and index. `put_if_absent` is the conditional create its exclusive create needs:
+the disk backend hard-links a call-unique `.backend-tmp` temporary to the key, and the base class
+refuses with `errc::unsupported`. The disk `list` walks only the prefix's directory.
 
 Remote blob registrations are persisted separately in `packs/remotes.meta`. The store reports
 whole-content availability as absent, remote, or local and fetches only missing logical chunks
