@@ -259,6 +259,11 @@ Liquid #321 adds opt-in exclusive cross-process store ownership (`store_options:
 with a bounded `owner_wait` hand-off, so a successor process can take a store root from a draining
 or killed predecessor; opens without it keep the single-process contract.
 
+Liquid #326 routes a shared-store repository's own state (`LIQUID_REPO`, `LIQUID_JOURNAL`, session
+state, and the new replication cursors) through the store's `store_backend` as
+`repositories/<id-hash>/` keys, and adds `store_backend::put_if_absent` for the exclusive create; a
+checkout keeps its on-disk layout ([store.md](docs/library/store.md#repository-state-through-the-backend)).
+
 Liquid #84 adds an operator-control-plane deployment client with digest-pinned interim OCI images,
 named environments, status readback, and rollback. It uses liquid's HTTP client and neither links
 Zetta nor lake code; the provisional wire contract is `contracts/control-plane/openapi.json`.

@@ -33,6 +33,13 @@ public:
 
     [[nodiscard]] virtual runtime::task<void> put(std::string key,
                                                   std::vector<std::byte> bytes) = 0;
+    // Conditional create (liquid #326): stores bytes under key only when no object exists there,
+    // and fails errc::already_exists otherwise. The test and the write are one atomic decision
+    // the backend makes, so of two concurrent creators exactly one succeeds. Readers see the
+    // complete object or none, as with put. A repository's exclusive create needs it; the default
+    // refuses with errc::unsupported rather than emulate it with a racy exists-then-put.
+    [[nodiscard]] virtual runtime::task<void> put_if_absent(std::string key,
+                                                            std::vector<std::byte> bytes);
     [[nodiscard]] virtual runtime::task<void>
     put_range(std::string key, std::uint64_t offset, std::vector<std::byte> bytes) = 0;
     [[nodiscard]] virtual runtime::task<std::vector<std::byte>>

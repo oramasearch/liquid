@@ -861,6 +861,7 @@ add_executable(liquid-store-sim-tests
   store/test_gc_sim_regression.cpp
   sim/harness.cpp
   sim/memory_backend.cpp
+  sim/test_repository_state.cpp
   sim/test_store_sim.cpp)
 target_include_directories(liquid-store-sim-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/store

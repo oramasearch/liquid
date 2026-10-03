@@ -3,7 +3,8 @@
 **Status: implemented for single-process stores with an injected persistence backend, local chunks,
 registered remote blobs, pre-pack write-through, local eviction, and resemblance-selected chunk
 deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278), plus opt-in exclusive
-cross-process ownership with a bounded hand-off between processes (liquid #321).**
+cross-process ownership with a bounded hand-off between processes (liquid #321), and repository
+state routed through the backend with a conditional create (liquid #326).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -24,6 +25,8 @@ with `make_disk_store_backend`. The public `store_backend` contract has only the
 store needs:
 
 - `put(key, bytes)` atomically replaces one complete object;
+- `put_if_absent(key, bytes)` stores one complete object only when the key is absent, and fails
+  `errc::already_exists` otherwise, as one atomic decision (liquid #326);
 - `put_range(key, offset, bytes)` creates or extends a pack-like object at an exact byte offset;
 - `get_range(key, offset, size)` returns exactly that byte range;
 - `remove(key)` deletes one complete object;
@@ -32,7 +35,8 @@ store needs:
   before later publication.
 
 Keys use `/` as a logical separator and are relative to the backend root. `LIQUID_STORE`,
-`packs/`, `index/`, `leases/`, and `gc/` are backend keys, not paths exposed to store code. A
+`packs/`, `index/`, `leases/`, `gc/`, and a shared store's `repositories/` are backend keys, not
+paths exposed to store code. A
 complete-object `put` must be atomic for readers. A range outside an existing object's bytes is
 `errc::corrupt`; a missing key is `errc::not_found`. Network implementations map an unreachable
 service to `errc::unavailable` and rejected credentials or permissions to `errc::unauthorized`.
@@ -59,6 +63,8 @@ The same seeded crash schedule runs against both implementations.
 <root>/keys/<key-id>.wrapped   encrypted trust-domain data key
 <root>/repositories/<id-hash>/LIQUID_REPO     shared-store repository checkpoint entry point
 <root>/repositories/<id-hash>/LIQUID_JOURNAL  shared-store repository journal entry point
+<root>/repositories/<id-hash>/replication/<source>.cursor   replication peer resume position
+<root>/repositories/<id-hash>/sessions/<session-id>/…      private session state (same names)
 <root>/tmp/
 <root>/store.lock          exclusive owner lock and the owner's pid, host and start time
 ```
@@ -81,7 +87,79 @@ The `repositories/` directory appears only when a caller supplies one open store
 `repository::create` or `repository::open`; it is not part of a repository-local store's checkout
 layout. Repository documents, directory checkpoints, trees, blobs, and chunks are still stored
 through the ordinary content-addressed packs, so identical content has one physical frame across
-all repositories in the store.
+all repositories in the store. `<id-hash>` is the hex BLAKE3 digest of the identifier passed to
+`create` or `open`.
+
+## Repository state through the backend
+
+**Why (liquid #326, decision 54 / lake#512).** Lake keeps each workspace's store in the workspace
+Zetta, through a remote `store_backend` over Zetta's object capability, and cannot mount the
+workspace's volume. Before this change a repository's own entry points were read, written and
+renamed with `std::filesystem` beside the store, so a store without a local root could hold the
+packs but not the repository. Every piece of repository state is now a backend key.
+
+**Keys.** A repository opened on a shared store keeps its state under `repositories/<id-hash>/` in
+that store's own backend:
+
+| Key | Contents | Written with |
+|---|---|---|
+| `…/LIQUID_REPO` | `<document digest>\n`, the checkpointed repository document | `put`; `put_if_absent` on create |
+| `…/LIQUID_JOURNAL` | `liquid-journal-v2 <document digest>\n`, the newest uncheckpointed document | `put`; `remove` at checkpoint |
+| `…/replication/<source>.cursor` | the sync cursor token pulled from peer `<source>` | `put` |
+| `…/sessions/<session-id>/LIQUID_REPO`, `LIQUID_JOURNAL`, `LIQUID_SESSION` | a private session replica's entry points and authority | `put`; the prefix is removed on publish or discard |
+
+A repository with its own store keeps the same names beside its working tree, through a disk
+backend rooted at the checkout: `<checkout>/LIQUID_REPO`, `<checkout>/LIQUID_JOURNAL`,
+`<checkout>/sessions/…`, and `<checkout>/.liquid/replication/<source>.cursor` (`.liquid/` is the
+checkout's private directory, so a cursor is never captured as a working-tree file). The
+checkout's state files are written with a data sync, as before.
+
+`repository::replication_cursor(source)` and `set_replication_cursor(source, cursor)` read and
+publish a cursor. `source` must be `[A-Za-z0-9._-]`, not beginning with a dot. The cursor is local
+state: it is not part of the repository document and is never exported to peers.
+
+**Ordering.** Every state publication runs `barrier()` on the store's backend, so the pack frames
+and the document the marker names are complete before the marker; then the atomic `put` (or
+`put_if_absent`); then `barrier()` on the state backend, so a later publication cannot overtake
+it. This is the order pack data and `index/MANIFEST` already use. The journal is a single pointer
+record replaced atomically, not an append log: each journaled write stores its whole document as
+an ordinary object and replaces the pointer, so a reader sees the previous pointer or the new one
+and never a torn record. A crash before the replacement leaves the previous journal and loses only
+the unacknowledged write. Open still reads a legacy journal holding an inline document.
+
+**Exclusive create.** `repository::create` first refuses an existing `LIQUID_REPO` cheaply, before
+writing any object. The create's first checkpoint then publishes `LIQUID_REPO` with
+`put_if_absent`, so of two concurrent creators of one identifier exactly one succeeds and the other
+fails `errc::already_exists` with no marker of its own; the objects it wrote are unreferenced and
+are reclaimed by collection. The disk backend writes the bytes to a temporary name unique to the
+call (`<key>.<random>.backend-tmp`, which `list` skips) and hard-links it to the key: `link(2)`
+refuses an existing destination atomically. The in-memory backend decides under its lock. The base
+class refuses with `errc::unsupported`, so a backend that has not implemented the conditional create
+cannot host repository creation rather than emulating it with a racy test-then-put. Open of an
+identifier with no `LIQUID_REPO` is `errc::not_found`.
+
+**Disk list.** `list(prefix)` on the disk backend walks only the prefix's directory and the entries
+whose names start with its last component, so a backend rooted at a checkout answers for
+`LIQUID_REPO` without visiting the working tree. The keys returned are unchanged.
+
+**What still uses a local path.** The structural-merge parse graph is a cache, not repository state.
+It stays at `<state>/STRUCTURAL_MERGE_GRAPH` when the state backend has a local root; otherwise
+`import_drips` opens it in a process temporary directory removed when the merge ends. Splits create
+an owned checkout repository by design and remain filesystem operations.
+
+**Compatibility.** The on-disk layout and the marker and journal formats are unchanged, so no
+format marker changes and there is nothing to refuse: a repository written before this change opens
+after it, and one written after it opens with an earlier build. A `LIQUID_REPO.tmp` left by an
+earlier release's interrupted rename is ignored. Disk replacement now goes through the backend's
+`.backend-tmp` temporary and rename.
+
+**Verify.** `tests/sim/test_repository_state.cpp`: the conditional create on both backends,
+including eight racing creators of one key; the default `unsupported`; the scoped disk `list`; a
+shared-store repository on the in-memory backend that is created, written, cut, synced to a second
+repository, given a replication cursor, reopened, and collected with no file under any directory
+and every backend key under the store's known prefixes; the unchanged disk layout and an
+earlier-release temporary; a crash before and after the journal publication on both backends; and
+the repository crash schedule described in [simulation.md](simulation.md#repository-state).
 
 The current pack has no table or footer. Its frames are represented in memory and in the index
 memtable. When a pack reaches `store_options::pack_size` (or 64 MiB when it is zero), it is sealed:

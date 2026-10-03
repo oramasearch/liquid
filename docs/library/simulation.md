@@ -1,6 +1,7 @@
 # Deterministic store simulation
 
-**Status: implemented for the Phase 1 chunk store on disk and in memory (liquid #55, #278).** The simulator is the first
+**Status: implemented for the Phase 1 chunk store on disk and in memory (liquid #55, #278), and for
+shared-store repository state on both backends (liquid #326).** The simulator is the first
 subject of a reusable test harness. Sync and reconciliation state machines join it when their
 implementations land.
 
@@ -58,6 +59,33 @@ The recovery scan accepts complete frames before a torn tail and starts the next
 pack. Sealed packs retain their table and footer. After each crash recovery, the harness also
 removes `index/` and verifies the pack-driven index rebuild has every acknowledged object. See
 [store.md](store.md) for the format and the `store_options::durable` power-loss trade-off.
+
+## Repository state
+
+`RepositoryStateSimulation.SeededCrashRecovery` (`tests/sim/test_repository_state.cpp`, liquid
+#326) runs the same probe-then-crash method one layer up, against a shared-store repository on the
+disk backend and on the in-memory backend. A seeded schedule of 14 operations mixes file writes,
+cuts, replication-cursor updates, store and repository reopens, and collections, with a checkpoint
+every three drips so both `LIQUID_REPO` and `LIQUID_JOURNAL` publications occur. Half of the seeds
+crash at a fault point on a `repositories/` key; the rest anywhere, which is mostly pack, index and
+lease data. At the crash the in-memory backend is frozen, so destructors and cleanup of the crashed
+process cannot write state its successor recovers.
+
+After the crash the store and repository reopen and the harness proves: every acknowledged write
+reads back byte for byte (the interrupted write may hold its new bytes, wholly); every acknowledged
+change is in the log; the replication cursor is the acknowledged or the interrupted value; and the
+repository accepts a write, a cut, and a collection that keeps every acknowledged file. On disk,
+timestamps inside drips can move a pack rollover, so a run may reach fewer fault points than its
+probe; such a seed is checked as a clean stop. Replacing the atomic marker publication with a
+remove-then-put fails the first memory seed.
+
+```sh
+ctest --test-dir build -R RepositoryStateSimulation --output-on-failure
+LIQUID_REPOSITORY_SIM_SEEDS=200 ctest --test-dir build -R RepositoryStateSimulation --output-on-failure
+LIQUID_REPOSITORY_SIM_SEED=7 ctest --test-dir build -R RepositoryStateSimulation --output-on-failure -V
+```
+
+The default run is 40 seeds per backend.
 
 The default CTest job, including the Linux sanitizer job, runs this harness. CI checkout currently
 depends on the organization `ORAMA_SUBMODULES_TOKEN`; until that secret is configured, the matrix

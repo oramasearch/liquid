@@ -11,6 +11,13 @@ owners carry the repository identity. Redaction persists the caller's replacemen
 tombstoning, pack compaction, and the required `not_found` verification.
 Repository retention lease restoration uses the caller-owned store's selected persistence backend,
 so shared-store lease generations follow the same durability contract as pack and index metadata.
+`repository_state_location` (liquid #326) names where a repository's own state lives: a key prefix
+in a store backend. A shared-store repository uses `repositories/<id-hash>/` in the store's backend;
+a checkout uses a disk backend rooted at the checkout with an empty prefix, which keeps its layout.
+`LIQUID_REPO`, `LIQUID_JOURNAL`, `sessions/<id>/…`, and replication cursors are read and published
+only through it, with a data barrier before and a state barrier after each publication, and create
+publishes `LIQUID_REPO` with `put_if_absent`. See
+[store.md](../../docs/library/store.md#repository-state-through-the-backend).
 
 Issue #86 validates caller-stated write bases before blob registration, content storage, or CRDT
 mutation. Persisted `config.agents` selects the TAAP actors that must supply a base. Version 2
