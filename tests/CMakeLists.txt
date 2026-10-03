@@ -831,12 +831,14 @@ endif()
 # library configurations without widening the public ABI.
 add_executable(liquid-index-tests
   test_index.cpp
+  sim/memory_backend.cpp
   ${PROJECT_SOURCE_DIR}/src/store/index.cpp
   ${PROJECT_SOURCE_DIR}/src/store/mapped_file.cpp
   ${PROJECT_SOURCE_DIR}/src/store/pack.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp)
 target_include_directories(liquid-index-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/store
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim
   ${PROJECT_SOURCE_DIR}/src/crypto
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)

@@ -7,7 +7,14 @@
 #include <random>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <boost/capy/test/run_blocking.hpp>
+#include <pthread.h>
+#include <sys/mman.h>
+#endif
+
 #include "index.hpp"
+#include "memory_backend.hpp"
 #include "temporary_directory.hpp"
 
 namespace {
@@ -166,5 +173,87 @@ TEST(ChunkIndex, CompactionSurvivesAConcurrentFlush) {
     ASSERT_TRUE(block_on(check_all(reopened, entries)).has_value());
     ASSERT_TRUE(block_on(reopened.close()).has_value());
 }
+
+#if !defined(_WIN32)
+// Run `coroutine` to completion on the calling thread. `block_on` spreads work over runner threads,
+// so it cannot pin a coroutine ramp to the thread whose stack is under test.
+liquid::result<void> run_here(task<void> coroutine) {
+    liquid::result<void> output =
+        std::unexpected(liquid::error{liquid::errc::internal, "not run", {}});
+    boost::capy::test::run_blocking([&](liquid::result<void> value) { output = std::move(value); })(
+        std::move(coroutine));
+    return output;
+}
+
+task<void> flush_and_compact(chunk_index& index, std::vector<index_entry> entries) {
+    auto opened = co_await index.open();
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    auto inserted = co_await insert_all(index, entries);
+    if (!inserted) {
+        co_return std::unexpected(inserted.error());
+    }
+    auto flushed = co_await index.flush();
+    if (!flushed) {
+        co_return std::unexpected(flushed.error());
+    }
+    auto checked = co_await check_all(index, entries);
+    if (!checked) {
+        co_return std::unexpected(checked.error());
+    }
+    co_return co_await index.close();
+}
+
+// Embedders run the index on secondary threads, which get 512 KiB stacks on macOS. The flush and
+// compaction coroutines once held two 65,537-entry fanout arrays, and at -O0 their ramps reserved
+// stack for them: 256 KiB for flush and 516 KiB for compaction (issue #323). This thread gets a
+// 512 KiB stack above 1 MiB of inaccessible memory, so a ramp that reaches past it faults every
+// time instead of landing in whatever happens to be mapped below. The in-memory backend completes
+// inline, so every ramp runs on this thread.
+TEST(ChunkIndex, CompactionRunsOnASmallThreadStack) {
+    constexpr std::size_t stack_size = 512 * 1024;
+    constexpr std::size_t guard_size = 1024 * 1024;
+    auto* const region = static_cast<std::byte*>(
+        ::mmap(nullptr, guard_size + stack_size, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0));
+    ASSERT_NE(region, MAP_FAILED);
+    ASSERT_EQ(::mprotect(region + guard_size, stack_size, PROT_READ | PROT_WRITE), 0);
+
+    struct work {
+        std::shared_ptr<liquid::sim::memory_store_backend> backend =
+            std::make_shared<liquid::sim::memory_store_backend>();
+        std::size_t runs = 0;
+        bool passed = false;
+    } job;
+    const auto body = [](void* argument) -> void* {
+        auto& job = *static_cast<work*>(argument);
+        chunk_index index(job.backend, "index", "memory", chunk_index_options{16, 2});
+        std::vector<index_entry> entries;
+        for (std::uint64_t i = 0; i != 64; ++i) {
+            entries.push_back({make_digest(i * 7919), {static_cast<std::uint32_t>(i), i * 31, 57}});
+        }
+        job.passed = run_here(flush_and_compact(index, std::move(entries))).has_value();
+        boost::capy::test::run_blocking(
+            [&](liquid::result<std::vector<liquid::store_backend_entry>> listed) {
+                for (const auto& entry :
+                     listed.value_or(std::vector<liquid::store_backend_entry>{})) {
+                    job.runs += entry.key.find("run-") != std::string::npos ? 1 : 0;
+                }
+            })(job.backend->list("index/"));
+        return nullptr;
+    };
+    pthread_attr_t attributes;
+    ASSERT_EQ(pthread_attr_init(&attributes), 0);
+    ASSERT_EQ(pthread_attr_setstack(&attributes, region + guard_size, stack_size), 0);
+    pthread_t thread;
+    ASSERT_EQ(pthread_create(&thread, &attributes, body, &job), 0);
+    pthread_attr_destroy(&attributes);
+    ASSERT_EQ(pthread_join(thread, nullptr), 0);
+    ::munmap(region, guard_size + stack_size);
+    EXPECT_TRUE(job.passed);
+    // Four flushes of 16 entries: three runs in one tier merge into one, leaving it and the fourth.
+    EXPECT_EQ(job.runs, 2U);
+}
+#endif
 
 } // namespace

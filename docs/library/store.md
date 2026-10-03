@@ -455,7 +455,9 @@ newest first. A bloom hit selects
 the two-byte fanout slice, and `std::lower_bound` searches the mapped 48-byte records directly.
 The index therefore issues no file I/O on its lookup path. Mapping keeps per-run process memory
 bounded by the 256 KiB fanout header plus the bloom filter; mapped record pages remain managed by
-the operating system.
+the operating system. Flush and compaction build that table in a heap `std::vector`: as a coroutine
+local array it made their Debug ramps reserve 256 KiB and 516 KiB of the calling thread's stack,
+which overflowed a 512 KiB secondary thread (liquid #323).
 
 Runs are size-tiered by record count. When more than four runs share a tier, compaction performs a
 streaming k-way merge by iterating mapped input records and incrementally writing the replacement

@@ -49,6 +49,9 @@ available for cancellation and scheduling failures.
   inputs. Ordinary non-coroutine callbacks and blocking callables may capture values.
 - Use `offload` only for blocking work. After it completes, touch executor-affine Corosio objects
   only from the resumed caller coroutine.
+- Keep large buffers out of coroutine bodies. A local array lives in the heap frame, but at -O0
+  the coroutine ramp also reserves stack for it, so a 256 KiB table overflows the 512 KiB stack
+  of a macOS secondary thread. Hold buffers of more than a few KiB in a `std::vector` (liquid #323).
 - Do not create raw threads outside `src/runtime/runtime.cpp`.
 - OS callback threads may enqueue work under a mutex and use
   `run_async(default_context().executor())` to schedule a runtime-side wake. They never call

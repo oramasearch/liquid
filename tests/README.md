@@ -9,7 +9,9 @@ configuration lowering, connected authority, daemon fan-out, and the `cli-locks`
 
 The default suite covers the public library surface and the local store. Focused garbage
 collection cases and its CLI flags, and the liquid #321 multi-process owner-lock cases, live in
-`store/`; deterministic crash schedules run through
+`store/`. `test_index.cpp` runs a flush and compaction through the in-memory backend on a thread
+with a 512 KiB stack above 1 MiB of inaccessible memory, so a Debug coroutine ramp that reserves a
+large table again faults deterministically (liquid #323); deterministic crash schedules run through
 both the disk and in-memory persistence backends in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.

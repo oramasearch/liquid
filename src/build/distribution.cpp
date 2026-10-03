@@ -108,7 +108,8 @@ collect_graph(repository& source, digest id, graph_object_kind kind, graph_objec
 runtime::task<std::vector<std::byte>>
 read_remote(remote_blob_source& source, const std::string& instance, digest id) {
     auto output = std::vector<std::byte>{};
-    auto buffer = std::array<std::byte, 64U * 1024U>{};
+    // On the heap: a 64 KiB array would make the Debug coroutine ramp reserve that much stack.
+    auto buffer = std::vector<std::byte>(64U * 1024U);
     for (;;) {
         auto count = co_await source.read_range(instance, id, output.size(), buffer);
         if (!count) {
