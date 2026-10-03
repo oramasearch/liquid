@@ -8,7 +8,8 @@ Exclusive checkout coverage spans repository holder/refusal/release and offline-
 configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
 
 The default suite covers the public library surface and the local store. Focused garbage
-collection cases and its CLI flags live in `store/`; deterministic crash schedules run through
+collection cases and its CLI flags, and the liquid #321 multi-process owner-lock cases, live in
+`store/`; deterministic crash schedules run through
 both the disk and in-memory persistence backends in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.

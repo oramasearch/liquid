@@ -77,6 +77,17 @@ struct LIQUID_EXPORT store_options {
     hydration_observer on_hydration;
     remote_access_observer on_remote_access;
     std::shared_ptr<store_backend> backend;
+    // Exclusive cross-process ownership of a disk store root (liquid #321). When set, open takes
+    // the root's owner lock before it reads or repairs anything, and the store holds it until the
+    // handle is destroyed or its process exits. Another exclusive opener then waits up to its own
+    // owner_wait and fails with errc::locked naming the holder. A store kept by a long-running
+    // service sets it, so a successor process can take over from a draining predecessor. Opens
+    // without it take no lock and keep the single-process contract: the caller must ensure no
+    // other process writes the root.
+    bool exclusive_owner{};
+    // How long an exclusive open waits for the current owner to release the root. Zero makes one
+    // attempt. Only meaningful with exclusive_owner.
+    std::chrono::milliseconds owner_wait{};
 };
 
 enum class blob_availability : std::uint8_t { absent, remote, local };

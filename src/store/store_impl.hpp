@@ -14,6 +14,7 @@
 #include "leases.hpp"
 #include "liquid/store.hpp"
 #include "mutation_mutex.hpp"
+#include "owner_lock.hpp"
 #include "subject_index.hpp"
 
 namespace liquid::store_detail {
@@ -120,6 +121,8 @@ private:
     friend class collector;
     friend class compactor;
 
+    // Declared first so it is released last, after every member that may still write.
+    owner_lock owner_;
     std::filesystem::path root_;
     store_options options_;
     std::shared_ptr<::liquid::store_backend> persistence_;

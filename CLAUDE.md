@@ -255,6 +255,10 @@ Liquid #210 adds strict DER, CMS, and X.509 parsing plus verification-only RSA a
 3161 checkpoint timestamps and RFC 4998 archive-timestamp renewal chains with explicit TSA trust
 anchors and historical certificate validation.
 
+Liquid #321 adds opt-in exclusive cross-process store ownership (`store_options::exclusive_owner`)
+with a bounded `owner_wait` hand-off, so a successor process can take a store root from a draining
+or killed predecessor; opens without it keep the single-process contract.
+
 Liquid #84 adds an operator-control-plane deployment client with digest-pinned interim OCI images,
 named environments, status readback, and rollback. It uses liquid's HTTP client and neither links
 Zetta nor lake code; the provisional wire contract is `contracts/control-plane/openapi.json`.
