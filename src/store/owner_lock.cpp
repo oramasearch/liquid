@@ -191,6 +191,15 @@ void write_record(native_handle descriptor) noexcept {
 
 } // namespace
 
+std::string holder_description() {
+#if defined(_WIN32)
+    const auto pid = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    const auto pid = static_cast<long>(::getpid());
+#endif
+    return "pid " + std::to_string(pid) + " on host " + host_name() + " since " + utc_now();
+}
+
 owner_lock::~owner_lock() {
     release();
 }

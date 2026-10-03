@@ -47,6 +47,15 @@ runtime::task<store> store::open(std::filesystem::path path, store_options optio
     co_return output;
 }
 
+runtime::task<void> store::close() {
+    if (!impl_)
+        co_return result<void>{};
+    auto value = std::move(impl_);
+    auto owner = value->value->take_owner();
+    value.reset();
+    co_return co_await owner.release();
+}
+
 result<std::filesystem::path> store::root_path() const {
     if (!impl_) {
         return std::unexpected(

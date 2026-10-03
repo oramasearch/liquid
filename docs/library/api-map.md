@@ -565,9 +565,22 @@ class store_backend {
   virtual runtime::task<void> remove(std::string key) = 0;
   virtual runtime::task<std::vector<store_backend_entry>> list(std::string prefix) = 0;
   virtual runtime::task<void> barrier() = 0;
+  virtual result<std::shared_ptr<store_backend>> fenced(std::uint64_t fence) const; // default unsupported
 };
 std::shared_ptr<store_backend> make_disk_store_backend(
     std::filesystem::path root, bool durable = false);
+class owner_grant {                    // shared state: copies see one revoke (liquid #327)
+ public:
+  explicit owner_grant(std::uint64_t fence);
+  bool valid() const; std::uint64_t fence() const; bool lost() const; void revoke() const;
+};
+class store_owner {                    // injected owner lock with a fence (liquid #327)
+ public:
+  virtual runtime::task<owner_grant> acquire(std::string holder,
+                                             std::chrono::milliseconds wait) = 0;
+  virtual runtime::task<void> release() = 0;
+};
+std::shared_ptr<store_owner> make_disk_store_owner(std::filesystem::path root); // flock, fence 0
 class blob_write_through {
  public:
   virtual runtime::task<void> put(digest content, std::span<const std::byte> bytes,
@@ -591,6 +604,8 @@ struct store_options {
   std::shared_ptr<store_backend> backend; // null selects the disk backend at the store path
   bool exclusive_owner{};              // take the root's cross-process owner lock (liquid #321)
   std::chrono::milliseconds owner_wait{}; // bounded wait for the current owner; zero refuses at once
+  std::shared_ptr<store_owner> owner;  // injected owner; implies exclusive ownership (liquid #327)
+  bool read_after_owner_lost{};        // reads continue after the grant is lost
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -628,6 +643,7 @@ class store {                          // the chunk store: chunks, packs, liquid
   runtime::task<std::optional<object_key_version>> key_version(digest);
   runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
   runtime::task<collection_report> collect(collection_options = {});   // epoch marking
+  runtime::task<void> close();         // destroy, then await the owner's release
 };
 ```
 
@@ -643,6 +659,8 @@ keyring enables trust-domain encrypted objects; see
 deletion, prefix listing, and durability barriers. Missing keys return `not_found`, invalid stored
 ranges or bytes return `corrupt`, unreachable services return `unavailable`, and rejected backend
 authority returns `unauthorized`; the disk implementation maps local system failures to `io`.
+`fenced` returns a view whose mutations carry an injected owner's fence; a stale fence is
+`locked`. See [store.md](store.md#injected-owners-and-fencing).
 
 ### `liquid/remote.hpp`
 

@@ -3,8 +3,9 @@
 **Status: implemented for single-process stores with an injected persistence backend, local chunks,
 registered remote blobs, pre-pack write-through, local eviction, and resemblance-selected chunk
 deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278), plus opt-in exclusive
-cross-process ownership with a bounded hand-off between processes (liquid #321), and repository
-state routed through the backend with a conditional create (liquid #326).**
+cross-process ownership with a bounded hand-off between processes (liquid #321), repository
+state routed through the backend with a conditional create (liquid #326), and an injected owner
+whose grant fences stale writers on backends without a local root (liquid #327).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -32,7 +33,10 @@ store needs:
 - `remove(key)` deletes one complete object;
 - `list(prefix)` returns matching keys and sizes; and
 - `barrier()` completes the backend's configured durability level for all successful operations
-  before later publication.
+  before later publication; and
+- `fenced(fence)` returns a view of the same objects whose every call carries an injected owner's
+  fence. It is not pure virtual: the default is `errc::unsupported`, which only an open with
+  `store_options::owner` reaches (see [Injected owners and fencing](#injected-owners-and-fencing)).
 
 Keys use `/` as a logical separator and are relative to the backend root. `LIQUID_STORE`,
 `packs/`, `index/`, `leases/`, `gc/`, and a shared store's `repositories/` are backend keys, not
@@ -565,9 +569,9 @@ store root is owned by pid 4211 on host lake-7d9f since 2026-10-02T21:14:03Z; on
 handle owns a root at a time
 ```
 
-A zero wait makes one attempt. A negative wait, or a wait without `exclusive_owner`, is
-`errc::invalid_argument`; `exclusive_owner` with a persistence backend that has no local root is
-`errc::unsupported`. The descriptor is close-on-exec, so a child process never keeps the root.
+A zero wait makes one attempt. A negative wait, or a wait without `exclusive_owner` or an injected
+`owner`, is `errc::invalid_argument`; `exclusive_owner` with a persistence backend that has no local
+root and no injected `owner` is `errc::unsupported`. The descriptor is close-on-exec, so a child process never keeps the root.
 The kernel releases the lock when the owner's descriptor closes, however the process ends, so a
 successor never waits on a dead owner.
 
@@ -613,9 +617,80 @@ the drain. The lock needs a filesystem whose `flock` is honoured between the pro
 block filesystem shared by two processes on one host is; a network filesystem must provide it
 between its clients.
 
+`store::close()` destroys the store and then awaits the owner's release, so a predecessor can hand
+over at a known point instead of relying on destruction; the handle is empty afterwards.
+
+### Injected owners and fencing
+
+**What (liquid #327).** `store_options::owner` injects the owner lock as a `store_owner`, so a store
+whose backend has no local root (lake's workspace stores on Zetta's object capability,
+oramasearch/zetta#1005) is still owned by one holder at a time. Setting it implies exclusive
+ownership; with `exclusive_owner` and no `owner`, a disk backend keeps the flock above, which is
+itself the disk implementation of the interface (`make_disk_store_owner`).
+
+```cpp
+class store_owner {
+  virtual runtime::task<owner_grant> acquire(std::string holder, std::chrono::milliseconds wait) = 0;
+  virtual runtime::task<void> release() = 0;
+};
+```
+
+- `acquire` waits up to `owner_wait` for the current holder and then fails with `errc::locked`
+  naming it. The store passes `holder` as `pid <pid> on host <host> since <UTC time>`, the words the
+  disk refusal uses, for the owner to record.
+- The `owner_grant` it returns carries `fence()`, an opaque token that rises with every new holder,
+  and `lost()`. Copies share one state: the owner keeps a copy and calls `revoke()` when it learns
+  the holder may no longer write (a lease renewal failed or another holder took it).
+- `release` gives the store up. `store::close()` awaits it. A store destroyed without `close()`
+  revokes the grant and starts the release on the runtime, so a waiting successor still proceeds;
+  the disk owner is released synchronously by its destructor as before. One owner object serves one
+  open store at a time.
+
+**The fence travels in a backend view.** After acquiring, open calls `backend->fenced(fence)` once
+and sends every later backend call through the returned view, wrapped so a lost grant is enforced
+locally. The view shares the backend's objects; a remote implementation attaches the fence to every
+mutation and the remote refuses one whose fence is not the current holder's with `errc::locked`.
+A view rather than a `set_fence` call on the backend: two store handles in one process may share a
+backend instance (a predecessor and its successor during a hand-off), and a fence set on the shared
+instance would let the predecessor write with the successor's token. The view also reaches
+repository state written through the store's configured backend (leases, and the repository keys
+of liquid #326), because the store's configuration names the wrapped view. A backend that cannot
+carry a fence keeps the default `fenced`, and an open with an injected owner on it is
+`errc::unsupported` after the owner is released again. The disk backend's view ignores the token:
+the disk owner's fence is zero and the kernel lock already excludes every other writer. An owner
+whose grant can lapse while its holder runs therefore needs a backend that enforces the fence.
+
+**A lost grant.** Once the grant is lost, by the owner's `revoke()` or because the remote refused
+the fence (the wrapper revokes the grant on any `errc::locked` from the view), every later
+mutation (`put`, `put_if_absent`, `put_range`, `remove`, `barrier`) fails with `errc::locked` without reaching the
+remote, and the store must be closed. Reads (`get_range`, `list`) fail the same way unless the
+caller set `store_options::read_after_owner_lost`. The operation that discovered the loss fails
+part way: its earlier writes are what any interrupted write leaves (an unsealed pack tail with
+whole frames, unpublished object maps), and the successor's open recovers them exactly as after a
+crash. The remote refusal is what makes this safe; the local check only stops a holder that already
+knows it lost from asking.
+
+**Adding a backend operation.** The wrapper forwards each `store_backend` operation with the
+lost-grant check; `put_if_absent` (liquid #326) is forwarded as a mutation, so a repository's
+conditional create also carries the fence and is refused once the grant is lost. A new mutating
+operation must be added to the wrapper in `src/store/owner.cpp` the same way, and a remote backend's
+view must carry the fence on it.
+
 **Verify.** `tests/store/test_owner.cpp` (`StoreOwner.*`). In-process cases cover refusal, the
 bounded wait expiring, a waiting open taking over when the owner is destroyed, and option
-validation. Process cases run `liquid-store-owner-fixture` as real processes: four writers started
+validation. Injected-owner cases run on a remote-shaped test backend (objects plus one lease whose
+fence rises with each holder, refusing a mutation with a stale fence): a successor waits and takes
+over when the predecessor closes, with a higher fence; a bounded wait expires; a holder whose lease
+lapses in the middle of a multi-chunk put has that write refused by the remote and its later writes
+and reads refused locally, while the successor opens, passes a collection dry run, reads every
+acknowledged object and none of the interrupted one, and keeps them all through a full collection;
+a grant the owner revokes refuses the next mutation without reaching the remote, permits reads
+when opted in, and a store destroyed without `close()` still releases to a waiting successor; a
+backend without `fenced` is `unsupported` and the owner is released; the disk owner can be
+injected and released by `close()`; a stale holder's `put_if_absent` is refused by the remote and
+then locally; and a shared-store repository's state keys are all written through the fenced view
+with the owner's fence, its create is a conditional create, and its next write after the lease
+lapses is refused. Process cases run `liquid-store-owner-fixture` as real processes: four writers started
 together on one root must take turns and every acknowledged write must survive; and a writer that
 is killed with `SIGKILL` in the middle of its write stream while a successor waits must hand the
 root over, after which the successor writes. Each process case then checks the store: every frame

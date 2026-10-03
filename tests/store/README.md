@@ -18,6 +18,12 @@ hand-off to a waiting opener, and option validation; and, on POSIX, real writer 
 writer killed with `SIGKILL` mid-stream while a successor waits. Each process case ends with a
 frame-level pack scan, reopen, a byte-for-byte read of every acknowledged write, and a full
 collection that must keep every acknowledged object.
+It also covers liquid #327 injected owners on a remote-shaped backend whose single lease fence
+rises with each holder: hand-off on `close()`, bounded-wait expiry, a stale holder whose lease lapses
+mid-put (refused by the remote, then locally; the successor recovers, passes a collection dry run,
+and keeps every acknowledged object), a revoked grant with opted-in reads and release on
+destruction, a backend without `fenced`, the injected disk owner, a stale holder's refused
+`put_if_absent`, and a shared-store repository whose state writes all carry the owner's fence.
 
 Store fixtures allocate their named directories beneath the unique process root specified in the
 parent [`README.md`](../README.md).

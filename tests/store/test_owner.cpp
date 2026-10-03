@@ -1,5 +1,6 @@
 // liquid #321: one open handle owns a store root at a time, across processes, and a successor
-// can wait (bounded) for a draining or killed predecessor to release it.
+// can wait (bounded) for a draining or killed predecessor to release it. liquid #327: the same
+// ownership through an injected owner whose grant carries a fence, on a remote-shaped backend.
 
 #include <gtest/gtest.h>
 
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -16,10 +18,13 @@
 #include <vector>
 
 #include "../temporary_directory.hpp"
+#include "liquid/hash.hpp"
+#include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "owner_fixture_content.hpp"
 #include "store/backend.hpp"
+#include "store/owner.hpp"
 #include "store/pack.hpp"
 
 #ifndef _WIN32
@@ -143,6 +148,517 @@ TEST(StoreOwner, InvalidOwnershipOptionsAreRejected) {
     auto in_memory = liquid::runtime::block_on(liquid::store::open(root, memory));
     ASSERT_FALSE(in_memory);
     EXPECT_EQ(in_memory.error().code, liquid::errc::unsupported);
+}
+
+// A remote object service shaped like Zetta's object capability (oramasearch/zetta#1005): objects
+// plus one owner lease whose fence rises with every new holder. A mutation carries its client's
+// fence and is refused with errc::locked unless that fence is the current holder's.
+struct remote_service {
+    std::mutex mutex;
+    std::map<std::string, std::vector<std::byte>> objects;
+    std::optional<std::string> holder;
+    std::uint64_t fence{};
+    std::uint64_t issued{};
+    std::uint64_t accepted{};
+    std::uint64_t refused{};
+    std::uint64_t created{};
+    // The fence carried by the last accepted write of each key; zero when it carried none.
+    std::map<std::string, std::uint64_t> written_with;
+    // The lease lapses once this many mutations have been accepted, as if renewal had failed.
+    std::optional<std::uint64_t> expire_at;
+
+    // Called with the mutex held.
+    liquid::result<void> admit(const std::optional<std::uint64_t>& client, const std::string& key) {
+        if (!client && !holder)
+            return {};
+        if (!holder || client != fence) {
+            ++refused;
+            return std::unexpected(
+                liquid::error{liquid::errc::locked, "stale owner fence refused", key});
+        }
+        return {};
+    }
+
+    void mutated(const std::string& key, const std::optional<std::uint64_t>& client) {
+        written_with.insert_or_assign(key, client.value_or(0));
+        ++accepted;
+        if (expire_at && accepted >= *expire_at) {
+            holder.reset();
+            expire_at.reset();
+        }
+    }
+};
+
+class remote_backend final : public liquid::store_backend {
+public:
+    explicit remote_backend(std::shared_ptr<remote_service> service,
+                            std::optional<std::uint64_t> fence = std::nullopt)
+        : service_(std::move(service)), fence_(fence) {}
+
+    liquid::runtime::task<void> put(std::string key, std::vector<std::byte> bytes) override {
+        auto lock = std::scoped_lock(service_->mutex);
+        if (auto admitted = service_->admit(fence_, key); !admitted)
+            co_return std::unexpected(admitted.error());
+        service_->mutated(key, fence_);
+        service_->objects.insert_or_assign(std::move(key), std::move(bytes));
+        co_return liquid::result<void>{};
+    }
+
+    liquid::runtime::task<void> put_if_absent(std::string key,
+                                              std::vector<std::byte> bytes) override {
+        auto lock = std::scoped_lock(service_->mutex);
+        if (auto admitted = service_->admit(fence_, key); !admitted)
+            co_return std::unexpected(admitted.error());
+        if (service_->objects.contains(key)) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::already_exists, "backend object already exists", key});
+        }
+        service_->mutated(key, fence_);
+        ++service_->created;
+        service_->objects.emplace(std::move(key), std::move(bytes));
+        co_return liquid::result<void>{};
+    }
+
+    liquid::runtime::task<void>
+    put_range(std::string key, std::uint64_t offset, std::vector<std::byte> bytes) override {
+        auto lock = std::scoped_lock(service_->mutex);
+        if (auto admitted = service_->admit(fence_, key); !admitted)
+            co_return std::unexpected(admitted.error());
+        auto& object = service_->objects[key];
+        const auto end = static_cast<std::size_t>(offset) + bytes.size();
+        if (object.size() < end)
+            object.resize(end);
+        std::copy(bytes.begin(), bytes.end(), object.begin() + static_cast<std::ptrdiff_t>(offset));
+        service_->mutated(key, fence_);
+        co_return liquid::result<void>{};
+    }
+
+    liquid::runtime::task<std::vector<std::byte>>
+    get_range(std::string key, std::uint64_t offset, std::uint64_t size) override {
+        auto lock = std::scoped_lock(service_->mutex);
+        const auto found = service_->objects.find(key);
+        if (found == service_->objects.end()) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::not_found, "backend object was not found", key});
+        }
+        if (offset > found->second.size() || size > found->second.size() - offset) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::corrupt, "backend range is outside the object", key});
+        }
+        const auto begin = found->second.begin() + static_cast<std::ptrdiff_t>(offset);
+        co_return std::vector<std::byte>(begin, begin + static_cast<std::ptrdiff_t>(size));
+    }
+
+    liquid::runtime::task<void> remove(std::string key) override {
+        auto lock = std::scoped_lock(service_->mutex);
+        if (auto admitted = service_->admit(fence_, key); !admitted)
+            co_return std::unexpected(admitted.error());
+        if (service_->objects.erase(key) == 0) {
+            co_return std::unexpected(
+                liquid::error{liquid::errc::not_found, "backend object was not found", key});
+        }
+        service_->mutated(key, fence_);
+        co_return liquid::result<void>{};
+    }
+
+    liquid::runtime::task<std::vector<liquid::store_backend_entry>>
+    list(std::string prefix) override {
+        auto lock = std::scoped_lock(service_->mutex);
+        std::vector<liquid::store_backend_entry> entries;
+        for (const auto& [key, bytes] : service_->objects) {
+            if (key.starts_with(prefix))
+                entries.push_back({key, bytes.size()});
+        }
+        co_return entries;
+    }
+
+    liquid::runtime::task<void> barrier() override {
+        co_return liquid::result<void>{};
+    }
+
+    liquid::result<std::shared_ptr<liquid::store_backend>>
+    fenced(std::uint64_t fence) const override {
+        return std::make_shared<remote_backend>(service_, fence);
+    }
+
+private:
+    std::shared_ptr<remote_service> service_;
+    std::optional<std::uint64_t> fence_;
+};
+
+// The owner over the service's lease: acquire polls until the lease is free or the wait expires.
+class remote_owner final : public liquid::store_owner {
+public:
+    explicit remote_owner(std::shared_ptr<remote_service> service) : service_(std::move(service)) {}
+
+    liquid::runtime::task<liquid::owner_grant> acquire(std::string holder,
+                                                       std::chrono::milliseconds wait) override {
+        const auto deadline = std::chrono::steady_clock::now() + wait;
+        for (;;) {
+            {
+                auto lock = std::scoped_lock(service_->mutex);
+                if (!service_->holder) {
+                    service_->holder = holder;
+                    service_->fence = ++service_->issued;
+                    grant_ = liquid::owner_grant{service_->fence};
+                    co_return grant_;
+                }
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    co_return std::unexpected(liquid::error{
+                        liquid::errc::locked, "store is owned by " + *service_->holder, "remote"});
+                }
+            }
+            auto [delay_error] = co_await liquid::runtime::delay(std::chrono::milliseconds{5});
+            if (delay_error) {
+                co_return std::unexpected(
+                    liquid::error{liquid::errc::unavailable, "cancelled", "remote"});
+            }
+        }
+    }
+
+    liquid::runtime::task<void> release() override {
+        auto lock = std::scoped_lock(service_->mutex);
+        if (service_->holder && grant_.valid() && service_->fence == grant_.fence())
+            service_->holder.reset();
+        ++releases;
+        co_return liquid::result<void>{};
+    }
+
+    [[nodiscard]] const liquid::owner_grant& grant() const noexcept {
+        return grant_;
+    }
+
+    std::uint64_t releases{};
+
+private:
+    std::shared_ptr<remote_service> service_;
+    liquid::owner_grant grant_;
+};
+
+struct remote_store {
+    liquid::store_options options;
+    std::shared_ptr<remote_owner> owner;
+};
+
+remote_store remote_options(const std::shared_ptr<remote_service>& service,
+                            std::chrono::milliseconds wait = std::chrono::milliseconds{0}) {
+    remote_store output;
+    output.owner = std::make_shared<remote_owner>(service);
+    output.options.backend = std::make_shared<remote_backend>(service);
+    output.options.owner = output.owner;
+    output.options.owner_wait = wait;
+    return output;
+}
+
+// Several chunks, so one put makes several backend mutations.
+std::vector<std::byte> large_payload() {
+    std::vector<std::byte> output;
+    for (std::uint64_t index = 0; output.size() < 2U * 1024U * 1024U; ++index) {
+        const auto part = liquid::test::owner_fixture_bytes(327, index);
+        output.insert(output.end(), part.begin(), part.end());
+    }
+    return output;
+}
+
+// The successor's view of a store that a stale owner wrote: it opens, a collection dry run passes,
+// every acknowledged object reads back, and a collection over leases on them keeps every one.
+void check_remote_store(
+    const std::shared_ptr<remote_service>& service,
+    const std::filesystem::path& root,
+    const std::vector<std::pair<liquid::digest, std::vector<std::byte>>>& acked) {
+    auto opened = remote_options(service);
+    auto store = liquid::runtime::block_on(liquid::store::open(root, opened.options));
+    ASSERT_TRUE(store) << store.error().message;
+    auto dry = liquid::runtime::block_on(store->collect({.dry_run = true}));
+    ASSERT_TRUE(dry) << dry.error().message;
+    std::vector<liquid::lease> leases;
+    for (const auto& [id, bytes] : acked) {
+        auto read = liquid::runtime::block_on(store->get(id));
+        ASSERT_TRUE(read) << read.error().message;
+        ASSERT_EQ(*read, bytes);
+        auto leased = liquid::runtime::block_on(store->lease_root(id, std::chrono::hours{1}));
+        ASSERT_TRUE(leased) << leased.error().message;
+        leases.push_back(std::move(*leased));
+    }
+    auto collected = liquid::runtime::block_on(store->collect());
+    ASSERT_TRUE(collected) << collected.error().message;
+    EXPECT_EQ(collected->live_objects, acked.size());
+    auto closed = liquid::runtime::block_on(store->close());
+    ASSERT_TRUE(closed) << closed.error().message;
+}
+
+TEST(StoreOwner, InjectedOwnerSuccessorWaitsAndTakesOverWhenThePredecessorCloses) {
+    const auto root = fresh("store-owner-injected-handoff") / "store";
+    auto service = std::make_shared<remote_service>();
+    auto first_options = remote_options(service);
+    auto first = liquid::runtime::block_on(liquid::store::open(root, first_options.options));
+    ASSERT_TRUE(first) << first.error().message;
+    const auto payload = liquid::test::owner_fixture_bytes(1, 1);
+    auto stored = liquid::runtime::block_on(first->put(payload));
+    ASSERT_TRUE(stored) << stored.error().message;
+
+    // An opener that will not wait is refused and told who holds the store.
+    auto refused_options = remote_options(service);
+    auto refused = liquid::runtime::block_on(liquid::store::open(root, refused_options.options));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::locked);
+    EXPECT_NE(refused.error().message.find("pid "), std::string::npos) << refused.error().message;
+
+    // The predecessor drains and closes while the successor waits.
+    std::thread drain([&first] {
+        std::this_thread::sleep_for(std::chrono::milliseconds{200});
+        auto closed = liquid::runtime::block_on(first->close());
+        EXPECT_TRUE(closed) << closed.error().message;
+    });
+    auto successor_options = remote_options(service, std::chrono::seconds{30});
+    auto successor =
+        liquid::runtime::block_on(liquid::store::open(root, successor_options.options));
+    drain.join();
+    ASSERT_TRUE(successor) << successor.error().message;
+    EXPECT_EQ(first_options.owner->releases, 1U);
+    EXPECT_GT(successor_options.owner->grant().fence(), first_options.owner->grant().fence());
+
+    auto read = liquid::runtime::block_on(successor->get(*stored));
+    ASSERT_TRUE(read) << read.error().message;
+    EXPECT_EQ(*read, payload);
+    const auto next = liquid::test::owner_fixture_bytes(1, 2);
+    auto written = liquid::runtime::block_on(successor->put(next));
+    ASSERT_TRUE(written) << written.error().message;
+    auto closed = liquid::runtime::block_on(successor->close());
+    ASSERT_TRUE(closed) << closed.error().message;
+    EXPECT_EQ(service->refused, 0U);
+    check_remote_store(service, root, {{*stored, payload}, {*written, next}});
+}
+
+TEST(StoreOwner, InjectedOwnerBoundedWaitExpires) {
+    const auto root = fresh("store-owner-injected-expires") / "store";
+    auto service = std::make_shared<remote_service>();
+    auto first_options = remote_options(service);
+    auto first = liquid::runtime::block_on(liquid::store::open(root, first_options.options));
+    ASSERT_TRUE(first) << first.error().message;
+
+    auto second_options = remote_options(service, std::chrono::milliseconds{150});
+    const auto started = std::chrono::steady_clock::now();
+    auto second = liquid::runtime::block_on(liquid::store::open(root, second_options.options));
+    ASSERT_FALSE(second);
+    EXPECT_EQ(second.error().code, liquid::errc::locked);
+    EXPECT_GE(std::chrono::steady_clock::now() - started, std::chrono::milliseconds{150});
+}
+
+TEST(StoreOwner, StaleOwnerWhoseLeaseExpiredMidWriteIsRefusedAndTheSuccessorRecovers) {
+    const auto root = fresh("store-owner-stale") / "store";
+    auto service = std::make_shared<remote_service>();
+    auto stale_options = remote_options(service);
+    auto stale = liquid::runtime::block_on(liquid::store::open(root, stale_options.options));
+    ASSERT_TRUE(stale) << stale.error().message;
+
+    std::vector<std::pair<liquid::digest, std::vector<std::byte>>> acked;
+    for (std::uint64_t index = 0; index != 3; ++index) {
+        auto bytes = liquid::test::owner_fixture_bytes(2, index);
+        auto stored = liquid::runtime::block_on(stale->put(bytes));
+        ASSERT_TRUE(stored) << stored.error().message;
+        acked.emplace_back(*stored, std::move(bytes));
+    }
+
+    // The lease lapses after the next accepted mutation, in the middle of a multi-chunk put; a
+    // successor then takes the lease with a higher fence.
+    {
+        auto lock = std::scoped_lock(service->mutex);
+        service->expire_at = service->accepted + 1;
+    }
+    const auto large = large_payload();
+    auto interrupted = liquid::runtime::block_on(stale->put(large));
+    ASSERT_FALSE(interrupted);
+    EXPECT_EQ(interrupted.error().code, liquid::errc::locked) << interrupted.error().message;
+    EXPECT_EQ(service->refused, 1U);
+    EXPECT_TRUE(stale_options.owner->grant().lost());
+
+    auto successor_options = remote_options(service);
+    auto successor =
+        liquid::runtime::block_on(liquid::store::open(root, successor_options.options));
+    ASSERT_TRUE(successor) << successor.error().message;
+    EXPECT_GT(successor_options.owner->grant().fence(), stale_options.owner->grant().fence());
+
+    // The stale holder's later work is refused without reaching the remote, reads included.
+    const auto accepted = service->accepted;
+    auto again = liquid::runtime::block_on(stale->put(liquid::test::owner_fixture_bytes(2, 9)));
+    ASSERT_FALSE(again);
+    EXPECT_EQ(again.error().code, liquid::errc::locked);
+    auto stale_read = liquid::runtime::block_on(stale->get(acked.front().first));
+    ASSERT_FALSE(stale_read);
+    EXPECT_EQ(stale_read.error().code, liquid::errc::locked);
+    EXPECT_EQ(service->refused, 1U);
+    EXPECT_EQ(service->accepted, accepted);
+
+    // The successor sees every acknowledged write and none of the interrupted one, and writes.
+    const auto large_id = liquid::hash(liquid::algorithm::blake3, large);
+    ASSERT_TRUE(large_id) << large_id.error().message;
+    auto contains = liquid::runtime::block_on(successor->contains(*large_id));
+    ASSERT_TRUE(contains) << contains.error().message;
+    EXPECT_FALSE(*contains);
+    auto bytes = liquid::test::owner_fixture_bytes(3, 0);
+    auto written = liquid::runtime::block_on(successor->put(bytes));
+    ASSERT_TRUE(written) << written.error().message;
+    acked.emplace_back(*written, std::move(bytes));
+    auto closed = liquid::runtime::block_on(successor->close());
+    ASSERT_TRUE(closed) << closed.error().message;
+    *stale = {};
+    check_remote_store(service, root, acked);
+}
+
+TEST(StoreOwner, RevokedGrantRefusesTheNextMutationAndTheSuccessorTakesOver) {
+    const auto root = fresh("store-owner-revoked") / "store";
+    auto service = std::make_shared<remote_service>();
+    auto revoked_options = remote_options(service);
+    revoked_options.options.read_after_owner_lost = true;
+    auto revoked = liquid::runtime::block_on(liquid::store::open(root, revoked_options.options));
+    ASSERT_TRUE(revoked) << revoked.error().message;
+    const auto payload = liquid::test::owner_fixture_bytes(4, 0);
+    auto stored = liquid::runtime::block_on(revoked->put(payload));
+    ASSERT_TRUE(stored) << stored.error().message;
+
+    // The owner learns its lease is gone (a failed renewal) and revokes the grant.
+    revoked_options.owner->grant().revoke();
+    const auto accepted = service->accepted;
+    auto refused = liquid::runtime::block_on(revoked->put(liquid::test::owner_fixture_bytes(4, 1)));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::locked);
+    EXPECT_EQ(service->accepted, accepted);
+    EXPECT_EQ(service->refused, 0U);
+    // The caller opted in to reads after the loss.
+    auto read = liquid::runtime::block_on(revoked->get(*stored));
+    ASSERT_TRUE(read) << read.error().message;
+    EXPECT_EQ(*read, payload);
+
+    // Destroying the store without close() still releases the owner, so a waiting successor gets
+    // the store.
+    std::thread drain([&revoked] {
+        std::this_thread::sleep_for(std::chrono::milliseconds{100});
+        *revoked = {};
+    });
+    auto successor_options = remote_options(service, std::chrono::seconds{30});
+    auto successor =
+        liquid::runtime::block_on(liquid::store::open(root, successor_options.options));
+    drain.join();
+    ASSERT_TRUE(successor) << successor.error().message;
+    auto closed = liquid::runtime::block_on(successor->close());
+    ASSERT_TRUE(closed) << closed.error().message;
+    check_remote_store(service, root, {{*stored, payload}});
+}
+
+TEST(StoreOwner, StaleOwnersConditionalCreateIsRefused) {
+    auto service = std::make_shared<remote_service>();
+    auto owner = std::make_shared<remote_owner>(service);
+    auto grant = liquid::runtime::block_on(owner->acquire("test", std::chrono::milliseconds{0}));
+    ASSERT_TRUE(grant) << grant.error().message;
+    auto view = remote_backend(service).fenced(grant->fence());
+    ASSERT_TRUE(view) << view.error().message;
+    auto owned = liquid::store_detail::owned_store_backend(*view, *grant, false);
+    const auto bytes = liquid::test::owner_fixture_bytes(6, 0);
+
+    auto created = liquid::runtime::block_on(owned.put_if_absent("a", bytes));
+    ASSERT_TRUE(created) << created.error().message;
+    EXPECT_EQ(service->written_with.at("a"), grant->fence());
+    auto exists = liquid::runtime::block_on(owned.put_if_absent("a", bytes));
+    ASSERT_FALSE(exists);
+    EXPECT_EQ(exists.error().code, liquid::errc::already_exists);
+    EXPECT_FALSE(grant->lost());
+
+    // The lease lapses: the remote refuses the stale fence and the grant is revoked.
+    {
+        auto lock = std::scoped_lock(service->mutex);
+        service->holder.reset();
+    }
+    auto stale = liquid::runtime::block_on(owned.put_if_absent("b", bytes));
+    ASSERT_FALSE(stale);
+    EXPECT_EQ(stale.error().code, liquid::errc::locked);
+    EXPECT_EQ(service->refused, 1U);
+    EXPECT_TRUE(grant->lost());
+
+    // Later conditional creates are refused locally.
+    auto again = liquid::runtime::block_on(owned.put_if_absent("c", bytes));
+    ASSERT_FALSE(again);
+    EXPECT_EQ(again.error().code, liquid::errc::locked);
+    EXPECT_EQ(service->refused, 1U);
+    EXPECT_FALSE(service->objects.contains("b"));
+    EXPECT_FALSE(service->objects.contains("c"));
+}
+
+TEST(StoreOwner, RepositoryStateWritesGoThroughTheFencedView) {
+    const auto workspace = fresh("store-owner-repository");
+    auto service = std::make_shared<remote_service>();
+    auto opened = remote_options(service);
+    auto store =
+        liquid::runtime::block_on(liquid::store::open(workspace / "store", opened.options));
+    ASSERT_TRUE(store) << store.error().message;
+    const auto fence = opened.owner->grant().fence();
+
+    auto repository = liquid::runtime::block_on(
+        liquid::repository::create(workspace / "repository", {.store = &*store}));
+    ASSERT_TRUE(repository) << repository.error().message;
+    auto written = liquid::runtime::block_on(
+        repository->write("notes.txt", liquid::test::owner_fixture_bytes(7, 0)));
+    ASSERT_TRUE(written) << written.error().message;
+
+    // Every repository key was written by the owner, with its fence, and the create was a
+    // conditional create.
+    std::size_t repository_keys = 0;
+    bool marker = false;
+    for (const auto& [key, carried] : service->written_with) {
+        if (!key.starts_with("repositories/"))
+            continue;
+        ++repository_keys;
+        marker = marker || key.ends_with("/LIQUID_REPO");
+        EXPECT_EQ(carried, fence) << key;
+    }
+    EXPECT_GT(repository_keys, 0U);
+    EXPECT_TRUE(marker);
+    EXPECT_GE(service->created, 1U);
+    EXPECT_EQ(service->refused, 0U);
+
+    // Once the lease lapses, the repository's next write is refused.
+    {
+        auto lock = std::scoped_lock(service->mutex);
+        service->holder.reset();
+    }
+    auto refused = liquid::runtime::block_on(
+        repository->write("notes.txt", liquid::test::owner_fixture_bytes(7, 1)));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::locked) << refused.error().message;
+    EXPECT_TRUE(opened.owner->grant().lost());
+}
+
+TEST(StoreOwner, InjectedOwnerNeedsABackendThatCarriesTheFence) {
+    const auto root = fresh("store-owner-unfenced") / "store";
+    auto service = std::make_shared<remote_service>();
+    auto options = remote_options(service);
+    options.options.backend = std::make_shared<rootless_backend>();
+    auto opened = liquid::runtime::block_on(liquid::store::open(root, options.options));
+    ASSERT_FALSE(opened);
+    EXPECT_EQ(opened.error().code, liquid::errc::unsupported);
+    EXPECT_EQ(options.owner->releases, 1U);
+    EXPECT_FALSE(service->holder);
+}
+
+TEST(StoreOwner, DiskOwnerCanBeInjectedAndCloseReleasesIt) {
+    const auto root = fresh("store-owner-disk-injected") / "store";
+    liquid::store_options injected;
+    injected.owner = liquid::make_disk_store_owner(root);
+    auto first = liquid::runtime::block_on(liquid::store::open(root, injected));
+    ASSERT_TRUE(first) << first.error().message;
+    auto stored = liquid::runtime::block_on(first->put(liquid::test::owner_fixture_bytes(5, 0)));
+    ASSERT_TRUE(stored) << stored.error().message;
+
+    auto second = liquid::runtime::block_on(liquid::store::open(root, exclusive()));
+    ASSERT_FALSE(second);
+    EXPECT_EQ(second.error().code, liquid::errc::locked);
+
+    auto closed = liquid::runtime::block_on(first->close());
+    ASSERT_TRUE(closed) << closed.error().message;
+    auto third = liquid::runtime::block_on(liquid::store::open(root, exclusive()));
+    ASSERT_TRUE(third) << third.error().message;
+    auto read = liquid::runtime::block_on(third->get(*stored));
+    ASSERT_TRUE(read) << read.error().message;
 }
 
 TEST(StoreOwner, OpensWithoutExclusiveOwnershipTakeNoLock) {

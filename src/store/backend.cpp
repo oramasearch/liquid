@@ -13,6 +13,7 @@
 
 #include "../runtime/net.hpp"
 #include "faults.hpp"
+#include "owner.hpp"
 
 namespace liquid {
 namespace {
@@ -55,6 +56,11 @@ public:
     runtime::task<void> remove(std::string key) override;
     runtime::task<std::vector<store_backend_entry>> list(std::string prefix) override;
     runtime::task<void> barrier() override;
+    // The disk owner's fence is zero and the kernel lock excludes every other writer, so the view
+    // is the same root without a token.
+    result<std::shared_ptr<store_backend>> fenced(std::uint64_t) const override {
+        return std::make_shared<disk_store_backend>(root_, durable_);
+    }
 
     result<std::filesystem::path> path(std::string_view key) const {
         return checked_path(root_, key);
@@ -336,6 +342,11 @@ runtime::task<void> store_backend::put_if_absent(std::string key, std::vector<st
         errc::unsupported, "store backend does not implement a conditional create", key));
 }
 
+result<std::shared_ptr<store_backend>> store_backend::fenced(std::uint64_t) const {
+    return std::unexpected(backend_error(
+        errc::unsupported, "this store backend cannot carry an owner fence", "store_backend"));
+}
+
 std::shared_ptr<store_backend> make_disk_store_backend(std::filesystem::path root, bool durable) {
     return std::make_shared<disk_store_backend>(std::move(root), durable);
 }
@@ -344,6 +355,9 @@ namespace store_detail {
 
 std::optional<std::filesystem::path>
 backend_local_path(const std::shared_ptr<::liquid::store_backend>& backend, std::string_view key) {
+    if (const auto owned = std::dynamic_pointer_cast<owned_store_backend>(backend)) {
+        return backend_local_path(owned->inner(), key);
+    }
     const auto disk = std::dynamic_pointer_cast<disk_store_backend>(backend);
     if (!disk) {
         return std::nullopt;

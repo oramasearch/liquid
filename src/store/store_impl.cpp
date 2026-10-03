@@ -24,6 +24,7 @@
 #include "identity/key_version.hpp"
 #include "mapped_file.hpp"
 #include "objects/records.hpp"
+#include "owner_lock.hpp"
 #include "references.hpp"
 
 namespace liquid::store_detail {
@@ -207,29 +208,56 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
                     store_error(errc::io, prepared.error().message, root.string()));
             }
         }
-        const auto persistence =
+        auto persistence =
             options.backend ? options.backend : make_disk_store_backend(root, options.durable);
         options.backend = persistence;
-        // An exclusive owner takes the root before reading or repairing anything under it: the
-        // temporary files removed below are another owner's in-progress publications while that
-        // owner runs. A non-disk backend has no local root to lock.
-        if (!options.exclusive_owner && options.owner_wait.count() != 0) {
-            co_return std::unexpected(store_error(
-                errc::invalid_argument, "owner_wait requires exclusive_owner", root.string()));
+        // An owner takes the store before reading or repairing anything under it: the temporary
+        // files removed below are another owner's in-progress publications while that owner runs.
+        // An injected owner (liquid #327) works with any backend that can carry its fence; without
+        // one, exclusive ownership is the disk root's flock and a non-disk backend has no root to
+        // lock.
+        const auto owned = options.exclusive_owner || options.owner;
+        if (!owned && options.owner_wait.count() != 0) {
+            co_return std::unexpected(store_error(errc::invalid_argument,
+                                                  "owner_wait requires exclusive_owner or an owner",
+                                                  root.string()));
         }
-        owner_lock owner;
-        const auto lock_path = options.exclusive_owner
-                                   ? backend_local_path(persistence, "store.lock")
-                                   : std::optional<std::filesystem::path>{};
-        if (options.exclusive_owner && !lock_path) {
+        if (options.owner_wait.count() < 0) {
             co_return std::unexpected(store_error(
-                errc::unsupported, "exclusive ownership needs a disk store root", root.string()));
+                errc::invalid_argument, "store owner wait must not be negative", root.string()));
         }
-        if (lock_path) {
-            auto acquired = co_await owner_lock::acquire(*lock_path, options.owner_wait);
-            if (!acquired)
-                co_return std::unexpected(acquired.error());
-            owner = std::move(*acquired);
+        owner_hold owner;
+        if (options.owner) {
+            auto grant = co_await options.owner->acquire(holder_description(), options.owner_wait);
+            if (!grant)
+                co_return std::unexpected(grant.error());
+            if (!grant->valid()) {
+                co_return std::unexpected(store_error(
+                    errc::internal, "the store owner returned an empty grant", root.string()));
+            }
+            owner = owner_hold(options.owner, *grant, true);
+            auto view = persistence->fenced(grant->fence());
+            if (!view) {
+                auto released = co_await owner.release();
+                static_cast<void>(released);
+                co_return std::unexpected(view.error());
+            }
+            persistence = std::make_shared<owned_store_backend>(
+                std::move(*view), *grant, options.read_after_owner_lost);
+            options.backend = persistence;
+        } else if (options.exclusive_owner) {
+            const auto lock_path = backend_local_path(persistence, "store.lock");
+            if (!lock_path) {
+                co_return std::unexpected(
+                    store_error(errc::unsupported,
+                                "exclusive ownership needs a disk store root or an owner",
+                                root.string()));
+            }
+            auto disk = make_disk_store_owner(lock_path->parent_path());
+            auto grant = co_await disk->acquire(holder_description(), options.owner_wait);
+            if (!grant)
+                co_return std::unexpected(grant.error());
+            owner = owner_hold(std::move(disk), std::move(*grant), false);
         }
         for (const auto& temporary :
              {"gc/MANIFEST.tmp", "packs/objects.meta.tmp", "packs/remotes.meta.tmp"}) {
@@ -2141,6 +2169,10 @@ store_backend::lease_root(digest id, std::chrono::seconds ttl, std::string owner
     }
     co_return co_await create_lease_until(
         persistence_, root_ / "leases", id, now + ttl, std::move(owner));
+}
+
+owner_hold store_backend::take_owner() noexcept {
+    return std::move(owner_);
 }
 
 const std::filesystem::path& store_backend::root_path() const noexcept {
