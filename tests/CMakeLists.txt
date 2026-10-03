@@ -53,6 +53,7 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_secret.cpp
   test_store.cpp
+  sim/write_once_backend.cpp
   store/test_owner.cpp
   store/test_transfer.cpp
   test_tiers.cpp
@@ -136,6 +137,7 @@ target_link_libraries(liquid-tests PRIVATE
   $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim
   ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
   ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
@@ -143,6 +145,9 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
+add_test(NAME store-write-once
+  COMMAND liquid-tests --gtest_filter=Store.*:GarbageCollection.*:RepositoryTransfer.*)
+set_tests_properties(store-write-once PROPERTIES ENVIRONMENT LIQUID_TEST_WRITE_ONCE_BACKEND=1)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   find_program(LIQUID_SWTPM_EXECUTABLE swtpm)
   if(LIQUID_SWTPM_EXECUTABLE)
@@ -833,6 +838,7 @@ endif()
 add_executable(liquid-index-tests
   test_index.cpp
   sim/memory_backend.cpp
+  sim/write_once_backend.cpp
   ${PROJECT_SOURCE_DIR}/src/store/index.cpp
   ${PROJECT_SOURCE_DIR}/src/store/mapped_file.cpp
   ${PROJECT_SOURCE_DIR}/src/store/pack.cpp
@@ -845,6 +851,10 @@ target_include_directories(liquid-index-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src)
 target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main $<COMPILE_ONLY:Boost::corosio> libzstd_static)
 gtest_discover_tests(liquid-index-tests DISCOVERY_TIMEOUT 120)
+# The index suite again, over a backend that refuses in-place range rewrites as Zetta's object
+# storage does (liquid #332). The store and garbage-collection suites run the same way below.
+add_test(NAME index-write-once COMMAND liquid-index-tests)
+set_tests_properties(index-write-once PROPERTIES ENVIRONMENT LIQUID_TEST_WRITE_ONCE_BACKEND=1)
 
 add_executable(liquid-crypto-tests
   crypto/test_aead.cpp
@@ -862,6 +872,7 @@ add_executable(liquid-store-sim-tests
   store/test_gc_sim_regression.cpp
   sim/harness.cpp
   sim/memory_backend.cpp
+  sim/write_once_backend.cpp
   sim/test_repository_state.cpp
   sim/test_store_sim.cpp)
 target_include_directories(liquid-store-sim-tests PRIVATE

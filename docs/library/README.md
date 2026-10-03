@@ -45,3 +45,5 @@ The [HTTP log URL contract](transparency.md#http-url-validation-289) documents f
 legacy-constructor behavior, CLI exit statuses, and regression coverage with networking denied.
 [Collection's publication order](gc.md) puts the object map before the tombstone manifest, so a
 crash between them reopens cleanly (liquid #337).
+The [store's index](store.md#index) writes every run once, in order, so no backend write rewrites
+bytes already written, as Zetta's object storage requires (liquid #332).

@@ -1,14 +1,17 @@
 # Deterministic store simulation
 
 **Status: implemented for the Phase 1 chunk store on disk and in memory (liquid #55, #278), and for
-shared-store repository state on both backends (liquid #326).** The simulator is the first
+shared-store repository state on both backends (liquid #326); the chunk store schedule also runs
+behind the write-once backend on both (liquid #332).** The simulator is the first
 subject of a reusable test harness. Sync and reconciliation state machines join it when their
 implementations land.
 
 ## What and why
 
 `tests/sim/` runs each seeded schedule against the disk reference backend and the in-memory test
-backend, interrupts one selected backend operation, destroys the store object without a close, and
+backend, and against each again behind the write-once backend, which refuses any range that does not
+append as Zetta's object storage does (liquid #332, [store.md](store.md#store-backend-interface)). It
+interrupts one selected backend operation, destroys the store object without a close, and
 opens the same backend again. It exercises
 rooted puts, orphan puts, gets, range reads, lease renewals, collections, and explicit reopens.
 Input sizes range from 40 bytes to 4 MiB; previously

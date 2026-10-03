@@ -7,7 +7,9 @@
 
 namespace liquid::sim {
 
-enum class simulation_backend { disk, memory };
+// The write-once kinds decorate the disk and memory backends with write_once_store_backend, which
+// refuses any range that does not append, as Zetta's object storage does (liquid #332).
+enum class simulation_backend { disk, memory, write_once_disk, write_once_memory };
 
 struct simulation_failure {
     std::uint64_t seed{};

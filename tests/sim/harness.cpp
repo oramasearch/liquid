@@ -17,6 +17,7 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "memory_backend.hpp"
+#include "write_once_backend.hpp"
 
 namespace liquid::sim {
 namespace {
@@ -134,8 +135,15 @@ std::size_t input_size(std::mt19937_64& random) {
 
 std::shared_ptr<store_backend> make_backend(simulation_backend kind,
                                             const std::filesystem::path& path) {
-    if (kind == simulation_backend::memory) {
+    switch (kind) {
+    case simulation_backend::memory:
         return std::make_shared<memory_store_backend>();
+    case simulation_backend::write_once_disk:
+        return std::make_shared<write_once_store_backend>(make_disk_store_backend(path));
+    case simulation_backend::write_once_memory:
+        return std::make_shared<write_once_store_backend>(std::make_shared<memory_store_backend>());
+    case simulation_backend::disk:
+        break;
     }
     return make_disk_store_backend(path);
 }

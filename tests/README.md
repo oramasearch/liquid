@@ -11,8 +11,12 @@ The default suite covers the public library surface and the local store. Focused
 collection cases and its CLI flags, and the liquid #321 multi-process owner-lock cases, live in
 `store/`. `test_index.cpp` runs a flush and compaction through the in-memory backend on a thread
 with a 512 KiB stack above 1 MiB of inaccessible memory, so a Debug coroutine ramp that reserves a
-large table again faults deterministically (liquid #323); deterministic crash schedules run through
-both the disk and in-memory persistence backends in `sim/`;
+large table again faults deterministically (liquid #323), and proves over `sim/`'s write-once backend
+that flush and compaction write every run once and that a torn merge leaves the old runs
+authoritative (liquid #332). CTest repeats the index suite (`index-write-once`) and the store and
+collection suites and the repository transfer suite (`store-write-once`) over that backend with `LIQUID_TEST_WRITE_ONCE_BACKEND=1`;
+deterministic crash schedules run through the disk and in-memory persistence backends, each also
+behind the write-once backend, in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
 `test_forge.cpp` covers lake review, comment, state, and branch-protection round trips; every

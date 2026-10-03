@@ -17,6 +17,7 @@
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
 #include "repository/store_access.hpp"
+#include "write_once_backend.hpp"
 
 namespace {
 
@@ -55,6 +56,7 @@ std::vector<std::byte> bytes(std::size_t size, std::uint64_t seed) {
 liquid::store open_store(const std::filesystem::path& path, std::uint64_t pack_size = 0) {
     liquid::store_options options;
     options.pack_size = pack_size;
+    options.backend = liquid::sim::test_store_backend(path);
     auto opened = liquid::runtime::block_on(liquid::store::open(path, options));
     EXPECT_TRUE(opened.has_value()) << (opened ? "" : opened.error().message);
     return std::move(*opened);
@@ -278,10 +280,8 @@ TEST(GarbageCollection, forever_ref_rule_survives_reopen_and_keeps_reachable_obj
         std::ranges::find(snapshot->root.entries, "release.bin", &liquid::tree_entry::name);
     ASSERT_NE(entry, snapshot->root.entries.end());
     *reopened = {};
-    auto object_store =
-        liquid::runtime::block_on(liquid::store::open(temporary.path() / ".liquid-store"));
-    ASSERT_TRUE(object_store) << object_store.error().message;
-    auto blob = liquid::runtime::block_on(object_store->get(entry->ref));
+    auto object_store = open_store(temporary.path() / ".liquid-store");
+    auto blob = liquid::runtime::block_on(object_store.get(entry->ref));
     EXPECT_TRUE(blob) << blob.error().message;
 }
 

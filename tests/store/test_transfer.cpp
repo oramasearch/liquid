@@ -26,6 +26,7 @@
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
 #include "remote_backend.hpp"
+#include "write_once_backend.hpp"
 
 namespace {
 
@@ -215,11 +216,28 @@ std::string state_prefix(std::string_view name) {
     return "repositories/" + text.substr(text.find(':') + 1) + "/";
 }
 
+// Under liquid::sim::write_once_environment the destination refuses in-place range rewrites, as
+// Zetta's object storage does, since lake transfers into it (liquid #332).
+liquid::test::remote_store write_once_if_requested(liquid::test::remote_store store) {
+    if (liquid::sim::write_once_requested()) {
+        store.options.backend =
+            std::make_shared<liquid::sim::write_once_store_backend>(store.options.backend);
+    }
+    return store;
+}
+
+// Every disk store this suite opens: the default disk backend, or the write-once one over it.
+liquid::result<liquid::store> open_disk(const std::filesystem::path& path) {
+    auto options = liquid::store_options{};
+    options.backend = liquid::sim::test_store_backend(path);
+    return liquid::runtime::block_on(liquid::store::open(path, options));
+}
+
 // The destination seals a pack every MiB, so a copy spans several packs.
 liquid::test::remote_store destination_options(const std::shared_ptr<remote_service>& service) {
     auto output = remote_options(service);
     output.options.pack_size = 1024U * 1024U;
-    return output;
+    return write_once_if_requested(std::move(output));
 }
 
 bool has_key(const std::shared_ptr<remote_service>& service, const std::string& key) {
@@ -288,7 +306,7 @@ std::string describe(const liquid::repository_transfer_report& report) {
 
 TEST(RepositoryTransfer, InterruptedCopyResumesAndVerifies) {
     const auto root = fresh("repository-transfer-resume");
-    auto source = liquid::runtime::block_on(liquid::store::open(root / "source"));
+    auto source = open_disk(root / "source");
     ASSERT_TRUE(source) << message(source.error());
     const auto expected = build_source(*source, root);
     ASSERT_FALSE(HasFailure());
@@ -393,14 +411,14 @@ TEST(RepositoryTransfer, InterruptedCopyResumesAndVerifies) {
 
 TEST(RepositoryTransfer, VerifyCatchesTamperedDestination) {
     const auto root = fresh("repository-transfer-tamper");
-    auto source = liquid::runtime::block_on(liquid::store::open(root / "source"));
+    auto source = open_disk(root / "source");
     ASSERT_TRUE(source) << message(source.error());
     static_cast<void>(build_source(*source, root));
     ASSERT_FALSE(HasFailure());
     const auto prefix = state_prefix(identifier);
 
     auto service = std::make_shared<remote_service>();
-    auto options = remote_options(service);
+    auto options = write_once_if_requested(remote_options(service));
     auto destination =
         liquid::runtime::block_on(liquid::store::open(root / "destination", options.options));
     ASSERT_TRUE(destination) << message(destination.error());
@@ -450,9 +468,9 @@ TEST(RepositoryTransfer, VerifyCatchesTamperedDestination) {
 
 TEST(RepositoryTransfer, RefusesMissingRepositoryAndOneStore) {
     const auto root = fresh("repository-transfer-refusals");
-    auto source = liquid::runtime::block_on(liquid::store::open(root / "source"));
+    auto source = open_disk(root / "source");
     ASSERT_TRUE(source) << message(source.error());
-    auto destination = liquid::runtime::block_on(liquid::store::open(root / "destination"));
+    auto destination = open_disk(root / "destination");
     ASSERT_TRUE(destination) << message(destination.error());
 
     auto missing = liquid::runtime::block_on(
