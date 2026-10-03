@@ -9,6 +9,7 @@
 #include <limits>
 #include <ranges>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -152,7 +153,7 @@ void append_record(std::vector<std::byte>& bytes,
 std::vector<std::byte> make_header(algorithm alg,
                                    std::uint64_t count,
                                    std::uint64_t bloom_size,
-                                   const std::array<std::uint32_t, fanout_count>& fanout) {
+                                   std::span<const std::uint32_t> fanout) {
     std::vector<std::byte> header;
     header.reserve(run_header_size);
     header.insert(header.end(), run_magic.begin(), run_magic.end());
@@ -367,7 +368,8 @@ runtime::task<void> chunk_index::flush(algorithm alg) {
         });
     const auto count = static_cast<std::uint64_t>(entries.size());
     const auto bloom_size = std::max<std::uint64_t>(1, (count * 10 + 7) / 8);
-    std::array<std::uint32_t, fanout_count> fanout{};
+    // On the heap: a 256 KiB array here makes the Debug coroutine ramp reserve that much stack.
+    std::vector<std::uint32_t> fanout(fanout_count);
     std::vector<std::byte> bloom(static_cast<std::size_t>(bloom_size));
     for (const auto& entry : entries) {
         const auto bucket = (std::to_integer<unsigned char>(entry.id.bytes[0]) << 8U) |
@@ -486,12 +488,13 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
             decode_record(source.bytes.subspan(source.records_offset, record_size), alg));
     }
     const auto bloom_size = std::max<std::uint64_t>(1, (capacity * 10 + 7) / 8);
-    std::array<std::uint32_t, fanout_count> fanout{};
+    // On the heap, as in flush: an on-stack table makes the Debug coroutine ramp reserve its size.
+    std::vector<std::uint32_t> fanout(fanout_count);
     std::vector<std::byte> bloom(static_cast<std::size_t>(bloom_size));
     const auto sequence = next_sequence_++;
     const auto run_key = key("run-" + std::to_string(sequence) + ".idx");
-    std::array<std::uint32_t, fanout_count> empty_fanout{};
-    auto created = co_await backend_->put(run_key, make_header(alg, 0, bloom_size, empty_fanout));
+    // The placeholder header carries the still-zero fanout; the final one is written after merge.
+    auto created = co_await backend_->put(run_key, make_header(alg, 0, bloom_size, fanout));
     if (!created) {
         co_return std::unexpected(created.error());
     }

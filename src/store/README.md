@@ -7,6 +7,9 @@ Repository configuration encryption uses the private `repository_detail::store_a
 choose a plaintext metadata put or an explicit trust-domain encrypted put for whole-file payload
 chunks; the public store API keeps its existing default-key behavior.
 
+`index.cpp` builds each run's 256 KiB fanout table in a heap vector, never as a coroutine local:
+a Debug coroutine ramp reserves stack for its locals (liquid #323).
+
 This directory owns FastCDC chunking, append-only packs, the fixed-width index, persisted backend
 leases, per-kind reference extraction, and epoch collection. `collector.cpp` preserves the
 ordering documented in `docs/library/gc.md`: committed tombstone manifest, index manifest, then
