@@ -43,3 +43,5 @@ command, vendored AppImage runtime provenance, and the
 [issue #286 verification record](../build/project-ordinary-repository.md).
 The [HTTP log URL contract](transparency.md#http-url-validation-289) documents factory errors,
 legacy-constructor behavior, CLI exit statuses, and regression coverage with networking denied.
+[Collection's publication order](gc.md) puts the object map before the tombstone manifest, so a
+crash between them reopens cleanly (liquid #337).

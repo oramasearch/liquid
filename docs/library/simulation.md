@@ -79,6 +79,25 @@ timestamps inside drips can move a pack rollover, so a run may reach fewer fault
 probe; such a seed is checked as a clean stop. Replacing the atomic marker publication with a
 remove-then-put fails the first memory seed.
 
+**Why a seed's crash point moves.** The schedule and the target step are fixed by the seed, but
+drips and changes carry wall-clock timestamps (seconds, and milliseconds for some records), so
+their encoded and compressed sizes, and with them pack rollovers and the number of fault points,
+differ from run to run. The same target step can therefore land on a different write. Seed 17
+(liquid #337) failed only when its step landed on the object map publication of a collection whose
+manifest had already committed. Index changes that alter how many writes a flush or compaction
+makes, such as liquid #332, shift which write a target lands on and so changed how often that seed
+failed; they did not cause it.
+
+**What a crash at a collection's `packs/objects.meta` means.** The collector publishes the
+filtered object map before it commits `gc/MANIFEST` (see [gc.md](gc.md)). A crash at the map's
+publication leaves the previous map and the previous manifest, so nothing was collected; a crash
+after it, before the manifest, leaves a map without the collected objects over chunks that are
+still live. Either way every object in the map can be read. Seed 17 found the earlier order,
+which committed the manifest first, leaving the old map naming tombstoned chunks.
+`RepositoryCollectionCrash` reaches that point deterministically: it records the fault points of
+one collection, then crashes a fresh copy at each object map and manifest point and the point
+after each, and reopens, reads, collects, and writes.
+
 ```sh
 ctest --test-dir build -R RepositoryStateSimulation --output-on-failure
 LIQUID_REPOSITORY_SIM_SEEDS=200 ctest --test-dir build -R RepositoryStateSimulation --output-on-failure

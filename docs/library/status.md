@@ -57,7 +57,9 @@ cloud KMS, lake transit, Shamir, or TPM PCR-bound custody, versioned data-key ro
 revocation, repository readability reports, leased roots, epoch garbage collection, and pack compaction
 ([`store.md`](store.md), [`encryption.md`](encryption.md), [`gc.md`](gc.md),
 [`simulation.md`](simulation.md)). The disk backend remains the default, and the crash simulator
-runs the same invariants against disk and memory. Store owners can await a whole-content write-through callback
+runs the same invariants against disk and memory. A collection publishes its object map before it
+commits tombstones, so a crash between them never leaves an object naming a tombstoned chunk
+(liquid #337). Store owners can await a whole-content write-through callback
 before the first local pack write and evict remote-registered local copies without losing their
 remote location. Multiple repositories can use one caller-owned store with repository-scoped
 checkpoints, journals, and retention leases. `liquid gc --explain` reports why retained chunks are

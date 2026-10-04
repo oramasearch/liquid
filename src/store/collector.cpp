@@ -567,15 +567,17 @@ runtime::task<collection_report> collector::run(collection_options options) {
         else
             ++iterator;
     }
-    auto objects_staged = co_await store_.stage_objects();
-    if (!objects_staged)
-        co_return std::unexpected(objects_staged.error());
+    // The object map is published before the manifest commits the tombstones (liquid #337). A
+    // crash between the two leaves a map without the collected objects over chunks that are still
+    // live, which the next collection reclaims. The other order left the previous map naming
+    // objects whose only chunks the committed manifest had already tombstoned, and the store could
+    // not reopen.
+    auto objects_saved = co_await store_.save_objects();
+    if (!objects_saved)
+        co_return std::unexpected(objects_saved.error());
     auto manifest_saved = co_await save_collection_manifest(store_.persistence_, committed);
     if (!manifest_saved)
         co_return std::unexpected(manifest_saved.error());
-    auto objects_saved = co_await store_.publish_staged_objects();
-    if (!objects_saved)
-        co_return std::unexpected(objects_saved.error());
 
     store_.index_.set_highest_pack_id(
         std::max({store_.index_.highest_pack_id(), high_water_pack, next_pack_id}));
@@ -666,17 +668,14 @@ runtime::task<void> collector::remove_local(collection_manifest manifest,
 
     ++manifest.epoch;
     report.epoch = manifest.epoch;
-    auto objects_staged = co_await store_.stage_objects();
-    if (!objects_staged) {
-        co_return std::unexpected(objects_staged.error());
+    // Map first, then tombstones, as in run (liquid #337).
+    auto objects_saved = co_await store_.save_objects();
+    if (!objects_saved) {
+        co_return std::unexpected(objects_saved.error());
     }
     auto manifest_saved = co_await save_collection_manifest(store_.persistence_, manifest);
     if (!manifest_saved) {
         co_return std::unexpected(manifest_saved.error());
-    }
-    auto objects_saved = co_await store_.publish_staged_objects();
-    if (!objects_saved) {
-        co_return std::unexpected(objects_saved.error());
     }
     store_.index_.set_collection_epoch(manifest.epoch);
     auto rebuilt = co_await store_.index_.rebuild(std::move(retained_index));
