@@ -21,6 +21,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -605,6 +606,132 @@ INSTANTIATE_TEST_SUITE_P(
                     ? "Before"
                     : "After");
     });
+
+// liquid #337: a collection publishes a new object map and commits a collection manifest whose
+// tombstones mark the collected chunks dead. Reopening after a crash between the two must find
+// every chunk the surviving object map names. Seed 17 of the repository simulation reached that
+// point only when wall-clock timestamps in drips and changes happened to shift the fault points
+// onto it; this test crashes the same collection at each fault point of that publication: every
+// one that touches the object map or the collection manifest, and the one after each.
+
+// Records the path of every fault point, in order.
+class recording_injector final : public fault_injector {
+public:
+    void visit(fault_event event) override {
+        auto lock = std::scoped_lock{mutex_};
+        paths_.push_back(event.path.generic_string());
+    }
+    [[nodiscard]] std::vector<std::string> paths() const {
+        auto lock = std::scoped_lock{mutex_};
+        return paths_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<std::string> paths_;
+};
+
+class RepositoryCollectionCrash : public testing::TestWithParam<backend_kind> {};
+
+// Builds a repository whose collection reclaims blob records: contents overwritten before any cut
+// stop being reachable once a later checkpoint no longer names them.
+std::optional<std::string> prepare_garbage(shared_store_host& host,
+                                           std::optional<liquid::repository>& subject) {
+    auto opened = host.open();
+    if (!opened) {
+        return "store open failed: " + message(opened.error());
+    }
+    auto created = liquid::runtime::block_on(
+        liquid::repository::create("workspace/alpha", host.repository_options(3)));
+    if (!created) {
+        return "repository create failed: " + message(created.error());
+    }
+    subject.emplace(std::move(*created));
+    if (!liquid::runtime::block_on(subject->write("kept", bytes_of("acknowledged"))) ||
+        !liquid::runtime::block_on(subject->cut("kept"))) {
+        return "could not write the kept file";
+    }
+    for (auto round = 0; round != 8; ++round) {
+        if (!liquid::runtime::block_on(subject->write(
+                "scratch", bytes_of("scratch contents, round " + std::to_string(round))))) {
+            return "could not overwrite the scratch file";
+        }
+    }
+    return std::nullopt;
+}
+
+TEST_P(RepositoryCollectionCrash, ReopenAfterACrashAtEveryCollectionFaultPoint) {
+    const auto kind = GetParam();
+    scoped_directory location("liquid-collection-crash-" + backend_name({kind, 0}));
+    auto paths = std::vector<std::string>{};
+    {
+        auto host = shared_store_host{kind, location.path() / "probe"};
+        auto subject = std::optional<liquid::repository>{};
+        const auto prepared = prepare_garbage(host, subject);
+        ASSERT_FALSE(prepared) << *prepared;
+        auto recorder = recording_injector{};
+        {
+            auto guard = injector_guard{&recorder};
+            auto collected = liquid::runtime::block_on(subject->collect());
+            ASSERT_TRUE(collected) << message(collected.error());
+            EXPECT_GT(collected->dead_chunks, 0U) << "the collection must reclaim something";
+        }
+        paths = recorder.paths();
+    }
+    const auto steps = static_cast<std::uint64_t>(paths.size());
+    auto targets = std::set<std::uint64_t>{};
+    for (auto index = std::size_t{}; index != paths.size(); ++index) {
+        if (paths[index].find("packs/objects.meta") != std::string::npos ||
+            paths[index].find("gc/MANIFEST") != std::string::npos) {
+            targets.insert(index + 1);
+            if (index + 2 <= paths.size()) {
+                targets.insert(index + 2);
+            }
+        }
+    }
+    ASSERT_GE(targets.size(), 4U) << "the collection published no object map and manifest";
+    for (const auto target : targets) {
+        SCOPED_TRACE("crash at collection fault point " + std::to_string(target) + " of " +
+                     std::to_string(steps));
+        const auto root = location.path() / ("actual-" + std::to_string(target));
+        auto host = shared_store_host{kind, root};
+        auto subject = std::optional<liquid::repository>{};
+        const auto prepared = prepare_garbage(host, subject);
+        ASSERT_FALSE(prepared) << *prepared;
+        auto crash = crash_injector{target, [&] { host.freeze(true); }};
+        {
+            auto guard = injector_guard{&crash};
+            auto collected = liquid::runtime::block_on(subject->collect());
+            static_cast<void>(collected);
+        }
+        subject.reset();
+        host.objects.reset();
+        host.freeze(false);
+
+        auto opened = host.open();
+        ASSERT_TRUE(opened) << crash.where() << ": " << message(opened.error());
+        auto reopened = liquid::runtime::block_on(
+            liquid::repository::open("workspace/alpha", host.repository_options(3)));
+        ASSERT_TRUE(reopened) << crash.where() << ": " << message(reopened.error());
+        auto kept = liquid::runtime::block_on(reopened->read("kept"));
+        ASSERT_TRUE(kept) << crash.where() << ": " << message(kept.error());
+        EXPECT_EQ(*kept, bytes_of("acknowledged"));
+        auto scratch = liquid::runtime::block_on(reopened->read("scratch"));
+        ASSERT_TRUE(scratch) << crash.where() << ": " << message(scratch.error());
+        EXPECT_EQ(*scratch, bytes_of("scratch contents, round 7"));
+        auto collected = liquid::runtime::block_on(reopened->collect());
+        ASSERT_TRUE(collected) << crash.where() << ": " << message(collected.error());
+        ASSERT_TRUE(liquid::runtime::block_on(reopened->write("after", bytes_of("usable"))));
+        *reopened = {};
+        host.objects.reset();
+        std::filesystem::remove_all(root);
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Backends,
+                         RepositoryCollectionCrash,
+                         testing::Values(backend_kind::disk, backend_kind::memory),
+                         backend_name);
 
 // The seeded crash schedule for repositories: one schedule of writes, cuts, replication-cursor
 // updates, reopens, and collections runs once to count fault points, then again with a crash at

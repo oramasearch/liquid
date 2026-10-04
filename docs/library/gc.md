@@ -87,13 +87,24 @@ section of [store.md](store.md).
 
 The backend publication order is:
 
-1. put the filtered object map and the new tombstone bitmap, then cross a durability barrier;
-2. atomically put `gc/MANIFEST` as the commit point;
+1. publish the filtered object map: stage `packs/objects.meta.tmp`, cross a durability barrier,
+   put `packs/objects.meta`, and cross another;
+2. atomically put `gc/MANIFEST`, carrying the new tombstone bitmaps, as the commit point;
 3. rebuild the chunk index without tombstoned frames and publish `index/MANIFEST` after its barrier;
 4. delete packs whose frames are all tombstoned, then remove superseded index runs.
 
 Only the committed tombstone manifest is authoritative. A crash before its atomic put leaves the
-previous manifest in force and deletes nothing. A crash after the put may leave old index runs
+previous manifest in force and deletes nothing. The object map may already omit the collected
+objects then; their chunks stay live in the index until the next collection reclaims them.
+
+**The ordering guarantee (liquid #337).** The published object map is never older than the
+committed collection manifest, so no object in it names a chunk whose only frames are tombstoned.
+Until #337 the collector staged the map before the manifest but published it after, and `open`
+discards a staged `packs/objects.meta.tmp`. A crash between the manifest and the map's publication
+left the previous map naming the collected objects over tombstoned chunks, and reopening failed
+with `chunk is not present` when the store decoded those blob records.
+`RepositoryCollectionCrash` crashes a collection at every fault point of its object map and
+manifest publication, and the one after each, on disk and in memory. A crash after the put may leave old index runs
 or whole packs behind; the next open removes that garbage safely. If `index/` is lost,
 reconstruction treats every frame as live unless the committed tombstone bitmap names that frame.
 Pack ids are never reused after deletion, so a committed tombstone can never identify a later

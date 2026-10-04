@@ -334,8 +334,9 @@ single callback can consume the content sequentially from `bytes`.
 unregistered digest returns `errc::not_remote` and changes nothing. Eviction removes the local
 object entry and tombstones locally cached content chunks and the local chunk-list descriptor when
 they are not shared by another local object or registered remote blob. It publishes the object
-map, collection tombstones, and rebuilt chunk index in crash-safe order without changing the
-remote registration. Evicting an already remote-only registration succeeds without a write.
+map, then the collection tombstones, then the rebuilt chunk index, without changing the remote
+registration. The map goes first, so a crash between them leaves no object naming a tombstoned
+chunk ([gc.md](gc.md), liquid #337). Evicting an already remote-only registration succeeds without a write.
 
 When no retained object or registration shares every chunk, `has(content)` reports `remote`, and
 `get` or `read` hydrates verified bytes again through the registered `remote_blob_source`; range

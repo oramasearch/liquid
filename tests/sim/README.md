@@ -11,6 +11,8 @@ failures, the conditional create, a key listing, and freezing at a crash point.
 
 `test_repository_state.cpp` (liquid #326) proves a shared-store repository's own state goes through
 the backend: the conditional create, the scoped disk listing, a full repository lifecycle on the
-in-memory backend with no file under any directory, the unchanged disk layout, journal crashes, and
-`RepositoryStateSimulation`, the seeded crash schedule over repository operations. See
+in-memory backend with no file under any directory, the unchanged disk layout, journal crashes,
+`RepositoryCollectionCrash` (liquid #337), which crashes one collection at each fault point of its
+object map and manifest publication and reopens, and `RepositoryStateSimulation`, the seeded crash
+schedule over repository operations. See
 `docs/library/simulation.md#repository-state`.

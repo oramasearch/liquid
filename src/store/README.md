@@ -12,8 +12,9 @@ a Debug coroutine ramp reserves stack for its locals (liquid #323).
 
 This directory owns FastCDC chunking, append-only packs, the fixed-width index, persisted backend
 leases, per-kind reference extraction, and epoch collection. `collector.cpp` preserves the
-ordering documented in `docs/library/gc.md`: committed tombstone manifest, index manifest, then
-whole-pack removal. `compactor.cpp` rewrites selected partially dead packs by copying physical
+ordering documented in `docs/library/gc.md`: published object map, committed tombstone manifest,
+index manifest, then whole-pack removal. The map precedes the tombstones so no published object
+ever names a tombstoned chunk (liquid #337). `compactor.cpp` rewrites selected partially dead packs by copying physical
 frames byte-for-byte, with the atomic collection-manifest put and durability barrier as the commit
 point. The object map also
 provides `store::key_version` with the recorded trust-domain data-key version and verifies whether
