@@ -52,6 +52,14 @@ available for cancellation and scheduling failures.
 - Keep large buffers out of coroutine bodies. A local array lives in the heap frame, but at -O0
   the coroutine ramp also reserves stack for it, so a 256 KiB table overflows the 512 KiB stack
   of a macOS secondary thread. Hold buffers of more than a few KiB in a `std::vector` (liquid #323).
+- `block_on` and `default_context()` run one Corosio `io_context` on several runner threads, so a
+  socket may be closed on one runner while another runner's reactor pass still holds its
+  descriptor. The Corosio pin must include the descriptor-lifetime fix for
+  [corosio#5](https://github.com/oramasearch/corosio/issues/5) (merged as `5505fd7`) and the
+  outstanding-work fix for [corosio#7](https://github.com/oramasearch/corosio/issues/7) (merged as
+  `1d56cba`); without the second, a descriptor registered before its scheduler was set drives the
+  scheduler's work count negative, `io_context::run()` never returns, and `block_on` hangs. Do not
+  move the pin to a Corosio that lacks either fix.
 - Do not create raw threads outside `src/runtime/runtime.cpp`.
 - OS callback threads may enqueue work under a mutex and use
   `run_async(default_context().executor())` to schedule a runtime-side wake. They never call
@@ -73,7 +81,12 @@ cmake --build build-shared && ctest --test-dir build-shared --output-on-failure
 `tests/test_runtime.cpp` verifies value and error return, laziness, executor return across a series
 of immediate offloads, completion, concurrent spawned tasks, the singleton shared context, a
 spawned store round trip, and two liquid tasks composed with `when_all`. The immediate operations
-exercise completion racing with caller suspension. The install-consumer proof in
+exercise completion racing with caller suspension. `tests/test_runtime_sockets.cpp` (POSIX) opens
+and closes Unix-domain socket pairs from 256 concurrent lanes inside `block_on` for three one-second
+rounds; each lane parks a read on one end, writes twice to the other and closes it, and the reader
+destroys its socket on whichever runner resumed it. It crashes with `mutex lock failed` on the
+Corosio pin before the multi-runner close fix, hangs intermittently on a pin with only that fix
+(the corosio#7 work-count underflow), and passes with both (liquid #329). The install-consumer proof in
 [`libliquid.md`](libliquid.md) verifies that an installed consumer receives Capy transitively.
 
 ## How to change
