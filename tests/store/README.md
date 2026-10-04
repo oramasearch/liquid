@@ -31,5 +31,12 @@ verify with no difference, a rerun that writes nothing, the reopened destination
 history, drips, cursor and session, a tampered pack byte and a changed state key caught by verify,
 and the refusals.
 
+`test_gc.cpp` opens every store through `open_store`, and `test_transfer.cpp` opens its disk stores
+through `open_disk` and its destinations through `destination_options` or
+`write_once_if_requested`, so the `store-write-once` CTest entry runs both over the write-once
+backend in `../sim/` as well (liquid #332). There the transfer's destination is the remote-shaped
+backend behind it, fenced views included: a transfer into a write-once store such as Zetta's must
+succeed, interruptions and resumption included.
+
 Store fixtures allocate their named directories beneath the unique process root specified in the
 parent [`README.md`](../README.md).

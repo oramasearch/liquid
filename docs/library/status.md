@@ -83,6 +83,10 @@ records, then its state keys with `LIQUID_REPO` last, through the destination's 
 rerun after an interruption copies only what is missing and a verify mode reads both stores and
 reports every difference (liquid #328, [`store.md`](store.md#whole-repository-transfer)). Encrypted
 objects are not transferred yet.
+No store write rewrites bytes already written: index compaction sizes its run in a first merge and
+writes the header, bloom and records once, in order, in a second, so every backend object is
+appended in order or replaced whole, which Zetta's object storage requires (liquid #332,
+[`store.md`](store.md#index)).
 
 **Repository.** Repository creation, working-tree reads and writes, recorded moves and removals,
 change cuts, references, snapshots, historical document state, composition, conflict values,

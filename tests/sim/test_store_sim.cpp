@@ -55,11 +55,21 @@ TEST_P(StoreSimulation, SeededCrashRecovery) {
 INSTANTIATE_TEST_SUITE_P(Backends,
                          StoreSimulation,
                          testing::Values(liquid::sim::simulation_backend::disk,
-                                         liquid::sim::simulation_backend::memory),
-                         [](const auto& parameter) {
-                             return parameter.param == liquid::sim::simulation_backend::disk
-                                        ? "Disk"
-                                        : "Memory";
+                                         liquid::sim::simulation_backend::memory,
+                                         liquid::sim::simulation_backend::write_once_disk,
+                                         liquid::sim::simulation_backend::write_once_memory),
+                         [](const auto& parameter) -> std::string {
+                             switch (parameter.param) {
+                             case liquid::sim::simulation_backend::disk:
+                                 return "Disk";
+                             case liquid::sim::simulation_backend::memory:
+                                 return "Memory";
+                             case liquid::sim::simulation_backend::write_once_disk:
+                                 return "WriteOnceDisk";
+                             case liquid::sim::simulation_backend::write_once_memory:
+                                 return "WriteOnceMemory";
+                             }
+                             return "Unknown";
                          });
 
 TEST(StoreBackend, MemoryBackendInjectsLatencyAndFailures) {

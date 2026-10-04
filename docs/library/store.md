@@ -6,7 +6,8 @@ deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278), plus opt-in 
 cross-process ownership with a bounded hand-off between processes (liquid #321), repository
 state routed through the backend with a conditional create (liquid #326), an injected owner
 whose grant fences stale writers on backends without a local root (liquid #327), and a resumable,
-verifiable whole-repository transfer between two open stores (liquid #328).**
+verifiable whole-repository transfer between two open stores (liquid #328). No backend write
+rewrites bytes already written: every object is appended in order or replaced whole (liquid #332).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -29,7 +30,10 @@ store needs:
 - `put(key, bytes)` atomically replaces one complete object;
 - `put_if_absent(key, bytes)` stores one complete object only when the key is absent, and fails
   `errc::already_exists` otherwise, as one atomic decision (liquid #326);
-- `put_range(key, offset, bytes)` creates or extends a pack-like object at an exact byte offset;
+- `put_range(key, offset, bytes)` creates or extends a pack-like object at an exact byte offset,
+  which the store always makes the object's current end. The store never rewrites bytes already
+  written (liquid #332), so a backend may refuse any other range with `errc::conflict`, as Zetta's
+  object storage does;
 - `get_range(key, offset, size)` returns exactly that byte range;
 - `remove(key)` deletes one complete object;
 - `list(prefix)` returns matching keys and sizes; and
@@ -53,6 +57,17 @@ The disk implementation retains mapped index runs and Corosio range I/O. The in-
 implementation under `tests/sim/` stores only byte vectors, supports coroutine latency and a
 one-shot injected `error`, and survives store reopen while its shared backend handle remains alive.
 The same seeded crash schedule runs against both implementations.
+
+`tests/sim/write_once_backend.hpp` decorates either one with the range contract of Zetta's object
+storage (zetta#1005, liquid #332): `put_range` appends only at the object's current end, a retry that
+resends bytes already held succeeds without a change, and any other range, a rewrite or a gap, fails
+`errc::conflict`. Its `fenced()` decorates the decorated backend's fenced view the same way, so a
+store held by an injected owner keeps the contract. The crash schedule runs over it on both
+implementations, and CTest runs the index suite (`index-write-once`) and the store, collection and
+repository transfer suites (`store-write-once`) a second time over it, selected by
+`LIQUID_TEST_WRITE_ONCE_BACKEND=1`: disk stores sit behind it, and so does the transfer's
+remote-shaped destination, because lake transfers into Zetta. It hides the disk root, so those runs
+load index runs into memory as a remote store does.
 
 ## Layout and pack format
 
@@ -544,11 +559,38 @@ local array it made their Debug ramps reserve 256 KiB and 516 KiB of the calling
 which overflowed a 512 KiB secondary thread (liquid #323).
 
 Runs are size-tiered by record count. When more than four runs share a tier, compaction performs a
-streaming k-way merge by iterating mapped input records and incrementally writing the replacement
-with backend range operations through bounded 4 MiB buffers. It does not load all input runs into
-memory. The replacement is synchronized and
-recorded in the manifest before the old runs are unmapped and removed. The manifest itself is
-published with an atomic complete-object put after the replacement run's durability barrier.
+streaming k-way merge over the mapped input records. It does not load all input runs into memory.
+
+**Every run is written once, in order (liquid #332).** The header carries the record count and
+fanout and the bloom follows it, but a merge learns the count, fanout and bloom only after it has
+seen every record, because duplicate digests collapse. Compaction used to write a placeholder
+header and an empty bloom, append the records, and then rewrite the header at offset 0 and the bloom
+in place. Zetta's object storage, under lake's per-workspace stores (liquid-bridge decision 54),
+refuses that rewrite with `409 conflict`. Compaction now merges twice over the immutable inputs. The
+first merge writes nothing: it counts the records and fills the fanout and bloom. The second
+writes the finished run as a complete-object `put` of the header, then appends the bloom and the
+records in 4 MiB windows, each at the object's current end. Flush already wrote this way, and its
+bloom is now appended in the same windows. The first merge has no suspension point, so no
+concurrent flush lands between the two; the second checks that it produced the counted records.
+
+The two merges were chosen over the alternatives the issue named:
+
+- **Records first into a staged object, then a separate finished object.** This needs no format
+  change, but it writes every record twice and reads it back once, and it leaves a second
+  unpublished object to clean up after a crash.
+- **A header-last layout** (records, then bloom, then a footer carrying count, fanout and
+  checksum). This writes every byte once but changes the run format. Every existing run would need
+  a second reader, and `open` would need the footer's position before it could map the fanout.
+
+A second merge reads mapped input pages again and costs CPU, but adds no write and no format.
+Memory stays at the fanout table, the bloom and one 4 MiB window, as before, and all three stay on
+the heap (liquid #323).
+
+**Crash safety is unchanged.** The replacement run is published only by the manifest put that
+follows its durability barrier, so a merge torn at any write leaves the manifest naming the old
+runs. The next merge takes the same unpublished key, because `next_sequence_` comes from the
+manifest, and its complete-object `put` replaces the torn object whole rather than rewriting
+its bytes. The old runs are unmapped and removed only after the manifest names the replacement.
 
 If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
 tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
@@ -820,7 +862,9 @@ ctest --test-dir build -L large-40g --output-on-failure
 
 The default tests cover deterministic boundaries, range reads, deduplication, corruption, reopen,
 unknown versions, index reconstruction, run corruption, compaction, and separate SHA-256 run-set
-lookup. The `large` label contains the 256 MiB streaming round trip; `large-40g` is the labelled
+lookup. `index-write-once` and `store-write-once` repeat the index, store, collection and
+repository transfer suites over the write-once backend; `ChunkIndex.CompactionWritesEachRunOnce` and
+`ChunkIndex.TornMergeLeavesOldRunsAuthoritative` run over it in the default suite as well. The `large` label contains the 256 MiB streaming round trip; `large-40g` is the labelled
 Phase 1 exit test.
 
 The chunk index's compaction merges runs across suspension points. Nothing in that merge may point
