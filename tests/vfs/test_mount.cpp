@@ -170,11 +170,11 @@ TEST(VfsMount, hydrates_captures_and_reuses_cache) {
     const auto pin_size =
         ::getxattr(locked_path.c_str(), pin_name, attribute.data(), attribute.size());
     ASSERT_EQ(pin_size, 1) << std::strerror(errno);
-    EXPECT_EQ(std::string_view{attribute.data(), static_cast<std::size_t>(pin_size)}, "1");
+    EXPECT_EQ((std::string_view{attribute.data(), static_cast<std::size_t>(pin_size)}), "1");
     const auto state_size =
         ::getxattr(locked_path.c_str(), state_name, attribute.data(), attribute.size());
     ASSERT_GT(state_size, 0) << std::strerror(errno);
-    EXPECT_EQ(std::string_view{attribute.data(), static_cast<std::size_t>(state_size)},
+    EXPECT_EQ((std::string_view{attribute.data(), static_cast<std::size_t>(state_size)}),
               "available-offline");
     const auto names_size = ::listxattr(locked_path.c_str(), nullptr, 0);
     ASSERT_GT(names_size, 0) << std::strerror(errno);
