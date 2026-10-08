@@ -58,8 +58,14 @@ available for cancellation and scheduling failures.
   [corosio#5](https://github.com/oramasearch/corosio/issues/5) (merged as `5505fd7`) and the
   outstanding-work fix for [corosio#7](https://github.com/oramasearch/corosio/issues/7) (merged as
   `1d56cba`); without the second, a descriptor registered before its scheduler was set drives the
-  scheduler's work count negative, `io_context::run()` never returns, and `block_on` hangs. Do not
-  move the pin to a Corosio that lacks either fix.
+  scheduler's work count negative, `io_context::run()` never returns, and `block_on` hangs. It must
+  also include the connect-after-open fix for
+  [corosio#10](https://github.com/oramasearch/corosio/issues/10) (merged as `0def6d3`):
+  `tcp_socket::connect()` opens and registers the socket when the awaitable is made, Linux epoll
+  reports that open, unconnected socket as `EPOLLOUT|EPOLLHUP`, and without the fix a connect that
+  parked after the reactor recorded it failed with `EIO` ("Input/output error"). Every liquid HTTP
+  client dials that way, so sync push and pull failed intermittently on Linux (liquid #345, lake#547).
+  Do not move the pin to a Corosio that lacks any of the three fixes.
 - Do not create raw threads outside `src/runtime/runtime.cpp`.
 - OS callback threads may enqueue work under a mutex and use
   `run_async(default_context().executor())` to schedule a runtime-side wake. They never call
@@ -86,7 +92,10 @@ and closes Unix-domain socket pairs from 256 concurrent lanes inside `block_on` 
 rounds; each lane parks a read on one end, writes twice to the other and closes it, and the reader
 destroys its socket on whichever runner resumed it. It crashes with `mutex lock failed` on the
 Corosio pin before the multi-runner close fix, hangs intermittently on a pin with only that fix
-(the corosio#7 work-count underflow), and passes with both (liquid #329). The install-consumer proof in
+(the corosio#7 work-count underflow), and passes with both (liquid #329).
+`RuntimeSockets.TcpConnectsStartedAfterTheOpenSucceedInsideBlockOn` starts 512 loopback TCP
+connects from 32 lanes, each 0 to 3 yields after its socket was opened, and fails on Linux on a
+pin without the corosio#10 fix (liquid #345). The install-consumer proof in
 [`libliquid.md`](libliquid.md) verifies that an installed consumer receives Capy transitively.
 
 ## How to change

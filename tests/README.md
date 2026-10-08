@@ -165,7 +165,11 @@ repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
 `test_runtime_sockets.cpp` (POSIX) opens and closes socket pairs from 256 concurrent lanes inside
 `block_on` with reads pending, and fails on a Corosio pin without the multi-runner close fix
-(corosio#5) or the outstanding-work fix (corosio#7) (liquid #329).
+(corosio#5) or the outstanding-work fix (corosio#7) (liquid #329). Its
+`RuntimeSockets.TcpConnectsStartedAfterTheOpenSucceedInsideBlockOn` makes 512 loopback TCP connects
+from 32 lanes inside `block_on`, each started 0 to 3 yields after its socket was opened; on Linux it
+fails with `Input/output error` on a Corosio pin without the connect-after-open fix (corosio#10,
+liquid #345).
 `test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
 drip bodies, same-path line-hunk reports, declared read dependencies, disjoint and forced records,
 and a synchronized replica whose signed write arrives before refusal. The CLI scenario
