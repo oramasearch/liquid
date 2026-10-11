@@ -60,8 +60,7 @@ auto stored_tree(liquid::repository& repository, liquid::tree value) -> liquid::
 
 auto stored_blob(liquid::repository& repository, std::string value) -> liquid::digest {
     static std::atomic_uint64_t next{};
-    const auto path =
-        std::filesystem::temp_directory_path() / ("liquid-sbom-blob-" + std::to_string(next++));
+    const auto path = liquid::test::fixture_path("liquid-sbom-blob-" + std::to_string(next++));
     {
         auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
         output.write(value.data(), static_cast<std::streamsize>(value.size()));

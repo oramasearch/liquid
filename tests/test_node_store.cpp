@@ -20,14 +20,14 @@
 #include "node_store/service.hpp"
 #include "serve/http.hpp"
 #include "store/chunker.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class temporary_node_store {
 public:
     temporary_node_store() {
-        path_ = std::filesystem::temp_directory_path() /
-                ("liquid-node-store-" + std::to_string(++sequence_));
+        path_ = liquid::test::fixture_path("liquid-node-store-" + std::to_string(++sequence_));
         std::filesystem::remove_all(path_);
     }
 

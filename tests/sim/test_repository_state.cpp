@@ -28,6 +28,7 @@
 #include <thread>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "faults.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -67,7 +68,7 @@ std::uint64_t environment_number(const char* name, std::uint64_t fallback) {
 class scoped_directory {
 public:
     explicit scoped_directory(std::string_view name)
-        : path_(std::filesystem::current_path() / std::string{name}) {
+        : path_(liquid::test::fixture_path(std::string{name})) {
         std::filesystem::remove_all(path_);
     }
     ~scoped_directory() {
@@ -391,7 +392,7 @@ liquid::result<std::vector<liquid::sync_item>> exported_items(liquid::repository
 // The issue's acceptance case: create, write, cut, sync, reopen, and collect a shared-store
 // repository on a backend with no local root, and find nothing under any directory.
 TEST(RepositoryStateBackend, SharedStoreRepositoryLivesEntirelyInTheBackend) {
-    const auto nominal = std::filesystem::current_path() / "liquid-memory-repository-root";
+    const auto nominal = liquid::test::fixture_path("liquid-memory-repository-root");
     std::filesystem::remove_all(nominal);
     auto host = shared_store_host{backend_kind::memory, nominal};
     ASSERT_TRUE(host.open());
@@ -1027,8 +1028,8 @@ TEST_P(RepositoryStateSimulation, SeededCrashRecovery) {
     const auto* single_seed = std::getenv("LIQUID_REPOSITORY_SIM_SEED");
     const auto first = single_seed ? environment_number("LIQUID_REPOSITORY_SIM_SEED", 0) : 0;
     const auto count = single_seed ? 1 : environment_number("LIQUID_REPOSITORY_SIM_SEEDS", 40);
-    const auto workspace = std::filesystem::current_path() /
-                           ("liquid-repository-sim-" + backend_name({GetParam(), 0}));
+    const auto workspace =
+        liquid::test::fixture_path("liquid-repository-sim-" + backend_name({GetParam(), 0}));
     std::filesystem::create_directories(workspace);
     for (auto offset = std::uint64_t{}; offset != count; ++offset) {
         const auto seed = first + offset;
