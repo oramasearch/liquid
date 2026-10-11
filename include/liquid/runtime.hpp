@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -51,10 +53,22 @@ boost::capy::task<> complete_block_on(task<T> coroutine,
 template <class T> struct offload_state {
     std::optional<result<T>> output;
     boost::capy::continuation completion;
+    // The pool thread that posts the completion, and whether it has left that post (liquid#350).
+    std::thread::id poster;
+    std::atomic<bool> posted{false};
 };
 
+// Runs on the awaiting executor. It resumes the awaiting coroutine only once the pool thread has
+// left its post into that executor: the post publishes this task, then still unlocks the
+// scheduler and wakes a runner. If the coroutine resumed before that, it could finish a block_on
+// root, and block_on would destroy the context the pool thread is still inside (liquid#350,
+// SIGBUS on a pool thread). The wait is the few instructions left in that post. A task that runs
+// on the poster's own thread (an executor that runs it inline) does not wait for itself.
 template <class T> task<void> wake_offload(std::shared_ptr<offload_state<T>> state) {
     const auto executor = co_await boost::capy::this_coro::executor;
+    if (std::this_thread::get_id() != state->poster) {
+        state->posted.wait(false, std::memory_order_acquire);
+    }
     executor.post(state->completion);
     co_return {};
 }
@@ -73,7 +87,12 @@ run_blocking(Callable callable, std::shared_ptr<offload_state<T>> state, Executo
         state->output.emplace(
             std::unexpected(exception_error(std::current_exception(), "runtime::offload")));
     }
-    boost::capy::run_async(executor)(wake_offload(std::move(state)));
+    state->poster = std::this_thread::get_id();
+    boost::capy::run_async(executor)(wake_offload(state));
+    // The post into the awaiting executor has returned: from here on this thread touches only
+    // the shared state, which it owns a reference to.
+    state->posted.store(true, std::memory_order_release);
+    state->posted.notify_one();
     co_return;
 }
 

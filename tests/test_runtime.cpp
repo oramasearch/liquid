@@ -2,9 +2,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <coroutine>
 #include <cstddef>
 #include <filesystem>
 #include <future>
+#include <memory>
+#include <mutex>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -104,6 +108,83 @@ liquid::runtime::task<void> concurrent_task(std::atomic<unsigned>* active,
     co_return {};
 }
 
+// Observes an offload's completion post from the pool thread, as liquid#350 needs. After the post
+// has published its operation, corosio's scheduler still unlocks its mutex and wakes a runner; a
+// block_on context destroyed in that window is touched after its end. The hook keeps the pool
+// thread inside its post until block_on returns or a deadline passes, and records whether
+// block_on returned while it was there.
+struct poster_hook {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::thread::id pool_thread;
+    bool block_on_returned = false;
+    bool returned_during_post = false;
+    bool poster_left = false;
+};
+
+class hook_executor {
+public:
+    hook_executor(boost::capy::executor_ref inner, std::shared_ptr<poster_hook> hook) noexcept
+        : inner_(inner), hook_(std::move(hook)) {}
+
+    bool operator==(const hook_executor& other) const noexcept {
+        return inner_ == other.inner_;
+    }
+    auto context() const noexcept -> boost::capy::execution_context& {
+        return inner_.context();
+    }
+    void on_work_started() const noexcept {
+        inner_.on_work_started();
+    }
+    void on_work_finished() const noexcept {
+        inner_.on_work_finished();
+    }
+    std::coroutine_handle<> dispatch(boost::capy::continuation& continuation) const {
+        if (!from_pool())
+            return inner_.dispatch(continuation);
+        post(continuation);
+        return std::noop_coroutine();
+    }
+    void post(boost::capy::continuation& continuation) const {
+        const bool foreign = from_pool();
+        inner_.post(continuation);
+        if (!foreign)
+            return;
+        const auto hook = hook_;
+        std::unique_lock lock(hook->mutex);
+        hook->changed.wait_for(lock, std::chrono::milliseconds(200),
+                               [&] { return hook->block_on_returned; });
+        hook->returned_during_post = hook->block_on_returned;
+        hook->poster_left = true;
+        hook->changed.notify_all();
+    }
+
+private:
+    bool from_pool() const {
+        std::lock_guard lock(hook_->mutex);
+        return std::this_thread::get_id() == hook_->pool_thread;
+    }
+
+    boost::capy::executor_ref inner_;
+    std::shared_ptr<poster_hook> hook_;
+};
+
+liquid::runtime::task<int> offload_through_hook(std::shared_ptr<poster_hook> hook) {
+    const auto inner = co_await boost::capy::this_coro::executor;
+    auto state = std::make_shared<liquid::runtime::detail::offload_state<int>>();
+    auto work = [hook] {
+        std::lock_guard lock(hook->mutex);
+        hook->pool_thread = std::this_thread::get_id();
+        return 7;
+    };
+    co_await liquid::runtime::detail::offload_awaiter<decltype(work), int, hook_executor>{
+        std::move(work), state, hook_executor{inner, hook}};
+    if (!state->output.has_value())
+        co_return std::unexpected(
+            liquid::error{liquid::errc::internal, "no offload result", "runtime test"});
+    co_return std::move(*state->output);
+}
+
 } // namespace
 
 TEST(Runtime, BlockOnReturnsValueAndError) {
@@ -150,6 +231,53 @@ TEST(Runtime, BlockOnWaitsForACoroutineSuspendedOutsideItsContext) {
         ASSERT_TRUE(value.has_value()) << value.error().message;
         EXPECT_EQ(*value, 42);
     }
+}
+
+TEST(Runtime, AnOffloadsCompletionPostReturnsBeforeBlockOnEnds) {
+    // liquid#350: the pool thread posts the offload's completion into block_on's context. The
+    // awaiting coroutine must not resume, and block_on must not end and destroy that context,
+    // until the pool thread has left the post.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        auto hook = std::make_shared<poster_hook>();
+        const auto value = liquid::runtime::block_on(offload_through_hook(hook));
+        {
+            std::lock_guard lock(hook->mutex);
+            hook->block_on_returned = true;
+        }
+        hook->changed.notify_all();
+        ASSERT_TRUE(value.has_value()) << value.error().message;
+        EXPECT_EQ(*value, 7);
+
+        std::unique_lock lock(hook->mutex);
+        ASSERT_TRUE(hook->changed.wait_for(lock, std::chrono::seconds(10),
+                                           [&] { return hook->poster_left; }));
+        EXPECT_FALSE(hook->returned_during_post)
+            << "block_on ended while the pool thread was still inside the completion post";
+    }
+}
+
+TEST(Runtime, ManyContextsOffloadAndEndConcurrently) {
+    // The shape of the lake crash: short-lived block_on contexts that end right after an offload
+    // completes, many at once.
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+    for (int thread = 0; thread < 8; ++thread) {
+        threads.emplace_back([&failures] {
+            for (int round = 0; round < 150; ++round) {
+                const auto value = liquid::runtime::block_on([]() -> liquid::runtime::task<int> {
+                    auto offloaded = co_await liquid::runtime::offload([] { return 3; });
+                    if (!offloaded)
+                        co_return std::unexpected(offloaded.error());
+                    co_return *offloaded;
+                }());
+                if (!value || *value != 3)
+                    failures.fetch_add(1);
+            }
+        });
+    }
+    for (auto& thread : threads)
+        thread.join();
+    EXPECT_EQ(failures.load(), 0);
 }
 
 TEST(Runtime, WhenAllComposesLiquidTasksThroughAdapter) {
