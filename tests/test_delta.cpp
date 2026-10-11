@@ -21,13 +21,14 @@
 #include "liquid/delta.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "temporary_directory.hpp"
 
 namespace {
 
 class delta_fixture : public testing::Test {
 protected:
     void SetUp() override {
-        root_ = std::filesystem::current_path() / ("delta-test-" + std::to_string(++counter_));
+        root_ = liquid::test::fixture_path("delta-test-" + std::to_string(++counter_));
         std::filesystem::remove_all(root_);
         std::filesystem::create_directories(root_);
         if (const auto* configured = std::getenv("LIQUID_HOME")) {

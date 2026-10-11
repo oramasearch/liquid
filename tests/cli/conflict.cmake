@@ -3,6 +3,16 @@ if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_CONFLICT_FIXTURE OR
   message(FATAL_ERROR "LIQUID_CLI, LIQUID_CONFLICT_FIXTURE, and LIQUID_CONFLICT_ROOT are required")
 endif()
 
+# A daemon left by an earlier run of this test (it idles for five minutes) would write into the
+# checkout after it is removed, so stop it first (liquid#352).
+if(EXISTS "${LIQUID_CONFLICT_ROOT}")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "LIQUID_HOME=${LIQUID_CONFLICT_ROOT}/identity"
+      "${LIQUID_CLI}" daemon --shutdown
+    WORKING_DIRECTORY "${LIQUID_CONFLICT_ROOT}"
+    OUTPUT_QUIET
+    ERROR_QUIET)
+endif()
 file(REMOVE_RECURSE "${LIQUID_CONFLICT_ROOT}")
 execute_process(
   COMMAND "${LIQUID_CONFLICT_FIXTURE}" "${LIQUID_CONFLICT_ROOT}"
@@ -79,6 +89,13 @@ string(JSON resolved_count LENGTH "${resolved_status}" conflicts)
 if(NOT resolved_count EQUAL 0)
   message(FATAL_ERROR "resolved conflict remained in status: ${resolved_status}")
 endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env "LIQUID_HOME=${LIQUID_CONFLICT_ROOT}/identity"
+    "${LIQUID_CLI}" daemon --shutdown
+  WORKING_DIRECTORY "${LIQUID_CONFLICT_ROOT}"
+  OUTPUT_QUIET
+  ERROR_QUIET)
 
 message(STATUS
   "${status_output}${list_output}${accept_output}${show_output}${resolve_output}${resolved_status}")

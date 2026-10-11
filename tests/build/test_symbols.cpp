@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/repository.hpp"
@@ -17,8 +18,7 @@ namespace {
 class temporary_repository {
 public:
     temporary_repository()
-        : path_(std::filesystem::temp_directory_path() /
-                ("liquid-symbols-test-" + std::to_string(next_++))) {}
+        : path_(liquid::test::fixture_path("liquid-symbols-test-" + std::to_string(next_++))) {}
 
     ~temporary_repository() {
         auto code = std::error_code{};
