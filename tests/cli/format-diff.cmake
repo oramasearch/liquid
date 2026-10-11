@@ -3,6 +3,15 @@ if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_FORMAT_DIFF_FIXTURE OR
   message(FATAL_ERROR "format diff test arguments are required")
 endif()
 
+# A daemon left by an earlier run of this test (it idles for five minutes) would write into the
+# checkout after it is removed, so stop it first (liquid#352).
+if(EXISTS "${LIQUID_FORMAT_DIFF_ROOT}")
+  execute_process(
+    COMMAND "${LIQUID_CLI}" daemon --shutdown
+    WORKING_DIRECTORY "${LIQUID_FORMAT_DIFF_ROOT}"
+    OUTPUT_QUIET
+    ERROR_QUIET)
+endif()
 file(REMOVE_RECURSE "${LIQUID_FORMAT_DIFF_ROOT}")
 execute_process(
   COMMAND "${LIQUID_FORMAT_DIFF_FIXTURE}"
@@ -80,3 +89,9 @@ if(NOT search_result EQUAL 0 OR
    NOT search_output MATCHES "tier: 3 \\(format\\(opaque\\)\\)")
   message(FATAL_ERROR "opaque archive search omitted its tier: ${search_output}${search_error}")
 endif()
+
+execute_process(
+  COMMAND "${LIQUID_CLI}" daemon --shutdown
+  WORKING_DIRECTORY "${LIQUID_FORMAT_DIFF_ROOT}"
+  OUTPUT_QUIET
+  ERROR_QUIET)
