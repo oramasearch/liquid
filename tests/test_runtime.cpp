@@ -152,8 +152,8 @@ public:
             return;
         const auto hook = hook_;
         std::unique_lock lock(hook->mutex);
-        hook->changed.wait_for(lock, std::chrono::milliseconds(200),
-                               [&] { return hook->block_on_returned; });
+        hook->changed.wait_for(
+            lock, std::chrono::milliseconds(200), [&] { return hook->block_on_returned; });
         hook->returned_during_post = hook->block_on_returned;
         hook->poster_left = true;
         hook->changed.notify_all();
@@ -249,8 +249,8 @@ TEST(Runtime, AnOffloadsCompletionPostReturnsBeforeBlockOnEnds) {
         EXPECT_EQ(*value, 7);
 
         std::unique_lock lock(hook->mutex);
-        ASSERT_TRUE(hook->changed.wait_for(lock, std::chrono::seconds(10),
-                                           [&] { return hook->poster_left; }));
+        ASSERT_TRUE(hook->changed.wait_for(
+            lock, std::chrono::seconds(10), [&] { return hook->poster_left; }));
         EXPECT_FALSE(hook->returned_during_post)
             << "block_on ended while the pool thread was still inside the completion post";
     }
