@@ -28,6 +28,14 @@ workers. At process exit it stops the context, joins those threads, then destroy
 callable into a coroutine frame and launches it on the compute pool. Completion posts a
 runtime-side wake to the caller executor; that wake queues the caller's continuation directly.
 The blocking pool never resumes the caller and never touches an executor-affine Capy event.
+The wake resumes the caller only after the pool thread has left its post into the caller's
+executor. That post publishes the wake, then still unlocks Corosio's scheduler and wakes a runner;
+a caller resumed before then could finish a `block_on` root, and `block_on` would destroy the
+context the pool thread is still inside (liquid #350, SIGBUS on a pool thread in
+`reactor_scheduler::post`). The pool thread marks the offload's state once its post has returned,
+and the wake waits for that mark, which costs only the few instructions left in the post. A
+poster that posts `detail::wake_offload` itself without recording itself in the state (lake's
+blocking pool, which guards its server's context with its own lock) is not waited for.
 `yield` is the way to give up the executor between steps of a long loop. It posts the caller's
 continuation and touches nothing afterwards; a zero `delay` is not a substitute, because Capy's
 `delay_awaitable::await_suspend` arms its timer before it registers its stop callback, and a
@@ -87,7 +95,13 @@ cmake --build build-shared && ctest --test-dir build-shared --output-on-failure
 `tests/test_runtime.cpp` verifies value and error return, laziness, executor return across a series
 of immediate offloads, completion, concurrent spawned tasks, the singleton shared context, a
 spawned store round trip, and two liquid tasks composed with `when_all`. The immediate operations
-exercise completion racing with caller suspension. `tests/test_runtime_sockets.cpp` (POSIX) opens
+exercise completion racing with caller suspension.
+`Runtime.AnOffloadsCompletionPostReturnsBeforeBlockOnEnds` offloads through an executor that keeps
+the pool thread inside its post until `block_on` returns (or 200 ms pass), and fails if `block_on`
+returned while the pool thread was still there; it fails every time without the liquid #350 change.
+`Runtime.AWakeWhosePosterDidNotRecordItselfDoesNotWait` posts the wake the way lake's blocking pool
+does and requires the caller to resume. `Runtime.ManyContextsOffloadAndEndConcurrently` runs 1,200 `block_on` contexts from 8 threads, each
+ending right after an offload completes. `tests/test_runtime_sockets.cpp` (POSIX) opens
 and closes Unix-domain socket pairs from 256 concurrent lanes inside `block_on` for three one-second
 rounds; each lane parks a read on one end, writes twice to the other and closes it, and the reader
 destroys its socket on whichever runner resumed it. It crashes with `mutex lock failed` on the
