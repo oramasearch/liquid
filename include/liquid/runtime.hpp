@@ -53,7 +53,9 @@ boost::capy::task<> complete_block_on(task<T> coroutine,
 template <class T> struct offload_state {
     std::optional<result<T>> output;
     boost::capy::continuation completion;
-    // The pool thread that posts the completion, and whether it has left that post (liquid#350).
+    // Set by run_blocking: the pool thread that posts the wake, and whether it has left that post
+    // (liquid#350). A poster that leaves `poster` unset does not make the wake wait; lake's
+    // blocking pool posts this wake itself and guards its server's context with its own lock.
     std::thread::id poster;
     std::atomic<bool> posted{false};
 };
@@ -63,10 +65,12 @@ template <class T> struct offload_state {
 // scheduler and wakes a runner. If the coroutine resumed before that, it could finish a block_on
 // root, and block_on would destroy the context the pool thread is still inside (liquid#350,
 // SIGBUS on a pool thread). The wait is the few instructions left in that post. A task that runs
-// on the poster's own thread (an executor that runs it inline) does not wait for itself.
+// on the poster's own thread (an executor that runs it inline) does not wait for itself, and a
+// poster that did not record itself is not waited for.
 template <class T> task<void> wake_offload(std::shared_ptr<offload_state<T>> state) {
     const auto executor = co_await boost::capy::this_coro::executor;
-    if (std::this_thread::get_id() != state->poster) {
+    const auto poster = state->poster;
+    if (poster != std::thread::id{} && poster != std::this_thread::get_id()) {
         state->posted.wait(false, std::memory_order_acquire);
     }
     executor.post(state->completion);

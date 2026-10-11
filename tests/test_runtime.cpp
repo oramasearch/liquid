@@ -185,6 +185,48 @@ liquid::runtime::task<int> offload_through_hook(std::shared_ptr<poster_hook> hoo
     co_return std::move(*state->output);
 }
 
+// Posts an offload's wake the way lake's blocking pool does: from a pool thread, without
+// recording itself in the state.
+boost::capy::task<>
+post_wake_unmarked(std::shared_ptr<liquid::runtime::detail::offload_state<int>> state,
+                   boost::capy::executor_ref executor) {
+    state->output.emplace(5);
+    boost::capy::run_async(executor)(liquid::runtime::detail::wake_offload(std::move(state)));
+    co_return;
+}
+
+class unmarked_wake_awaiter {
+public:
+    unmarked_wake_awaiter(std::shared_ptr<liquid::runtime::detail::offload_state<int>> state,
+                          boost::capy::executor_ref executor)
+        : state_(std::move(state)), executor_(executor) {}
+
+    bool await_ready() const noexcept {
+        return false;
+    }
+    std::coroutine_handle<> await_suspend(std::coroutine_handle<> handle,
+                                          const boost::capy::io_env*) {
+        state_->completion.h = handle;
+        liquid::runtime::detail::run_on_pool(post_wake_unmarked(state_, executor_));
+        return std::noop_coroutine();
+    }
+    void await_resume() const noexcept {}
+
+private:
+    std::shared_ptr<liquid::runtime::detail::offload_state<int>> state_;
+    boost::capy::executor_ref executor_;
+};
+
+liquid::runtime::task<int> wake_from_unmarked_poster() {
+    const auto executor = co_await boost::capy::this_coro::executor;
+    auto state = std::make_shared<liquid::runtime::detail::offload_state<int>>();
+    co_await unmarked_wake_awaiter{state, executor};
+    if (!state->output.has_value())
+        co_return std::unexpected(
+            liquid::error{liquid::errc::internal, "no offload result", "runtime test"});
+    co_return std::move(*state->output);
+}
+
 } // namespace
 
 TEST(Runtime, BlockOnReturnsValueAndError) {
@@ -254,6 +296,24 @@ TEST(Runtime, AnOffloadsCompletionPostReturnsBeforeBlockOnEnds) {
         EXPECT_FALSE(hook->returned_during_post)
             << "block_on ended while the pool thread was still inside the completion post";
     }
+}
+
+TEST(Runtime, AWakeWhosePosterDidNotRecordItselfDoesNotWait) {
+    // lake's blocking pool posts wake_offload itself and never records the poster; the wake must
+    // resume the caller at once, not wait for a mark nobody sets.
+    std::promise<liquid::result<int>> finished;
+    auto outcome = finished.get_future();
+    std::thread runner([&finished] {
+        finished.set_value(liquid::runtime::block_on(wake_from_unmarked_poster()));
+    });
+    if (outcome.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+        runner.detach();
+        FAIL() << "the wake waited for a poster that never recorded itself";
+    }
+    runner.join();
+    const auto value = outcome.get();
+    ASSERT_TRUE(value.has_value()) << value.error().message;
+    EXPECT_EQ(*value, 5);
 }
 
 TEST(Runtime, ManyContextsOffloadAndEndConcurrently) {
