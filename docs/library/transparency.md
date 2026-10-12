@@ -85,6 +85,39 @@ them. The coroutine-native `log_source` interface lets applications and tests pr
 tiles, and proofs. `http_log_source` obtains Lake's HTTP representation without linking a Lake
 library.
 
+### HTTP URL validation (#289)
+
+Use `http_log_source::create(url)` to construct a source through
+`result<http_log_source>`. Malformed schemes, missing hosts, and ports outside the decimal
+range 1–65535 return `errc::invalid_argument` with an HTTP/HTTPS URL diagnostic. Validation
+is local: it does not resolve a host, open a socket, or request log data. Successful
+construction also performs no I/O.
+
+The string constructor remains source-compatible for existing clients. It retains a URL
+validation error instead of throwing; each of its six request operations returns that same
+error before entering the HTTP transport. New callers should use the factory to receive the
+error at construction. This also protects existing admission and verification callers without
+changing their proof or trust behavior.
+
+`log scan`, `log consistency`, and `log verify` use the factory before opening a repository
+or decoding an attestation. Invalid URLs print the specific correction and exit **2** (invalid
+usage); a valid URL's failed operation still exits **1**, as the
+[command reference](../reference/cli/log.md#exit-status) specifies.
+
+`HttpLogSource` API tests cover rejected schemes, absent hosts, empty/nondecimal/out-of-range
+ports, valid HTTP/HTTPS URLs, and every legacy request operation. `cli/log-url.cmake` repeats
+the invalid cases through all three verbs outside a repository and runs the API cases too.
+On macOS and Linux, that CTest case uses the existing offline runner with networking denied.
+No test in this regression starts a server or requires an endpoint.
+
+A review of explicit throws in library-owned public constructors also found
+`forge_client(std::string, forge_client_options)` in `src/forge.cpp` and
+`sync_endpoint(std::string, sync_endpoint_options)` in `src/sync/endpoint.cpp` throwing
+`std::invalid_argument` for invalid endpoints. Those remain outside #289. This review does
+not establish that allocations or constructors in dependencies cannot throw.
+
+### Checkpoints and proofs
+
 The client validates the checkpoint's compact canonical JSON hash, then the Ed25519 Lake signature
 over `TAAP/1 lake_checkpoint/1`, a NUL byte, and the CBOR checkpoint body. It accepts only
 configured witnesses with valid signatures over the canonical JSON body. Duplicate witness keys do
@@ -136,8 +169,18 @@ with `bootstrap_policy::pinned`; `accept_with_warning` returns a recorded bootst
 `liquid log verify <log-url> <attestation-base64url>` verifies inclusion and records its checkpoint.
 `liquid log consistency <log-url>` advances trusted state only through a consistency proof.
 `liquid log scan <log-url> <identity>` returns matching canonical attestations. `liquid verify
---log <log-url>` requires inclusion for each agreeing reproducibility attestation. `liquid log
+--log <log-url>` requires inclusion for each agreeing reproducibility attestation. For every selected
+action, run `liquid verify --all --log <log-url>`. `liquid log
 timestamps <log-url>` and `liquid log verify --timestamps` retain the RFC 3161/RFC 4998 commands.
+
+`cli-verify-log` exercises that policy through the CLI handler. It stores a signed, agreeing
+`reproducibility/1` attestation in a temporary repository and serves the matching checkpoint, entry
+tile, and inclusion proof over loopback HTTP. It also requires missing, tampered, and unavailable
+inclusion to fail; without `--log`, verification retains its local-only policy. The test injects
+only the already-completed verification report, so it can cover the CLI policy without a sandbox
+mount. `cli-verify-log-guide` reads the documented all-actions invocation and runs it through the
+built command parser. The typed command table remains covered independently by generated help and
+reference tests.
 
 `tests/fixtures/transparency/fixture.json` is copied from Lake commit `cb60ed4` and is generated
 by Lake's `tests/fixtures/transparency/regenerate.py`. The tests use its checkpoint, tiles, and

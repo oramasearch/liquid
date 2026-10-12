@@ -30,6 +30,8 @@ compiler actions through the query graph. Operations owned by later issues retur
 synchronous code through `runtime::block_on`. Rules: `std::expected` at the boundary, no
 exceptions across it, **never a Zetta type**, and no third-party type in a public header except
 Boost.Capy through `liquid/runtime.hpp`. The CLI never carries behaviour the library lacks.
+The [HTTP log URL contract](transparency.md#http-url-validation-289) documents result-returning
+construction and the remaining explicit constructor throws found during the #289 review.
 
 **Consume.**
 

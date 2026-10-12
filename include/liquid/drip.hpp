@@ -97,6 +97,11 @@ struct LIQUID_EXPORT capture_status {
     std::uint64_t blocked_drips{0};
     std::optional<scan_block> last_block;
     journal_cursor last_cursor;
+    // False when the platform watcher could not be armed and capture is running
+    // on periodic reconciliation alone. Changes are still observed; they are
+    // observed on the reconcile interval rather than as they happen.
+    bool watcher_armed{true};
+    std::string watcher_diagnostic;
 };
 
 class LIQUID_EXPORT subscription {

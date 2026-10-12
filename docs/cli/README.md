@@ -20,6 +20,13 @@ Clone pins the repository root, so every pulled file is materialized even when i
 drive client's ordinary on-demand hydration threshold. The remote remains configured for later
 `drive status` and synchronization.
 
+`liquid --help` lists the commands in groups, Git's own first, under a *Start here* block of the
+eight a person coming from Git reaches for. The groups are one table in `src/main.cpp`, checked at
+compile time so that every command is in exactly one, and the generated reference index and man
+page use the same groups. Where Git has a command for the same thing liquid uses Git's name; the
+rule, the deliberate differences and their reasons are in [`git-commands.md`](git-commands.md). A
+Git command liquid does not have (`commit`, `add`, `grep` and others) prints what to use instead.
+
 Focused command contracts: [`build`](build-events.md) plans and events, and [`test`](test.md).
 `liquid repack [repository]` rewrites packs containing chunk deltas so each target refers directly
 to its oldest useful base and prints the rewritten pack, delta, and byte counts.
@@ -68,15 +75,14 @@ built binary under the build directory before CTest compares it with the committ
 | `registry` | `registry trust <pin <root.json>\|show>` | Pin or inspect the current repository's trusted TUF root. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `config` | `config check <file\|dir> \| config lower <file> [--json] [--trace] \| config format <file>` | Check, lower, trace, or canonically format `.liquid` configuration. | available |
-| `log` | `log [--ops] [--json]` or `log timestamps <log-url>` or `log verify --timestamps` | Show change, signed drip, or timestamp history and verify timestamp evidence. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
 | `review` | `review <list\|show\|open\|comment\|approve\|close\|protections\|watch> --lake <url> [--json] ...` | Review a lake change in place. | available |
 | `deploy` | `deploy [--control <url>] [--env <name>] [--image <ref@sha256:...>] [--to <change\|deployment>] [--wait]` or `deploy <status\|list> [--control <url>] [--env <name>] [--json]` | Create, inspect, or roll back an environment deployment. | available |
-| `serve` | `serve sync <path> [--listen <address>] [--port <port>] [--allow-ref <glob>]...` | Serve one repository over the sync protocol. | available |
-| `move` | `move <from> <to>` | Record a path move. | available |
+| `serve` | `serve admission <--policy <file>\|--policies <dir>> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>] [--decision-replay <count>]` | Serve named image-admission policies, structured decisions, and the control API. | available |
+| `mv` | `mv <from> <to>` | Record a path move. `move` is accepted as an older spelling. | available |
 | `rm` | `rm <path>` | Record a path removal. | available |
 | `anchor` | `anchor <path>:<line>@<change> --to <change>` | Map a text position between changes. | available |
 | `nest` | `nest <repository> <path>` | Nest another repository. | available |
@@ -96,28 +102,20 @@ built binary under the build directory before CTest compares it with the committ
 | `export` | `export git <path> [ref]` | Export as a Git repository. | available |
 | `retain` | `retain explain <digest>` | Explain why an object is retained or will be evicted. | available |
 | `identity` | `identity [show\|rotate [--to software\|fido2\|piv:9c]] [--json]` | Show or rotate the device identity and select its key custody. | available |
-| `sign` | `sign <drip\|change\|artifact> <digest>` | Sign a canonical digest value with the current identity backend. | available |
+| `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
 | `release` | `release policy set --threshold <k> --signer <id>...` or `release <approve\|verify> <artifact>` | Manage signed threshold release approval. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
 | `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
-| `attest` | `attest <show\|verify> <digest>` | Show or verify an attestation in the current repository or capture store. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain] [--log <log-url>]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
 | `replay` | `replay <action\|result> [--json] [--record]` | Reproduce and compare a recorded action. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--session <id>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--install-prefix <path>] [--allow-embedded-prefix] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions or publish a checked install tree. | available on Linux with FUSE and on macOS with macFUSE |
-| `build` | `build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Plan or start a configured repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
-| `wrap` | `wrap [--jobs <count>] [--target <triple>] [--input <name>=<result\|tree>] [--remote <address>\|--scheduler <address>] [--no-cache] [--no-verify] [--explain] [--fail-on-abi-break] <command> [args...]` | Run an existing build as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `build` | `build --target <name> [--json] \| build [target] \| build --plan [target] \| build --events <command> [args...] \| build --profile [remote options] <command> [args...] \| build trace [--chrome]` | Build a `.liquid` target, plan or start a wrapped repository build, profile a command, stream events, or export a trace. | available on Linux with FUSE and on macOS with macFUSE |
 | `test` | `test [filter]` | Run discovered tests as cached actions. | available on Linux with FUSE and on macOS with macFUSE |
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
-| `project` | `project <oci\|ostree\|bootc\|deb\|rpm\|apk\|helm\|homebrew\|pkgbuild\|appimage\|flatpak\|snap\|dsc> <result\|change\|tree> [--name <name>] [--version <version>] [--distribution <suite>] [target options]` | Project checked content into Tier A artifacts or a Debian Tier B source package. | available |
 | `project` | `project <oci\|deb\|rpm\|apk\|helm\|macos-pkg\|macos-dmg\|msix\|winget> <result\|install-tree\|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--json]` | Project a checked tree into a package or image, or an MSIX into winget manifests. Platform installers are unsigned and include a signing request. | available on the target platform; winget is portable |
-| `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
-| `project` | `project <oci\|deb\|rpm\|apk\|helm> <result\|install-tree> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--depends <dependency>] [--against <path>] [--replaces <package>] [--service <value>] [--compat-gzip] [--allow-abi-break] [--json]` | Project a checked install tree into Tier A packages, an OCI image, or a Helm chart, with optional ownership checking. | available |
 | `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
 | `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
@@ -129,14 +127,15 @@ built binary under the build directory before CTest compares it with the committ
 | `symbols` | `symbols <path>` | Show compiler or syntactic symbols for a source path. | available |
 | `hot-update` | `hot-update <classify\|apply\|status> ...` | Classify, apply, or inspect runtime updates. | available on macOS arm64 and Linux x86_64 |
 | `edit` | `edit <rename\|extract\|move\|apply> ... [--json] [--apply] [--agent <name>]` | Preview or apply a structural edit through the daemon. | available on macOS and Linux |
-| `serve` | `serve reapi --listen <address> [--instance <name>]` | Serve the repository CAS and action cache over REAPI. | available |
-| `serve` | `serve admission <--policy <file>\|--policies <dir>> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>] [--decision-replay <count>]` | Serve named image-admission policies, structured decisions, and the control API. | available |
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
 | `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
 | `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
 | `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
+| `repack` | `repack [repository]` | Rebase stored chunk deltas. | available |
+| `tree` | `tree` | Print the recorded root tree digest. | available |
+| `docs` | `docs [--format markdown\|json\|man] [--out <dir>]` | Generate the CLI reference. | available |
 
 ## Output and errors
 
@@ -726,7 +725,7 @@ liquid refs --json
 liquid diff blake3:<old-change> blake3:<new-change>
 LIQUID_TOKEN="$token" liquid push https://lake.example/repositories/project
 LIQUID_TOKEN="$token" liquid pull https://lake.example/repositories/project
-liquid move notes.txt archive/notes.txt
+liquid mv notes.txt archive/notes.txt
 liquid rm archive/notes.txt
 liquid anchor src/main.cpp:42@blake3:<source-change> --to blake3:<target-change>
 liquid nest ../shared-assets vendor/assets
@@ -841,3 +840,9 @@ in the matching `src/cli/*.cpp` command group, and regenerate `docs/reference/cl
 docs --format markdown --out docs/reference/cli` followed by the JSON form. Keep each command on
 public libliquid calls; a library capability that does not exist belongs in the library before it
 reaches the CLI.
+
+`liquid tree` prints only the current recorded root digest, including the algorithm prefix, for
+direct use as a `project` input. `project` resolves changes and trees in the ordinary repository
+and retains build-repository result lookup. Unsupported inputs name the supplied kind and the
+accepted kinds. See [package ordinary files](../guides/project-from-files.md) and
+[projection](../library/projection.md) for source-package and overlay requirements.

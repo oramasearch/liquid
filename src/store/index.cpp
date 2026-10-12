@@ -9,6 +9,7 @@
 #include <limits>
 #include <ranges>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -152,7 +153,7 @@ void append_record(std::vector<std::byte>& bytes,
 std::vector<std::byte> make_header(algorithm alg,
                                    std::uint64_t count,
                                    std::uint64_t bloom_size,
-                                   const std::array<std::uint32_t, fanout_count>& fanout) {
+                                   std::span<const std::uint32_t> fanout) {
     std::vector<std::byte> header;
     header.reserve(run_header_size);
     header.insert(header.end(), run_magic.begin(), run_magic.end());
@@ -174,6 +175,95 @@ unsigned tier(std::uint64_t records) {
         ++value;
     }
     return value;
+}
+
+std::uint32_t fanout_bucket(const std::array<std::byte, 32>& id) {
+    return (std::uint32_t(std::to_integer<unsigned char>(id[0])) << 8U) |
+           std::to_integer<unsigned char>(id[1]);
+}
+
+// One input of a compaction, copied by value: the merge suspends on every write, and a concurrent
+// flush reallocates `algorithm_state::runs` (issue #271).
+struct merge_input {
+    std::uint64_t sequence{};
+    std::uint64_t record_count{};
+    std::uint64_t records_offset{};
+    std::span<const std::byte> bytes;
+};
+
+// A k-way merge over sorted input runs. It yields each digest once, with the location from the
+// newest run holding it. It only reads the inputs, so a second merge over the same inputs yields
+// the same records: compaction runs one to size the run and one to write it (liquid #332).
+class run_merge {
+public:
+    run_merge(std::span<const merge_input> input, algorithm alg) : input_(input), alg_(alg) {
+        positions_.assign(input_.size(), 0);
+        heads_.reserve(input_.size());
+        for (const auto& source : input_) {
+            heads_.push_back(
+                decode_record(source.bytes.subspan(source.records_offset, record_size), alg_));
+        }
+    }
+
+    std::optional<index_entry> next() {
+        std::optional<std::size_t> choice;
+        for (std::size_t i = 0; i < heads_.size(); ++i) {
+            if (heads_[i] && (!choice || heads_[i]->id.bytes < heads_[*choice]->id.bytes)) {
+                choice = i;
+            }
+        }
+        if (!choice) {
+            return std::nullopt;
+        }
+        const auto key = heads_[*choice]->id.bytes;
+        std::size_t newest = *choice;
+        for (std::size_t i = 0; i < heads_.size(); ++i) {
+            if (heads_[i] && heads_[i]->id.bytes == key &&
+                input_[i].sequence > input_[newest].sequence) {
+                newest = i;
+            }
+        }
+        const auto output = *heads_[newest];
+        for (std::size_t i = 0; i < heads_.size(); ++i) {
+            if (!heads_[i] || heads_[i]->id.bytes != key) {
+                continue;
+            }
+            ++positions_[i];
+            if (positions_[i] == input_[i].record_count) {
+                heads_[i] = std::nullopt;
+            } else {
+                heads_[i] = decode_record(
+                    input_[i].bytes.subspan(input_[i].records_offset + positions_[i] * record_size,
+                                            record_size),
+                    alg_);
+            }
+        }
+        return output;
+    }
+
+private:
+    std::span<const merge_input> input_;
+    algorithm alg_;
+    std::vector<std::uint64_t> positions_;
+    std::vector<std::optional<index_entry>> heads_;
+};
+
+// Appends `bytes` at `offset`, the object's current end, in windows of at most write_window_size.
+runtime::task<void> append_windows(std::shared_ptr<::liquid::store_backend> backend,
+                                   std::string key,
+                                   std::uint64_t offset,
+                                   std::span<const std::byte> bytes) {
+    while (!bytes.empty()) {
+        const auto size = std::min(bytes.size(), write_window_size);
+        auto written = co_await backend->put_range(
+            key, offset, std::vector<std::byte>(bytes.begin(), bytes.begin() + size));
+        if (!written) {
+            co_return std::unexpected(written.error());
+        }
+        offset += size;
+        bytes = bytes.subspan(size);
+    }
+    co_return result<void>{};
 }
 
 } // namespace
@@ -367,7 +457,8 @@ runtime::task<void> chunk_index::flush(algorithm alg) {
         });
     const auto count = static_cast<std::uint64_t>(entries.size());
     const auto bloom_size = std::max<std::uint64_t>(1, (count * 10 + 7) / 8);
-    std::array<std::uint32_t, fanout_count> fanout{};
+    // On the heap: a 256 KiB array here makes the Debug coroutine ramp reserve that much stack.
+    std::vector<std::uint32_t> fanout(fanout_count);
     std::vector<std::byte> bloom(static_cast<std::size_t>(bloom_size));
     for (const auto& entry : entries) {
         const auto bucket = (std::to_integer<unsigned char>(entry.id.bytes[0]) << 8U) |
@@ -384,7 +475,7 @@ runtime::task<void> chunk_index::flush(algorithm alg) {
     if (!created) {
         co_return std::unexpected(created.error());
     }
-    auto bloom_written = co_await backend_->put_range(run_key, run_header_size, bloom);
+    auto bloom_written = co_await append_windows(backend_, run_key, run_header_size, bloom);
     if (!bloom_written) {
         co_return std::unexpected(bloom_written.error());
     }
@@ -457,13 +548,7 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
     // The merge below suspends on every write. A concurrent flush inserts into `state.runs` and
     // reallocates it, so nothing here may point into that vector: each input is copied by value,
     // and the mapping is read through its own bytes, which a vector move does not disturb.
-    struct source_run {
-        std::uint64_t sequence{};
-        std::uint64_t record_count{};
-        std::uint64_t records_offset{};
-        std::span<const std::byte> bytes;
-    };
-    std::vector<source_run> input;
+    std::vector<merge_input> input;
     std::set<std::uint64_t> old_sequences;
     std::uint64_t capacity = 0;
     for (const auto index : group->second) {
@@ -475,58 +560,46 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
         old_sequences.insert(source.sequence);
         capacity += source.record_count;
     }
-    struct cursor {
-        std::uint64_t position{};
-    };
-    std::vector<cursor> cursors;
-    std::vector<std::optional<index_entry>> heads;
-    for (const auto& source : input) {
-        cursors.push_back({0});
-        heads.push_back(
-            decode_record(source.bytes.subspan(source.records_offset, record_size), alg));
-    }
+    // Every byte of the run is written once, in order (liquid #332): an object store such as
+    // Zetta's refuses a range that rewrites bytes already written. The header and bloom precede
+    // the records, so a first merge over the inputs computes the count, fanout and bloom without
+    // writing anything, and a second merge streams the records after them. It runs without a
+    // suspension point, so no flush lands between the two merges.
     const auto bloom_size = std::max<std::uint64_t>(1, (capacity * 10 + 7) / 8);
-    std::array<std::uint32_t, fanout_count> fanout{};
+    // On the heap, as in flush: an on-stack table makes the Debug coroutine ramp reserve its size.
+    std::vector<std::uint32_t> fanout(fanout_count);
     std::vector<std::byte> bloom(static_cast<std::size_t>(bloom_size));
+    std::uint64_t count = 0;
+    {
+        run_merge sizing(input, alg);
+        while (const auto entry = sizing.next()) {
+            set_bloom(bloom, entry->id.bytes);
+            ++fanout[fanout_bucket(entry->id.bytes) + 1];
+            ++count;
+        }
+    }
+    for (std::size_t i = 1; i < fanout.size(); ++i) {
+        fanout[i] += fanout[i - 1];
+    }
     const auto sequence = next_sequence_++;
     const auto run_key = key("run-" + std::to_string(sequence) + ".idx");
-    std::array<std::uint32_t, fanout_count> empty_fanout{};
-    auto created = co_await backend_->put(run_key, make_header(alg, 0, bloom_size, empty_fanout));
+    // A complete-object put replaces any run a torn earlier merge left under this unpublished key.
+    auto created = co_await backend_->put(run_key, make_header(alg, count, bloom_size, fanout));
     if (!created) {
         co_return std::unexpected(created.error());
     }
-    auto bloom_space = co_await backend_->put_range(run_key, run_header_size, bloom);
-    if (!bloom_space) {
-        co_return std::unexpected(bloom_space.error());
+    auto bloom_written = co_await append_windows(backend_, run_key, run_header_size, bloom);
+    if (!bloom_written) {
+        co_return std::unexpected(bloom_written.error());
     }
     std::vector<std::byte> output;
     output.reserve(write_window_size);
     std::uint64_t offset = run_header_size + bloom_size;
-    std::uint64_t count = 0;
-    while (true) {
-        std::optional<std::size_t> choice;
-        for (std::size_t i = 0; i < heads.size(); ++i) {
-            if (heads[i] && (!choice || heads[i]->id.bytes < heads[*choice]->id.bytes)) {
-                choice = i;
-            }
-        }
-        if (!choice) {
-            break;
-        }
-        const auto key = heads[*choice]->id.bytes;
-        std::size_t newest = *choice;
-        for (std::size_t i = 0; i < heads.size(); ++i) {
-            if (heads[i] && heads[i]->id.bytes == key &&
-                input[i].sequence > input[newest].sequence) {
-                newest = i;
-            }
-        }
-        append_record(output, key, heads[newest]->location);
-        set_bloom(bloom, key);
-        const auto bucket =
-            (std::to_integer<unsigned char>(key[0]) << 8U) | std::to_integer<unsigned char>(key[1]);
-        ++fanout[bucket + 1];
-        ++count;
+    std::uint64_t written_count = 0;
+    run_merge records(input, alg);
+    while (const auto entry = records.next()) {
+        append_record(output, entry->id.bytes, entry->location);
+        ++written_count;
         if (output.size() >= write_window_size) {
             const auto size = output.size();
             auto written = co_await backend_->put_range(run_key, offset, std::move(output));
@@ -537,20 +610,6 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
             output.clear();
             output.reserve(write_window_size);
         }
-        for (std::size_t i = 0; i < heads.size(); ++i) {
-            if (!heads[i] || heads[i]->id.bytes != key) {
-                continue;
-            }
-            ++cursors[i].position;
-            if (cursors[i].position == input[i].record_count) {
-                heads[i] = std::nullopt;
-            } else {
-                heads[i] = decode_record(
-                    input[i].bytes.subspan(
-                        input[i].records_offset + cursors[i].position * record_size, record_size),
-                    alg);
-            }
-        }
     }
     if (!output.empty()) {
         auto written = co_await backend_->put_range(run_key, offset, std::move(output));
@@ -558,17 +617,9 @@ runtime::task<void> chunk_index::compact(algorithm alg) {
             co_return std::unexpected(written.error());
         }
     }
-    for (std::size_t i = 1; i < fanout.size(); ++i) {
-        fanout[i] += fanout[i - 1];
-    }
-    auto header_written =
-        co_await backend_->put_range(run_key, 0, make_header(alg, count, bloom_size, fanout));
-    if (!header_written) {
-        co_return std::unexpected(header_written.error());
-    }
-    auto bloom_written = co_await backend_->put_range(run_key, run_header_size, bloom);
-    if (!bloom_written) {
-        co_return std::unexpected(bloom_written.error());
+    if (written_count != count) {
+        co_return std::unexpected(
+            index_error(errc::internal, "index merge changed between passes", root_));
     }
     auto synchronized = co_await backend_->barrier();
     if (!synchronized) {

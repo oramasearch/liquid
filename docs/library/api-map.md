@@ -58,7 +58,7 @@ owning issue in `error::context`.
 | `liquid/session.hpp` | #30, #41, #86, #248 | implemented | move-only speculative `session`, session/delegation options, atomic publish reports, semantic lease claims, transient presence, epoch values, and per-line actor/session/change attribution records |
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
-| `liquid/transparency.hpp` | #207, #210, #268 | implemented | Lake checkpoint signature and witness quorum validation; entry/hash tiles, inclusion and consistency proofs, identity scans, Capy `log_source`, HTTP source, repository-backed or caller-pinned trust, RFC 3161 timestamp tokens, and RFC 4998 evidence chains with explicit TSA anchors |
+| `liquid/transparency.hpp` | #207, #210, #268, #289 | implemented | Lake checkpoint signature and witness quorum validation; entry/hash tiles, inclusion and consistency proofs, identity scans, Capy `log_source`, locally validated HTTP source factory and retained constructor errors, repository-backed or caller-pinned trust, RFC 3161 timestamp tokens, and RFC 4998 evidence chains with explicit TSA anchors |
 | `liquid/admission.hpp` | #203, #238, #268 | implemented | versioned policy and CBOR/JSON decision codecs, named policy-directory options, per-policy transparency mode and trust, rule-attributed reasons and considered evidence with log outcomes, coroutine attestation-source and transparency-verifier interfaces, shared image review, and admission server options including bounded replay |
 | `liquid/attestation.hpp` | #14, #61, #62, #203 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM and image claims, attestation encoding, profile-keyed verification, and image-attestation minting |
 | `liquid/attestation.hpp` | #14, #61, #62, #76 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM and platform-signature claims, attestation encoding, and profile-keyed verification |
@@ -565,9 +565,22 @@ class store_backend {
   virtual runtime::task<void> remove(std::string key) = 0;
   virtual runtime::task<std::vector<store_backend_entry>> list(std::string prefix) = 0;
   virtual runtime::task<void> barrier() = 0;
+  virtual result<std::shared_ptr<store_backend>> fenced(std::uint64_t fence) const; // default unsupported
 };
 std::shared_ptr<store_backend> make_disk_store_backend(
     std::filesystem::path root, bool durable = false);
+class owner_grant {                    // shared state: copies see one revoke (liquid #327)
+ public:
+  explicit owner_grant(std::uint64_t fence);
+  bool valid() const; std::uint64_t fence() const; bool lost() const; void revoke() const;
+};
+class store_owner {                    // injected owner lock with a fence (liquid #327)
+ public:
+  virtual runtime::task<owner_grant> acquire(std::string holder,
+                                             std::chrono::milliseconds wait) = 0;
+  virtual runtime::task<void> release() = 0;
+};
+std::shared_ptr<store_owner> make_disk_store_owner(std::filesystem::path root); // flock, fence 0
 class blob_write_through {
  public:
   virtual runtime::task<void> put(digest content, std::span<const std::byte> bytes,
@@ -589,6 +602,10 @@ struct store_options {
   hydration_observer on_hydration;
   remote_access_observer on_remote_access;
   std::shared_ptr<store_backend> backend; // null selects the disk backend at the store path
+  bool exclusive_owner{};              // take the root's cross-process owner lock (liquid #321)
+  std::chrono::milliseconds owner_wait{}; // bounded wait for the current owner; zero refuses at once
+  std::shared_ptr<store_owner> owner;  // injected owner; implies exclusive ownership (liquid #327)
+  bool read_after_owner_lost{};        // reads continue after the grant is lost
 };
 struct object_key_version { std::string key_id; std::uint64_t version; bool readable; };
 struct collection_options {
@@ -626,6 +643,7 @@ class store {                          // the chunk store: chunks, packs, liquid
   runtime::task<std::optional<object_key_version>> key_version(digest);
   runtime::task<lease> lease_root(digest, std::chrono::seconds ttl);   // GC roots are leases
   runtime::task<collection_report> collect(collection_options = {});   // epoch marking
+  runtime::task<void> close();         // destroy, then await the owner's release
 };
 ```
 
@@ -641,6 +659,8 @@ keyring enables trust-domain encrypted objects; see
 deletion, prefix listing, and durability barriers. Missing keys return `not_found`, invalid stored
 ranges or bytes return `corrupt`, unreachable services return `unavailable`, and rejected backend
 authority returns `unauthorized`; the disk implementation maps local system failures to `io`.
+`fenced` returns a view whose mutations carry an injected owner's fence; a stale fence is
+`locked`. See [store.md](store.md#injected-owners-and-fencing).
 
 ### `liquid/remote.hpp`
 
@@ -1058,12 +1078,26 @@ struct search_plan { search_executor executor; search_query_kind query_kind;
                                    drips_since_index_update, scan_nanoseconds_per_blob,
                                    scan_parallelism;
                      double trigram_selectivity; std::vector<search_alternative> alternatives; };
+enum class repository_transfer_mode { copy, verify };           // liquid #328
+struct repository_transfer_options { repository_transfer_mode mode{copy};
+                                     std::uint64_t batch_objects{4096}; };
+struct repository_transfer_difference { std::string subject, reason; };
+struct repository_transfer_report { std::uint64_t objects, objects_present, objects_read, bytes_read,
+                                                  objects_written, bytes_written, state_written,
+                                                  leases_written;
+                                    std::vector<digest> missing;
+                                    std::vector<repository_transfer_difference> differences;
+                                    bool complete; };
 class repository {
  public:
   static runtime::task<repository> create(std::filesystem::path, repository_options = {});
   static runtime::task<repository> open(std::filesystem::path, repository_options = {});
   static runtime::task<repository> open_build(std::filesystem::path working_tree,
                                                repository_options = {});
+  // whole-repository copy or verify between two open shared stores (liquid #328)
+  static runtime::task<repository_transfer_report> transfer(store& from, store& into,
+                                                            std::filesystem::path identifier,
+                                                            repository_transfer_options = {});
   runtime::task<tree> root();                            // the working copy is a change
   runtime::task<change_id> head();
   runtime::task<std::vector<std::byte>> read(std::string path);

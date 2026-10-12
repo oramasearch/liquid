@@ -53,9 +53,13 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_secret.cpp
   test_store.cpp
+  sim/write_once_backend.cpp
+  store/test_owner.cpp
+  store/test_transfer.cpp
   test_tiers.cpp
   test_temporary_directory.cpp
   test_lake_transparency.cpp
+  test_log_url.cpp
   test_transparency.cpp
   test_tuf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp
@@ -117,21 +121,23 @@ if(BUILD_SHARED_LIBS)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
-  target_sources(liquid-tests PRIVATE test_sync.cpp admission/test_server.cpp)
+  target_sources(liquid-tests PRIVATE test_sync.cpp test_runtime_sockets.cpp admission/test_server.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
-  liquid::liquid
+  # liquid_forge_double links liquid::liquid publicly, so naming it here too put
+  # libliquid.a on the link line twice.
   liquid_forge_double
   liquid_monocypher
-  orama::oramacore-cpp
+  $<COMPILE_ONLY:orama::oramacore-cpp>
   GTest::gtest_main
   Boost::assert
   Boost::config
   Boost::throw_exception
-  Boost::corosio
-  Boost::corosio_openssl)
+  $<COMPILE_ONLY:Boost::corosio>
+  $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim
   ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
   ${PROJECT_SOURCE_DIR}/modules/corosio/include
   ${boost_core_libs_SOURCE_DIR}/libs/multiprecision/include
@@ -139,6 +145,9 @@ target_include_directories(liquid-tests PRIVATE
   ${monocypher_source_SOURCE_DIR}/src/optional)
 include(GoogleTest)
 gtest_discover_tests(liquid-tests DISCOVERY_TIMEOUT 120)
+add_test(NAME store-write-once
+  COMMAND liquid-tests --gtest_filter=Store.*:GarbageCollection.*:RepositoryTransfer.*)
+set_tests_properties(store-write-once PROPERTIES ENVIRONMENT LIQUID_TEST_WRITE_ONCE_BACKEND=1)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   find_program(LIQUID_SWTPM_EXECUTABLE swtpm)
   if(LIQUID_SWTPM_EXECUTABLE)
@@ -162,8 +171,8 @@ add_executable(liquid-http2-test-server
   ${LIQUID_HTTP2_TEST_SOURCES})
 target_link_libraries(liquid-http2-test-server PRIVATE
   liquid::liquid
-  Boost::corosio
-  Boost::corosio_openssl)
+  $<COMPILE_ONLY:Boost::corosio>
+  $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 add_executable(liquid-build-fixture build/fixture.c)
@@ -197,6 +206,13 @@ if(UNIX)
   add_executable(liquid-graph-crash-fixture build/graph_crash_fixture.cpp)
   target_link_libraries(liquid-graph-crash-fixture PRIVATE liquid::liquid)
   add_dependencies(liquid-tests liquid-graph-crash-fixture)
+endif()
+if(UNIX)
+  add_executable(liquid-store-owner-fixture store/owner_fixture.cpp)
+  target_link_libraries(liquid-store-owner-fixture PRIVATE liquid::liquid)
+  add_dependencies(liquid-tests liquid-store-owner-fixture)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_STORE_OWNER_FIXTURE="$<TARGET_FILE:liquid-store-owner-fixture>")
 endif()
 if(UNIX)
   add_executable(liquid-install-crash-fixture install_crash_fixture.cpp)
@@ -262,7 +278,8 @@ if(LIQUID_BUILD_FRONTENDS)
     ${LIQUID_TREE_SITTER_RUNTIME_INCLUDE})
   target_link_libraries(liquid-tests PRIVATE
     liquid-frontend-clang-static
-    liquid_frontend_syntax)
+    # libliquid already carries the syntax archive to consumers.
+    $<COMPILE_ONLY:liquid_frontend_syntax>)
 
   add_test(NAME grammar-lock-digests
     COMMAND ${CMAKE_COMMAND}
@@ -414,10 +431,44 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_INSTALL_ROOT=${CMAKE_CURRENT_BINARY_DIR}/install-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/install.cmake)
+  add_executable(liquid-project-cli-fixture cli/project_fixture.cpp)
+  target_link_libraries(liquid-project-cli-fixture PRIVATE liquid::liquid)
+  add_test(NAME cli-project
+    COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/cli/project.py
+      --liquid $<TARGET_FILE:liquid-cli>
+      --fixture $<TARGET_FILE:liquid-project-cli-fixture>
+      --source-fixture ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/projection/debian-source
+      --work ${CMAKE_CURRENT_BINARY_DIR}/project-cli)
+  set_tests_properties(cli-project PROPERTIES TIMEOUT 120)
   add_test(NAME cli-docs-json
     COMMAND $<TARGET_FILE:liquid-cli> docs --format json)
   set_tests_properties(cli-docs-json PROPERTIES
     PASS_REGULAR_EXPRESSION "^\\{\"schema_version\":1,\"commands\":\\[")
+  if(UNIX)
+    add_executable(liquid-verify-log-cli
+      cli/verify_log.cpp
+      ${PROJECT_SOURCE_DIR}/src/cli/verify.cpp
+      ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+      ${PROJECT_SOURCE_DIR}/src/objects/records.cpp)
+    target_include_directories(liquid-verify-log-cli PRIVATE
+      ${PROJECT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
+      ${monocypher_source_SOURCE_DIR}/src
+      ${monocypher_source_SOURCE_DIR}/src/optional)
+    target_link_libraries(liquid-verify-log-cli PRIVATE
+      liquid::liquid
+      liquid_monocypher
+      GTest::gtest)
+    add_test(NAME cli-verify-log COMMAND $<TARGET_FILE:liquid-verify-log-cli>)
+  endif()
+  add_test(NAME cli-verify-log-guide
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_TRANSPARENCY_GUIDE=${PROJECT_SOURCE_DIR}/docs/library/transparency.md
+      -DLIQUID_GUIDE_WORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/verify-log-guide.cmake)
   add_test(NAME cli-man-pages
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -433,6 +484,15 @@ if(LIQUID_BUILD_CLI)
         --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/build/wrap
         --work ${CMAKE_CURRENT_BINARY_DIR}/guides-resolution)
     set_tests_properties(guides-resolution PROPERTIES TIMEOUT 60)
+    add_test(NAME guides-projection
+      COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/guides/run.py
+        --liquid $<TARGET_FILE:liquid-cli>
+        --guides ${PROJECT_SOURCE_DIR}/docs/guides
+        --guide project-from-files.md
+        --fixtures ${CMAKE_CURRENT_SOURCE_DIR}/build/wrap
+        --work ${CMAKE_CURRENT_BINARY_DIR}/guides-projection)
+    set_tests_properties(guides-projection PROPERTIES TIMEOUT 60)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME guides-run
@@ -471,6 +531,21 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_LOCK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lock-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/locks.cmake)
+  set(LIQUID_LOG_URL_SANDBOX_ARGS)
+  if(UNIX)
+    list(APPEND LIQUID_LOG_URL_SANDBOX_ARGS
+      -DLIQUID_OFFLINE_RUNNER=$<TARGET_FILE:liquid-offline-runner>
+      -DLIQUID_SOURCE_ROOT=${PROJECT_SOURCE_DIR})
+  endif()
+  add_test(NAME cli-log-url
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_API_TESTS=$<TARGET_FILE:liquid-tests>
+      -DLIQUID_LOG_URL_WORK=${CMAKE_CURRENT_BINARY_DIR}/log-url-work
+      ${LIQUID_LOG_URL_SANDBOX_ARGS}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/log-url.cmake)
+  set_tests_properties(cli-log-url PROPERTIES TIMEOUT 120)
+
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -572,7 +647,9 @@ if(LIQUID_BUILD_CLI)
     cli-scenario
     cli-help-docs
     cli-reference-docs
+    cli-verify-log-guide
     cli-docs-json
+    cli-project
     cli-man-pages
     cli-configuration
     cli-transparency-configuration
@@ -606,7 +683,7 @@ if(LIQUID_BUILD_CLI)
     list(APPEND LIQUID_CLI_TESTS symbols-cli-python)
   endif()
   if(UNIX)
-    list(APPEND LIQUID_CLI_TESTS guides-resolution)
+    list(APPEND LIQUID_CLI_TESTS guides-resolution guides-projection)
   endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND LIQUID_CLI_TESTS guides-run)
@@ -647,6 +724,44 @@ add_executable(liquid-vfs-queue-tests
 target_include_directories(liquid-vfs-queue-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-vfs-queue-tests PRIVATE liquid::liquid GTest::gtest_main)
 gtest_discover_tests(liquid-vfs-queue-tests DISCOVERY_TIMEOUT 120)
+
+# Compile the existing private mount entry points unchanged. This keeps the
+# conformance adapter usable with hidden shared-library symbols as well as static.
+add_executable(liquid-vfs-conformance
+  vfs/conformance_main.cpp
+  vfs/conformance_backend.cpp
+  vfs/conformance_direct.cpp
+  vfs/conformance_posix.cpp
+  vfs/test_conformance.cpp
+  ${PROJECT_SOURCE_DIR}/src/vfs/fuse_fs.cpp
+  ${PROJECT_SOURCE_DIR}/src/vfs/observation.cpp)
+target_include_directories(liquid-vfs-conformance PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(liquid-vfs-conformance PRIVATE liquid::liquid GTest::gtest)
+if(LIQUID_FUSE_TARGET)
+  target_compile_definitions(liquid-vfs-conformance PRIVATE ${LIQUID_FUSE_DEFINITION})
+  target_link_libraries(liquid-vfs-conformance PRIVATE ${LIQUID_FUSE_TARGET})
+endif()
+if(BUILD_SHARED_LIBS)
+  target_sources(liquid-vfs-conformance PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+    ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+    ${PROJECT_SOURCE_DIR}/src/vfs/hydration.cpp
+    ${PROJECT_SOURCE_DIR}/src/vfs/request_queue.cpp
+    ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
+endif()
+set(LIQUID_VFS_CONFORMANCE_BACKENDS "direct;libfuse" CACHE STRING
+  "Named VFS drivers to run through the common conformance suite")
+foreach(backend IN LISTS LIQUID_VFS_CONFORMANCE_BACKENDS)
+  set(conformance_availability)
+  if((backend STREQUAL "libfuse" AND NOT LIQUID_FUSE_TARGET) OR
+     (WIN32 AND backend STREQUAL "direct"))
+    set(conformance_availability --allow-unavailable)
+  endif()
+  add_test(NAME vfs-conformance-${backend}
+    COMMAND liquid-vfs-conformance --backend=${backend} ${conformance_availability})
+  set_tests_properties(vfs-conformance-${backend} PROPERTIES
+    LABELS "vfs;conformance" RUN_SERIAL TRUE TIMEOUT 300 SKIP_RETURN_CODE 77)
+endforeach()
 
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -722,17 +837,24 @@ endif()
 # library configurations without widening the public ABI.
 add_executable(liquid-index-tests
   test_index.cpp
+  sim/memory_backend.cpp
+  sim/write_once_backend.cpp
   ${PROJECT_SOURCE_DIR}/src/store/index.cpp
   ${PROJECT_SOURCE_DIR}/src/store/mapped_file.cpp
   ${PROJECT_SOURCE_DIR}/src/store/pack.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/crypto.cpp)
 target_include_directories(liquid-index-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/store
+  ${CMAKE_CURRENT_SOURCE_DIR}/sim
   ${PROJECT_SOURCE_DIR}/src/crypto
   ${blake3_source_SOURCE_DIR}/c
   ${monocypher_source_SOURCE_DIR}/src)
-target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main Boost::corosio libzstd_static)
+target_link_libraries(liquid-index-tests PRIVATE liquid::liquid liquid_blake3 liquid_monocypher GTest::gtest_main $<COMPILE_ONLY:Boost::corosio> libzstd_static)
 gtest_discover_tests(liquid-index-tests DISCOVERY_TIMEOUT 120)
+# The index suite again, over a backend that refuses in-place range rewrites as Zetta's object
+# storage does (liquid #332). The store and garbage-collection suites run the same way below.
+add_test(NAME index-write-once COMMAND liquid-index-tests)
+set_tests_properties(index-write-once PROPERTIES ENVIRONMENT LIQUID_TEST_WRITE_ONCE_BACKEND=1)
 
 add_executable(liquid-crypto-tests
   crypto/test_aead.cpp
@@ -750,6 +872,8 @@ add_executable(liquid-store-sim-tests
   store/test_gc_sim_regression.cpp
   sim/harness.cpp
   sim/memory_backend.cpp
+  sim/write_once_backend.cpp
+  sim/test_repository_state.cpp
   sim/test_store_sim.cpp)
 target_include_directories(liquid-store-sim-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src/store

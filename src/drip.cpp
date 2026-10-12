@@ -159,6 +159,8 @@ struct capture::impl : std::enable_shared_from_this<capture::impl> {
     std::vector<subscriber> subscribers;
     std::uint64_t next_subscription{1};
     std::uint64_t overflows{0};
+    bool watcher_armed{true};
+    std::string watcher_diagnostic;
     std::uint64_t recrawls{0};
     std::uint64_t blocked_drips{0};
     std::optional<scan_block> last_block;
@@ -634,11 +636,20 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
             if (!removed)
                 co_return std::unexpected(removed.error());
         }
-        if (!armed)
-            co_return std::unexpected(
-                capture_error(errc::unavailable,
-                              std::string{state->watcher->name()} + " did not arm for workspace",
-                              state->workspace));
+        if (!armed) {
+            // The platform accepted the subscription and then reported nothing for
+            // cookies we wrote ourselves, so the watcher is not delivering. Capture
+            // does not depend on it: periodic reconciliation observes the same
+            // changes, on its interval rather than as they happen. Refusing to start
+            // would take capture away over an optimisation, so record the condition
+            // and continue degraded.
+            state->watcher_armed = false;
+            state->watcher_diagnostic =
+                std::string{state->watcher->name()} +
+                " accepted the subscription but delivered no event for a file capture wrote "
+                "itself, so capture is running on periodic reconciliation alone. On macOS this "
+                "is usually a wedged fseventsd: restart it with `sudo killall -9 fseventsd`.";
+        }
         auto output = capture{std::make_unique<impl>()};
         output.impl_->shared = std::move(state);
         boost::capy::run_async(output.impl_->shared->executor,
@@ -726,6 +737,12 @@ runtime::task<capture> capture::open(std::filesystem::path workspace, capture_op
             }
             co_return {};
         }(output.impl_->shared));
+        if (!output.impl_->shared->watcher_armed &&
+            output.impl_->shared->options.reconcile_interval.count() <= 0) {
+            // Reconciliation is the only way changes are seen while the watcher is
+            // not delivering, so it cannot also be switched off.
+            output.impl_->shared->options.reconcile_interval = capture_options{}.reconcile_interval;
+        }
         if (output.impl_->shared->options.reconcile_interval.count() > 0) {
             boost::capy::run_async(output.impl_->shared->executor,
                                    [](result<void>) {})(impl::ticker(output.impl_->shared));
@@ -839,7 +856,9 @@ result<capture_status> capture::status() {
                           .recrawl_count = impl_->shared->recrawls,
                           .blocked_drips = impl_->shared->blocked_drips,
                           .last_block = impl_->shared->last_block,
-                          .last_cursor = {token(impl_->shared->cursor)}};
+                          .last_cursor = {token(impl_->shared->cursor)},
+                          .watcher_armed = impl_->shared->watcher_armed,
+                          .watcher_diagnostic = impl_->shared->watcher_diagnostic};
 }
 
 void capture_detail::inject_overflow_for_test(capture& handle) {

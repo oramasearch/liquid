@@ -4,85 +4,124 @@
 
 Each command page is generated from the same metadata used to validate flags and print command help.
 
+Commands are grouped as `liquid --help` groups them. Where Git has a command for the same thing, liquid uses Git's name.
+
+## Record and inspect history
+
 | Command | Summary | Availability |
 |---|---|---|
-| [`version`](version.md) | print the version | available |
-| [`tiers`](tiers.md) | print declared language, format, and platform support | available |
 | [`init`](init.md) | create a repository and import its regular files | available |
 | [`clone`](clone.md) | clone and materialize a repository | available |
-| [`repack`](repack.md) | rebase stored chunk deltas | available |
 | [`status`](status.md) | show repository status | available |
-| [`conflict`](conflict.md) | inspect or resolve an unresolved conflict | available |
-| [`conflicts`](conflicts.md) | list unresolved conflicts | available |
-| [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |
-| [`write`](write.md) | write a file from a stated base | available |
-| [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
-| [`search`](search.md) | search paths and contents | available |
-| [`diff`](diff.md) | compare changes, containers, and source syntax | available |
-| [`resolve`](resolve.md) | concretise packages or resolve a conflict | available |
-| [`config`](config.md) | check, lower, or format .liquid configuration | available |
-| [`project`](project.md) | project content into packages, commits, images, or charts | available |
-| [`install`](install.md) | install or list atomic generations | available |
-| [`rollback`](rollback.md) | select the previous installed generation | available |
-| [`log`](log.md) | show or verify change, signed drip, timestamp, or transparency-log history | available |
 | [`cut`](cut.md) | cut the working change | available |
-| [`refs`](refs.md) | list repository references | available |
-| [`diff`](diff.md) | compare changes and supported container formats | available |
-| [`history`](history.md) | show or restore path history | available |
+| [`log`](log.md) | show changes and drips, or verify timestamps and the transparency log | available |
+| [`diff`](diff.md) | compare changes, containers, and source syntax | available |
 | [`blame`](blame.md) | show the session and change that last wrote each line | available on macOS and Linux |
-| [`drive`](drive.md) | synchronize a drive folder | available |
-| [`registry`](registry.md) | manage artifact-registry trust | available |
-| [`push`](push.md) | push repository changes and objects | available |
-| [`pull`](pull.md) | pull repository changes and objects | available |
-| [`review`](review.md) | review a lake change in place | available |
-| [`deploy`](deploy.md) | create, inspect, or roll back an environment deployment | available |
-| [`serve`](serve.md) | serve repository sync, REAPI, or image admission | available |
-| [`move`](move.md) | record a path move | available |
+| [`history`](history.md) | show or restore path history | available |
+| [`refs`](refs.md) | list repository references | available |
+| [`tree`](tree.md) | print the recorded root tree digest | available |
+| [`write`](write.md) | write a file from a stated base | available |
+| [`mv`](mv.md) | record a path move | available |
 | [`rm`](rm.md) | record a path removal | available |
 | [`anchor`](anchor.md) | map a text position between changes | available |
+| [`ops`](ops.md) | list recorded operations | available |
+| [`undo`](undo.md) | undo the newest, named, or session operations | available |
+| [`search`](search.md) | search paths and contents | available |
+| [`symbols`](symbols.md) | show compiler or syntactic symbols for a source path | available |
+| [`edit`](edit.md) | preview or apply a structural edit | available on macOS and Linux |
+
+## Compose repositories and resolve conflicts
+
+| Command | Summary | Availability |
+|---|---|---|
 | [`nest`](nest.md) | nest another repository | available |
 | [`split`](split.md) | split a subtree into a repository | available |
 | [`combine`](combine.md) | combine another repository | available |
-| [`ops`](ops.md) | list recorded operations | available |
-| [`undo`](undo.md) | undo the newest, named, or session operations | available |
+| [`conflicts`](conflicts.md) | list unresolved conflicts | available |
+| [`conflict`](conflict.md) | inspect or resolve an unresolved conflict | available |
+| [`resolve`](resolve.md) | concretise packages or resolve a conflict | available |
 | [`lock`](lock.md) | exclusively lock a configured path | available |
 | [`unlock`](unlock.md) | release an exclusive lock | available |
 | [`session`](session.md) | manage a private speculative replica | available |
-| [`compact`](compact.md) | checkpoint a repository epoch | available |
-| [`mount`](mount.md) | mount a lazy working tree | available where FUSE is available |
-| [`materialise`](materialise.md) | write a full working tree | available |
-| [`gc`](gc.md) | checkpoint and collect a repository | available |
+| [`data`](data.md) | manage session database branches | available with PostgreSQL client tools |
+
+## Share and interchange
+
+| Command | Summary | Availability |
+|---|---|---|
+| [`push`](push.md) | push repository changes and objects | available |
+| [`pull`](pull.md) | pull repository changes and objects | available |
+| [`review`](review.md) | review a lake change in place | available |
+| [`drive`](drive.md) | synchronize a drive folder | available |
 | [`import`](import.md) | import a local tree, Git repository, or Spack package universe | available |
 | [`export`](export.md) | export as a Git repository | available |
+| [`serve`](serve.md) | serve repository sync, REAPI, or image admission | available |
+
+## Capture, working trees and storage
+
+| Command | Summary | Availability |
+|---|---|---|
+| [`daemon`](daemon.md) | start or stop the checkout daemon | available on macOS and Linux |
+| [`watch`](watch.md) | capture changes until Ctrl-C | available |
+| [`pause`](pause.md) | pause working-tree capture | available |
+| [`resume`](resume.md) | resume working-tree capture | available |
+| [`mount`](mount.md) | mount a lazy working tree | available where FUSE is available |
+| [`materialise`](materialise.md) | write a full working tree | available |
+| [`compact`](compact.md) | checkpoint a repository epoch | available |
+| [`gc`](gc.md) | checkpoint and collect a repository | available |
+| [`repack`](repack.md) | rebase stored chunk deltas | available |
 | [`retain`](retain.md) | explain retention for an object | available |
+
+## Identity, keys and trust
+
+| Command | Summary | Availability |
+|---|---|---|
 | [`identity`](identity.md) | show or rotate the device identity | available |
+| [`keys`](keys.md) | inspect and manage data-key custody | available |
+| [`secret`](secret.md) | fetch, seal, or unseal a Lake environment secret | available |
 | [`sign`](sign.md) | sign a digest or projected platform installer | available |
 | [`release`](release.md) | manage threshold release approval | available |
-| [`keys`](keys.md) | inspect and manage data-key custody | available |
 | [`attest`](attest.md) | show, verify, or mint an image attestation | available |
-| [`delta`](delta.md) | create, apply, or fetch an artifact delta | available |
+| [`registry`](registry.md) | manage artifact-registry trust | available |
+| [`policy`](policy.md) | check or explain build-input policy | available |
+
+## Build
+
+| Command | Summary | Availability |
+|---|---|---|
+| [`wrap`](wrap.md) | run an existing build as cached actions | available on Linux with FUSE and on macOS with macFUSE |
+| [`build`](build.md) | plan, start, profile, or trace a configured repository build | available on Linux with FUSE and on macOS with macFUSE |
+| [`test`](test.md) | run discovered tests as cached actions | available on Linux with FUSE and on macOS with macFUSE |
 | [`verify`](verify.md) | re-execute and compare cached actions or the query graph | available on Linux with FUSE and on macOS with macFUSE |
 | [`replay`](replay.md) | reproduce and compare a recorded action | available on Linux with FUSE and on macOS with macFUSE |
-| [`provenance`](provenance.md) | print and verify build provenance | available |
-| [`policy`](policy.md) | check or explain build-input policy | available |
-| [`sbom`](sbom.md) | print a derived or explicitly inferred SBOM | available |
-| [`abi`](abi.md) | show or compare library ABIs | available |
-| [`inspect`](inspect.md) | explain a recognised artifact | available |
-| [`symbols`](symbols.md) | show compiler or syntactic symbols for a source path | available |
-| [`hot-update`](hot-update.md) | classify, apply, or inspect runtime updates | available on macOS arm64 and Linux x86_64 |
-| [`secret`](secret.md) | fetch, seal, or unseal a Lake environment secret | available |
-| [`edit`](edit.md) | preview or apply a structural edit | available on macOS and Linux |
-| [`wrap`](wrap.md) | run an existing build as cached actions | available on Linux with FUSE and on macOS with macFUSE |
-| [`build`](build.md) | plan or start a configured repository build, profile a command, stream events, or export a trace | available on Linux with FUSE and on macOS with macFUSE |
-| [`test`](test.md) | run discovered tests as cached actions | available on Linux with FUSE and on macOS with macFUSE |
 | [`why`](why.md) | explain the latest cache lookup | available |
 | [`why-slow`](why-slow.md) | show the critical path to a build target | available |
 | [`cache`](cache.md) | show build-cache statistics | available |
 | [`facts`](facts.md) | inspect or export configure facts | available |
+| [`provenance`](provenance.md) | print and verify build provenance | available |
+| [`sbom`](sbom.md) | print a derived or explicitly inferred SBOM | available |
+| [`abi`](abi.md) | show or compare library ABIs | available |
+| [`inspect`](inspect.md) | explain a recognised artifact | available |
+| [`hot-update`](hot-update.md) | classify, apply, or inspect runtime updates | available on macOS arm64 and Linux x86_64 |
 | [`scheduler`](scheduler.md) | run the remote-execution scheduler and CAS | available |
 | [`worker`](worker.md) | run a remote-execution worker | available on Linux with FUSE |
-| [`pause`](pause.md) | pause working-tree capture | available |
-| [`resume`](resume.md) | resume working-tree capture | available |
-| [`watch`](watch.md) | capture changes until Ctrl-C | available |
-| [`docs`](docs.md) | generate the CLI reference | available |
 | [`node-store`](node-store.md) | run or control the runtime node chunk store | available on Linux with FUSE and on macOS with macFUSE |
+
+## Package, install and deploy
+
+| Command | Summary | Availability |
+|---|---|---|
+| [`config`](config.md) | check, lower, or format .liquid configuration | available |
+| [`project`](project.md) | project content into packages, commits, images, or charts | available |
+| [`delta`](delta.md) | create, apply, or fetch an artifact delta | available |
+| [`install`](install.md) | install or list atomic generations | available |
+| [`rollback`](rollback.md) | select the previous installed generation | available |
+| [`deploy`](deploy.md) | create, inspect, or roll back an environment deployment | available |
+
+## About liquid
+
+| Command | Summary | Availability |
+|---|---|---|
+| [`version`](version.md) | print the version | available |
+| [`tiers`](tiers.md) | print declared language, format, and platform support | available |
+| [`docs`](docs.md) | generate the CLI reference | available |

@@ -7,10 +7,14 @@ Repository configuration encryption uses the private `repository_detail::store_a
 choose a plaintext metadata put or an explicit trust-domain encrypted put for whole-file payload
 chunks; the public store API keeps its existing default-key behavior.
 
+`index.cpp` builds each run's 256 KiB fanout table in a heap vector, never as a coroutine local:
+a Debug coroutine ramp reserves stack for its locals (liquid #323).
+
 This directory owns FastCDC chunking, append-only packs, the fixed-width index, persisted backend
 leases, per-kind reference extraction, and epoch collection. `collector.cpp` preserves the
-ordering documented in `docs/library/gc.md`: committed tombstone manifest, index manifest, then
-whole-pack removal. `compactor.cpp` rewrites selected partially dead packs by copying physical
+ordering documented in `docs/library/gc.md`: published object map, committed tombstone manifest,
+index manifest, then whole-pack removal. The map precedes the tombstones so no published object
+ever names a tombstoned chunk (liquid #337). `compactor.cpp` rewrites selected partially dead packs by copying physical
 frames byte-for-byte, with the atomic collection-manifest put and durability barrier as the commit
 point. The object map also
 provides `store::key_version` with the recorded trust-domain data-key version and verifies whether
@@ -48,9 +52,12 @@ private object-kind listing used by repository record pages returns canonical ob
 exposing store internals in the public API.
 
 Repository internals can query the opened store's root and configuration without exposing either
-through the public store API. This places per-repository checkpoint and journal entry points under
-`repositories/` and creates repository-identified lease owners while all immutable objects remain
-in the common packs and index.
+through the public store API. A shared-store repository writes its checkpoint, journal, session and
+replication-cursor entry points as `repositories/<id-hash>/` keys through the store's own backend
+(liquid #326) and creates repository-identified lease owners while all immutable objects remain in
+the common packs and index. `put_if_absent` is the conditional create its exclusive create needs:
+the disk backend hard-links a call-unique `.backend-tmp` temporary to the key, and the base class
+refuses with `errc::unsupported`. The disk `list` walks only the prefix's directory.
 
 Remote blob registrations are persisted separately in `packs/remotes.meta`. The store reports
 whole-content availability as absent, remote, or local and fetches only missing logical chunks
@@ -64,6 +71,31 @@ The optional `blob_write_through` receives the complete content digest, byte spa
 chunk table once before any pack mutation. Memory puts retain their input across the await. File
 puts first scan in bounded windows, verify a read-only file mapping against that table, and retain
 the mapping across the await before copying one chunk at a time into packs.
+
+`owner_lock.cpp` is the cross-process owner lock taken by `store_options::exclusive_owner` (liquid
+#321): an exclusive close-on-exec `flock` (POSIX) or `LockFileEx` (Windows) on `<root>/store.lock`,
+taken in `store_backend::open` before the fixed-name temporary files are removed and released last
+when the store is destroyed. A bounded `owner_wait` retries the lock with a doubling 5–100 ms delay;
+expiry returns `errc::locked` with the holder's recorded pid, host and start time. See
+`docs/library/store.md#process-ownership-and-hand-off`.
+
+`store_impl.cpp` also holds the store side of liquid #328's whole-repository transfer:
+`transfer_describe` (how a store holds an identity: object, chunk, registration), `transfer_copy_chunk`
+and `transfer_copy_object` (a verified chunk at a time from the source store, appended under the same
+digest; an object published only after its whole-content digest and chunk-list descriptor are
+recomputed and matched), `transfer_copy_remote`, `transfer_publish` (index flush and object map
+after a barrier, only when something was appended), and the `transfer_verify_*` reads. The walk,
+the state keys and the lease records are in `src/repository/transfer.cpp`. See
+`docs/library/store.md#whole-repository-transfer`.
+
+`owner.cpp` holds the injected owner of liquid #327: `owner_grant` (a fence and a shared lost
+flag), `make_disk_store_owner` (the flock above as a `store_owner` with fence zero),
+`owned_store_backend` (the wrapper around a backend's fenced view that refuses mutations, and reads
+unless opted in, with `errc::locked` once the grant is lost, and revokes the grant when the view
+refuses a stale fence), and `owner_hold` (what an open store keeps; it releases an injected owner
+on `store::close()` or, when destroyed without it, on the runtime). `owned_store_backend` forwards
+`put_if_absent` as a mutation; a new `store_backend` operation must be forwarded the same way. See
+`docs/library/store.md#injected-owners-and-fencing`.
 
 `mutation_mutex.hpp` owns the store's mutation lock: an asynchronous mutex that is safe from any
 thread, following Capy's IoAwaitable protocol so call sites read as with `async_mutex::scoped_lock`.

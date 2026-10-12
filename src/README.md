@@ -7,6 +7,8 @@ failure cleanup in its typed command table. The implementation lives in libliqui
 under `cli/`. Identity document export uses the public signed snapshot in `identity.cpp` and the
 existing canonical-CBOR codec. Library implementation directories follow the installed public API areas while
 keeping parsers, codecs, storage, network, solver, and runtime implementation types private.
+The command table exposes `verify --log <log-url>` so callers can require transparency inclusion
+for agreeing reproducibility attestations.
 The projection implementation includes the Debian Tier B source writer and its committed,
 peer-derived build-tool package mapping.
 
@@ -20,3 +22,10 @@ for the existing repository workflows.
 Issue #287 connects source package declarations to universe loading. The CLI table documents
 canonical package output through `config lower --output-record`; `resolve` reports an empty
 universe before solving. See [resolution](../docs/library/resolution.md).
+
+The command table documents ordinary-repository projection and `liquid tree`, which prints the
+recorded root digest. The CLI chooses the owning repository before calling projection; format
+writers retain their existing behavior.
+HTTP log sources validate URL syntax and numeric port bounds locally. The factory returns
+public errors; legacy sources return retained validation errors before transport access.
+See [the URL contract](../docs/library/transparency.md#http-url-validation-289).

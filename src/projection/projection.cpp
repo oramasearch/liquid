@@ -918,6 +918,18 @@ auto project_prepared(repository& source,
         co_return co_await projection_detail::project_snap(source, std::move(prepared));
     case projection_target::debian_source:
         co_return co_await projection_detail::project_debian_source(source, std::move(prepared));
+    case projection_target::macos_pkg:
+    case projection_target::macos_dmg:
+        co_return co_await projection_detail::project_macos(source, target, std::move(prepared));
+    case projection_target::msix:
+        co_return co_await projection_detail::project_msix(source, std::move(prepared));
+    case projection_target::winget_manifest:
+        // A winget manifest is produced from the request rather than a prepared
+        // tree, so it has no prepared form to project here.
+        co_return std::unexpected(error{errc::unsupported,
+                                        "winget manifests are projected from the request; "
+                                        "project this target on its own",
+                                        "project"});
     }
     co_return std::unexpected(error{errc::unsupported, "unknown projection target", "project"});
 }

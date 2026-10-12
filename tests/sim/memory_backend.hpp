@@ -14,8 +14,16 @@ public:
 
     void set_latency(std::chrono::milliseconds latency) noexcept;
     void fail_next(error failure);
+    // Every key the backend holds, for tests that prove nothing was written elsewhere.
+    [[nodiscard]] std::vector<std::string> keys() const;
+    // While frozen every mutation fails errc::unavailable and nothing changes. A crash simulation
+    // freezes the backend at the crash point, so work the crashed process would never have done
+    // (destructors, cleanup) cannot reach the state its successor recovers.
+    void set_frozen(bool frozen) noexcept;
 
     [[nodiscard]] runtime::task<void> put(std::string key, std::vector<std::byte> bytes) override;
+    [[nodiscard]] runtime::task<void> put_if_absent(std::string key,
+                                                    std::vector<std::byte> bytes) override;
     [[nodiscard]] runtime::task<void>
     put_range(std::string key, std::uint64_t offset, std::vector<std::byte> bytes) override;
     [[nodiscard]] runtime::task<std::vector<std::byte>>
@@ -30,6 +38,7 @@ private:
 
     [[nodiscard]] runtime::task<void> wait();
     [[nodiscard]] std::optional<error> take_failure();
+    [[nodiscard]] std::optional<error> take_mutation_failure(const std::string& key);
 };
 
 } // namespace liquid::sim

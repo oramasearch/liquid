@@ -83,3 +83,62 @@ foreach(page IN LISTS documented_pages)
     message(FATAL_ERROR "--help is missing documented command ${command}")
   endif()
 endforeach()
+
+# The help is grouped, and each command is listed in exactly one group.
+foreach(title IN ITEMS
+    "Start here:"
+    "Record and inspect history:"
+    "Compose repositories and resolve conflicts:"
+    "Share and interchange:"
+    "Capture, working trees and storage:"
+    "Identity, keys and trust:"
+    "Build:"
+    "Package, install and deploy:"
+    "About liquid:")
+  string(FIND "${help_output}" "\n${title}\n" title_position)
+  if(title_position EQUAL -1)
+    message(FATAL_ERROR "--help is missing the section '${title}'")
+  endif()
+endforeach()
+set(seen_commands)
+foreach(command IN LISTS help_commands)
+  if(command IN_LIST seen_commands)
+    message(FATAL_ERROR "--help lists ${command} in more than one group")
+  endif()
+  list(APPEND seen_commands "${command}")
+endforeach()
+
+# Git's name is the command; the older spelling is still accepted.
+if(NOT "mv" IN_LIST help_commands)
+  message(FATAL_ERROR "--help is missing mv")
+endif()
+if("move" IN_LIST help_commands)
+  message(FATAL_ERROR "--help lists move; the command is mv")
+endif()
+execute_process(
+  COMMAND "${LIQUID_CLI}" move --help
+  RESULT_VARIABLE move_result
+  OUTPUT_VARIABLE move_help
+  ERROR_QUIET)
+if(NOT move_result EQUAL 0 OR NOT move_help MATCHES "usage: liquid mv <from> <to>")
+  message(FATAL_ERROR "liquid move is no longer accepted as a spelling of mv")
+endif()
+
+# A Git command liquid does not have says what to use instead.
+foreach(pair IN ITEMS "commit|liquid cut" "add|liquid cut" "grep|liquid search" "reflog|liquid ops")
+  string(REPLACE "|" ";" pair "${pair}")
+  list(GET pair 0 git_command)
+  list(GET pair 1 expected)
+  execute_process(
+    COMMAND "${LIQUID_CLI}" "${git_command}"
+    RESULT_VARIABLE hint_result
+    OUTPUT_QUIET
+    ERROR_VARIABLE hint_error)
+  if(NOT hint_result EQUAL 2)
+    message(FATAL_ERROR "liquid ${git_command} did not exit 2")
+  endif()
+  string(FIND "${hint_error}" "${expected}" hint_position)
+  if(hint_position EQUAL -1)
+    message(FATAL_ERROR "liquid ${git_command} does not point at ${expected}: ${hint_error}")
+  endif()
+endforeach()

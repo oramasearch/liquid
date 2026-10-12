@@ -91,3 +91,28 @@ ctest --test-dir build --output-on-failure -R 'docs|reference|help'
 tree differs; `cli-docs-json` checks the stable JSON projection. `guides-run` executes the marked
 shell blocks in `docs/guides/` on Linux. GitHub Actions builds and tests clean checkouts on Linux,
 macOS, and Windows and renders the documentation site; see [`ci.md`](ci.md).
+
+
+## Linking libliquid without duplicating archives
+
+`libliquid` is a static library, so CMake carries its `PRIVATE` dependencies — Corosio, Boost.HTTP,
+oramacore-cpp, the syntax frontend — to consumers for the final link. A consumer that also *names*
+those targets puts the same archive on the link line twice, which Apple's linker reports as
+`ld: warning: ignoring duplicate libraries`.
+
+When a consumer needs those headers but not a second copy of the archive, ask for the usage
+requirements alone:
+
+```cmake
+target_link_libraries(my-target PRIVATE
+  liquid::liquid
+  $<COMPILE_ONLY:Boost::corosio>)
+```
+
+The same applies transitively: `liquid-tests` links `liquid_forge_double`, which links
+`liquid::liquid` publicly, so it must not name `liquid::liquid` again.
+
+Third-party dependencies fetched with `FetchContent` are marked `SYSTEM`, and googletest's targets
+additionally get `INTERFACE_SYSTEM_INCLUDE_DIRECTORIES` and `-Wno-character-conversion`, because a
+sub-project compiling its own sources is not covered by system include marking. A clean configure and
+build print no warnings; if yours does, that is a regression worth fixing rather than scrolling past.

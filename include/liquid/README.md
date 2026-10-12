@@ -38,6 +38,8 @@ delta-rebase count.
 remote-source registration, hydration and remote-access observation, and live local-byte
 accounting for long-running node stores. `store_options::backend` selects a caller-owned
 implementation; null preserves the disk-backed behavior at the store path.
+`repository.hpp` exposes `repository::transfer` and its options, report and difference values: a
+whole-repository copy or verify between two open shared stores (liquid #328).
 `node_store.hpp` defines the embedded node chunk-store service, its mount requests, and its status
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
@@ -88,3 +90,7 @@ offline patch-byte injection, optional target toolchain binding, and the corouti
 `deploy.hpp` defines coroutine-native deployment creation, listing, rollback, and environment
 status calls for an operator-owned control plane. Its interim image input is an OCI reference
 pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay outside the API.
+
+`transparency.hpp` provides `http_log_source::create()` for local URL validation through
+`result<http_log_source>`. Existing string construction retains errors for request operations;
+see [the contract](../../docs/library/transparency.md#http-url-validation-289).

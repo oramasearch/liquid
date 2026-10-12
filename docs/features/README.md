@@ -1,5 +1,9 @@
 # liquid — features
 
+The [VFS conformance harness](../library/vfs.md#backend-conformance-301) specifies the shared
+projection checks for decisions 39 and 41. Nine cases run against the direct core reference; every
+replacement must run them itself. Linux libfuse calibration is still owed against #299.
+
 This tree states what liquid **does**. It is the counterpart to
 [`docs/research/`](../research/), which states what the world currently does and
 why it is insufficient.
@@ -133,8 +137,8 @@ specifies it.
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Direct `.liquid` universe loading, canonical record output, empty-universe diagnostics, typed package rules, and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
-| [08](08-packaging-and-images.md) | Packaging and images | Tier A package and image projection plus Debian Tier B source packages, generated install scripts, ownership conflict checks, atomic generations, and ABI gates. |
-| [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage, Flatpak, and Snap, with ABI and relocation gates. |
+| [08](08-packaging-and-images.md) | Packaging and images | Tier A package and image projection from ordinary-repository changes and trees plus Debian Tier B source packages, generated install scripts, ownership conflict checks, atomic generations, and ABI gates. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage with vendored hash-pinned runtimes, Flatpak, and Snap, with ABI and relocation gates. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Direct `.liquid` universe loading, canonical record output, empty-universe diagnostics, typed package rules, and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented; a pinned Spack export seeds the package universe with explicit losses. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
@@ -142,7 +146,7 @@ specifies it.
 | [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, TPM sealing, and dedup-preserving encryption. |
 | [12](12-search.md) | Search | Local BM25F and positional-trigram search over the working tree and named refs is implemented; published-artifact search follows the format registry. |
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
-| [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits. |
+| [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits and [bounded demo socket paths](../build/socket-fixtures.md). |
 | [15](15-consumer-sync-and-web.md) | Consumer sync and web | The drive client, concurrent offline history, and Linux desktop state, hydration, offline, and badge integration are implemented; native Windows/macOS and web surfaces follow. |
 | [16](16-universality.md) | Universality | Every language, platform and operating system, declared through the generated support matrix. |
 | [17](17-implementation.md) | Implementation | C++26, the component inventory, and the build order. |
@@ -153,13 +157,16 @@ specifies it.
 | [22](22-change-capture.md) | Change capture | How a write becomes a drip, and everything a drip sets in motion. |
 | [23](23-metis-and-zetta.md) | Metis and Zetta | How liquid fits Orama's pivot — the data-availability mapping, and the Zetta/liquid storage overlap. |
 | [24](24-multiplayer-and-agents.md) | Multiplayer and agents | Write flow control, private replicas, presence, leases, epochs, and per-line attribution are implemented; suspicious-region detection remains. |
-| [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, the append-only log with optional public anchoring, and policy-pinned admission verification with authenticated checkpoint age bounds. |
+| [25](25-identity-attestation-and-transparency.md) | Identity, attestation and transparency | TAAP/1 identity for every party, signed drips, the append-only log with optional public anchoring, policy-pinned admission verification with authenticated checkpoint age bounds, and local HTTP log URL validation through public errors. |
 
 ## Status
 
 The implemented Phase 1 chunk store selects a coroutine-native persistence backend. Disk is the
 reference implementation, and the deterministic simulator also runs against an in-memory test
-implementation with injected latency and failures.
+implementation with injected latency and failures. A repository opened on a shared store keeps all
+of its own state in that store's backend (liquid #326). `repository::transfer` copies such a
+repository, whole and with every digest, from one open store into another, resumably and with a
+verify mode (liquid #328).
 
 The installed library target also supports repository create/open, persisted file write/read, and
 consumer-defined coroutines through `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid`;

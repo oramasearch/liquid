@@ -486,6 +486,51 @@ struct LIQUID_EXPORT search_plan {
     std::vector<search_alternative> alternatives;
 };
 
+// Whole-repository transfer between two open stores (liquid #328).
+enum class repository_transfer_mode : std::uint8_t {
+    // Copies what the destination lacks, then publishes the repository's state.
+    copy,
+    // Writes nothing: reads every reachable object and every state key in both stores and reports
+    // each way the destination differs from the source.
+    verify,
+};
+
+struct LIQUID_EXPORT repository_transfer_options {
+    repository_transfer_mode mode{repository_transfer_mode::copy};
+    // Objects whose metadata is published to the destination's object map together. An
+    // interruption loses at most one batch of metadata (never pack data, which a rerun finds); a
+    // larger batch rewrites the object map less often.
+    std::uint64_t batch_objects{4096};
+};
+
+struct LIQUID_EXPORT repository_transfer_difference {
+    // A digest, or a state or lease key relative to the store.
+    std::string subject;
+    std::string reason;
+};
+
+struct LIQUID_EXPORT repository_transfer_report {
+    // Identities examined: objects, chunks and remote registrations reachable from the source.
+    std::uint64_t objects{};
+    // Identities the destination already held with everything they reach, so not descended into.
+    std::uint64_t objects_present{};
+    std::uint64_t objects_read{};
+    std::uint64_t bytes_read{};
+    std::uint64_t objects_written{};
+    std::uint64_t bytes_written{};
+    // Repository state keys (LIQUID_REPO, LIQUID_JOURNAL, sessions, replication cursors) and the
+    // repository's lease records written to the destination, or removed from it.
+    std::uint64_t state_written{};
+    std::uint64_t leases_written{};
+    // Identities a stored record references that the source does not hold. They cannot be copied;
+    // the destination lacks them exactly as the source does.
+    std::vector<digest> missing;
+    // Verify mode: each way the destination differs from the source.
+    std::vector<repository_transfer_difference> differences;
+    // Copy: every reachable object and the state were published. Verify: no difference was found.
+    bool complete{};
+};
+
 class LIQUID_EXPORT repository {
 public:
     repository() noexcept;
@@ -501,6 +546,17 @@ public:
                                                         repository_options options = {});
     [[nodiscard]] static runtime::task<repository> open_build(std::filesystem::path working_tree,
                                                               repository_options options = {});
+    // Copies (or, in verify mode, compares) the repository that `identifier` names on the shared
+    // store `from` into the shared store `into` (liquid #328): every object reachable from its
+    // state, keeping every digest, then its lease records, then its state keys with LIQUID_REPO
+    // last. A rerun after an interruption copies only what the destination lacks. Writes go
+    // through `into`'s backend, so an injected owner's fence covers them. The repository must not
+    // be written while it is transferred.
+    [[nodiscard]] static runtime::task<repository_transfer_report>
+    transfer(store& from,
+             store& into,
+             std::filesystem::path identifier,
+             repository_transfer_options options = {});
     [[nodiscard]] runtime::task<tree> root();
     [[nodiscard]] result<node_id> id() const;
     [[nodiscard]] runtime::task<digest> root_digest();
@@ -626,6 +682,14 @@ public:
     [[nodiscard]] runtime::task<sync_export> export_drips(journal_cursor cursor,
                                                           std::span<sync_item> output);
     [[nodiscard]] runtime::task<sync_import_report> import_drips(std::span<const sync_item> input);
+    // The position a replication peer named source has been pulled to (liquid #326). It is local
+    // state kept beside LIQUID_REPO, through the store backend for a shared-store repository, and
+    // is never exported to peers. Absent until first set. source uses [A-Za-z0-9._-] and does not
+    // begin with a dot.
+    [[nodiscard]] runtime::task<std::optional<journal_cursor>>
+    replication_cursor(std::string source);
+    [[nodiscard]] runtime::task<void> set_replication_cursor(std::string source,
+                                                             journal_cursor cursor);
     [[nodiscard]] std::optional<remote_config> remote_configuration() const;
     [[nodiscard]] hot_update_config hot_update_configuration() const;
     [[nodiscard]] deployment_config deploy_configuration() const;

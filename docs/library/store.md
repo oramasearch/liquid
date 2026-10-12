@@ -2,7 +2,12 @@
 
 **Status: implemented for single-process stores with an injected persistence backend, local chunks,
 registered remote blobs, pre-pack write-through, local eviction, and resemblance-selected chunk
-deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278).**
+deltas (liquid #1, #7, #8, #17, #46, #116, #133, #199, #208, #278), plus opt-in exclusive
+cross-process ownership with a bounded hand-off between processes (liquid #321), repository
+state routed through the backend with a conditional create (liquid #326), an injected owner
+whose grant fences stale writers on backends without a local root (liquid #327), and a resumable,
+verifiable whole-repository transfer between two open stores (liquid #328). No backend write
+rewrites bytes already written: every object is appended in order or replaced whole (liquid #332).**
 `store::open`, `put`, `put_file`, `get`, `get_to_file`, `read`, and `contains` are Capy
 coroutines. The same operations support encrypted objects when supplied a keyring. Leased roots
 and epoch collection are implemented as Capy coroutines; see [gc.md](gc.md). Collection also
@@ -23,15 +28,24 @@ with `make_disk_store_backend`. The public `store_backend` contract has only the
 store needs:
 
 - `put(key, bytes)` atomically replaces one complete object;
-- `put_range(key, offset, bytes)` creates or extends a pack-like object at an exact byte offset;
+- `put_if_absent(key, bytes)` stores one complete object only when the key is absent, and fails
+  `errc::already_exists` otherwise, as one atomic decision (liquid #326);
+- `put_range(key, offset, bytes)` creates or extends a pack-like object at an exact byte offset,
+  which the store always makes the object's current end. The store never rewrites bytes already
+  written (liquid #332), so a backend may refuse any other range with `errc::conflict`, as Zetta's
+  object storage does;
 - `get_range(key, offset, size)` returns exactly that byte range;
 - `remove(key)` deletes one complete object;
 - `list(prefix)` returns matching keys and sizes; and
 - `barrier()` completes the backend's configured durability level for all successful operations
-  before later publication.
+  before later publication; and
+- `fenced(fence)` returns a view of the same objects whose every call carries an injected owner's
+  fence. It is not pure virtual: the default is `errc::unsupported`, which only an open with
+  `store_options::owner` reaches (see [Injected owners and fencing](#injected-owners-and-fencing)).
 
 Keys use `/` as a logical separator and are relative to the backend root. `LIQUID_STORE`,
-`packs/`, `index/`, `leases/`, and `gc/` are backend keys, not paths exposed to store code. A
+`packs/`, `index/`, `leases/`, `gc/`, and a shared store's `repositories/` are backend keys, not
+paths exposed to store code. A
 complete-object `put` must be atomic for readers. A range outside an existing object's bytes is
 `errc::corrupt`; a missing key is `errc::not_found`. Network implementations map an unreachable
 service to `errc::unavailable` and rejected credentials or permissions to `errc::unauthorized`.
@@ -43,6 +57,17 @@ The disk implementation retains mapped index runs and Corosio range I/O. The in-
 implementation under `tests/sim/` stores only byte vectors, supports coroutine latency and a
 one-shot injected `error`, and survives store reopen while its shared backend handle remains alive.
 The same seeded crash schedule runs against both implementations.
+
+`tests/sim/write_once_backend.hpp` decorates either one with the range contract of Zetta's object
+storage (zetta#1005, liquid #332): `put_range` appends only at the object's current end, a retry that
+resends bytes already held succeeds without a change, and any other range, a rewrite or a gap, fails
+`errc::conflict`. Its `fenced()` decorates the decorated backend's fenced view the same way, so a
+store held by an injected owner keeps the contract. The crash schedule runs over it on both
+implementations, and CTest runs the index suite (`index-write-once`) and the store, collection and
+repository transfer suites (`store-write-once`) a second time over it, selected by
+`LIQUID_TEST_WRITE_ONCE_BACKEND=1`: disk stores sit behind it, and so does the transfer's
+remote-shaped destination, because lake transfers into Zetta. It hides the disk root, so those runs
+load index runs into memory as a remote store does.
 
 ## Layout and pack format
 
@@ -58,7 +83,10 @@ The same seeded crash schedule runs against both implementations.
 <root>/keys/<key-id>.wrapped   encrypted trust-domain data key
 <root>/repositories/<id-hash>/LIQUID_REPO     shared-store repository checkpoint entry point
 <root>/repositories/<id-hash>/LIQUID_JOURNAL  shared-store repository journal entry point
+<root>/repositories/<id-hash>/replication/<source>.cursor   replication peer resume position
+<root>/repositories/<id-hash>/sessions/<session-id>/…      private session state (same names)
 <root>/tmp/
+<root>/store.lock          exclusive owner lock and the owner's pid, host and start time
 ```
 
 The disk backend's `open` creates missing directories and refuses a marker other than format 1 with
@@ -79,7 +107,79 @@ The `repositories/` directory appears only when a caller supplies one open store
 `repository::create` or `repository::open`; it is not part of a repository-local store's checkout
 layout. Repository documents, directory checkpoints, trees, blobs, and chunks are still stored
 through the ordinary content-addressed packs, so identical content has one physical frame across
-all repositories in the store.
+all repositories in the store. `<id-hash>` is the hex BLAKE3 digest of the identifier passed to
+`create` or `open`.
+
+## Repository state through the backend
+
+**Why (liquid #326, decision 54 / lake#512).** Lake keeps each workspace's store in the workspace
+Zetta, through a remote `store_backend` over Zetta's object capability, and cannot mount the
+workspace's volume. Before this change a repository's own entry points were read, written and
+renamed with `std::filesystem` beside the store, so a store without a local root could hold the
+packs but not the repository. Every piece of repository state is now a backend key.
+
+**Keys.** A repository opened on a shared store keeps its state under `repositories/<id-hash>/` in
+that store's own backend:
+
+| Key | Contents | Written with |
+|---|---|---|
+| `…/LIQUID_REPO` | `<document digest>\n`, the checkpointed repository document | `put`; `put_if_absent` on create |
+| `…/LIQUID_JOURNAL` | `liquid-journal-v2 <document digest>\n`, the newest uncheckpointed document | `put`; `remove` at checkpoint |
+| `…/replication/<source>.cursor` | the sync cursor token pulled from peer `<source>` | `put` |
+| `…/sessions/<session-id>/LIQUID_REPO`, `LIQUID_JOURNAL`, `LIQUID_SESSION` | a private session replica's entry points and authority | `put`; the prefix is removed on publish or discard |
+
+A repository with its own store keeps the same names beside its working tree, through a disk
+backend rooted at the checkout: `<checkout>/LIQUID_REPO`, `<checkout>/LIQUID_JOURNAL`,
+`<checkout>/sessions/…`, and `<checkout>/.liquid/replication/<source>.cursor` (`.liquid/` is the
+checkout's private directory, so a cursor is never captured as a working-tree file). The
+checkout's state files are written with a data sync, as before.
+
+`repository::replication_cursor(source)` and `set_replication_cursor(source, cursor)` read and
+publish a cursor. `source` must be `[A-Za-z0-9._-]`, not beginning with a dot. The cursor is local
+state: it is not part of the repository document and is never exported to peers.
+
+**Ordering.** Every state publication runs `barrier()` on the store's backend, so the pack frames
+and the document the marker names are complete before the marker; then the atomic `put` (or
+`put_if_absent`); then `barrier()` on the state backend, so a later publication cannot overtake
+it. This is the order pack data and `index/MANIFEST` already use. The journal is a single pointer
+record replaced atomically, not an append log: each journaled write stores its whole document as
+an ordinary object and replaces the pointer, so a reader sees the previous pointer or the new one
+and never a torn record. A crash before the replacement leaves the previous journal and loses only
+the unacknowledged write. Open still reads a legacy journal holding an inline document.
+
+**Exclusive create.** `repository::create` first refuses an existing `LIQUID_REPO` cheaply, before
+writing any object. The create's first checkpoint then publishes `LIQUID_REPO` with
+`put_if_absent`, so of two concurrent creators of one identifier exactly one succeeds and the other
+fails `errc::already_exists` with no marker of its own; the objects it wrote are unreferenced and
+are reclaimed by collection. The disk backend writes the bytes to a temporary name unique to the
+call (`<key>.<random>.backend-tmp`, which `list` skips) and hard-links it to the key: `link(2)`
+refuses an existing destination atomically. The in-memory backend decides under its lock. The base
+class refuses with `errc::unsupported`, so a backend that has not implemented the conditional create
+cannot host repository creation rather than emulating it with a racy test-then-put. Open of an
+identifier with no `LIQUID_REPO` is `errc::not_found`.
+
+**Disk list.** `list(prefix)` on the disk backend walks only the prefix's directory and the entries
+whose names start with its last component, so a backend rooted at a checkout answers for
+`LIQUID_REPO` without visiting the working tree. The keys returned are unchanged.
+
+**What still uses a local path.** The structural-merge parse graph is a cache, not repository state.
+It stays at `<state>/STRUCTURAL_MERGE_GRAPH` when the state backend has a local root; otherwise
+`import_drips` opens it in a process temporary directory removed when the merge ends. Splits create
+an owned checkout repository by design and remain filesystem operations.
+
+**Compatibility.** The on-disk layout and the marker and journal formats are unchanged, so no
+format marker changes and there is nothing to refuse: a repository written before this change opens
+after it, and one written after it opens with an earlier build. A `LIQUID_REPO.tmp` left by an
+earlier release's interrupted rename is ignored. Disk replacement now goes through the backend's
+`.backend-tmp` temporary and rename.
+
+**Verify.** `tests/sim/test_repository_state.cpp`: the conditional create on both backends,
+including eight racing creators of one key; the default `unsupported`; the scoped disk `list`; a
+shared-store repository on the in-memory backend that is created, written, cut, synced to a second
+repository, given a replication cursor, reopened, and collected with no file under any directory
+and every backend key under the store's known prefixes; the unchanged disk layout and an
+earlier-release temporary; a crash before and after the journal publication on both backends; and
+the repository crash schedule described in [simulation.md](simulation.md#repository-state).
 
 The current pack has no table or footer. Its frames are represented in memory and in the index
 memtable. When a pack reaches `store_options::pack_size` (or 64 MiB when it is zero), it is sealed:
@@ -249,8 +349,9 @@ single callback can consume the content sequentially from `bytes`.
 unregistered digest returns `errc::not_remote` and changes nothing. Eviction removes the local
 object entry and tombstones locally cached content chunks and the local chunk-list descriptor when
 they are not shared by another local object or registered remote blob. It publishes the object
-map, collection tombstones, and rebuilt chunk index in crash-safe order without changing the
-remote registration. Evicting an already remote-only registration succeeds without a write.
+map, then the collection tombstones, then the rebuilt chunk index, without changing the remote
+registration. The map goes first, so a crash between them leaves no object naming a tombstoned
+chunk ([gc.md](gc.md), liquid #337). Evicting an already remote-only registration succeeds without a write.
 
 When no retained object or registration shares every chunk, `has(content)` reports `remote`, and
 `get` or `read` hydrates verified bytes again through the registered `remote_blob_source`; range
@@ -453,21 +554,298 @@ newest first. A bloom hit selects
 the two-byte fanout slice, and `std::lower_bound` searches the mapped 48-byte records directly.
 The index therefore issues no file I/O on its lookup path. Mapping keeps per-run process memory
 bounded by the 256 KiB fanout header plus the bloom filter; mapped record pages remain managed by
-the operating system.
+the operating system. Flush and compaction build that table in a heap `std::vector`: as a coroutine
+local array it made their Debug ramps reserve 256 KiB and 516 KiB of the calling thread's stack,
+which overflowed a 512 KiB secondary thread (liquid #323).
 
 Runs are size-tiered by record count. When more than four runs share a tier, compaction performs a
-streaming k-way merge by iterating mapped input records and incrementally writing the replacement
-with backend range operations through bounded 4 MiB buffers. It does not load all input runs into
-memory. The replacement is synchronized and
-recorded in the manifest before the old runs are unmapped and removed. The manifest itself is
-published with an atomic complete-object put after the replacement run's durability barrier.
+streaming k-way merge over the mapped input records. It does not load all input runs into memory.
+
+**Every run is written once, in order (liquid #332).** The header carries the record count and
+fanout and the bloom follows it, but a merge learns the count, fanout and bloom only after it has
+seen every record, because duplicate digests collapse. Compaction used to write a placeholder
+header and an empty bloom, append the records, and then rewrite the header at offset 0 and the bloom
+in place. Zetta's object storage, under lake's per-workspace stores (liquid-bridge decision 54),
+refuses that rewrite with `409 conflict`. Compaction now merges twice over the immutable inputs. The
+first merge writes nothing: it counts the records and fills the fanout and bloom. The second
+writes the finished run as a complete-object `put` of the header, then appends the bloom and the
+records in 4 MiB windows, each at the object's current end. Flush already wrote this way, and its
+bloom is now appended in the same windows. The first merge has no suspension point, so no
+concurrent flush lands between the two; the second checks that it produced the counted records.
+
+The two merges were chosen over the alternatives the issue named:
+
+- **Records first into a staged object, then a separate finished object.** This needs no format
+  change, but it writes every record twice and reads it back once, and it leaves a second
+  unpublished object to clean up after a crash.
+- **A header-last layout** (records, then bloom, then a footer carrying count, fanout and
+  checksum). This writes every byte once but changes the run format. Every existing run would need
+  a second reader, and `open` would need the footer's position before it could map the fanout.
+
+A second merge reads mapped input pages again and costs CPU, but adds no write and no format.
+Memory stays at the fanout table, the bloom and one 4 MiB window, as before, and all three stay on
+the heap (liquid #323).
+
+**Crash safety is unchanged.** The replacement run is published only by the manifest put that
+follows its durability barrier, so a merge torn at any write leaves the manifest naming the old
+runs. The next merge takes the same unpublished key, because `next_sequence_` comes from the
+manifest, and its complete-object `put` replaces the torn object whole rather than rewriting
+its bytes. The old runs are unmapped and removed only after the manifest names the replacement.
 
 If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
 tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
 
 Concurrent coroutines on one store serialize mutation with the store's thread-safe
 `mutation_mutex`. Reads use immutable
-runs and are not given that mutation lock. Cross-process access is outside this issue's contract.
+runs and are not given that mutation lock. Across processes, see the next section.
+
+## Process ownership and hand-off
+
+**What.** One open store handle owns a disk store root at a time. An open with
+`store_options::exclusive_owner` takes an exclusive advisory lock on `<root>/store.lock` (`flock`
+on Linux and macOS, `LockFileEx` on Windows) before it reads or repairs anything under the root, and
+holds it until the `store` is destroyed. It then writes its pid, host and start time into the file.
+A second exclusive opener, in this process or another, retries until `store_options::owner_wait`
+has elapsed and then fails with `errc::locked`, whose message names the holder:
+
+```text
+store root is owned by pid 4211 on host lake-7d9f since 2026-10-02T21:14:03Z; one open store
+handle owns a root at a time
+```
+
+A zero wait makes one attempt. A negative wait, or a wait without `exclusive_owner` or an injected
+`owner`, is `errc::invalid_argument`; `exclusive_owner` with a persistence backend that has no local
+root and no injected `owner` is `errc::unsupported`. The descriptor is close-on-exec, so a child process never keeps the root.
+The kernel releases the lock when the owner's descriptor closes, however the process ends, so a
+successor never waits on a dead owner.
+
+Opens without `exclusive_owner` take no lock and keep the single-process contract: the caller must
+ensure that no other process writes the root. Existing callers that open one repository's store
+from several handles in one process (repository reopen, the CLI beside its daemon, readers in
+tests) are unchanged.
+
+**Why (liquid #321, found by lake#467).** A store keeps its pack append position, object map,
+chunk index memtable, and delta candidates in process memory. It appends at the offset it
+remembers, publishes `packs/objects.meta` and `index/MANIFEST` by replacing them from that memory,
+and on open removes the fixed-name `gc/MANIFEST.tmp`, `packs/objects.meta.tmp`, and
+`packs/remotes.meta.tmp` that a live writer may be about to publish. Two processes writing one
+root therefore overwrite each other's frames and object maps; lake measured `chunk header digest
+differs from index`, `invalid index run size`, lost acknowledged writes, and a store that no longer
+opened.
+
+Two designs were offered. Making every write path multi-process safe means a cross-process lock
+around each append and publication, re-reading the object map, the unflushed index entries (which
+exist only in the writer's memtable, so a reader would have to rescan the current pack), the
+remote map, the subject index and the pack tail under it, unique temporary names, and the same
+treatment for the repository journal, checkpoints, and leases layered on the store. It would put a
+re-validation on every read and write and would still leave a service's own caches (lake's search
+segments and registry indexes) stale. The hand-off serialises whole processes instead: the root
+has exactly one writer at any instant, the in-memory state stays authoritative for as long as the
+lock is held, and the successor rebuilds it from disk on open, exactly as after a crash. That is
+the same recovery path the crash simulator already proves, so the change adds no new on-disk
+state beyond the lock file.
+
+**A rollout without an unavailable window.** The hand-off removes the stop-then-start gap only if
+the successor is reachable before it owns the root:
+
+1. The successor starts, binds its listener, and passes readiness without opening the store.
+2. It opens the store with `exclusive_owner` and an `owner_wait` longer than the predecessor's drain
+   period. Requests that need the store wait for that open instead of failing.
+3. The predecessor receives its stop signal, stops accepting, finishes in-flight work, and destroys
+   its store (or is killed); the lock is released.
+4. The successor's open succeeds within one retry interval (5 ms, doubling to 100 ms), recovers any
+   torn pack tail, and serves the waiting requests.
+
+Clients see added latency for the length of the drain and no refusals, provided the wait outlasts
+the drain. The lock needs a filesystem whose `flock` is honoured between the processes: a local
+block filesystem shared by two processes on one host is; a network filesystem must provide it
+between its clients.
+
+`store::close()` destroys the store and then awaits the owner's release, so a predecessor can hand
+over at a known point instead of relying on destruction; the handle is empty afterwards.
+
+### Injected owners and fencing
+
+**What (liquid #327).** `store_options::owner` injects the owner lock as a `store_owner`, so a store
+whose backend has no local root (lake's workspace stores on Zetta's object capability,
+oramasearch/zetta#1005) is still owned by one holder at a time. Setting it implies exclusive
+ownership; with `exclusive_owner` and no `owner`, a disk backend keeps the flock above, which is
+itself the disk implementation of the interface (`make_disk_store_owner`).
+
+```cpp
+class store_owner {
+  virtual runtime::task<owner_grant> acquire(std::string holder, std::chrono::milliseconds wait) = 0;
+  virtual runtime::task<void> release() = 0;
+};
+```
+
+- `acquire` waits up to `owner_wait` for the current holder and then fails with `errc::locked`
+  naming it. The store passes `holder` as `pid <pid> on host <host> since <UTC time>`, the words the
+  disk refusal uses, for the owner to record.
+- The `owner_grant` it returns carries `fence()`, an opaque token that rises with every new holder,
+  and `lost()`. Copies share one state: the owner keeps a copy and calls `revoke()` when it learns
+  the holder may no longer write (a lease renewal failed or another holder took it).
+- `release` gives the store up. `store::close()` awaits it. A store destroyed without `close()`
+  revokes the grant and starts the release on the runtime, so a waiting successor still proceeds;
+  the disk owner is released synchronously by its destructor as before. One owner object serves one
+  open store at a time.
+
+**The fence travels in a backend view.** After acquiring, open calls `backend->fenced(fence)` once
+and sends every later backend call through the returned view, wrapped so a lost grant is enforced
+locally. The view shares the backend's objects; a remote implementation attaches the fence to every
+mutation and the remote refuses one whose fence is not the current holder's with `errc::locked`.
+A view rather than a `set_fence` call on the backend: two store handles in one process may share a
+backend instance (a predecessor and its successor during a hand-off), and a fence set on the shared
+instance would let the predecessor write with the successor's token. The view also reaches
+repository state written through the store's configured backend (leases, and the repository keys
+of liquid #326), because the store's configuration names the wrapped view. A backend that cannot
+carry a fence keeps the default `fenced`, and an open with an injected owner on it is
+`errc::unsupported` after the owner is released again. The disk backend's view ignores the token:
+the disk owner's fence is zero and the kernel lock already excludes every other writer. An owner
+whose grant can lapse while its holder runs therefore needs a backend that enforces the fence.
+
+**A lost grant.** Once the grant is lost, by the owner's `revoke()` or because the remote refused
+the fence (the wrapper revokes the grant on any `errc::locked` from the view), every later
+mutation (`put`, `put_if_absent`, `put_range`, `remove`, `barrier`) fails with `errc::locked` without reaching the
+remote, and the store must be closed. Reads (`get_range`, `list`) fail the same way unless the
+caller set `store_options::read_after_owner_lost`. The operation that discovered the loss fails
+part way: its earlier writes are what any interrupted write leaves (an unsealed pack tail with
+whole frames, unpublished object maps), and the successor's open recovers them exactly as after a
+crash. The remote refusal is what makes this safe; the local check only stops a holder that already
+knows it lost from asking.
+
+**Adding a backend operation.** The wrapper forwards each `store_backend` operation with the
+lost-grant check; `put_if_absent` (liquid #326) is forwarded as a mutation, so a repository's
+conditional create also carries the fence and is refused once the grant is lost. A new mutating
+operation must be added to the wrapper in `src/store/owner.cpp` the same way, and a remote backend's
+view must carry the fence on it.
+
+**Verify.** `tests/store/test_owner.cpp` (`StoreOwner.*`). In-process cases cover refusal, the
+bounded wait expiring, a waiting open taking over when the owner is destroyed, and option
+validation. Injected-owner cases run on a remote-shaped test backend (objects plus one lease whose
+fence rises with each holder, refusing a mutation with a stale fence): a successor waits and takes
+over when the predecessor closes, with a higher fence; a bounded wait expires; a holder whose lease
+lapses in the middle of a multi-chunk put has that write refused by the remote and its later writes
+and reads refused locally, while the successor opens, passes a collection dry run, reads every
+acknowledged object and none of the interrupted one, and keeps them all through a full collection;
+a grant the owner revokes refuses the next mutation without reaching the remote, permits reads
+when opted in, and a store destroyed without `close()` still releases to a waiting successor; a
+backend without `fenced` is `unsupported` and the owner is released; the disk owner can be
+injected and released by `close()`; a stale holder's `put_if_absent` is refused by the remote and
+then locally; and a shared-store repository's state keys are all written through the fenced view
+with the owner's fence, its create is a conditional create, and its next write after the lease
+lapses is refused. Process cases run `liquid-store-owner-fixture` as real processes: four writers started
+together on one root must take turns and every acknowledged write must survive; and a writer that
+is killed with `SIGKILL` in the middle of its write stream while a successor waits must hand the
+root over, after which the successor writes. Each process case then checks the store: every frame
+of every pack decodes and matches the digest its table records, the store reopens, every
+acknowledged object from every process reads back byte for byte, and a full collection over leases
+on all of them keeps every one. Without the lock both process cases fail.
+
+## Whole-repository transfer
+
+**What (liquid #328).** `repository::transfer(from, into, identifier, options)` copies the
+repository that `identifier` names on the shared store `from` into the shared store `into`, both
+open in one process, and returns a `repository_transfer_report`. It copies:
+
+- every object reachable from the repository: its checkpoint and journal documents and those of its
+  sessions, everything those documents name (the working tree, refs, history, directory documents,
+  conflicts, operations, signed drips, metadata such as symbol records), and everything those
+  objects reference in turn through the store's reference registry, so trees, changes, blob records,
+  chunks, build records, attestations about a copied object, and the whole-content object of each
+  blob; Drive files, models and datasets are repository files and metadata, so they travel the same
+  way;
+- the repository's state keys under `repositories/<id-hash>/`: `LIQUID_REPO`, `LIQUID_JOURNAL`,
+  `sessions/<id>/…` and `replication/<source>.cursor` (the structural-merge parse graph is a cache
+  and is skipped);
+- the repository's lease records (owner `repository:<id>\n…`), so the destination's collector
+  retains what the source's retained.
+
+Every digest is kept. A chunk is read from the source (resolving delta bases), verified against its
+digest, and appended to the destination's packs under the same identity as an ordinary frame. An
+object is published to the destination's object map with the source's chunk list only after every
+chunk has been read in order, the whole-content digest recomputed from them, and the chunk-list
+descriptor recomputed and matched. Remote registrations (`remotes.meta`) are copied as
+registrations, with whatever chunks the source holds locally. The destination is therefore equal
+to the source in content digests, and an object it holds is readable with the destination's own
+verification.
+
+**Why (decision 54, lake#380).** Lake moves each workspace's repositories from the space's disk
+store into the workspace's own store, which lives on a remote backend over the workspace Zetta
+(liquid #326, #327). `replicate_from` does this between two instances over HTTP; the move needs it
+locally between two `store` handles, resumable and checkable before lake switches the repository
+over.
+
+**Order.** The walk is depth first and copies an object only after everything it references, so an
+object present in the destination already has everything it reaches. Object metadata is published
+every `batch_objects` objects (index flush, then the object map after a data barrier) and at the
+end. Then the lease records are written, then a barrier, then every state key but the repository's
+own `LIQUID_REPO` (state keys the destination holds and the source does not, such as a journal the
+source has since checkpointed, are removed first), then a barrier, then `LIQUID_REPO`, then a
+barrier. A destination interrupted at any point therefore has no repository, or one whose every
+object is present; it never has a `LIQUID_REPO` naming a missing object.
+
+**Resume and idempotence.** A rerun after an interruption walks from the roots again and does not
+descend into an identity the destination already holds in the form the source does (an object in
+its object map, a chunk in its index, a registration). Pack frames written before the interruption
+are recovered by the destination's next open and are found in its index, so a rerun appends only
+what is missing; at most one batch of object metadata is lost. A rerun of a complete transfer
+writes nothing: no frame, no index run, no object map, no state key, no lease
+(`RepositoryTransfer.InterruptedCopyResumesAndVerifies` counts the destination's mutations).
+
+**Verify.** With `repository_transfer_mode::verify` the transfer writes nothing. It walks the same
+reachable set without skipping, and for every identity reads the destination's copy: a chunk is
+loaded and its digest checked, an object's size, kind, chunk list, chunk sizes and descriptor must
+equal the source's and its chunks must reassemble to its digest, and a registration must be equal.
+It then compares every state key and lease record byte for byte, and reports a destination state
+key the source lacks. Each mismatch is a `repository_transfer_difference` (a digest or key, and the
+reason); `complete` is true only when there is none.
+
+**Fencing.** Every destination write goes through `into`'s persistence backend, which for a store
+opened with an injected owner is the fenced view (see
+[Injected owners and fencing](#injected-owners-and-fencing)). A transfer whose owner loses its
+grant fails with `errc::locked`; the successor opens the store with a higher fence, recovers the
+pack tail, and reruns the transfer.
+
+**Memory.** Content passes one chunk at a time (at most 128 KiB, plus the decompressed delta base
+it needs). Structural records (trees, changes, blob records) and the repository documents are read
+whole, as the repository itself reads them. The walk keeps one 33-byte key per identity visited and
+the references of the objects on its current path, so its memory grows with the number of objects,
+not with their bytes.
+
+**Report.** `objects` counts identities examined, `objects_present` those the destination already
+held (and so did not descend into), `objects_read` and `bytes_read` the chunks read from the source,
+`objects_written` and `bytes_written` what was appended or registered, and `state_written` and
+`leases_written` the keys written or removed. `missing` lists identities a stored record references
+that the source does not hold: they cannot be copied, the destination lacks them exactly as the
+source does, and the transfer still completes. A digest-shaped value in a repository document that
+the source does not hold (an operation identifier, an object already collected) is not reported.
+
+**Limits.** Encrypted objects are refused with `errc::unsupported`: copying them would need either
+the source's trust-domain key in the destination or re-encryption under the destination's key, which
+changes keyed identities and so every record that names them. Both stores must be shared stores
+(a repository with its own checkout store is not a transfer source). The repository must not be
+written while it is transferred; a write after the transfer read the source's state is not copied,
+and a rerun copies it. Nothing else should write or collect the destination during the transfer:
+copied objects are unreferenced until `LIQUID_REPO` is written, so a collection in between could
+remove them (the rerun would copy them again).
+
+**Verify (tests).** `tests/store/test_transfer.cpp` (`RepositoryTransfer.*`) builds a repository on
+a disk store with history, a rename, a 6 MiB file streamed from disk, a second ref, an
+uncheckpointed journal, a private session with its own write, a replication cursor, and an unrelated
+repository beside it, and transfers it into the remote-shaped test backend of liquid #327 held by
+an injected owner, with one-MiB packs so the copy spans several. An uninterrupted copy measures the
+destination's mutations; then, for interruptions at 10, 35, 60, 90 and 99 percent of them, the
+owner's lease lapses mid-copy, the remote refuses the next write and the transfer fails with
+`errc::locked` leaving no `LIQUID_REPO`; a successor with a higher fence reruns it, appending fewer
+bytes than the whole copy and writing `LIQUID_REPO` with its own fence; verify reports no
+difference; a third run writes nothing; and after a reopen the destination verifies again and opens
+the repository with byte-identical files (the streamed file included), the same refs, history,
+drips, replication cursor and session write, and passes a collection dry run. A second test flips
+one byte in a destination pack and verify reports the object that no longer verifies, changes a
+copied cursor and verify reports that key, and verify of an empty destination reports the missing
+state. A third covers the refusals: a repository absent from the source (`errc::not_found`), one
+store as both ends, and a zero batch (`errc::invalid_argument`).
 
 ## Tuning and verification
 
@@ -484,7 +862,9 @@ ctest --test-dir build -L large-40g --output-on-failure
 
 The default tests cover deterministic boundaries, range reads, deduplication, corruption, reopen,
 unknown versions, index reconstruction, run corruption, compaction, and separate SHA-256 run-set
-lookup. The `large` label contains the 256 MiB streaming round trip; `large-40g` is the labelled
+lookup. `index-write-once` and `store-write-once` repeat the index, store, collection and
+repository transfer suites over the write-once backend; `ChunkIndex.CompactionWritesEachRunOnce` and
+`ChunkIndex.TornMergeLeavesOldRunsAuthoritative` run over it in the default suite as well. The `large` label contains the 256 MiB streaming round trip; `large-40g` is the labelled
 Phase 1 exit test.
 
 The chunk index's compaction merges runs across suspension points. Nothing in that merge may point

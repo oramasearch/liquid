@@ -12,5 +12,31 @@ checkpoint leases.
 `test_gc_sim_regression.cpp` replays seed 140: a collection or compaction crash must not remove a
 rooted object during a subsequent index reconstruction.
 
+`test_owner.cpp` covers liquid #321 exclusive ownership: in-process refusal, bounded-wait expiry,
+hand-off to a waiting opener, and option validation; and, on POSIX, real writer processes from
+`owner_fixture.cpp` (bytes from `owner_fixture_content.hpp`) that take turns on one root, and a
+writer killed with `SIGKILL` mid-stream while a successor waits. Each process case ends with a
+frame-level pack scan, reopen, a byte-for-byte read of every acknowledged write, and a full
+collection that must keep every acknowledged object.
+It also covers liquid #327 injected owners on a remote-shaped backend whose single lease fence
+rises with each holder: hand-off on `close()`, bounded-wait expiry, a stale holder whose lease lapses
+mid-put (refused by the remote, then locally; the successor recovers, passes a collection dry run,
+and keeps every acknowledged object), a revoked grant with opted-in reads and release on
+destruction, a backend without `fenced`, the injected disk owner, a stale holder's refused
+`put_if_absent`, and a shared-store repository whose state writes all carry the owner's fence.
+`remote_backend.hpp` is that remote-shaped backend, shared with `test_transfer.cpp`, which covers
+liquid #328's whole-repository transfer from a disk store into it: an interruption at five points
+by a lapsed lease, resumption by a successor with a higher fence that copies only what is missing,
+verify with no difference, a rerun that writes nothing, the reopened destination's files, refs,
+history, drips, cursor and session, a tampered pack byte and a changed state key caught by verify,
+and the refusals.
+
+`test_gc.cpp` opens every store through `open_store`, and `test_transfer.cpp` opens its disk stores
+through `open_disk` and its destinations through `destination_options` or
+`write_once_if_requested`, so the `store-write-once` CTest entry runs both over the write-once
+backend in `../sim/` as well (liquid #332). There the transfer's destination is the remote-shaped
+backend behind it, fenced views included: a transfer into a write-once store such as Zetta's must
+succeed, interruptions and resumption included.
+
 Store fixtures allocate their named directories beneath the unique process root specified in the
 parent [`README.md`](../README.md).

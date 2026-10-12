@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid verify <action|--all|--changed> [--explain] | verify --graph [--all] [--explain]
+liquid verify <action|--all|--changed> [--explain] [--log <log-url>] | verify --graph [--all] [--explain]
 ```
 
 ## Description
@@ -20,6 +20,7 @@ Cleanly recompute graph values or re-execute cached actions and quarantine diver
 | `--all` | — | Validate every eligible value or action. | sample |
 | `--changed` | — | Validate results without a recorded verification. | false |
 | `--explain` | — | Include first-difference details. | false |
+| `--log` | `<log-url>` | Require inclusion of every agreeing reproducibility attestation. | local verification only |
 
 ## Availability
 

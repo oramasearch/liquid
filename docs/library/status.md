@@ -1,20 +1,28 @@
 # Implementation status
 
+**VFS conformance (#301).** Nine common cases pass against the direct core calibration backend,
+covering file operations, recorded inputs, attributed writes, partial hydration, synthetic times,
+xattrs and read-only refusal. A deliberate wrong-size mutation fails with the operation and
+expectation. The unchanged libfuse entry skips on this Mac because macFUSE is absent. Agreement
+with liquid's own core is weaker than agreement with a known-good filesystem; the Linux libfuse
+baseline remains owed against #299 ([`vfs.md`](vfs.md#backend-conformance-301)).
+
 Issue #2: ordinary and nested splits own their referenced chunks and expose original signed
 history after source removal. Shared-store sources produce standalone destinations. Publication
 and limitations are documented in [`split.md`](split.md).
 
 This page states what libliquid and the `liquid` binary implement today, by phase, and what each
-phase still lacks. It is the consolidated status record that the root `README.md` used to carry;
-the root file now keeps a short summary and links here. Each paragraph names the page that holds
+phase still lacks. It is the authoritative implementation status record; the root `README.md`
+and `CLAUDE.md` keep short summaries and link here. The
+[historical reconciliation](readme-history.md) records how duplicate inventories were combined for issue #284. Each paragraph names the page that holds
 the design and verification detail. When a change makes a sentence here false, correct it in the
 same commit.
 
 **Code shape.** Code is a C++26 **libliquid** (`liquid::liquid`, static by default, shared with
-`BUILD_SHARED_LIBS`) plus the `liquid` binary as a thin client of it; liquify and lake link the
-same library. The public waiting operations are lazy Boost.Capy tasks, backed by a private Corosio
-runtime ([`runtime.md`](runtime.md)). Issue #285 completes the installed static dependency
-closure: `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid` support repository
+`BUILD_SHARED_LIBS`) plus the `liquid` binary as a thin client of it. Other programs consume the
+same library through its exported CMake target. The public waiting operations are lazy Boost.Capy
+tasks, backed by a private Corosio runtime ([`runtime.md`](runtime.md)). Issue #285 completes
+the installed static dependency closure: `find_package(liquid CONFIG REQUIRED)` and `liquid::liquid` support repository
 create/open, persisted file write/read, and consumer-defined coroutines, checked after moving
 the install prefix
 ([`libliquid.md`](libliquid.md)). The `liquid` binary is the documented thin client of the Phase 1
@@ -49,11 +57,36 @@ cloud KMS, lake transit, Shamir, or TPM PCR-bound custody, versioned data-key ro
 revocation, repository readability reports, leased roots, epoch garbage collection, and pack compaction
 ([`store.md`](store.md), [`encryption.md`](encryption.md), [`gc.md`](gc.md),
 [`simulation.md`](simulation.md)). The disk backend remains the default, and the crash simulator
-runs the same invariants against disk and memory. Store owners can await a whole-content write-through callback
+runs the same invariants against disk and memory. A collection publishes its object map before it
+commits tombstones, so a crash between them never leaves an object naming a tombstoned chunk
+(liquid #337). Store owners can await a whole-content write-through callback
 before the first local pack write and evict remote-registered local copies without losing their
 remote location. Multiple repositories can use one caller-owned store with repository-scoped
 checkpoints, journals, and retention leases. `liquid gc --explain` reports why retained chunks are
-live.
+live. Digest-addressed near-duplicate chunk deltas and resemblance-selected bases reduce
+stored bytes; repacking rebases delta chains and garbage collection retains their transitive
+bases ([`store.md`](store.md), [`gc.md`](gc.md)). A long-running owner opens with
+`store_options::exclusive_owner`: one handle owns a disk root across processes, and a successor
+waits up to `owner_wait` for a draining or killed predecessor to release it (liquid #321,
+[`store.md`](store.md#process-ownership-and-hand-off)). A shared-store repository's own state
+(`LIQUID_REPO`, `LIQUID_JOURNAL`, session state, and replication cursors) is backend keys under
+`repositories/<id-hash>/`, so a backend with no local root holds the whole repository; create is
+exclusive through `store_backend::put_if_absent` (liquid #326,
+[`store.md`](store.md#repository-state-through-the-backend)). A store on a backend without a local
+root takes the same ownership through an injected `store_options::owner` whose grant carries a
+fence: the backend's fenced view sends it with every mutation, `put_if_absent` included, so the
+remote refuses a stale holder, and a lost grant refuses every later mutation with `errc::locked`
+(liquid #327,
+[`store.md`](store.md#injected-owners-and-fencing)). `repository::transfer` copies one repository,
+whole, between two open shared stores: every reachable object with its digest, then its lease
+records, then its state keys with `LIQUID_REPO` last, through the destination's fenced backend; a
+rerun after an interruption copies only what is missing and a verify mode reads both stores and
+reports every difference (liquid #328, [`store.md`](store.md#whole-repository-transfer)). Encrypted
+objects are not transferred yet.
+No store write rewrites bytes already written: index compaction sizes its run in a first merge and
+writes the header, bloom and records once, in order, in a second, so every backend object is
+appended in order or replaced whole, which Zetta's object storage requires (liquid #332,
+[`store.md`](store.md#index)).
 
 **Repository.** Repository creation, working-tree reads and writes, recorded moves and removals,
 change cuts, references, snapshots, historical document state, composition, conflict values,
@@ -69,6 +102,11 @@ rotation and signed drips and changes, the internal CRDT metadata document, cano
 and drip journal are implemented behind libliquid. Directory CRDT checkpoints prefer compact bytes
 with checked full-history fallback and reopen as sync-capable documents; remote changes are
 observed through patches, and every automerge apply, merge, and sync-receive failure is checked.
+
+**Exclusive checkout locks.** Configured path patterns require holder-aware writes and release.
+Lock records carry holder, acquisition time, and reason; signed offline reconciliation produces
+conflict values, connected authority uses a callback, and `liquid lock`/`unlock` forwards lock
+snapshots to daemon targets without advancing their drip cursors ([`locks.md`](locks.md)).
 
 **Capture, scanning, and attestations.** Capture subscriptions, default-blocking secret scanning,
 the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`, structured
@@ -103,7 +141,7 @@ providers. Issue #247 adds `liquid clone` over the same client, including first-
 adoption, persisted remote configuration, full plain-checkout materialization, and stable JSON
 output ([`drive.md`](drive.md), [`../cli/README.md`](../cli/README.md)).
 
-**VFS.** VFS full materialisation works on every platform; lazy mounts use libfuse3 on Linux and
+**VFS.** Full materialisation writes a plain directory; lazy mounts use libfuse3 on Linux and
 optional macFUSE on macOS ([`vfs.md`](vfs.md)).
 
 **Transparency and trust.** Repository metadata retains verified Lake transparency checkpoints:
@@ -111,7 +149,9 @@ the public client verifies signed witness-quorum checkpoints, all entry and pare
 exact TAAP inclusion, consistency, and identity scans before callers trust a log response. Each
 full or partial tile is reauthenticated through its parents to the selected checkpoint; cached
 tile bytes receive the same complete walk, and consistency verification completes that walk before
-it requests a proof.
+it requests a proof. HTTP log source construction reports invalid URLs through the public
+result model; legacy request operations retain the validation error. `log scan`, `log consistency`,
+and `log verify` reject malformed URLs locally with exit 2 (liquid #289).
 Complete transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and
 proofs before log mode accepts a record. Strict DER, CMS, and X.509 parsing plus verification-only
 RSA and ECDSA validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against
@@ -142,7 +182,9 @@ generates its Markdown, stable JSON, and installed man-page reference from that 
 ([`../reference/README.md`](../reference/README.md)). Executable guides cover an existing wrapped
 build, a first repository and sync peer, and the current keys-and-encryption boundary
 ([`../guides/README.md`](../guides/README.md)). CI renders the complete documentation tree as a
-downloadable static-site artifact ([`../build/ci.md`](../build/ci.md)).
+downloadable static-site artifact ([`../build/ci.md`](../build/ci.md)). The `liquid-offline` suite
+reruns CLI tests in the macOS or Linux sandbox with networking denied and verifies intentional
+network refusals before handlers start ([`../cli/README.md`](../cli/README.md)).
 
 ## Phase 2: the build engine
 
@@ -164,8 +206,10 @@ the first differing input on a miss. The on-disk action index rebuilds from its 
 
 **Verification.** `liquid verify` re-executes cached actions in fresh sandboxes, compares exit
 status and every output digest, signs a `reproducibility/1` attestation, and permanently
-quarantines a divergent result. `wrap` schedules one-in-20 graph and action samples on the shared
-runtime by default.
+quarantines a divergent result. `verify --log <log-url>` additionally requires inclusion for every
+agreeing reproducibility attestation; missing, tampered, and unavailable inclusion fail the command,
+while an omitted log keeps local-only verification. `wrap` schedules one-in-20 graph and action
+samples on the shared runtime by default.
 
 **Outputs and inputs.** New signed results carry canonical output-tree digests.
 `wrap --input <name>=<result|tree>` and direct named inputs mount upstream bytes read-only below
@@ -278,6 +322,13 @@ in [`grammars.md`](grammars.md). The Clang C++ module emits definition actions a
 outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 that definition's new action; recorded header reads invalidate the definitions that use them.
 
+**Structural diff and support tiers.** The graph-owned canonical parse is shared by build units,
+symbols, and source diff. Structural matching reports moves, semantic edits, formatting, and
+comments; `liquid diff --structural` labels its structural, text, or binary fallback. The public
+support matrix derives language and format rows from the loaded registries and declares platform
+wrapper backends; `liquid tiers` emits text, JSON, and generated feature tables
+([`structural-diff.md`](structural-diff.md), [`support-tiers.md`](support-tiers.md)).
+
 **Symbols.** Liquid #66 adds content-addressed per-translation-unit symbol records from a query
 over recorded compile actions, a labelled tree-sitter fallback, graph retrieval, repository access,
 and `liquid symbols <path>` ([`symbols.md`](symbols.md)).
@@ -286,7 +337,9 @@ and `liquid symbols <path>` ([`symbols.md`](symbols.md)).
 patch and restart records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and
 Linux x86_64, sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven
 daemon target. Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise
-returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)).
+returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). Issue #305 gives the tier-1
+demo a scoped, bounded socket path and makes overlong runtime endpoints report the native limit
+and path ([socket fixtures](../build/socket-fixtures.md)).
 
 **Build streams, tests, and plans.** Public build handles stream queued, started, hit, done,
 failed, critical-path, and finished events through the library and daemon. CMake test
@@ -348,15 +401,32 @@ entries are retained as deduplicated blobs beside the verbatim container. Uncomp
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
 reasons ([`formats.md`](formats.md)).
 
-**Projection.** Tier A package and image projection and Debian-only Tier B source projection are
+**Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
+`liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
+lookup ([executable guide](../guides/project-from-files.md)). Tier A package and image projection and Debian-only Tier B source projection are
 implemented. One checked install tree
 projects to deterministic `.deb`, `.rpm`, `.apk`, Homebrew bottles, Arch recipes, OCI image
-layouts, digest-pinned Helm charts, pinned-runtime AppImages, Flatpak build directories, and
-Snaps. A recorded change or producing result projects to an unsigned `.dsc`, deterministic source
+layouts, digest-pinned Helm charts, AppImages with vendored and hash-pinned runtimes, Flatpak build
+directories, and Snaps. A recorded change or producing result projects to an unsigned `.dsc`,
+deterministic source
 archives, and generated Debian policy files. Binary readers derive package relationships;
 incompatible ABI and relocation verdicts
 refuse by default; and signed `projection/1`, source provenance, and SBOM statements accompany
 every artifact
+([`projection.md`](projection.md)).
+
+**Platform projection and signing.** Projection also produces reproducible unsigned macOS
+packages, explicitly non-reproducible disk images, deterministic MSIX, and winget manifests.
+Native signing records bind unsigned and shipped digests, identity, and notarisation or timestamp
+evidence through `platform_signature/1`. The projection page does not yet record a credentialed
+Apple notarisation proof ([`projection.md`](projection.md#unsigned-projection-and-platform-signing)).
+
+**Install intent and image-based OS projection.** Canonical `install_intent/1` records generate
+Debian, RPM, and Alpine lifecycle scripts. Their digests bind to projection and SBOM records;
+ownership checks detect conflicting paths, explicit replacements derive package relationships,
+and install/list/rollback use atomic projected-tree generations with interruption recovery.
+Digest-pinned base and overlay trees also produce OSTree commits and bootc OCI layouts, with
+separate commit and image digests. Projection is distinct from the Phase 7 boot workflow
 ([`projection.md`](projection.md)).
 
 **Dependency resolution** is implemented. Issue #287 connects `.liquid` declarations to directory
@@ -372,12 +442,18 @@ cores. Selected graphs are constructed iteratively, so dependency-chain length n
 worker-thread stack. `liquid resolve` prints the graph, stable JSON, or package-selection
 explanations ([`resolution.md`](resolution.md)).
 
-**Configuration.** `.liquid` is a typed declarative language for package, source, and target
-records with repository-local includes, exact source-located diagnostics, canonical formatting and
-CBOR lowering, digest-verified source fetch, and ordinary-program generators executed with signed
+**Configuration.** `.liquid` is a typed declarative language for package, source, target,
+install-intent, and exclusive-checkout rule records with repository-local includes, exact
+source-located diagnostics, canonical formatting and CBOR lowering, digest-verified source fetch, and ordinary-program generators executed with signed
 provenance. `liquid config` checks, lowers, traces, and formats; `liquid build --target` executes
 a lowered target through the existing action path and refuses outputs that fail relocation
 publication ([`configuration-language.md`](configuration-language.md)).
+
+**Spack import.** A pinned Spack export maps package metadata into formatter-canonical `.liquid`
+documents and `package/1` records, pins patches, and reports translated fields and losses in
+`import-report/1`. The committed 500-package fixture checks resolution and an introduced HDF5
+conflict; an opt-in Linux subset exercises configured builds and relocation
+([`import-spack.md`](import-spack.md)).
 
 ## Deployment
 
@@ -394,6 +470,9 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 - Lazy mounts, `wrap`, `verify`, and `replay` need libfuse3 on Linux and macFUSE on macOS.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.
+- The projection page has no recorded credentialed Apple notarisation proof; image booting is
+  outside the projection implementation.
+- Tier B source projection is Debian-only; other distribution source-policy formats are deferred.
 - The open decisions are listed in `CLAUDE.md` under *Decisions*; the licence for liquid and
   liquify is not yet chosen
   ([liquid-bridge #2](https://github.com/oramasearch/liquid-bridge/issues/2)).

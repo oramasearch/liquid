@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "harness.hpp"
 #include "memory_backend.hpp"
 
@@ -35,7 +36,7 @@ TEST_P(StoreSimulation, SeededCrashRecovery) {
     const auto* single_seed = std::getenv("LIQUID_SIM_SEED");
     const auto first = single_seed ? environment_number("LIQUID_SIM_SEED", 0) : 0;
     const auto count = single_seed ? 1 : environment_number("LIQUID_SIM_SEEDS", 200);
-    const auto workspace = std::filesystem::current_path() / "liquid-sim-work";
+    const auto workspace = liquid::test::fixture_path("liquid-sim-work");
     std::filesystem::create_directories(workspace);
     for (std::uint64_t offset = 0; offset < count; ++offset) {
         const auto seed = first + offset;
@@ -55,11 +56,21 @@ TEST_P(StoreSimulation, SeededCrashRecovery) {
 INSTANTIATE_TEST_SUITE_P(Backends,
                          StoreSimulation,
                          testing::Values(liquid::sim::simulation_backend::disk,
-                                         liquid::sim::simulation_backend::memory),
-                         [](const auto& parameter) {
-                             return parameter.param == liquid::sim::simulation_backend::disk
-                                        ? "Disk"
-                                        : "Memory";
+                                         liquid::sim::simulation_backend::memory,
+                                         liquid::sim::simulation_backend::write_once_disk,
+                                         liquid::sim::simulation_backend::write_once_memory),
+                         [](const auto& parameter) -> std::string {
+                             switch (parameter.param) {
+                             case liquid::sim::simulation_backend::disk:
+                                 return "Disk";
+                             case liquid::sim::simulation_backend::memory:
+                                 return "Memory";
+                             case liquid::sim::simulation_backend::write_once_disk:
+                                 return "WriteOnceDisk";
+                             case liquid::sim::simulation_backend::write_once_memory:
+                                 return "WriteOnceMemory";
+                             }
+                             return "Unknown";
                          });
 
 TEST(StoreBackend, MemoryBackendInjectsLatencyAndFailures) {
@@ -77,7 +88,7 @@ TEST(StoreBackend, MemoryBackendInjectsLatencyAndFailures) {
 }
 
 TEST(StoreBackend, MemoryBackendPersistsStoreWithoutBackendFiles) {
-    const auto path = std::filesystem::current_path() / "liquid-memory-backend-test";
+    const auto path = liquid::test::fixture_path("liquid-memory-backend-test");
     std::filesystem::remove_all(path);
     auto backend = std::make_shared<liquid::sim::memory_store_backend>();
     liquid::store_options options;
@@ -97,7 +108,7 @@ TEST(StoreBackend, MemoryBackendPersistsStoreWithoutBackendFiles) {
 }
 
 TEST(StoreBackend, DiskBackendImplementsContract) {
-    const auto path = std::filesystem::current_path() / "liquid-disk-backend-test";
+    const auto path = liquid::test::fixture_path("liquid-disk-backend-test");
     std::filesystem::remove_all(path);
     auto backend = liquid::make_disk_store_backend(path);
     ASSERT_TRUE(

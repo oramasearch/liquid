@@ -14,6 +14,7 @@
 #include "leases.hpp"
 #include "liquid/store.hpp"
 #include "mutation_mutex.hpp"
+#include "owner.hpp"
 #include "subject_index.hpp"
 
 namespace liquid::store_detail {
@@ -31,6 +32,25 @@ struct stored_object {
     std::vector<digest> chunks;
     std::vector<std::uint64_t> chunk_sizes;
     std::vector<std::uint64_t> chunk_resemblances;
+};
+
+// How a store holds one identity, for a whole-repository transfer (liquid #328). An identity can be
+// a logical object (an object-map entry naming its chunks), a raw chunk in the index, a remote
+// registration, or several at once: a one-chunk object's chunk has the object's own identity.
+struct transfer_entry {
+    bool object{};
+    bool chunk{};
+    bool remote{};
+    stored_object value;
+    blob registration{};
+};
+
+// What one transfer step read from the source and appended to the destination.
+struct transfer_counts {
+    std::uint64_t objects_read{};
+    std::uint64_t bytes_read{};
+    std::uint64_t objects_written{};
+    std::uint64_t bytes_written{};
 };
 
 class store_backend {
@@ -74,6 +94,33 @@ public:
     [[nodiscard]] const store_options& configuration() const noexcept;
     [[nodiscard]] runtime::task<std::shared_ptr<lease_state>>
     lease_root(digest id, std::chrono::seconds ttl, std::string owner);
+    // Detaches the owner so store::close can destroy the store and then await the release.
+    [[nodiscard]] owner_hold take_owner() noexcept;
+
+    // Whole-repository transfer primitives (liquid #328); see docs/library/store.md. Copies keep
+    // every identity: chunks are read verified from the source and appended to this store's packs
+    // under the same digest, and an object is published with the source's chunk list once every
+    // chunk and its whole-content digest have been verified. Object metadata collects in an object
+    // batch until transfer_publish. Encrypted identities are refused with errc::unsupported.
+    [[nodiscard]] result<transfer_entry> transfer_describe(digest id) const;
+    [[nodiscard]] runtime::task<transfer_counts> transfer_copy_chunk(store_backend& source,
+                                                                     digest id);
+    [[nodiscard]] runtime::task<transfer_counts> transfer_copy_object(store_backend& source,
+                                                                      const stored_object& object);
+    [[nodiscard]] runtime::task<transfer_counts> transfer_copy_remote(const blob& registration);
+    // Flushes the chunk index and publishes the object map after a data barrier, so every object
+    // this store names is readable from its backend.
+    [[nodiscard]] runtime::task<void> transfer_publish();
+    // Ends a failed transfer's object batch without publishing; the objects it added stay pending
+    // for this store's next object-map publication.
+    void transfer_abandon() noexcept;
+    // Reads and verifies one identity in the form the source holds it. Each returned string is one
+    // way this store differs; an empty result means the identity is present and every byte
+    // verifies.
+    [[nodiscard]] runtime::task<std::vector<std::string>> transfer_verify_chunk(digest id);
+    [[nodiscard]] runtime::task<std::vector<std::string>>
+    transfer_verify_object(const stored_object& expected);
+    [[nodiscard]] std::vector<std::string> transfer_verify_remote(const blob& expected) const;
 
 private:
     explicit store_backend(std::filesystem::path root, store_options options);
@@ -120,6 +167,8 @@ private:
     friend class collector;
     friend class compactor;
 
+    // Declared first so it is released last, after every member that may still write.
+    owner_hold owner_;
     std::filesystem::path root_;
     store_options options_;
     std::shared_ptr<::liquid::store_backend> persistence_;
@@ -151,6 +200,10 @@ private:
     std::uint32_t current_pack_{};
     std::uint64_t object_batch_depth_{};
     bool objects_dirty_{};
+    // The pack of the last chunk a transfer appended, and whether it appended any since the last
+    // transfer_publish, which then flushes the index.
+    std::uint32_t transfer_pack_{};
+    bool transfer_appended_{};
     mutation_mutex mutation_;
 };
 

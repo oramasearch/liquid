@@ -9,3 +9,8 @@ runs the restart hook through the configured sandbox backend and verifies the ou
 It skips explicitly when macOS has no macFUSE; Linux CI executes it with libfuse3.
 
 The portable classification and unsigned-patch refusal cases remain in `tests/test_hot_update.cpp`.
+
+The tier-1 listener uses `socket_fixture.hpp` independently of the repository path, so deep
+worktrees and long temporary roots do not lengthen its socket address. Runtime boundary coverage
+checks the largest accepted pathname and the first rejected byte, including the diagnostic's path
+and native capacity. See [socket fixtures](../../docs/build/socket-fixtures.md).

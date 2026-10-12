@@ -11,6 +11,20 @@ owners carry the repository identity. Redaction persists the caller's replacemen
 tombstoning, pack compaction, and the required `not_found` verification.
 Repository retention lease restoration uses the caller-owned store's selected persistence backend,
 so shared-store lease generations follow the same durability contract as pack and index metadata.
+`repository_state_location` (liquid #326) names where a repository's own state lives: a key prefix
+in a store backend. A shared-store repository uses `repositories/<id-hash>/` in the store's backend;
+a checkout uses a disk backend rooted at the checkout with an empty prefix, which keeps its layout.
+`LIQUID_REPO`, `LIQUID_JOURNAL`, `sessions/<id>/…`, and replication cursors are read and published
+only through it, with a data barrier before and a state barrier after each publication, and create
+publishes `LIQUID_REPO` with `put_if_absent`. See
+[store.md](../../docs/library/store.md#repository-state-through-the-backend).
+`transfer.cpp` (liquid #328) is `repository::transfer`: it reads the repository's state keys from the
+source backend, takes every digest-shaped value in its documents as a candidate root, adds the
+repository's lease records, walks the reachable set depth first through the store's transfer
+primitives (copying an object after everything it references), and publishes leases, state keys and
+`LIQUID_REPO` last; in verify mode it compares instead. `transfer.hpp` exposes the shared-store state
+prefix that `repository_impl.cpp` computes. See
+[store.md](../../docs/library/store.md#whole-repository-transfer).
 
 Issue #86 validates caller-stated write bases before blob registration, content storage, or CRDT
 mutation. Persisted `config.agents` selects the TAAP actors that must supply a base. Version 2

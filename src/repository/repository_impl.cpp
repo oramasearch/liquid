@@ -48,7 +48,9 @@
 #include "repository/store_access.hpp"
 #include "repository/sync_access.hpp"
 #include "repository/testing.hpp"
+#include "repository/transfer.hpp"
 #include "search/repository_access.hpp"
+#include "store/backend.hpp"
 #include "store/leases.hpp"
 #include "store/pack.hpp"
 #include "store/references.hpp"
@@ -2890,6 +2892,36 @@ struct split_staging_directory {
     }
 };
 
+// A process-local directory removed when the merge that needed it ends.
+struct scratch_directory {
+    std::filesystem::path path;
+
+    scratch_directory() = default;
+    scratch_directory(const scratch_directory&) = delete;
+    auto operator=(const scratch_directory&) -> scratch_directory& = delete;
+    ~scratch_directory() {
+        if (!path.empty()) {
+            auto code = std::error_code{};
+            std::filesystem::remove_all(path, code);
+        }
+    }
+
+    auto create(std::string_view prefix) -> result<std::filesystem::path> {
+        auto code = std::error_code{};
+        const auto base = std::filesystem::temp_directory_path(code);
+        if (code) {
+            return std::unexpected(failure(errc::io, code.message(), "temporary directory"));
+        }
+        const auto candidate = base / (std::string{prefix} + node_text(random_id()));
+        if (!std::filesystem::create_directory(candidate, code)) {
+            return std::unexpected(failure(
+                errc::io, code ? code.message() : "scratch directory exists", candidate.string()));
+        }
+        path = candidate;
+        return candidate;
+    }
+};
+
 auto prepare_split_directory(const std::filesystem::path& destination)
     -> result<std::filesystem::path> {
     auto code = std::error_code{};
@@ -4147,8 +4179,7 @@ auto string_bytes(std::string_view input) -> std::vector<std::byte> {
             reinterpret_cast<const std::byte*>(input.data() + input.size())};
 }
 
-auto identifier_path(store& objects, const std::filesystem::path& identifier)
-    -> result<std::filesystem::path> {
+auto identifier_key(const std::filesystem::path& identifier) -> result<std::string> {
     const auto text = identifier.generic_string();
     if (text.empty()) {
         return std::unexpected(
@@ -4158,21 +4189,168 @@ auto identifier_path(store& objects, const std::filesystem::path& identifier)
     if (!id) {
         return std::unexpected(id.error());
     }
-    auto root = repository_detail::store_access::root_path(objects);
-    if (!root) {
-        return std::unexpected(root.error());
-    }
     const auto encoded = to_string(*id);
     const auto separator = encoded.find(':');
-    return *root / "repositories" / encoded.substr(separator + 1);
+    return "repositories/" + encoded.substr(separator + 1);
 }
+
+// Where a repository's own state lives (liquid #326): keys under a prefix in a store backend.
+// A repository with its own store keeps LIQUID_REPO and LIQUID_JOURNAL beside its working tree,
+// through a disk backend rooted at the repository path, so that layout is unchanged. A repository
+// opened on a shared store keeps them under repositories/<id-hash>/ in that store's own backend,
+// so a backend with no local root holds every byte of the repository. Data is the store's
+// backend: its barrier orders pack data before the marker that names it.
+struct repository_state_location {
+    std::shared_ptr<store_backend> backend;
+    std::shared_ptr<store_backend> data;
+    std::string prefix;
+    std::string replication_prefix;
+
+    [[nodiscard]] auto key(std::string_view name) const -> std::string {
+        return prefix + std::string{name};
+    }
+    [[nodiscard]] auto child(std::string_view directory) const -> repository_state_location {
+        const auto nested = prefix + std::string{directory} + "/";
+        return {backend, data, nested, nested + "replication/"};
+    }
+};
 
 struct prepared_repository_store {
     std::filesystem::path state_path;
     std::unique_ptr<store> owned;
     store* objects{};
     store_options configuration;
+    repository_state_location state;
 };
+
+auto bytes_text(const std::vector<std::byte>& bytes) -> std::string {
+    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+// Reads one state object, or nothing when it is absent.
+auto read_state(const repository_state_location& state, std::string_view name)
+    -> runtime::task<std::optional<std::vector<std::byte>>> {
+    auto bytes = co_await store_detail::read_backend_object(state.backend, state.key(name));
+    if (!bytes) {
+        if (bytes.error().code == errc::not_found) {
+            co_return std::optional<std::vector<std::byte>>{};
+        }
+        co_return std::unexpected(bytes.error());
+    }
+    co_return std::optional<std::vector<std::byte>>{std::move(*bytes)};
+}
+
+// Publishes one state object after everything it names: barrier on the data backend, an atomic
+// replacement (or, for an exclusive create, a conditional create), then a barrier on the state
+// backend so a later publication cannot overtake it.
+auto publish_state(const repository_state_location& state,
+                   std::string_view name,
+                   std::vector<std::byte> bytes,
+                   bool exclusive = false) -> runtime::task<void> {
+    auto ordered = co_await state.data->barrier();
+    if (!ordered) {
+        co_return std::unexpected(ordered.error());
+    }
+    auto written = exclusive
+                       ? co_await state.backend->put_if_absent(state.key(name), std::move(bytes))
+                       : co_await state.backend->put(state.key(name), std::move(bytes));
+    if (!written) {
+        co_return std::unexpected(written.error());
+    }
+    co_return co_await state.backend->barrier();
+}
+
+auto remove_state(const repository_state_location& state, std::string_view name)
+    -> runtime::task<void> {
+    auto removed = co_await state.backend->remove(state.key(name));
+    if (!removed && removed.error().code != errc::not_found) {
+        co_return std::unexpected(removed.error());
+    }
+    co_return result<void>{};
+}
+
+// Removes every state object under a location. A disk backend also removes the directory itself,
+// as the repository did before its state went through the backend.
+auto remove_state_tree(const repository_state_location& state) -> runtime::task<void> {
+    auto directory = state.prefix;
+    if (directory.ends_with('/')) {
+        directory.pop_back();
+    }
+    if (auto local = store_detail::backend_local_path(state.backend, directory)) {
+        auto code = std::error_code{};
+        std::filesystem::remove_all(*local, code);
+        if (code) {
+            co_return std::unexpected(failure(errc::io, code.message(), local->string()));
+        }
+        co_return result<void>{};
+    }
+    co_return co_await store_detail::remove_backend_prefix(state.backend, state.prefix);
+}
+
+auto parse_state_digest(std::string text, std::string_view prefix = {}) -> result<digest> {
+    text.erase(0, prefix.size());
+    if (const auto newline = text.find('\n'); newline != std::string::npos) {
+        text.resize(newline);
+    }
+    return parse_digest(text);
+}
+
+// Loads the repository document a state location publishes: the checkpoint named by LIQUID_REPO,
+// replaced by the journal's document when LIQUID_JOURNAL exists (a pointer, or a legacy inline
+// document).
+auto load_state_document(const repository_state_location& state, store& objects)
+    -> runtime::task<repository_document> {
+    auto marker = co_await read_state(state, "LIQUID_REPO");
+    if (!marker) {
+        co_return std::unexpected(marker.error());
+    }
+    if (!*marker) {
+        co_return std::unexpected(
+            failure(errc::not_found, "repository does not exist", state.key("LIQUID_REPO")));
+    }
+    auto document_id = parse_state_digest(bytes_text(**marker));
+    if (!document_id) {
+        co_return std::unexpected(document_id.error());
+    }
+    auto saved = co_await objects.get(*document_id);
+    if (!saved) {
+        co_return std::unexpected(saved.error());
+    }
+    auto journal = co_await read_state(state, "LIQUID_JOURNAL");
+    if (!journal) {
+        co_return std::unexpected(journal.error());
+    }
+    if (!*journal) {
+        co_return decode_repository_document(*saved);
+    }
+    auto journal_text = bytes_text(**journal);
+    if (journal_text.starts_with(journal_pointer_prefix)) {
+        auto journal_id = parse_state_digest(std::move(journal_text), journal_pointer_prefix);
+        if (!journal_id) {
+            co_return std::unexpected(journal_id.error());
+        }
+        auto journal_document = co_await objects.get(*journal_id);
+        if (!journal_document) {
+            co_return std::unexpected(journal_document.error());
+        }
+        co_return decode_repository_document(*journal_document);
+    }
+    co_return decode_repository_document(**journal);
+}
+
+auto valid_replication_source(std::string_view source) -> result<void> {
+    const auto allowed = [](char value) {
+        return std::isalnum(static_cast<unsigned char>(value)) != 0 || value == '-' ||
+               value == '_' || value == '.';
+    };
+    if (source.empty() || source.size() > 255 || source.front() == '.' ||
+        !std::ranges::all_of(source, allowed)) {
+        return std::unexpected(failure(errc::invalid_argument,
+                                       "replication source is not a safe identifier",
+                                       std::string{source}));
+    }
+    return {};
+}
 
 auto prepare_repository_store(std::filesystem::path path, repository_options& options)
     -> runtime::task<prepared_repository_store> {
@@ -4181,12 +4359,23 @@ auto prepare_repository_store(std::filesystem::path path, repository_options& op
         if (!configuration) {
             co_return std::unexpected(configuration.error());
         }
-        auto state_path = identifier_path(*options.store, path);
-        if (!state_path) {
-            co_return std::unexpected(state_path.error());
+        auto key = identifier_key(path);
+        if (!key) {
+            co_return std::unexpected(key.error());
         }
+        auto root = repository_detail::store_access::root_path(*options.store);
+        if (!root) {
+            co_return std::unexpected(root.error());
+        }
+        auto backend = configuration->backend;
+        if (!backend) {
+            co_return std::unexpected(
+                failure(errc::not_configured, "store backend is unavailable", *key));
+        }
+        auto state =
+            repository_state_location{backend, backend, *key + "/", *key + "/replication/"};
         co_return prepared_repository_store{
-            std::move(*state_path), nullptr, options.store, std::move(*configuration)};
+            *root / *key, nullptr, options.store, std::move(*configuration), std::move(state)};
     }
     auto configuration = options.storage;
     auto opened = co_await store::open(path / ".liquid-store", std::move(options.storage));
@@ -4195,8 +4384,15 @@ auto prepare_repository_store(std::filesystem::path path, repository_options& op
     }
     auto owned = std::make_unique<store>(std::move(*opened));
     auto* objects = owned.get();
+    auto data = repository_detail::store_access::configuration(*owned);
+    if (!data) {
+        co_return std::unexpected(data.error());
+    }
+    // The checkout's state files were always written with a data sync; the backend keeps that.
+    auto state = repository_state_location{
+        make_disk_store_backend(path, true), data->backend, "", ".liquid/replication/"};
     co_return prepared_repository_store{
-        std::move(path), std::move(owned), objects, std::move(configuration)};
+        std::move(path), std::move(owned), objects, std::move(configuration), std::move(state)};
 }
 } // namespace
 
@@ -4251,6 +4447,7 @@ struct repository::impl {
     static constexpr auto lease_ttl = std::chrono::days{30};
 
     std::filesystem::path root_path;
+    repository_state_location state;
     std::unique_ptr<store> owned_objects;
     store& objects;
     repository_document current;
@@ -4279,6 +4476,7 @@ struct repository::impl {
     std::vector<liquid::presence> transient_presence;
     std::map<std::string, std::pair<cache_status, std::optional<cache_miss>>> cache_lookups;
     impl(std::filesystem::path path,
+         repository_state_location state_location,
          std::unique_ptr<store> owned,
          store& value,
          repository_document document,
@@ -4287,8 +4485,9 @@ struct repository::impl {
          std::uint64_t interval,
          algorithm algorithm_value,
          session_id session_value)
-        : root_path(std::move(path)), owned_objects(std::move(owned)), objects(value),
-          current(std::move(document)), checkpoint_interval(std::max(std::uint64_t{1}, interval)),
+        : root_path(std::move(path)), state(std::move(state_location)),
+          owned_objects(std::move(owned)), objects(value), current(std::move(document)),
+          checkpoint_interval(std::max(std::uint64_t{1}, interval)),
           hash_algorithm(algorithm_value), session(session_value), signing_key(std::move(key)),
           keys(std::move(encryption_keys)),
           flow_limits(flow_detail::shared_controller(root_path.generic_string(), current.flow)) {}
@@ -4304,12 +4503,6 @@ struct repository::impl {
         output.push_back('\n');
         output.append(kind);
         return output;
-    }
-    auto marker() const -> std::filesystem::path {
-        return root_path / "LIQUID_REPO";
-    }
-    auto journal_marker() const -> std::filesystem::path {
-        return root_path / "LIQUID_JOURNAL";
     }
     runtime::task<void> restore_paged_tree(working_entry& destination, std::string path = {}) {
         auto bytes = co_await objects.get(destination.object);
@@ -4529,7 +4722,7 @@ struct repository::impl {
                                      node_text(source.current.repository));
         co_return result<void>{};
     }
-    runtime::task<digest> persist(bool synchronize_reachable) {
+    runtime::task<digest> persist(bool synchronize_reachable, bool exclusive_create = false) {
         if (synchronize_reachable) {
             auto reachable = std::set<node_id>{};
             append_working_directories(current.root, reachable);
@@ -4572,24 +4765,15 @@ struct repository::impl {
             co_await repository_detail::store_access::put_plain(objects, std::move(*encoded));
         if (!stored)
             co_return std::unexpected(stored.error());
-        auto temporary = marker();
-        temporary += ".tmp";
-        const auto text = to_string(*stored) + "\n";
-        auto marker_bytes =
-            std::vector<std::byte>{reinterpret_cast<const std::byte*>(text.data()),
-                                   reinterpret_cast<const std::byte*>(text.data() + text.size())};
-        auto written = co_await store_detail::write_file(temporary, std::move(marker_bytes));
-        if (!written)
-            co_return std::unexpected(written.error());
-        auto code = std::error_code{};
-        std::filesystem::rename(temporary, marker(), code);
-        if (code) {
-            std::filesystem::remove(marker(), code);
-            code.clear();
-            std::filesystem::rename(temporary, marker(), code);
+        auto published = co_await publish_state(
+            state, "LIQUID_REPO", string_bytes(to_string(*stored) + "\n"), exclusive_create);
+        if (!published) {
+            if (exclusive_create && published.error().code == errc::already_exists) {
+                co_return std::unexpected(
+                    failure(errc::already_exists, "repository already exists", root_path.string()));
+            }
+            co_return std::unexpected(published.error());
         }
-        if (code)
-            co_return std::unexpected(failure(errc::io, code.message(), marker().string()));
         co_return *stored;
     }
     runtime::task<void> retain(std::optional<retained_lease>& retained, digest id) {
@@ -4739,7 +4923,7 @@ struct repository::impl {
         }
         co_return result<void>{};
     }
-    runtime::task<void> checkpoint(std::optional<digest> root = {}) {
+    runtime::task<void> checkpoint(std::optional<digest> root = {}, bool exclusive_create = false) {
         const auto synchronize_reachable = current.pending_drips != 0;
         auto working_tree = root;
         if (!working_tree) {
@@ -4755,7 +4939,7 @@ struct repository::impl {
         }
         current.pending_drips = 0;
         journal_bytes = 0;
-        auto document = co_await persist(synchronize_reachable);
+        auto document = co_await persist(synchronize_reachable, exclusive_create);
         if (!document) {
             co_return std::unexpected(document.error());
         }
@@ -4763,9 +4947,7 @@ struct repository::impl {
         if (!retained) {
             co_return std::unexpected(retained.error());
         }
-        std::error_code cleanup;
-        std::filesystem::remove(journal_marker(), cleanup);
-        co_return result<void>{};
+        co_return co_await remove_state(state, "LIQUID_JOURNAL");
     }
     runtime::task<void> checkpoint_or_journal() {
         if (defer_persistence) {
@@ -4786,11 +4968,10 @@ struct repository::impl {
         if (!document) {
             co_return std::unexpected(document.error());
         }
-        const auto text = std::string{journal_pointer_prefix} + to_string(*document) + "\n";
-        auto encoded =
-            std::vector<std::byte>{reinterpret_cast<const std::byte*>(text.data()),
-                                   reinterpret_cast<const std::byte*>(text.data() + text.size())};
-        co_return co_await store_detail::write_file(journal_marker(), std::move(encoded));
+        co_return co_await publish_state(
+            state,
+            "LIQUID_JOURNAL",
+            string_bytes(std::string{journal_pointer_prefix} + to_string(*document) + "\n"));
     }
     runtime::task<void> append_drip(std::string operation,
                                     const node_id& node,
@@ -5993,11 +6174,13 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     if (!prepared) {
         co_return std::unexpected(prepared.error());
     }
-    auto code = std::error_code{};
-    std::filesystem::create_directories(prepared->state_path, code);
-    if (code)
-        co_return std::unexpected(failure(errc::io, code.message(), prepared->state_path.string()));
-    if (std::filesystem::exists(prepared->state_path / "LIQUID_REPO"))
+    // A cheap refusal before any object is written; the conditional create of LIQUID_REPO in the
+    // first checkpoint is what makes the create exclusive against a concurrent creator.
+    auto existing = co_await store_detail::backend_exists(prepared->state.backend,
+                                                          prepared->state.key("LIQUID_REPO"));
+    if (!existing)
+        co_return std::unexpected(existing.error());
+    if (*existing)
         co_return std::unexpected(failure(
             errc::already_exists, "repository already exists", prepared->state_path.string()));
     const auto hash_algorithm = prepared->configuration.hash_algorithm;
@@ -6024,6 +6207,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
     repository output;
     auto* objects = prepared->objects;
     output.impl_ = std::make_unique<impl>(std::move(prepared->state_path),
+                                          std::move(prepared->state),
                                           std::move(prepared->owned),
                                           *objects,
                                           std::move(document),
@@ -6043,7 +6227,7 @@ runtime::task<repository> repository::create(std::filesystem::path path,
         }
         ++output.impl_->current.pending_drips;
     }
-    auto saved = co_await output.impl_->checkpoint();
+    auto saved = co_await output.impl_->checkpoint(std::nullopt, true);
     if (!saved)
         co_return std::unexpected(saved.error());
     co_return output;
@@ -6053,49 +6237,11 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     if (!prepared) {
         co_return std::unexpected(prepared.error());
     }
-    auto marker = co_await store_detail::read_file(prepared->state_path / "LIQUID_REPO");
-    if (!marker)
-        co_return std::unexpected(marker.error());
-    auto text = std::string{reinterpret_cast<const char*>(marker->data()), marker->size()};
-    if (const auto newline = text.find('\n'); newline != std::string::npos)
-        text.resize(newline);
-    auto document_id = parse_digest(text);
-    if (!document_id)
-        co_return std::unexpected(document_id.error());
     const auto hash_algorithm = prepared->configuration.hash_algorithm;
     auto keys = prepared->configuration.keys;
-    auto saved = co_await prepared->objects->get(*document_id);
-    if (!saved)
-        co_return std::unexpected(saved.error());
-    auto document = decode_repository_document(*saved);
+    auto document = co_await load_state_document(prepared->state, *prepared->objects);
     if (!document)
         co_return std::unexpected(document.error());
-    if (std::filesystem::exists(prepared->state_path / "LIQUID_JOURNAL")) {
-        auto journal = co_await store_detail::read_file(prepared->state_path / "LIQUID_JOURNAL");
-        if (!journal)
-            co_return std::unexpected(journal.error());
-        auto journal_text =
-            std::string{reinterpret_cast<const char*>(journal->data()), journal->size()};
-        if (journal_text.starts_with(journal_pointer_prefix)) {
-            journal_text.erase(0, journal_pointer_prefix.size());
-            if (const auto newline = journal_text.find('\n'); newline != std::string::npos) {
-                journal_text.resize(newline);
-            }
-            auto journal_id = parse_digest(journal_text);
-            if (!journal_id) {
-                co_return std::unexpected(journal_id.error());
-            }
-            auto journal_document = co_await prepared->objects->get(*journal_id);
-            if (!journal_document) {
-                co_return std::unexpected(journal_document.error());
-            }
-            journal = std::move(*journal_document);
-        }
-        auto replayed = decode_repository_document(*journal);
-        if (!replayed)
-            co_return std::unexpected(replayed.error());
-        document = std::move(replayed);
-    }
     auto valid_rules = validate_encryption_rules(document->encryption_rules);
     if (!valid_rules)
         co_return std::unexpected(valid_rules.error());
@@ -6132,6 +6278,7 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     repository output;
     auto* objects = prepared->objects;
     output.impl_ = std::make_unique<impl>(std::move(prepared->state_path),
+                                          std::move(prepared->state),
                                           std::move(prepared->owned),
                                           *objects,
                                           std::move(*document),
@@ -7280,6 +7427,37 @@ runtime::task<digest> repository_detail::git_access::put_tree(repository& destin
         co_return std::unexpected(encoded.error());
     co_return co_await repository_detail::store_access::put_plain(destination.impl_->objects,
                                                                   std::move(*encoded));
+}
+runtime::task<std::optional<journal_cursor>> repository::replication_cursor(std::string source) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto valid = valid_replication_source(source);
+    if (!valid) {
+        co_return std::unexpected(valid.error());
+    }
+    auto replication = impl_->state;
+    replication.prefix = replication.replication_prefix;
+    auto stored = co_await read_state(replication, source + ".cursor");
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    if (!*stored) {
+        co_return std::optional<journal_cursor>{};
+    }
+    co_return std::optional<journal_cursor>{journal_cursor{bytes_text(**stored)}};
+}
+runtime::task<void> repository::set_replication_cursor(std::string source, journal_cursor cursor) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    auto valid = valid_replication_source(source);
+    if (!valid) {
+        co_return std::unexpected(valid.error());
+    }
+    auto replication = impl_->state;
+    replication.prefix = replication.replication_prefix;
+    co_return co_await publish_state(replication, source + ".cursor", string_bytes(cursor.token));
 }
 runtime::task<void> repository::set_metadata(std::string key, std::vector<std::byte> value) {
     if (!impl_ || key.empty())
@@ -8539,17 +8717,14 @@ runtime::task<session> repository::fork_session(session_options options) {
     document->pending_drips = 0;
     const auto id = session_id{random_id()};
     auto private_path = impl_->root_path / "sessions" / to_string(id);
-    auto code = std::error_code{};
-    std::filesystem::create_directories(private_path, code);
-    if (code) {
-        co_return std::unexpected(failure(errc::io, code.message(), private_path.string()));
-    }
+    auto private_state = impl_->state.child("sessions/" + to_string(id));
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key) {
         co_return std::unexpected(signing_key.error());
     }
     auto private_repository = repository{};
     private_repository.impl_ = std::make_unique<repository::impl>(private_path,
+                                                                  private_state,
                                                                   nullptr,
                                                                   impl_->objects,
                                                                   std::move(*document),
@@ -8595,7 +8770,7 @@ runtime::task<session> repository::fork_session(session_options options) {
         co_return std::unexpected(metadata.error());
     }
     auto metadata_written =
-        co_await store_detail::write_file(private_path / "LIQUID_SESSION", std::move(*metadata));
+        co_await publish_state(private_state, "LIQUID_SESSION", std::move(*metadata));
     if (!metadata_written) {
         co_return std::unexpected(metadata_written.error());
     }
@@ -8607,60 +8782,22 @@ runtime::task<session> repository::open_session(session_id id) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
     const auto private_path = impl_->root_path / "sessions" / to_string(id);
-    auto metadata_bytes = co_await store_detail::read_file(private_path / "LIQUID_SESSION");
+    const auto private_state = impl_->state.child("sessions/" + to_string(id));
+    auto metadata_bytes = co_await read_state(private_state, "LIQUID_SESSION");
     if (!metadata_bytes) {
         co_return std::unexpected(metadata_bytes.error());
     }
-    auto metadata = decode_stored_session(*metadata_bytes);
+    if (!*metadata_bytes) {
+        co_return std::unexpected(failure(
+            errc::not_found, "session does not exist", private_state.key("LIQUID_SESSION")));
+    }
+    auto metadata = decode_stored_session(**metadata_bytes);
     if (!metadata) {
         co_return std::unexpected(metadata.error());
     }
-    auto marker = co_await store_detail::read_file(private_path / "LIQUID_REPO");
-    if (!marker) {
-        co_return std::unexpected(marker.error());
-    }
-    auto marker_text = std::string{reinterpret_cast<const char*>(marker->data()), marker->size()};
-    if (const auto newline = marker_text.find('\n'); newline != std::string::npos) {
-        marker_text.resize(newline);
-    }
-    auto document_id = parse_digest(marker_text);
-    if (!document_id) {
-        co_return std::unexpected(document_id.error());
-    }
-    auto saved = co_await impl_->objects.get(*document_id);
-    if (!saved) {
-        co_return std::unexpected(saved.error());
-    }
-    auto document = decode_repository_document(*saved);
+    auto document = co_await load_state_document(private_state, impl_->objects);
     if (!document) {
         co_return std::unexpected(document.error());
-    }
-    if (std::filesystem::exists(private_path / "LIQUID_JOURNAL")) {
-        auto journal = co_await store_detail::read_file(private_path / "LIQUID_JOURNAL");
-        if (!journal) {
-            co_return std::unexpected(journal.error());
-        }
-        auto journal_text =
-            std::string{reinterpret_cast<const char*>(journal->data()), journal->size()};
-        if (journal_text.starts_with(journal_pointer_prefix)) {
-            journal_text.erase(0, journal_pointer_prefix.size());
-            if (const auto newline = journal_text.find('\n'); newline != std::string::npos) {
-                journal_text.resize(newline);
-            }
-            auto journal_id = parse_digest(journal_text);
-            if (!journal_id) {
-                co_return std::unexpected(journal_id.error());
-            }
-            journal = co_await impl_->objects.get(*journal_id);
-            if (!journal) {
-                co_return std::unexpected(journal.error());
-            }
-        }
-        auto replayed = decode_repository_document(*journal);
-        if (!replayed) {
-            co_return std::unexpected(replayed.error());
-        }
-        document = std::move(replayed);
     }
     auto signing_key = co_await identity_detail::local_signer();
     if (!signing_key) {
@@ -8668,6 +8805,7 @@ runtime::task<session> repository::open_session(session_id id) {
     }
     auto private_repository = repository{};
     private_repository.impl_ = std::make_unique<repository::impl>(private_path,
+                                                                  private_state,
                                                                   nullptr,
                                                                   impl_->objects,
                                                                   std::move(*document),
@@ -9067,11 +9205,9 @@ runtime::task<publish_report> session::publish(publish_options options) {
         }
     }
     reset_publish_state();
-    const auto private_path = impl_->private_replica.impl_->root_path;
-    auto code = std::error_code{};
-    std::filesystem::remove_all(private_path, code);
-    if (code) {
-        co_return std::unexpected(failure(errc::io, code.message(), private_path.string()));
+    auto removed = co_await remove_state_tree(impl_->private_replica.impl_->state);
+    if (!removed) {
+        co_return std::unexpected(removed.error());
     }
     impl_->active = false;
     co_return report;
@@ -9093,11 +9229,9 @@ runtime::task<void> session::discard() {
             co_return std::unexpected(released.error());
         }
     }
-    const auto path = impl_->private_replica.impl_->root_path;
-    auto code = std::error_code{};
-    std::filesystem::remove_all(path, code);
-    if (code) {
-        co_return std::unexpected(failure(errc::io, code.message(), path.string()));
+    auto removed = co_await remove_state_tree(impl_->private_replica.impl_->state);
+    if (!removed) {
+        co_return std::unexpected(removed.error());
     }
     impl_->active = false;
     co_return result<void>{};
@@ -10058,6 +10192,9 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
     auto merge_metadata = std::map<std::string, std::string>{};
     auto graph = std::optional<frontend_graph>{};
 #if defined(LIQUID_HAS_BUILTIN_FRONTEND)
+    // The parse graph is a local cache, not repository state. A state backend without a local
+    // root (liquid #326) gets a scratch directory for the length of this merge instead.
+    auto scratch = scratch_directory{};
     if (!remote_writes.empty()) {
         auto linked = frontend_module::linked(liquid_builtin_tree_sitter_module_v1());
         if (!linked) {
@@ -10065,9 +10202,19 @@ runtime::task<sync_import_report> repository::import_drips(std::span<const sync_
             co_return std::unexpected(linked.error());
         }
         auto module = std::make_shared<frontend_module>(std::move(*linked));
+        auto graph_root = store_detail::backend_local_path(
+            impl_->state.backend, impl_->state.key("STRUCTURAL_MERGE_GRAPH"));
+        if (!graph_root) {
+            auto created = scratch.create("liquid-merge-graph-");
+            if (!created) {
+                abort();
+                co_return std::unexpected(created.error());
+            }
+            graph_root = *created;
+        }
         auto opened = co_await frontend_graph::open(
-            impl_->root_path / "STRUCTURAL_MERGE_GRAPH",
-            impl_->root_path,
+            *graph_root,
+            graph_root->parent_path(),
             std::move(module),
             [](std::vector<std::byte>) -> runtime::task<std::vector<std::byte>> {
                 co_return std::unexpected(failure(
@@ -11404,5 +11551,14 @@ auto repository_detail::search_access::index_path(repository& source)
 void repository_detail::testing::reset_directory_loads(repository& value) {
     if (value.impl_)
         value.impl_->directory_load_count = 0;
+}
+
+auto repository_detail::shared_state_prefix(const std::filesystem::path& identifier)
+    -> result<std::string> {
+    auto key = identifier_key(identifier);
+    if (!key) {
+        return std::unexpected(key.error());
+    }
+    return *key + "/";
 }
 } // namespace liquid

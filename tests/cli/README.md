@@ -17,6 +17,14 @@ outside the public `liquid/` header tree or the CLI's own metadata header. The `
 `cli-cache-stats-json` cases exercise machine-readable diagnostics against an isolated empty
 cache.
 
+`verify_log.cpp` uses the CLI verification handler with a completed signed reproducibility report
+and a loopback HTTP log fixture. It requires valid inclusion, rejects missing, tampered, and
+unavailable proofs, and confirms that omitting `--log` retains local-only verification.
+The target compiles the private attestation encoder and its canonical CBOR dependency directly so
+the same fixture works with hidden symbols in shared-library builds.
+`verify-log-guide.cmake` reads the transparency guide's all-actions invocation and requires the
+built command to accept it past argument parsing.
+
 `offline.cmake` runs every test carrying the `liquid-cli` label through `offline_runner.cpp`,
 which invokes the same macOS or Linux sandbox launcher used by build wrapping with networking
 denied. It first pins exit 69 and the exact diagnostic for push, pull, remote execution, and the
@@ -94,3 +102,12 @@ reports, all emitted Shamir shares, and the final persisted custody kind.
 The configuration scenario also checks canonical record file/stdout equivalence, successful
 resolution from emitted records, named package selection and output errors, empty and unsupported
 universe diagnostics in text/JSON modes, and an exact attributed contradiction narrative (#287).
+
+`project.py` covers ordinary changes and trees without a build cache, deterministic Debian
+bytes, OCI/RPM/APK output, Debian source changes, and explicit unsupported-input errors. Its
+public-API fixture records results in a separate build repository to preserve result-ID and
+producing-install-tree behavior, including a checkout without ordinary repository state.
+`log-url.cmake` checks malformed schemes, missing hosts, and invalid ports through `log scan`,
+`log consistency`, and `log verify`, requiring exit 2 and specific HTTP/HTTPS diagnostics.
+It also runs the `HttpLogSource` API cases. The existing offline runner denies networking
+on macOS and Linux; no repository or server is required.

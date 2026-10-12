@@ -36,6 +36,16 @@ function(require_success result output error)
   message(STATUS "${${output}}")
 endfunction()
 
+# A daemon left by an earlier run of this test (it idles for five minutes) would write into the
+# checkout after it is removed, so stop it first (liquid#352).
+if(EXISTS "${LIQUID_CLI_ROOT}/workspace")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "LIQUID_HOME=${LIQUID_CLI_ROOT}/identity"
+      "${LIQUID_CLI}" daemon --shutdown
+    WORKING_DIRECTORY "${LIQUID_CLI_ROOT}/workspace"
+    OUTPUT_QUIET
+    ERROR_QUIET)
+endif()
 file(REMOVE_RECURSE "${LIQUID_CLI_ROOT}")
 file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/workspace/notes")
 file(MAKE_DIRECTORY "${LIQUID_CLI_ROOT}/other")
@@ -252,4 +262,11 @@ string(REGEX MATCH "\"name\":\"main\"" collected_main "${collected_refs_output}"
 if(NOT collected_main)
   message(FATAL_ERROR "collection lost main reference: ${collected_refs_output}")
 endif()
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env "LIQUID_HOME=${LIQUID_CLI_ROOT}/identity"
+    "${LIQUID_CLI}" daemon --shutdown
+  WORKING_DIRECTORY "${LIQUID_CLI_ROOT}/workspace"
+  OUTPUT_QUIET
+  ERROR_QUIET)
+
 message(STATUS "scenario output:\n${init_output}${status_output}${cut_output}${move_output}${moved_cut_output}${anchor_output}${history_output}${restore_output}${restored_cut_output}${nest_output}${split_output}${combine_output}${combined_cut_output}${final_move_output}${log_output}${log_ops_output}${ops_output}${undo_output}${lock_output}${locked_error}${pause_output}${resume_output}${gc_output}${moved_output}${combined_output}${collected_log_output}${collected_refs_output}")

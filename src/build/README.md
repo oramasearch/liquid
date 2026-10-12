@@ -9,7 +9,9 @@ signed result creation. It exposes one preparation and one publication path to
 `distribution.cpp`, which walks source and toolchain object graphs, measures the remote's missing
 objects, selects local, remote, or race from recorded cost inputs, groups short actions into a
 supported batch, hydrates remote outputs, and cancels race losers before the winner reaches the
-single publication path. `cache.cpp` owns candidate-key derivation, current-tree manifest validation,
+single publication path. Its remote object reads use a heap 64 KiB buffer rather than a coroutine
+local array, which a Debug coroutine ramp would reserve on the stack (liquid #323).
+`cache.cpp` owns candidate-key derivation, current-tree manifest validation,
 signature and referenced-object checks, the sorted disk action index, and its store-backed recovery
 root. It also computes the median execution cost, synchronizes cost-weighted result leases, and
 ranks size-cap eviction by execution cost per result-graph byte. Divergence and the signed

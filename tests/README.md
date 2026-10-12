@@ -8,8 +8,15 @@ Exclusive checkout coverage spans repository holder/refusal/release and offline-
 configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
 
 The default suite covers the public library surface and the local store. Focused garbage
-collection cases and its CLI flags live in `store/`; deterministic crash schedules run through
-both the disk and in-memory persistence backends in `sim/`;
+collection cases and its CLI flags, and the liquid #321 multi-process owner-lock cases, live in
+`store/`. `test_index.cpp` runs a flush and compaction through the in-memory backend on a thread
+with a 512 KiB stack above 1 MiB of inaccessible memory, so a Debug coroutine ramp that reserves a
+large table again faults deterministically (liquid #323), and proves over `sim/`'s write-once backend
+that flush and compaction write every run once and that a torn merge leaves the old runs
+authoritative (liquid #332). CTest repeats the index suite (`index-write-once`) and the store and
+collection suites and the repository transfer suite (`store-write-once`) over that backend with `LIQUID_TEST_WRITE_ONCE_BACKEND=1`;
+deterministic crash schedules run through the disk and in-memory persistence backends, each also
+behind the write-once backend, in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
 coverage uses the private Corosio connection adapter.
 `test_forge.cpp` covers lake review, comment, state, and branch-protection round trips; every
@@ -33,11 +40,17 @@ compiles the private package-common, tar writer and SquashFS writer translation 
 byte-identity tests; those helpers remain outside the public ABI.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
+`cli-verify-log` uses a loopback HTTP log fixture and a signed stored reproducibility attestation
+to require valid inclusion and reject missing, tampered, and unavailable inclusion through the
+`verify --log` CLI handler. Its test target compiles the private attestation encoder and canonical
+CBOR dependency so it also covers a shared libliquid build with hidden symbols.
+`cli-verify-log-guide` reads the transparency guide's all-actions invocation and runs it through
+the built command parser.
 `test_tuf.cpp` verifies Lake-produced root, targets, snapshot, and timestamp metadata; unique-key
 thresholds; expiry and persisted rollback checks; exact metadata bindings; root-key recovery; full
 target hashing; and the `registry trust` CLI.
 
-Every filesystem fixture uses `temporary_directory.hpp`. The helper creates one random,
+Ordinary filesystem fixtures use `temporary_directory.hpp`. The helper creates one random,
 process-specific directory beneath `std::filesystem::temp_directory_path()`, honours `TMPDIR` on
 Linux, resolves a relative temporary root before subprocesses can change directory, reports a clear
 error when the temporary root is not writable, and removes the directory at process exit. Tests may
@@ -45,6 +58,11 @@ use fixed names beneath that directory, but must never name a fixed path directl
 temporary root. `TemporaryDirectory.*` covers root selection, per-process stability, unique child
 creation, cleanup, and the failure diagnostic. Subprocess daemon coverage supplies the same root
 relative to the checkout before changing directory.
+
+New Unix-domain listener fixtures use the scoped `socket_fixture.hpp` helper, which keeps socket
+paths within the native byte limit independently of checkout depth and removes each directory on scope
+exit. Root fallback and bound-socket cleanup have dedicated coverage; see
+[the socket fixture rules](../docs/build/socket-fixtures.md).
 
 Scheduler protocol, duplicate-join, size-class placement, and one-requeue coverage lives in
 `workers/`.
@@ -145,6 +163,13 @@ daemon pause/resume and bucket status, peer HTTP 429 retry projection, and the s
 `test_runtime.cpp`
 repeats immediate blocking-pool completions to verify that
 each continuation returns to the caller executor without losing a wake during suspension.
+`test_runtime_sockets.cpp` (POSIX) opens and closes socket pairs from 256 concurrent lanes inside
+`block_on` with reads pending, and fails on a Corosio pin without the multi-runner close fix
+(corosio#5) or the outstanding-work fix (corosio#7) (liquid #329). Its
+`RuntimeSockets.TcpConnectsStartedAfterTheOpenSucceedInsideBlockOn` makes 512 loopback TCP connects
+from 32 lanes inside `block_on`, each started 0 to 3 yields after its socket was opened; on Linux it
+fails with `Input/output error` on a Corosio pin without the connect-after-open fix (corosio#10,
+liquid #345).
 `test_stale_reasoning.cpp` covers listed and unlisted actors, persisted policy, unmoved and legacy
 drip bodies, same-path line-hunk reports, declared read dependencies, disjoint and forced records,
 and a synchronized replica whose signed write arrives before refusal. The CLI scenario
@@ -307,3 +332,16 @@ the compiler frontend as the strongest C++ registration.
 
 `guides-resolution` executes the source-only package guide on macOS and Linux, including
 canonical record equivalence. The configuration CLI scenario pins loading diagnostics (#287).
+
+`liquid-vfs-conformance` adds named projection-driver coverage under `vfs/`, built against both
+library forms. Each configured backend receives the same filesystem and observation assertions.
+The `direct` driver calibrates them through the core without mounting; `libfuse` uses real POSIX
+syscalls. See the [VFS guide](../docs/library/vfs.md#backend-conformance-301) for required backend
+execution, explicit unavailable results, the deliberate regression and Linux proof still owed.
+
+Issue #286 adds `cli-project` for ordinary-repository projection and existing result-ID
+compatibility. `guides-projection` runs the documented file-to-package workflow natively,
+including equality of Debian bytes from a change and its root tree, without a mount.
+`test_log_url.cpp` covers HTTP log URL factory errors and all six legacy source operations.
+`cli-log-url` repeats these API tests and every malformed URL through the three log verbs
+with networking denied on macOS and Linux. See [the contract](../docs/library/transparency.md#http-url-validation-289).

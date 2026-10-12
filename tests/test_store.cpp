@@ -25,6 +25,7 @@
 #include "store/chunker.hpp"
 #include "store/faults.hpp"
 #include "temporary_directory.hpp"
+#include "write_once_backend.hpp"
 
 namespace {
 
@@ -54,7 +55,12 @@ std::vector<std::byte> bytes(std::size_t size, std::uint64_t seed = 9) {
     return output;
 }
 
+// Every store this suite opens goes through open_store, so its second registration runs the whole
+// suite over the write-once backend (liquid #332).
 liquid::store open_store(const std::filesystem::path& path, liquid::store_options options = {}) {
+    if (!options.backend) {
+        options.backend = liquid::sim::test_store_backend(path, options.durable);
+    }
     auto opened = liquid::runtime::block_on(liquid::store::open(path, std::move(options)));
     EXPECT_TRUE(opened.has_value()) << (opened ? "" : opened.error().message);
     return std::move(*opened);
@@ -103,6 +109,10 @@ auto store_files(const std::filesystem::path& root)
 
 auto pack_bytes(const std::filesystem::path& root) -> std::uint64_t {
     auto total = std::uint64_t{};
+    // An injected backend, such as the write-once one, creates packs/ with its first pack.
+    if (!std::filesystem::exists(root / "packs")) {
+        return total;
+    }
     for (const auto& entry : std::filesystem::directory_iterator(root / "packs")) {
         if (entry.is_regular_file() && entry.path().extension() == ".pack") {
             total += entry.file_size();
@@ -791,12 +801,11 @@ TEST(Store, SealedPackReopensFromItsFooter) {
     temporary_store temporary;
     liquid::store_options options;
     options.pack_size = 1;
-    auto store = liquid::runtime::block_on(liquid::store::open(temporary.path(), options));
-    ASSERT_TRUE(store.has_value()) << store.error().message;
+    auto store = open_store(temporary.path(), options);
     const auto source = bytes(4096, 45);
-    auto id = liquid::runtime::block_on(store->put(source));
+    auto id = liquid::runtime::block_on(store.put(source));
     ASSERT_TRUE(id.has_value()) << id.error().message;
-    *store = {};
+    store = {};
     auto reopened = open_store(temporary.path());
     auto got = liquid::runtime::block_on(reopened.get(*id));
     ASSERT_TRUE(got.has_value()) << got.error().message;
