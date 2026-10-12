@@ -94,3 +94,40 @@ Use [status](status.md) and the relevant implementation page for current behavio
 - Support every language, platform and operating system — with the tier of support
   stated honestly rather than implied.
 
+## 2026-10-12: the README becomes the introduction
+
+By the `v0.1.0` release the root `README.md` had grown back to 614 lines. After the front door of
+issue #284 it again carried the names, the design axioms, the list of goals, the library targets,
+two more build sections, a quoted status inventory, and a second documentation index with repeated
+rows. `CLAUDE.md` carried about 260 lines of per-issue status under *What this repo is*.
+
+The release pull request rewrote the README once, as the introduction to the project, instead of
+cutting it back to the short front door again. A bare front door told a newcomer how to build
+liquid and nothing about why it exists. The page now opens with what liquid is, the next
+generation of Git, and makes the argument of the [research synthesis](../research/99-synthesis/README.md):
+what Git left on the table, the thesis, drips and changes, what one tool owning the whole stack
+makes nearly free, and a path in from Git. It keeps the first result and the tour, lists what
+works today with a link per capability, and says what is new and what is not there yet. The
+design axioms, the names and the library targets are on the page once each.
+
+What left the README, and where it lives:
+
+| Passage | Where it lives |
+|---|---|
+| The repeated copies of names, axioms, goals, targets and build sections | One copy each stays in the README; the full text is in the [feature index](../features/README.md), [libliquid](libliquid.md) and [local build](../build/local.md) |
+| The list of what liquid must do | [feature index](../features/README.md); the README lists what it does today instead |
+| Quoted phase status | [implementation status](status.md) |
+| The per-page documentation list, with repeated rows | [documentation index](../README.md) |
+| The benchmark option and install layout | [local build](../build/local.md) |
+
+A check of every removed passage against `docs/` found the index lines and a few reworded
+sentences as the only text without a near-verbatim copy; no capability, option or decision was
+described only in the README.
+
+The status text removed from `CLAUDE.md` was checked against `docs/library/`, `docs/cli/`,
+`docs/build/` and `docs/api/`: every code term in it is present there. Of the 104 issue numbers
+it cited, four (#54, #82, #83 and #288) are not cited on any of those pages.
+
+The cause of the growth is the same as before: merges of long-lived branches re-added passages
+that an earlier change had removed. `CLAUDE.md` now has *The README is the introduction*, which
+says each thing appears once and that a conflict in `README.md` is resolved by hand.
