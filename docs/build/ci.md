@@ -88,6 +88,10 @@ that FUSE is unavailable and is skipped rather than silently substituting the ma
 path. A job token must have access to every private submodule when `ORAMA_SUBMODULES_TOKEN` is not
 available; otherwise CI stops at checkout before any FUSE proof can run.
 
+No machine reachable from the development Mac currently has a FUSE mount, so the wrapped-build
+proofs on this page have not been run end to end. What was checked, and the decision needed, is in
+the [Phase 2 exit lane audit](phase-2-exit-lane-audit.md).
+
 ## Offline CLI prerequisites and diagnosis (#296)
 
 Run the outer CTest command from a native host shell. The test itself creates the denied-network
