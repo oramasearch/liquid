@@ -146,6 +146,18 @@ Unix-domain socket fixtures use the scoped `tests/socket_fixture.hpp` helper, in
 repository paths. Native byte limits, temporary-root fallback, and cleanup are documented in
 [`docs/build/socket-fixtures.md`](docs/build/socket-fixtures.md) (liquid #305).
 
+### Commands follow Git
+
+Steve, 2026-10-12: *"liquid should really not deviate from git commands without a good reason
+(e.g. git mv vs liquid move)"*.
+
+Where Git has a command for the same thing, liquid uses Git's name, arguments and order. A
+different name needs a reason recorded in
+[`docs/cli/git-commands.md`](docs/cli/git-commands.md), and a hint in `git_hints` in
+`src/main.cpp` so that typing the Git name says what to use. `cut` is not `commit` on purpose:
+a change names drips that already exist. Every command belongs to exactly one `--help` group;
+the build fails if one is missing or listed twice.
+
 ### The README is the introduction
 
 Steve, 2026-10-12: *"liquid is a next generation git... the readme should act like it"* and *"the

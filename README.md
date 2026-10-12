@@ -128,13 +128,18 @@ liquid export git /path/to/out    # write a standalone Git repository back out
 Import preserves reachable local history and maps identities. Export reports exactly what
 could not be carried over. See [Git interop](docs/library/git-interop.md).
 
+**Where Git has a command for the same thing, liquid uses Git's name.** Where it differs there
+is a reason, and typing the Git name tells you what to use: `liquid commit` answers with
+`liquid cut`. The full map, with the reason for every difference, is
+[liquid and Git's commands](docs/cli/git-commands.md).
+
 | You know | In liquid |
 |---|---|
 | `git init`, `git clone` | `liquid init`, `liquid clone` |
 | `git add` + `git commit` | Nothing, then `liquid cut "message"` |
 | `git log`, `git diff`, `git blame` | `liquid log`, `liquid diff`, `liquid blame` |
 | `git push`, `git pull` | `liquid push`, `liquid pull` |
-| `git mv`, `git rm` | `liquid move`, `liquid rm` |
+| `git mv`, `git rm` | `liquid mv`, `liquid rm` |
 | `git grep` | `liquid search` |
 | `git reflog` and a careful reset | `liquid ops`, `liquid undo` |
 | Submodules, subtree, filter-repo | `liquid nest`, `liquid split`, `liquid combine` |

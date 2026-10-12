@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid diff <a> <b> [path] [--text] [--formats] [--json]
+liquid diff <a> <b> [path] [--text] [--formats] [--structural] [--json]
 ```
 
 ## Description
 
-Compare two changes, optionally limit the result to a path, and inspect supported formats.
+Compare two changes, optionally limit the result to a path, inspect supported formats, or compare source syntax through a registered grammar.
 
 ## Options
 
@@ -28,7 +28,7 @@ available
 ## Examples
 
 ```sh
-liquid diff main feature --text --json
+liquid diff main feature --structural --json
 ```
 
 ## Exit status

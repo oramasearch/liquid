@@ -230,3 +230,11 @@ Unsupported records name the input and accepted kinds. `tree.cpp` exposes `root_
 `log.cpp` constructs HTTP log sources through the public factory before repository access or
 attestation decoding. Invalid URLs report an actionable HTTP/HTTPS diagnostic with exit 2;
 operation failures retain exit 1.
+
+`main.cpp` also holds the `--help` layout. `groups` assigns every command in the typed table to
+one titled section, and a `static_assert` fails the build when a command is in no group or in two;
+`command_groups()` gives the same sections to the generated reference index and the man page in
+`docs.cpp`. `start_here` is the short list printed first. `git_hints` maps Git commands liquid does
+not have to the command to use, and an unknown command that matches one prints that advice. The
+rule that commands take Git's names, and the reason for each difference, is in
+[`docs/cli/git-commands.md`](../../docs/cli/git-commands.md).

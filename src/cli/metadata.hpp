@@ -34,7 +34,16 @@ struct command {
     command_handler handler;
 };
 
+// One titled section of `liquid --help` and of the generated reference index. Every command in the
+// table belongs to exactly one group; main.cpp checks that when it is compiled.
+struct command_group {
+    std::string_view title;
+    std::span<const std::string_view> members;
+};
+
 [[nodiscard]] auto command_table() -> std::span<const command>;
+[[nodiscard]] auto command_groups() -> std::span<const command_group>;
+[[nodiscard]] auto find_command(std::string_view name) -> const command*;
 [[nodiscard]] auto validate_flags(const command& definition, int argc, char** argv) -> std::string;
 auto print_command_help(const command& definition) -> void;
 auto docs(int argc, char** argv) -> int;

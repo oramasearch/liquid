@@ -688,7 +688,7 @@ constexpr auto commands = std::to_array<command>({
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
      "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "
      "<identity>",
-     "show or verify change, signed drip, timestamp, or transparency-log history",
+     "show changes and drips, or verify timestamps and the transparency log",
      "available",
      flags_log,
      "Show repository history, verify timestamp or transparency-log evidence, and scan log "
@@ -717,16 +717,6 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_refs},
-    {"diff",
-     "diff <a> <b> [path] [--text] [--formats] [--json]",
-     "compare changes and supported container formats",
-     "available",
-     flags_diff,
-     "Compare two changes, optionally limit the result to a path, and inspect supported formats.",
-     "liquid diff main feature --text --json",
-     normal_exit,
-     argument_policy::ordinary,
-     liquid_cli::diff},
     {"history",
      "history <path> [--restore <change>]",
      "show or restore path history",
@@ -833,13 +823,14 @@ constexpr auto commands = std::to_array<command>({
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::tree_digest},
-    {"move",
-     "move <from> <to>",
+    {"mv",
+     "mv <from> <to>",
      "record a path move",
      "available",
      {},
-     "Move a path while preserving its repository node identity.",
-     "liquid move notes.txt archive/notes.txt",
+     "Move a path while preserving its repository node identity. `move` is accepted as an older "
+     "spelling.",
+     "liquid mv notes.txt archive/notes.txt",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::tree_move},
@@ -1214,8 +1205,7 @@ constexpr auto commands = std::to_array<command>({
      "build --target <name> [--json] | build [target] | build --plan [target] | build --events "
      "<command> [args...] | "
      "build --profile [remote options] <command> [args...] | build trace [--chrome]",
-     "plan or start a configured repository build, profile a command, stream events, or export a "
-     "trace",
+     "plan, start, profile, or trace a configured repository build",
      "available on Linux with FUSE and on macOS with macFUSE",
      flags_build,
      "Plan or execute a configured graph, wrap a child command, stream events, or export a trace.",
@@ -1347,19 +1337,210 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::node_store},
 });
 
+// The sections of `liquid --help`, in reading order. Git's own commands come first, under git's
+// names. A command that is missing from every group, or named in two, fails the static_assert
+// below.
+constexpr auto group_history = std::to_array<std::string_view>({
+    "init",  "clone", "status", "cut",    "log", "diff", "blame",  "history", "refs", "tree",
+    "write", "mv",    "rm",     "anchor", "ops", "undo", "search", "symbols", "edit",
+});
+constexpr auto group_compose = std::to_array<std::string_view>({
+    "nest",
+    "split",
+    "combine",
+    "conflicts",
+    "conflict",
+    "resolve",
+    "lock",
+    "unlock",
+    "session",
+    "data",
+});
+constexpr auto group_share = std::to_array<std::string_view>({
+    "push",
+    "pull",
+    "review",
+    "drive",
+    "import",
+    "export",
+    "serve",
+});
+constexpr auto group_storage = std::to_array<std::string_view>({
+    "daemon",
+    "watch",
+    "pause",
+    "resume",
+    "mount",
+    "materialise",
+    "compact",
+    "gc",
+    "repack",
+    "retain",
+});
+constexpr auto group_trust = std::to_array<std::string_view>({
+    "identity",
+    "keys",
+    "secret",
+    "sign",
+    "release",
+    "attest",
+    "registry",
+    "policy",
+});
+constexpr auto group_build = std::to_array<std::string_view>({
+    "wrap",
+    "build",
+    "test",
+    "verify",
+    "replay",
+    "why",
+    "why-slow",
+    "cache",
+    "facts",
+    "provenance",
+    "sbom",
+    "abi",
+    "inspect",
+    "hot-update",
+    "scheduler",
+    "worker",
+    "node-store",
+});
+constexpr auto group_package = std::to_array<std::string_view>({
+    "config",
+    "project",
+    "delta",
+    "install",
+    "rollback",
+    "deploy",
+});
+constexpr auto group_about = std::to_array<std::string_view>({
+    "version",
+    "tiers",
+    "docs",
+});
+
+constexpr auto groups = std::to_array<liquid_cli::command_group>({
+    {"Record and inspect history", group_history},
+    {"Compose repositories and resolve conflicts", group_compose},
+    {"Share and interchange", group_share},
+    {"Capture, working trees and storage", group_storage},
+    {"Identity, keys and trust", group_trust},
+    {"Build", group_build},
+    {"Package, install and deploy", group_package},
+    {"About liquid", group_about},
+});
+
+// The commands a person coming from Git reaches for first.
+constexpr auto start_here = std::to_array<std::string_view>({
+    "init",
+    "clone",
+    "status",
+    "cut",
+    "log",
+    "diff",
+    "push",
+    "pull",
+});
+
+consteval auto groups_hold_every_command_once() -> bool {
+    for (const auto& definition : commands) {
+        auto count = 0;
+        for (const auto& group : groups) {
+            for (const auto member : group.members) {
+                if (member == definition.name) {
+                    ++count;
+                }
+            }
+        }
+        if (count != 1) {
+            return false;
+        }
+    }
+    for (const auto& group : groups) {
+        for (const auto member : group.members) {
+            auto known = false;
+            for (const auto& definition : commands) {
+                if (definition.name == member) {
+                    known = true;
+                }
+            }
+            if (!known) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+static_assert(groups_hold_every_command_once(),
+              "every command belongs to exactly one --help group, and every group member is a "
+              "command");
+
+constexpr auto command_column = 13;
+
 auto print_usage() -> void {
-    std::println("liquid — a version control system, build system, package manager,");
-    std::println("artifact service and runtime in one program.");
+    std::println("liquid — the next generation of Git: version control, builds, packages,");
+    std::println("artifacts and deployment in one program.");
     std::println("");
     std::println("usage: liquid <command> [options]");
+    std::println("       liquid <command> --help");
     std::println("");
-    std::println("commands:");
-    for (const auto& command : commands) {
-        const auto suffix = command.availability == "available"
-                                ? std::string{}
-                                : std::format(" ({})", command.availability);
-        std::println("  {:{}} {}{}", command.name, 16, command.summary, suffix);
+    std::println("Start here:");
+    for (const auto name : start_here) {
+        const auto* definition = liquid_cli::find_command(name);
+        std::println("    {:{}} {}", name, command_column - 2, definition->summary);
     }
+    std::println("");
+    std::println("Every write to a repository's files is captured as a signed drip; there is no");
+    std::println("`add`. `cut` names the work since the last change.");
+    auto limited = false;
+    for (const auto& group : groups) {
+        std::println("");
+        std::println("{}:", group.title);
+        for (const auto name : group.members) {
+            const auto* definition = liquid_cli::find_command(name);
+            const auto marker = definition->availability == "available" ? "" : " *";
+            limited = limited || definition->availability != "available";
+            std::println("  {:{}} {}{}", name, command_column, definition->summary, marker);
+        }
+    }
+    if (limited) {
+        std::println("");
+        std::println("* not available on every platform or build; `liquid <command> --help` says "
+                     "where.");
+    }
+    std::println("");
+    std::println("Full reference: `man liquid`, or docs/reference/cli/ in the source tree.");
+}
+
+// Git commands liquid deliberately does not have, with what to use instead. liquid keeps Git's
+// name wherever it has the same command; these are the places it differs for a reason, and the
+// reason is what the person who typed the Git name needs to read.
+struct git_hint {
+    std::string_view git_command;
+    std::string_view advice;
+};
+constexpr auto git_hints = std::to_array<git_hint>({
+    {"add",
+     "liquid has no staging area: every write is captured as a drip. Name the work with "
+     "`liquid cut <message>`"},
+    {"commit",
+     "use `liquid cut <message>`: a change is a named group of captured drips, and there is "
+     "nothing to stage"},
+    {"grep", "use `liquid search`, which ranks results and also takes a substring or a regex"},
+    {"reflog", "use `liquid ops` to list recorded operations and `liquid undo` to reverse one"},
+    {"submodule", "use `liquid nest` to place another repository inside this one"},
+    {"mergetool", "use `liquid conflicts` to list conflicts and `liquid resolve` to settle one"},
+    {"restore", "use `liquid history <path> --restore <change>`"},
+    {"branch", "use `liquid refs` to list the repository's references"},
+});
+
+auto unknown_command_message(std::string_view name) -> std::string {
+    const auto hint = std::ranges::find(git_hints, name, &git_hint::git_command);
+    if (hint == git_hints.end()) {
+        return std::format("unknown command '{}'; `liquid --help` lists the commands", name);
+    }
+    return std::format("unknown command '{}': {}", name, hint->advice);
 }
 
 auto usage_error(std::string_view message) -> int {
@@ -1416,6 +1597,15 @@ auto command_table() -> std::span<const command> {
     return commands;
 }
 
+auto command_groups() -> std::span<const command_group> {
+    return groups;
+}
+
+auto find_command(std::string_view name) -> const command* {
+    const auto found = std::ranges::find(commands, name, &command::name);
+    return found == commands.end() ? nullptr : &*found;
+}
+
 auto print_command_help(const command& definition) -> void {
     std::println("usage: liquid {}", definition.usage);
     std::println("");
@@ -1461,7 +1651,7 @@ int main(int argc, char** argv) {
         command_name = argv[2];
         const auto found = std::ranges::find(commands, command_name, &command::name);
         if (found == commands.end()) {
-            return usage_error(std::format("unknown command '{}'", command_name));
+            return usage_error(unknown_command_message(command_name));
         }
         liquid_cli::print_command_help(*found);
         return 0;
@@ -1469,9 +1659,13 @@ int main(int argc, char** argv) {
     if (command_name == "--version") {
         command_name = "version";
     }
+    if (command_name == "move") {
+        // The command is `mv`, as in Git; `move` was its name before v0.1.0.
+        command_name = "mv";
+    }
     const auto found = std::ranges::find(commands, command_name, &command::name);
     if (found == commands.end()) {
-        return usage_error(std::format("unknown command '{}'", command_name));
+        return usage_error(unknown_command_message(command_name));
     }
     if (argc == 3 && std::string_view{argv[2]} == "--help") {
         liquid_cli::print_command_help(*found);
